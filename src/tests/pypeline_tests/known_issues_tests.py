@@ -76,6 +76,56 @@ def get_tests() -> list:
             requires=["ghdl"],
         )
     )
+    # Factory specializations that differ only inside a numpy array argument
+    # over 1000 elements share one identity (numpy's repr elides the middle),
+    # so the second elaborates as a DUPLICATE of the first: wrong hardware.
+    # Issue #370.
+    tests.append(
+        Test(
+            name="numpy_factory_arg_identity_known_issue",
+            category="known_issues",
+            cmd=[INST_DIR / "numpy_factory_arg_identity_test.py"],
+            needs_out_dir=True,
+            expect_fail=True,
+        )
+    )
+    # A pipelined top-level function folding a .latency-derived module value
+    # keeps pass 1's entity file in pin-and-confirm pass 2 when the folded
+    # constant keeps its width and the slices are replayed: wrong hardware.
+    # Issue #369.
+    tests.append(
+        Test(
+            name="latency_constant_entity_reuse_known_issue",
+            category="known_issues",
+            cmd=[INST_DIR / "latency_constant_entity_reuse_test.py"],
+            needs_out_dir=True,
+            expect_fail=True,
+        )
+    )
+    # Python supplies a @hw_func default, but HDL calls leave an omitted input
+    # undriven. DSP reset inputs are explicit until this is supported.
+    tests.append(
+        Test(
+            name="hw_func_default_arg_known_issue",
+            category="known_issues",
+            cmd=[PYPELINEC, INST_DIR / "hw_func_default_arg_design.py", "--no_synth"],
+            needs_out_dir=True,
+            expect_fail=True,
+        )
+    )
+    # Nested record names starting with signed_ take the scalar conversion
+    # branch in VHDL emission. NCO sideband records avoid this prefix.
+    tests.append(
+        Test(
+            name="struct_signed_prefix_known_issue",
+            category="known_issues",
+            cmd=[PYPELINEC, INST_DIR / "struct_signed_prefix_design.py",
+                 "--comb", "--sim", "--cocotb", "--ghdl", "--run", "4"],
+            needs_out_dir=True,
+            expect_fail=True,
+            requires=["ghdl"],
+        )
+    )
     # (operator_library_predicate_never_fires_known_issue was here while
     # SYN._IS_PYPELINE_OPERATOR_LIBRARY_CODE, meant to put operator-library
     # delays in the name-keyed cache/delay, never fired (#364). The predicate

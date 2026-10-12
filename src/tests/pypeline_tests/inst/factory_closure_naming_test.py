@@ -740,6 +740,163 @@ def test_bin_func_name_builtin_op_info_keeps_unsanitized_types():
     print("test_bin_func_name_builtin_op_info_keeps_unsanitized_types PASS")
 
 
+# ── User names (name=) ──────────────────────────────────────────────────────
+
+
+def test_factory_name_none_is_not_captured():
+    # Adding name=None to a factory must rename none of its products
+    def make_tagged(width, name=None):
+        @PL.hw_func
+        def tagged(x: PL.uint8_t) -> PL.uint8_t:
+            return x + width
+
+        return tagged
+
+    unnamed = make_tagged(3)
+    assert list(unnamed._pypeline_factory_args) == ["width"], unnamed._pypeline_factory_args
+    named = make_tagged(3, name="three")
+    assert named._pypeline_factory_args == {"width": 3, "name": "three"}
+    key = P.CANONICAL_CALLABLE_KEY(unnamed)
+    assert "name" not in key.replace("_s" + key.rsplit("_s", 1)[1], ""), key
+    # _exec_generated_func's frame capture follows the same rule
+    def make_generated(width, name=None):
+        src = "def gen(x: T) -> T:\n    return x\n"
+        return PL._exec_generated_func("gen", src, {"T": PL.uint8_t})
+
+    params = dict(inspect.unwrap(make_generated(4))._pypeline_name_info.params)
+    assert "width" in params and "name" not in params, params
+    params = dict(inspect.unwrap(make_generated(4, name="g"))._pypeline_name_info.params)
+    assert params.get("name") == "g", params
+
+
+def make_named_adder(k, label):
+    @PL.hw_func(name=label)
+    def adder(x: PL.uint8_t) -> PL.uint8_t:
+        return x + k
+
+    return adder
+
+
+def make_plain_adder(k):
+    @PL.hw_func
+    def adder(x: PL.uint8_t) -> PL.uint8_t:
+        return x + k
+
+    return adder
+
+
+def test_named_hw_func_key_is_name_plus_digest_of_unnamed_key():
+    fn = make_named_adder(3, "add_three")
+    inner = inspect.unwrap(fn)
+    closure_ns = P._closure_cells_ns(inner)
+    unnamed = P._canonical_func_name(inner, closure_ns, globals(), user_names=False)
+    key = P.CANONICAL_CALLABLE_KEY(fn)
+    assert key == "add_three_s" + PL._name_digest(unnamed), (key, unnamed)
+    assert unnamed.startswith("adder_k_3_label_add_three_s"), unnamed
+    assert inner._pypeline_name_info.render() == "add_three"
+    assert inner._pypeline_name_info.render(user=False).startswith("adder_from_")
+    # One name on two specializations: two keys, both starting with the name
+    other = P.CANONICAL_CALLABLE_KEY(make_named_adder(5, "add_three"))
+    assert other != key and other.startswith("add_three_s"), (key, other)
+    # Deterministic
+    assert P.CANONICAL_CALLABLE_KEY(make_named_adder(3, "add_three")) == key
+
+
+def test_named_hw_func_errors():
+    def top_level(x: PL.uint8_t) -> PL.uint8_t:
+        return x
+
+    top_level.__qualname__ = "top_level"
+    for fn, expected in (
+        (top_level, "top-level function"),
+        (make_plain_adder(1), "already a hardware function"),
+    ):
+        try:
+            PL.hw_func(fn, name="named")
+        except TypeError as e:
+            assert expected in str(e), str(e)
+        else:
+            raise AssertionError(f"{fn!r} accepted name=")
+    try:
+        make_named_adder(1, "bad__name")
+    except ValueError as e:
+        assert "single underscores" in str(e), str(e)
+    else:
+        raise AssertionError("bad__name accepted")
+
+
+def test_named_struct_and_enum_type_names():
+    from enum import IntEnum
+
+    def make_pair_t(n):
+        @PL.struct(name=f"pair{n}_t")
+        class pair_t(typing.NamedTuple):
+            a: PL.uint8_t
+            b: PL.uint8_t
+
+        return pair_t
+
+    four, eight = make_pair_t(4), make_pair_t(8)
+    assert four._pypeline_ctype_name.startswith("pair4_t_s"), four._pypeline_ctype_name
+    assert four._pypeline_ctype_name == "pair4_t_s" + PL._name_digest(
+        four._pypeline_unnamed_ctype_name
+    )
+    assert four._pypeline_unnamed_ctype_name == "pair_t_a_uint8_t_b_uint8_t_n_4"
+    assert four._pypeline_name_info.render() == "pair4_t"
+    assert eight._pypeline_ctype_name.startswith("pair8_t_s")
+    assert make_pair_t(4)._pypeline_ctype_name == four._pypeline_ctype_name
+
+    @PL.enum(name="mode_t")
+    class mode_e(IntEnum):
+        IDLE = 0
+        RUN = 1
+
+    assert mode_e._pypeline_ctype_name == "mode_t_s" + PL._name_digest("mode_e_IDLE_RUN")
+    assert mode_e._pypeline_name_info.render() == "mode_t"
+
+
+def test_stream_factory_names_unchanged_and_forwarded():
+    # Interpreter-independent parts of the names every existing
+    # make_stream_auto_pipeline / make_stream_auto_multi_cycle product had
+    # before name= existed (the _s digest covers bytecode, so it is checked
+    # for shape only)
+    from stream.stream_auto_pipeline import make_stream_auto_pipeline
+    from stream.stream_multi_cycle import make_stream_auto_multi_cycle
+
+    PL.RESET_AUTO_MULTI_CYCLE_TRACKING()
+    sap, _ = make_stream_auto_pipeline(round_a_hw)
+    assert re.fullmatch(
+        r"stream_auto_pipeline_func_v_main_round_a_hw_latency_None_start_latency_None"
+        r"_max_latency_None_s[0-9a-f]{12}",
+        P.CANONICAL_CALLABLE_KEY(sap),
+    ), P.CANONICAL_CALLABLE_KEY(sap)
+    assert inspect.unwrap(sap)._pypeline_name_info.render(192) == (
+        "stream_auto_pipeline_from_stream_stream_auto_pipeline_latency_None"
+        "_start_latency_None_max_latency_None_func_round_a_hw"
+    )
+    mcp, _ = make_stream_auto_multi_cycle(round_a_hw)
+    # An unnamed tag's key is the library source line it is built on: moving
+    # that line renames every unnamed make_stream_auto_multi_cycle holder
+    assert mcp.mcp.canonical_key == (
+        "stream.stream_multi_cycle.make_stream_auto_multi_cycle_line137_0"
+    ), mcp.mcp.canonical_key
+    assert inspect.unwrap(mcp)._pypeline_name_info.render(192) == (
+        "func_mcp_from_stream_stream_multi_cycle_make_stream_auto_multi_cycle"
+        "_latency_None_start_latency_None_max_latency_None_func_round_a_hw"
+    )
+    # A name reaches the tag, and shows in the products' own names
+    named, _ = make_stream_auto_pipeline(round_a_hw, name="round_a", start_latency=2)
+    assert "_name_round_a_" in P.CANONICAL_CALLABLE_KEY(named)
+    mcp, _ = make_stream_auto_multi_cycle(round_a_hw, name="round_a_mcp", max_latency=4)
+    assert mcp.mcp.canonical_key == "round_a_mcp_max_latency_4"
+    PL.RESET_AUTO_MULTI_CYCLE_TRACKING()
+
+
+@PL.hw_func
+def round_a_hw(x: PL.uint8_t) -> PL.uint8_t:
+    return x + 1
+
+
 if __name__ == "__main__":
     test_nested_factory_instances_get_distinct_readable_names()
     test_top_level_callable_closure_param_is_readable()
@@ -779,4 +936,9 @@ if __name__ == "__main__":
     test_unary_func_name_sanitizes_array_brackets()
     test_bin_func_name_scalar_types_unaffected()
     test_bin_func_name_builtin_op_info_keeps_unsanitized_types()
+    test_factory_name_none_is_not_captured()
+    test_named_hw_func_key_is_name_plus_digest_of_unnamed_key()
+    test_named_hw_func_errors()
+    test_named_struct_and_enum_type_names()
+    test_stream_factory_names_unchanged_and_forwarded()
     print("All factory_closure_naming tests passed.")

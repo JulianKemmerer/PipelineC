@@ -142,6 +142,18 @@ def get_tests() -> list:
             needs_out_dir=True,
         )
     )
+    # Latency memory end to end: a rebuild starts from the remembered latency
+    # and skips pass 2; --no_latency_memory, the --syn_cache store's copy after
+    # the output directory is deleted, --latency_hints from a profile, and a
+    # stale too-high hint that the ordinary pass 2 corrects
+    tests.append(
+        Test(
+            name="latency_memory_build_test",
+            category=DM,
+            cmd=[INST_DIR / "latency_memory_build_test.py"],
+            needs_out_dir=True,
+        )
+    )
     # AUTO_PIPELINE latency constraints end to end: latency=2 / start_latency=1
     # call sites built with exactly those counts and the pin-and-confirm pass
     # skipped (every .latency read already matched), plus a max_latency=1 cap

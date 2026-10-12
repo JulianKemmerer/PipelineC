@@ -2833,7 +2833,15 @@ def DO_AUTO_PIPELINE_LATENCY_PASSES(parser_state, multimain_timing_params, src_f
         prev_tpl = multimain_timing_params.TimingParamsLookupTable
         pypeline.SET_AUTO_PIPELINE_LATENCY_CACHE(latencies)
         pypeline.SET_AUTO_MULTI_CYCLE_LATENCY_CACHE(auto_multi_cycle)
+        # The part the driver resolved (--part / --syn_tool / PART()) carries
+        # over, as in the RAM plan re-parse below
+        part = getattr(parser_state, "part", None)
+        tool = getattr(parser_state, "syn_tool_name", None)
         parser_state = PY_TO_LOGIC.PARSE_FILE(src_file)
+        if part is not None:
+            parser_state.part = part
+        if tool is not None:
+            parser_state.syn_tool_name = tool
         C_TO_LOGIC.WRITE_0_ADDED_CLKS_INIT_FILES(parser_state)
         parser_state = SYN.ADD_PATH_DELAY_TO_LOOKUP(parser_state)
         try:
@@ -3434,6 +3442,12 @@ def DO_PIPELINED_BUILD(parser_state, args, src_file):
     """Dispatch to the AUTO_FSM schedule-and-confirm loop when the design contains
     AUTO_FSM call sites, otherwise straight to the sweep + AUTO_PIPELINE convergence
     flow. Both paths return (parser_state, multimain_timing_params)."""
+    if src_file.endswith(".py"):
+        import SWEEP
+
+        # Starting latencies remembered for other hardware or another
+        # configuration only keep serving .latency (see SWEEP_DESIGN.md §5)
+        SWEEP.GUARD_LATENCY_SEEDS(parser_state)
     auto_fsm_possible = (
         src_file.endswith(".py") and not args.comb and not args.yosys_json
     )
@@ -3961,7 +3975,8 @@ class AutoPipelineRegion:
         # Budget divisor private to this region, multiplied on top of the
         # plan's global_scale; calibrated so start_latency / nudges persist
         self.scale = 1.0
-        self.start_pending = constraint.start_latency is not None
+        # start() is start_latency=, or a latency hint / latency memory seed
+        self.start_pending = constraint.start() is not None
         self.landscape = None
         self.cuts = []
         self.placements = []
@@ -3990,21 +4005,32 @@ class AutoPipelineRegion:
 
 def COLLECT_AUTO_PIPELINE_REGIONS(parser_state, scope_inst=None, fixed_only=False):
     """Every instance of a constrained AUTO_PIPELINE call site (optionally only
-    those at/under scope_inst, or only fixed latency=N ones), sorted. Empty
-    for designs without constraints, which keeps every region code path off."""
+    those at/under scope_inst, or only fixed latency=N ones), sorted. A tag
+    with a starting latency from a hint or the latency memory is a start-only
+    region too (AutoPipelineLatency.is_region). Empty for designs with neither,
+    which keeps every region code path off."""
     marker = C_TO_LOGIC.SUBMODULE_MARKER
     regions = []
     for inst_name in sorted(parser_state.LogicInstLookupTable):
         logic = parser_state.LogicInstLookupTable[inst_name]
         for local_sub in sorted(logic.sub_inst_to_auto_pipeline_latency):
             constraint = logic.sub_inst_to_auto_pipeline_latency[local_sub]
-            if constraint is None or constraint.is_unconstrained():
+            if constraint is None or not constraint.is_region():
                 continue
             if fixed_only and not constraint.is_fixed():
                 continue
             sub_inst = inst_name + marker + local_sub
             sub_logic = parser_state.LogicInstLookupTable.get(sub_inst)
             if sub_logic is None:
+                continue
+            if constraint.is_unconstrained() and not (
+                sub_logic.CAN_HAVE_ADDED_LATENCY(parser_state)
+                and not FUNC_SUBTREE_HAS_AUTO_PIPELINE(sub_logic.func_name, parser_state)
+            ):
+                # Only a seed made this a region: a callee that can't take
+                # registers, or holds another AUTO_PIPELINE (which a constrained
+                # call site may not, see PY_TO_LOGIC's constraint validation),
+                # stays as unconstrained as its source says
                 continue
             if scope_inst is not None and not (
                 sub_inst == scope_inst or sub_inst.startswith(scope_inst + marker)
@@ -4161,11 +4187,11 @@ def _AUTO_PIPELINE_REGION_COUNT(region, period_ns, global_scale):
         # Plan the rest from the clock period instead.
         region.start_pending = False
     if period_ns is None:
-        count = constraint.start_latency or 0
+        count = constraint.start() or 0
         calibrate = False
     elif region.start_pending:
         region.start_pending = False
-        count = constraint.start_latency
+        count = constraint.start()
         calibrate = True
     else:
         budget = region.landscape.budget_units_for_period(period_ns) / (

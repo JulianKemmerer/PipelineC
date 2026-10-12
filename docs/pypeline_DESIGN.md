@@ -54,6 +54,7 @@ one paragraph per change.
 - [Overview](#overview)
 - [C Type System](#c-type-system)
 - [Type Utilities](#type-utilities)
+- [Naming Metadata](#naming-metadata)
 - [Struct Support](#struct-support)
 - [Annotation Types](#annotation-types)
 - [`PART()` and `@MAIN` Pragmas](#part-and-main-pragmas)
@@ -250,6 +251,104 @@ True if `ctype` is a scalar (non-array, non-struct) Pypeline integer type.
 Returns the canonical C type name string for a type object (handles both `_CTypeMeta`
 instances and `@struct` NamedTuple types via `_pypeline_ctype_name`).
 
+## Naming Metadata
+
+Every generated hardware object has two names. The **logical key** is what the
+compiler indexes by: a `FuncLogicLookupTable` key, a C type name. It is
+deterministic and unique, but it encodes implementation detail. The **description** is
+what a person reads in VHDL. It records where the object came from: its source
+symbol, module, enclosing factory, file and line, parameter values and field types.
+This section covers the description half. It lives in the "Naming metadata"
+section of `pypeline.py`, so the runtime decorators can use it without importing
+the compiler. [Generated VHDL names](PY_TO_LOGIC_DESIGN.md#generated-vhdl-names)
+covers how `PY_TO_LOGIC.EmissionNames` renders descriptions into VHDL
+identifiers.
+
+- **`_NameInfo`** is a frozen dataclass with `kind`, `symbol`, `module`, `qualname`,
+  `source`, `line`, `params`, `fields` and `identity`. A parameter or field value is
+  either a string fragment or a nested `_NameInfo`.
+  - `render(limit=None, context=True)` composes the readable base. That is the symbol,
+    then `_from_<module>` and enclosing scopes when `context` is set, then each
+    parameter as `_<name>_<value>`. Scalar settings come first, then primitive types,
+    then nested types.
+  - Above `limit`, the largest nested descriptions shrink first. The result ends in
+    `_h<digest>` of the full identity.
+- **`_stable_key(value)` / `_name_identity(value)`** are the typed, address-free
+  snapshot that specialization identity is built from (`_name_identity` is its
+  JSON form).
+  - Lists and tuples, strings and numbers, and punctuation-bearing strings never alias.
+  - A callable contributes its module, qualname, bytecode, constants, closure cells and
+    defaults.
+  - An AUTO_PIPELINE contributes its constructor constraint, never its served
+    `.latency`.
+  - An AUTO_MULTI_CYCLE contributes its resolved count (see
+    [`AUTO_MULTI_CYCLE(...)`](#auto_multi_cycle--tool-tuned-multi-cycle-path-tag)).
+  - Cycles are bounded by their defining type or symbol, never by object address.
+- **`_name_digest(text)`** is the 12-hex SHA-256 prefix used in `_s<digest>` and
+  `_h<digest>` suffixes.
+- **`_value_description(value)`** is a readable fragment for one value: a type's own
+  description, an array as `n`/`of`, a function with its factory or closure
+  parameters, a wrapper tag around its function, numbers as `neg5`/`1p5`, and
+  sequences joined by `_`. Anything else is `<type>_h<digest>`.
+- **`_describe(obj, kind, params, frame)`** snapshots a declaration at decoration
+  time, while its factory arguments are still available.
+  - Callers:
+    - `@struct`, `@enum`, `@interface` and `@hw_func`;
+    - `_exec_generated_func`, for generated functions;
+    - `interface_func`, AUTO_FSM and the RAM generators, which describe the
+      generated function by the factory or user function that caused it.
+  - **Shared helpers:** `_derived_type` describes an interface's `fwd`/`fb`/`wire`
+    halves, and `_replace_name_info` (`dataclasses.replace`) adjusts a description.
+- **Limits:** `_NAME_BASE_LIMIT` (192) applies to bases and `_NAME_IDENTIFIER_LIMIT`
+  (240) to composed identifiers. `_shorten_name` truncates on whole `_` tokens, keeps
+  timing and role suffixes, and appends a hash of what it omitted. `_safe_name`
+  reduces any text to an identifier fragment.
+
+Descriptions never decide identity. Two objects with equal descriptions but different
+logical keys are hashed apart at emission. Equal logical keys merge, however their
+descriptions read.
+
+### User names (`name=`)
+
+`@hw_func(name=)`, `@struct(name=)` and `@enum(name=)` give factory-produced hardware a
+name of the user's choosing. `AUTO_PIPELINE(name=)` and `AUTO_MULTI_CYCLE(name=)` name a
+latency group instead (see their sections below). Nothing in the library or the
+examples uses these: automatic names are the default everywhere, and the user guide's
+[naming section](pypeline_guide.md#naming-factory-produced-hardware-name) is the user
+documentation.
+
+- **Validation.** `_check_user_name` runs at decoration or construction, without the
+  compiler:
+  - the name must match `_USER_NAME_RE` (a VHDL basic identifier) and be at most 64
+    characters;
+  - it must not be a VHDL reserved word. `_VHDL_RESERVED_WORDS` lives here, and
+    PY_TO_LOGIC uses the same set for identifier mangling.
+  - it must not end in a suffix the compiler generates (`_USER_NAME_ROLE_SUFFIX_RE`).
+
+  A bad name raises; it is never sanitized.
+- **The prefix rule.** A named function or type's logical key is `_named_key(name,
+  unnamed)`: `<name>_s<_name_digest(unnamed key)>`.
+  - For a function, the unnamed key is `_canonical_func_name` with `user_names=False`.
+  - For a struct or enum, it is the `_pypeline_ctype_name` it would have had, kept as
+    `_pypeline_unnamed_ctype_name`.
+
+  Keys therefore change exactly when unnamed keys would, which keeps cross-pass and
+  cross-build reuse as safe as before.
+- **Descriptions.** `_NameInfo.user_name` makes `render()` return the name verbatim, so
+  `EmissionNames` uses it as the VHDL base and adds `_h<digest>` only on a collision.
+  `render(user=False)` is the automatic description, used by `-- Specialization:`
+  comments and `name_index.log`. A named type's identity also covers its name.
+- **Where names are allowed.** `@hw_func(name=)` takes only factory-produced functions
+  (a `.<locals>.` qualname). A top-level function's key comes from PARSE_FILE's
+  pre-registration (`_hw_func_name`), and its Python name already is its name.
+  `@hw_func(name=)` on an already-wrapped function is an error too: give the name where
+  the function is first decorated.
+- **The capture rule.** `capture_factory_args` and `_exec_generated_func`'s frame
+  capture skip a parameter named `name` whose value is `None`. A factory can forward an
+  optional `name=` without renaming any product of an unnamed call. A real name is
+  captured like any argument (`…_name_chacha20_…`). No factory had a `name=None`
+  parameter before this rule, so it renamed nothing.
+
 ---
 
 ## Struct Support
@@ -278,7 +377,8 @@ call site. Array brackets are mangled (`[` → `_`, `]` removed). Above 96 chara
 `collapse_overflow_name` keeps a readable prefix plus eight SHA-256 digits; the
 pre-collapse string remains in `_pypeline_ctype_canonical`.
 
-`_pypeline_name_info` is a separate immutable description from `pypeline_names.py`:
+`_pypeline_name_info` is a separate immutable `_NameInfo` description (see
+[Naming Metadata](#naming-metadata)):
 the source class, module, enclosing factory, file/line, parameter values, and field
 types. Nested types carry their descriptions, so a short logical type key does not
 hide their meaning in VHDL. For example:
@@ -937,8 +1037,14 @@ The removed `depth=` keyword raises a `TypeError` that names its replacements.
    (`pypeline._auto_pipeline_latency_cache`) holds the tag's key. `AUTO_PIPELINE.DO_AUTO_PIPELINE_LATENCY_PASSES`
    installs the cache between pin-and-confirm passes, and again before a non-`--comb`
    `--sim` run imports the design for native sim.
-3. Otherwise, `start_latency` in a synthesizing build.
-4. Otherwise, 0.
+3. Otherwise, in a synthesizing build, a starting latency from the latency memory or
+   a `--latency_hints` file (`SET_LATENCY_SEEDS`, see
+   [SWEEP_DESIGN.md](SWEEP_DESIGN.md#5-latency-memory)), clamped to `max_latency`. The
+   tag keeps it as `.seed`, which `C_TO_LOGIC.AutoPipelineLatency.from_tag` copies.
+   A `@pipeline_latency` callee is never seeded. A harvested value (step 2) clears the
+   seed.
+4. Otherwise, `start_latency` in a synthesizing build.
+5. Otherwise, 0.
 
 The build kind comes from `pypeline.SET_AUTO_PIPELINE_BUILD_MODE`, which the `pypelinec`
 driver calls before its first `PARSE_FILE`. There are three modes:
@@ -964,12 +1070,31 @@ re-elaboration in two cases:
   covers fixed latencies, a correct `start_latency` guess, and a discovered 0.
 
 Naming: an unconstrained tag's identity is exactly its wrapped function's identity. This
-holds for `canonical_key`, for `encode_param_value`, and for the `pypeline_names.stable_key`
+holds for `canonical_key`, for `encode_param_value`, and for the `_stable_key`
 config `()`, so no existing entity name moved. A constraint appends its constructor
 settings (`_latency_N`, `_start_latency_S`, `_max_latency_M`). These are fixed at
 construction and never include the discovered `.latency`, so wrappers stay distinct
 and stable across pin-and-confirm passes. `AUTO_PIPELINE.__repr__` stays address-free
 and shows the constraint as written.
+
+**Named tags.** `AUTO_PIPELINE(func, name=)` makes `canonical_key` the name plus the
+`_latency_N` / `_max_latency_M` suffix. `start_latency` is left out of a named
+`latency_suffix()`, and so out of the key and of `_stable_key`'s config, which is
+`(("name", name),)` plus the fixed and max settings. Computing the key needs no
+compiler.
+- **Encoding.** `_callable_canonical_name` and `encode_param_value` encode a named tag
+  as `AUTO_PIPELINE_<name><suffix>`; `_value_description` describes it by its name.
+- **One name, one group.** `_auto_pipeline_names` records, per design execution, the
+  first construction under each name: the wrapped function's identity, its
+  constraint, and its site (`_construction_site`, which also names the design line when
+  a library built the tag). A later tag under that name with a different signature
+  raises `TypeError` naming both sites.
+- **Two names on one function** are two keys, so two groups, sized independently by
+  the sweep. The elaborator labels each call's instance with the group name. The
+  callee's own entity is the function's, unchanged.
+- **Reports.** `USER_NAMED_AUTO_TAGS()` lists the named tags for `name_index.log`.
+  `RESET_AUTO_MULTI_CYCLE_TRACKING` clears both name registries at the start of every
+  design execution.
 
 The class-level `_is_auto_pipeline_pragma` flag is the only thing the elaborator
 duck-type probes (mirroring `@sim_output`'s `_is_sim_output` flag). See
@@ -984,8 +1109,8 @@ and no-sweep builds enforce constraints is in
 [`AUTO_PIPELINE_DESIGN.md`](AUTO_PIPELINE_DESIGN.md#6-constrained-auto_pipeline-regions-latency--start_latency--max_latency).
 
 The internal helper
-`_auto_pipeline_with_io_regs(func, has_input_reg, has_output_reg, *, latency=None, start_latency=None, max_latency=None)`
-wraps `AUTO_PIPELINE(func, latency=, start_latency=, max_latency=)` with optional
+`_auto_pipeline_with_io_regs(func, has_input_reg, has_output_reg, *, latency=None, start_latency=None, max_latency=None, name=None)`
+wraps `AUTO_PIPELINE(func, latency=, start_latency=, max_latency=, name=)` with optional
 unconditional `Reg[T]` boundary registers. It returns `(wrapped_func, auto_pipeline_call)`
 so library code can read `.latency`. The constraints are passed through unchanged, so they
 cover the core only and never the boundary registers.
@@ -999,7 +1124,9 @@ AUTO_PIPELINE, whose `.latency` also sizes the elastic FIFO.
 The stream wrapper itself has no `.latency`, because valid/ready is not a fixed latency.
 The factories capture these parameters like any others
 (`pypeline.capture_factory_args`), so their names appear in the generated entity names
-even when left at `None`.
+even when left at `None`. `make_stream_auto_pipeline` also takes `name=`, which names
+its core's group. Under the [capture rule](#user-names-name) an unset `name=` is not
+captured.
 
 ### `AUTO_COMB_AREA_OPT(func)` — Zero-Cycle Resource Sharing
 
@@ -1012,7 +1139,7 @@ Ordinary Python/native simulation calls forward to `.func` without importing
 the optimizer. No simulation state or latency feedback cache is needed.
 
 Canonical identity includes the wrapped function, not the chosen implementation.
-`encode_param_value` and `pypeline_names` preserve the tag in factory identities;
+`encode_param_value` and `_stable_key` preserve the tag in factory identities;
 fixed-pipeline reachability follows through to its underlying callable.
 `PY_TO_LOGIC._elaborate_live_func` substitutes the chosen ordinary hardware
 function, which permits composition with `AUTO_PIPELINE` and stream factories.
@@ -1139,13 +1266,15 @@ role and populate `Logic.mcp_tuples` — shared, unmodified, with the C frontend
 Its untagged launch-to-capture logic stays combinational across sweep locks and
 re-elaboration; see the [caller-context invariant](AUTO_MULTI_CYCLE_DESIGN.md).
 
-`AUTO_MULTI_CYCLE(*, latency=None, start_latency=None, max_latency=None)` is a `MULTI_CYCLE`-shaped
+`AUTO_MULTI_CYCLE(*, latency=None, start_latency=None, max_latency=None, name=None)` is a `MULTI_CYCLE`-shaped
 tag whose cycle count the throughput sweep picks. It has `.start` / `.end`
 `_MultiCycleRole`s, so `Reg[T, MC.start]` needs no `_RegMeta` change. It mirrors
 AUTO_PIPELINE's `.latency` feedback, with a few deliberate differences:
 
 - **Resolution.** The count resolves once, at construction, to the driver-installed cache
-  (`SET_AUTO_MULTI_CYCLE_LATENCY_CACHE`), else `latency=`, else `start_latency=`, else 1.
+  (`SET_AUTO_MULTI_CYCLE_LATENCY_CACHE`), else `latency=`, else (in a synthesizing build)
+  a starting count from the latency memory or a hints file (`SET_LATENCY_SEEDS`, kept as
+  `.seed` and clamped to `max_latency`), else `start_latency=`, else 1.
   - There is no build-mode dependency: a multi-cycle count never changes how many
     registers exist, so native sim, `--comb` and a sweep's bootstrap all read the same
     value.
@@ -1159,6 +1288,13 @@ AUTO_PIPELINE's `.latency` feedback, with a few deliberate differences:
     `CLEAR_AUTO_PIPELINE_LATENCY_READ_FLAG` (i.e. `PARSE_FILE`) and before
     `pypeline_sim.run_sim`'s design import.
   - Keys are therefore deterministic across the pin-and-confirm re-executions.
+  - A library factory's tags all share its one construction line, and that line
+    number is in their keys. `make_stream_auto_multi_cycle` keeps its construction on
+    line 137 for that reason, and `factory_closure_naming_test` pins it.
+  - **A named tag's key is its name** plus the `_latency_N` / `_max_latency_M` suffix
+    (`start_latency` is left out). It consumes no site ordinal, so unnamed keys at the
+    same site never move. `_auto_multi_cycle_names` allows one tag per name per
+    design execution; a second construction is a `TypeError` naming the first site.
 - **Construction inside a `@hw_func` body is a `TypeError`.** Detected by the calling
   frame's pseudo file name (`<local_const>`, `<const_eval>`, ...) or `_sim_active`. A tag
   re-created on every evaluation would break key identity.
@@ -1167,8 +1303,10 @@ AUTO_PIPELINE's `.latency` feedback, with a few deliberate differences:
   - The compiler reads through `_ncycles_for_compiler()`, which records nothing.
   - `AUTO_MULTI_CYCLE_UNREAD_KEYS()` lists non-fixed tags no design code read; the driver refuses
     those (`AUTO_MULTI_CYCLE.CHECK_AUTO_MULTI_CYCLE_TAGS_READ`).
-- **Name identity.** `pypeline_names.stable_key` encodes the key, the constraint **and the
-  resolved count**. An AUTO_PIPELINE's identity deliberately omits its served latency.
+- **Name identity.** `_stable_key` encodes the key, the constraint **and the
+  resolved count** (for a named tag, the key, `latency=`, `max_latency=` and the count:
+  its `start_latency` is only a starting value). An AUTO_PIPELINE's identity
+  deliberately omits its served latency.
   Here the function holding the tagged registers bakes `.latency`-derived constants into
   its logic, so a count change between passes must rename that entity, not reuse a
   skip-if-exists file.
@@ -1176,11 +1314,13 @@ AUTO_PIPELINE's `.latency` feedback, with a few deliberate differences:
 Automatic count selection uses endpoint-qualified isolated measurements to
 seed all groups, then whole-design feedback. A provisional seed may be confirmed
 down once per datapath shape without crossing its elaborated/user floor; after
-that, feedback is grow-only. A changed datapath is measured and seeded before
-pinned confirmation. See [sweep and confirmation rules](AUTO_MULTI_CYCLE_DESIGN.md#3-sweep-feedback).
+that, feedback is grow-only. A count elaborated from a latency memory or hints seed
+is provisional from the start, with its floor at `start_latency=` (or 1). A changed
+datapath is measured and seeded before pinned confirmation. See
+[sweep and confirmation rules](AUTO_MULTI_CYCLE_DESIGN.md#3-sweep-feedback).
 
 The library factories `make_stream_multi_cycle(func, latency)` (fixed `MULTI_CYCLE`) and
-`make_stream_auto_multi_cycle(func, *, latency=, start_latency=, max_latency=)` live in
+`make_stream_auto_multi_cycle(func, *, latency=, start_latency=, max_latency=, name=)` live in
 `include/pypeline/stream/stream_multi_cycle.py`; the auto one exposes its tag as `func_mcp.mcp`.
 Sweep and pin-and-confirm handling are in
 [`AUTO_MULTI_CYCLE_DESIGN.md`](AUTO_MULTI_CYCLE_DESIGN.md); elaboration is in

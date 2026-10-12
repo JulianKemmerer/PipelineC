@@ -154,6 +154,15 @@ Unmapped hierarchy is left unclassified rather than guessed.
    elaborated/user floor, and requires whole-design confirmation. Failure
    restores the passing counts. Thereafter feedback is grow-only for that shape;
    ordinary pipeline trimming still counts only cuts.
+   - **Remembered counts.** A count elaborated from a
+     [latency memory or hints](SWEEP_DESIGN.md#5-latency-memory) seed
+     (`AutoMultiCycleConstraint.seed`) is registered by `SEED_COUNTS` as provisional
+     from the start. Its floor is `start_latency=` (or 1), not the remembered count, so a
+     stale high count can be confirmed down.
+   - **Raising keeps the lower floor.** When isolated evidence raises a provisional
+     count further, the lower floor is kept.
+   - **Why Vivado suffices.** AUTO_MULTI_CYCLE synthesizes only on Vivado, whose `mcp:`
+     path reports confirm-down needs.
 5. **Termination.** Distinct groups receive feedback from their optional per-pair
    reports in the same synthesis, so they need not serially become clock-worst.
    A changed count always earns another synthesis run, including for
@@ -173,7 +182,8 @@ elaborated counts overlaid with the sweep's final overrides.
 - **Skip.** Pass 2 is skipped for AUTO_MULTI_CYCLE's sake when the harvest equals both the
   elaborated counts and every `.latency` value design code read
   (`AUTO_MULTI_CYCLE_BUILT_MATCHES_ELABORATED`). The build prints `AUTO_MULTI_CYCLE: every .latency read
-  matched the built multi-cycle count`, and a correct `start_latency=` costs nothing.
+  matched the built multi-cycle count`, and a correct `start_latency=` (or remembered
+  count) costs nothing.
 - **Confirmation repair.** Resized datapaths are seeded from their new isolated
   endpoint measurements before confirmation. An MCP-only failure raises counts
   through the XDC overrides, preserves every pipeline, and re-confirms. It does

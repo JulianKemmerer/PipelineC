@@ -194,6 +194,104 @@ def test_forced_canonical_collision_raises_naming_both_sources():
     raise AssertionError("Expected ElaborationError for the widget/widget collision")
 
 
+# ── user names (name=) on hardware and AUTO tags ──
+_USER_NAMES_SRC = textwrap.dedent(
+    """
+    import sys
+    sys.path.insert(0, {repo!r})
+    from enum import IntEnum
+    from pypeline import (
+        MAIN, NamedTuple, hw_func, struct, enum, uint8_t, uint16_t, AUTO_PIPELINE,
+    )
+
+    def make_pair_t(n):
+        @struct(name=f"pair{{n}}_t")
+        class pair_t(NamedTuple):
+            a: uint8_t
+            b: uint8_t
+        return pair_t
+
+    def make_adder(k):
+        @hw_func(name=f"add_{{k}}")
+        def adder(x: uint8_t) -> uint8_t:
+            return x + k
+        return adder
+
+    pair4_t = make_pair_t(4)
+    add3 = make_adder(3)
+    add5 = make_adder(5)
+
+    @hw_func
+    def square(x: uint16_t) -> uint16_t:
+        return x * x
+
+    enc = AUTO_PIPELINE(square, name="square_encrypt")
+    dec = AUTO_PIPELINE(square, name="square_decrypt")
+
+    @MAIN
+    def top(x: uint8_t, y: uint16_t) -> uint16_t:
+        p = pair4_t(a=add3(x), b=add5(x))
+        return enc(y) + dec(y) + p.a + p.b
+    """
+).format(repo=REPO_SRC)
+
+
+def test_user_names_section_and_named_groups():
+    import pypeline
+
+    with tempfile.TemporaryDirectory() as tmp:
+        state = _parse(tmp, "d_user_names", _USER_NAMES_SRC)
+        SYN.WRITE_NAME_INDEX_LOG(state)
+        with open(os.path.join(SYN.SYN_OUTPUT_DIRECTORY, "name_index.log")) as f:
+            index = f.read()
+    section = index.split("USER NAMES\n", 1)[1].split("\n\n", 1)[0]
+    for line in (
+        "  add_3 (function)",
+        "    vhdl:     add_3",
+        "    replaces: adder_k_3_s",
+        "  pair4_t (struct)",
+        "    replaces: pair_t_a_uint8_t_b_uint8_t_n_4",
+        "  square_encrypt (AUTO_PIPELINE)",
+        "    key:      square_decrypt",
+    ):
+        assert line in section, (line, section)
+    names = state.pypeline_emission_names
+    assert names.identifier(
+        next(k for k in state.FuncLogicLookupTable if k.startswith("add_3_s"))
+    ) == "add_3"
+    # The automatic description stays in the index
+    assert "function: adder_from_d_user_names_k_3" in index
+    assert "user name: add_3" in index
+    # Two names on one function: two instances (never collapsed as duplicate
+    # calls of one function), labeled by their group and tagged separately
+    top = state.FuncLogicLookupTable["top"]
+    keys = {
+        top.sub_inst_to_auto_pipeline_key[inst]: inst
+        for inst in top.sub_inst_to_auto_pipeline_key
+        if inst in top.submodule_instances
+    }
+    assert sorted(keys) == ["square_decrypt", "square_encrypt"], keys
+    for key, inst in keys.items():
+        assert inst.startswith(key + "["), (key, inst)
+    pypeline.RESET_AUTO_MULTI_CYCLE_TRACKING()
+
+
+def test_conflicting_auto_pipeline_name_names_both_sites():
+    src = _USER_NAMES_SRC.replace(
+        'dec = AUTO_PIPELINE(square, name="square_decrypt")',
+        'dec = AUTO_PIPELINE(square, name="square_encrypt", max_latency=4)',
+    )
+    with tempfile.TemporaryDirectory() as tmp:
+        try:
+            _parse(tmp, "d_name_conflict", src)
+        except TypeError as e:
+            msg = str(e)
+            assert msg.count("d_name_conflict.py:") == 2, msg
+            assert "one latency group" in msg, msg
+            return
+    raise AssertionError("Expected TypeError for two different square_encrypt tags")
+
+
 if __name__ == "__main__":
     from _test_main import run_module_tests
 

@@ -339,7 +339,7 @@ def make_stream_auto_pipeline_ram(
     wrapped = py._exec_generated_func(
         name, "\n".join(lines) + "\n", ns, folder=RAM_GENERATED_FOLDER
     )
-    info = py._names.replace(
+    info = py._replace_name_info(
         wrapped._pypeline_name_info,
         params=(("implementation", core.plan.fingerprint),)
         + wrapped._pypeline_name_info.params,

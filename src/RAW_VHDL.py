@@ -2177,7 +2177,7 @@ def _EQUAL_WIDTH_BITS_PER_STAGE_DICT(num_bits, num_slices):
     suboptimal (48 slices at 164.69 MHz on the divider, below the 32-slice
     plan's 169.57 MHz), which is the shape of result a leaf-split interface
     able to honor a requested fraction might improve. Deciding that means
-    measuring both under the current model. See docs/SWEEP_DESIGN.md#7-limitations-and-future-work,
+    measuring both under the current model. See docs/SWEEP_DESIGN.md#8-limitations-and-future-work,
     item 6 (uneven bit-split boundaries)."""
     chunks = num_slices + 1
     boundaries = GET_EQUAL_WIDTH_BIT_BOUNDARIES(num_bits, num_slices)

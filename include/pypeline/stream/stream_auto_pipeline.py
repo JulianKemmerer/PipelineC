@@ -16,7 +16,9 @@ from fifo import make_fifo
 from stream.stream import make_stream_interface, make_stream_t
 
 
-def make_stream_auto_pipeline(func, *, latency=None, start_latency=None, max_latency=None):
+def make_stream_auto_pipeline(
+    func, *, latency=None, start_latency=None, max_latency=None, name=None
+):
     """Wraps a combinational hardware function in an AUTO_PIPELINE'd instance (with
     registered input/output) plus a free-running output FIFO, exposing a single
     valid/ready stream interface around it — pypeline equivalent of PipelineC's
@@ -46,6 +48,10 @@ def make_stream_auto_pipeline(func, *, latency=None, start_latency=None, max_lat
     skips the pin-and-confirm re-elaboration. Native sim and --comb /
     --no_synth / --yosys_json builds ignore start_latency / max_latency (core
     latency 0, as unconstrained); latency=N fixes the core at N everywhere.
+
+    name="..." names the core AUTO_PIPELINE's latency group (see
+    AUTO_PIPELINE): latency hints, the latency memory and sweep reports use
+    it, and two names on one func give two independently sized cores.
 
     `func` must already be @hw_func-decorated, with a single annotated parameter and an
     annotated return type, e.g.:
@@ -101,6 +107,7 @@ def make_stream_auto_pipeline(func, *, latency=None, start_latency=None, max_lat
         latency=latency,
         start_latency=start_latency,
         max_latency=max_latency,
+        name=name,
     )
 
     # A word's credit is out for L+5 cycles: input reg, L core regs, output

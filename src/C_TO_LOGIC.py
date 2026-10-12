@@ -413,34 +413,48 @@ class AutoMultiCycleConstraint:
     The elaborated count itself lives in the matching Logic.mcp_tuples entry.
     """
 
-    __slots__ = ("key", "latency", "start_latency", "max_latency")
+    __slots__ = ("key", "latency", "start_latency", "max_latency", "seed")
 
-    def __init__(self, key, latency=None, start_latency=None, max_latency=None):
+    def __init__(
+        self, key, latency=None, start_latency=None, max_latency=None, seed=None
+    ):
         self.key = key
         self.latency = latency
         self.start_latency = start_latency
         self.max_latency = max_latency
+        # The starting count a latency hint or the latency memory gave the tag
+        # (pypeline.SET_LATENCY_SEEDS), else None. Not identity: equality,
+        # hashing and keys use the source constraint only.
+        self.seed = seed
 
     @staticmethod
     def from_tag(tag):
         return AutoMultiCycleConstraint(
-            tag.canonical_key, tag.fixed_latency, tag.start_latency, tag.max_latency
+            tag.canonical_key,
+            tag.fixed_latency,
+            tag.start_latency,
+            tag.max_latency,
+            getattr(tag, "seed", None),
         )
 
-    def __getstate__(self):
+    def _source_state(self):
         return (self.key, self.latency, self.start_latency, self.max_latency)
 
+    def __getstate__(self):
+        return self._source_state() + (self.seed,)
+
     def __setstate__(self, state):
-        self.key, self.latency, self.start_latency, self.max_latency = state
+        self.key, self.latency, self.start_latency, self.max_latency = state[:4]
+        self.seed = state[4] if len(state) > 4 else None
 
     def __eq__(self, other):
         return (
             isinstance(other, AutoMultiCycleConstraint)
-            and self.__getstate__() == other.__getstate__()
+            and self._source_state() == other._source_state()
         )
 
     def __hash__(self):
-        return hash(self.__getstate__())
+        return hash(self._source_state())
 
     def is_fixed(self):
         return self.latency is not None
@@ -474,12 +488,18 @@ class AutoPipelineLatency:
     (AUTO_PIPELINE canonical key / entity-name identity); a unit test checks it.
     """
 
-    __slots__ = ("latency", "start_latency", "max_latency")
+    __slots__ = ("latency", "start_latency", "max_latency", "seed")
 
-    def __init__(self, latency=None, start_latency=None, max_latency=None):
+    def __init__(self, latency=None, start_latency=None, max_latency=None, seed=None):
         self.latency = latency
         self.start_latency = start_latency
         self.max_latency = max_latency
+        # The starting count a latency hint or the latency memory gave the tag
+        # (pypeline.SET_LATENCY_SEEDS), else None. Like start_latency=, it is
+        # where the tag's planned sweep starts (start(), is_region()).
+        # Equality, hashing, keys, key_suffix() and is_unconstrained() use the
+        # source constraint only.
+        self.seed = seed
 
     @staticmethod
     def from_tag(tag):
@@ -487,13 +507,30 @@ class AutoPipelineLatency:
             getattr(tag, "fixed_latency", None),
             getattr(tag, "start_latency", None),
             getattr(tag, "max_latency", None),
+            getattr(tag, "seed", None),
         )
 
-    def __getstate__(self):
+    def _source_state(self):
         return (self.latency, self.start_latency, self.max_latency)
 
+    def __getstate__(self):
+        return self._source_state() + (self.seed,)
+
     def __setstate__(self, state):
-        self.latency, self.start_latency, self.max_latency = state
+        self.latency, self.start_latency, self.max_latency = state[:3]
+        self.seed = state[3] if len(state) > 3 else None
+
+    def start(self):
+        """Where a region's planned sweep starts: the seed, else start_latency
+        (None when neither is set)."""
+        return self.seed if self.seed is not None else self.start_latency
+
+    def is_region(self):
+        """Planned as its own region: a source constraint, or a starting count
+        from a hint or the latency memory (a start-only region, like
+        start_latency=; see AUTO_PIPELINE.COLLECT_AUTO_PIPELINE_REGIONS for the
+        callees a seed never makes a region)."""
+        return not self.is_unconstrained() or self.seed is not None
 
     def is_unconstrained(self):
         return (
@@ -542,11 +579,11 @@ class AutoPipelineLatency:
 
     def __eq__(self, other):
         return isinstance(other, AutoPipelineLatency) and (
-            self.__getstate__() == other.__getstate__()
+            self._source_state() == other._source_state()
         )
 
     def __hash__(self):
-        return hash(self.__getstate__())
+        return hash(self._source_state())
 
     def __repr__(self):
         return f"AutoPipelineLatency({self.describe()})"
@@ -1763,6 +1800,15 @@ class Logic:
             self.ref_submodule_instance_to_ref_toks[new_inst] = (
                 self.ref_submodule_instance_to_ref_toks[old_inst]
             )
+        # A collapsed duplicate keeps its calls' AUTO_PIPELINE / AUTO_FSM tag
+        # (duplicates are only ever collapsed within one tag group)
+        for tags in (
+            self.sub_inst_to_auto_pipeline_latency,
+            self.sub_inst_to_auto_pipeline_key,
+            self.sub_inst_to_auto_fsm_key,
+        ):
+            if old_inst in tags:
+                tags[new_inst] = tags[old_inst]
 
     def CAN_HAVE_ADDED_LATENCY(self, parser_state):
         if self.func_name in parser_state.func_fixed_latency:
@@ -10027,6 +10073,15 @@ def TRIM_COLLAPSE_FUNC_DEFS_RECURSIVE(func_logic, parser_state):
                 sub_input_wire = submodule_inst + SUBMODULE_MARKER + sub_input_port
                 driver_of_input = func_logic.wire_driven_by[sub_input_wire]
                 id_tup += (driver_of_input,)
+            # Which AUTO_PIPELINE / AUTO_FSM group the call belongs to, last
+            # (the collapse below reads drivers by position): two calls of one
+            # function in different latency groups, or one tagged and one not,
+            # are different hardware even with equal inputs
+            id_tup += (
+                func_logic.sub_inst_to_auto_pipeline_key.get(submodule_inst),
+                func_logic.sub_inst_to_auto_pipeline_latency.get(submodule_inst),
+                func_logic.sub_inst_to_auto_fsm_key.get(submodule_inst),
+            )
             # Record
             if id_tup not in submodule_dups:
                 submodule_dups[id_tup] = []

@@ -182,7 +182,7 @@ pins two `PYTHONHASHSEED` values confirmed to disagree without this sort.
 
 ## Pypeline source-based naming
 
-`pypeline_names.EmissionNames` translates logical function/type keys into descriptive
+`PY_TO_LOGIC.EmissionNames` translates logical function/type keys into descriptive
 VHDL bases after Python elaboration. Records identify their source class and factory
 settings; interface halves retain their original interface and `fwd`/`fb`/`wire` role.
 Function entities retain their source symbol/module, important scalar settings and

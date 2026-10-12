@@ -1917,6 +1917,64 @@ sum8_u8  = make_sum_array(uint8_t, 8)
 The factory body (`for i in range(N)`) is pure Python and runs at elaboration time.
 Only the inner function's body becomes hardware.
 
+### Naming factory-produced hardware: `name=`
+
+You don't have to name what a factory produces. Pypeline names it automatically from
+the factory and the arguments it was called with. `make_adder(uint32_t)` above becomes
+the entity `add_from_<module>_make_adder_T_uint32_t`, and every specialization gets a
+distinct name. Most designs never need anything else.
+
+When you want a shorter or more meaningful name, give one to the decorator inside the
+factory:
+
+```python
+def make_quarter_round(a, b, c, d):
+    @hw_func(name=f"quarter_round_{a}_{b}_{c}_{d}")
+    def quarter_round(s: state_t) -> state_t:
+        ...
+    return quarter_round
+
+def make_pair_t(T, n):
+    @struct(name=f"pair{n}_t")
+    class pair_t(NamedTuple):
+        a: T
+        b: T
+    return pair_t
+```
+
+`@enum(name=...)` works the same way.
+
+**The name is a prefix.** The VHDL entity or type is named exactly what you wrote,
+`quarter_round_0_4_8_12`. Internally the function's key is
+`quarter_round_0_4_8_12_s<digest>`, where the digest covers the specialization (the
+key it would have had without a name).
+
+- **Specializations stay distinct.** If two specializations end up with one name,
+  each VHDL name gets `_h<digest>` added, so they never merge.
+- **A collision is resolved, never an error.** The same `_h` suffix is added when a
+  name collides with another name, a `@MAIN` or a port.
+- **Pipelined entities are named the same way.** They still add the usual
+  `_<N>CLK_<hash>`.
+
+A name is used verbatim, so it must be a VHDL basic identifier:
+- a letter first, then letters, digits and single underscores, with no trailing `_`;
+- at most 64 characters;
+- not a VHDL reserved word;
+- not ending like a generated name (`_top`, `_NULL`, `_to_slv`, `_<n>CLK_<hex>`,
+  `_s<hex>`, `_h<hex>`).
+
+A bad name is an error, never silently changed.
+
+`name=` is for what factories produce. A top-level function's Python name already is
+its hardware name, so `@hw_func(name=...)` on one is an error, and `@MAIN` takes no
+name. The generated VHDL keeps the automatic description in each entity's
+`-- Specialization:` comment, and `name_index.log` lists every name with the key it
+replaced (see [Generated files and reports](README.md#generated-files-and-reports)).
+
+AUTO_PIPELINE and AUTO_MULTI_CYCLE tags take a `name=` of their own. It names a
+latency group rather than an entity; see
+[Naming a latency group](#naming-a-latency-group-name).
+
 ### Introspecting a function's types: `hw_arg_types` / `hw_return_type`
 
 Sometimes a factory wraps a function *supplied by the caller* rather than one it builds
@@ -2760,9 +2818,97 @@ The rules for these arguments:
 - The old `depth=` argument is now `latency=`.
 - Library wrappers built around one internal AUTO_PIPELINE accept the same three
   keyword arguments and pass them to that core:
-  - [`make_stream_auto_pipeline`](#pipelined-stream-wrappers-make_stream_auto_pipeline);
+  - [`make_stream_auto_pipeline`](#pipelined-stream-wrappers-make_stream_auto_pipeline),
+    which also passes on `name=`;
   - the DSP factories (`make_fir`, `make_fir_decim`, `make_fir_interp`,
     `make_dc_block`, `make_moving_avg`, `make_magnitude`).
+
+#### Naming a latency group: `name=`
+
+Each AUTO_PIPELINE has a key that identifies its *latency group*: every call site in the
+group is planned to one register count, the one `.latency` reports. By default the key
+is the wrapped function's own identity, plus `_latency_N` / `_start_latency_S` /
+`_max_latency_M` for a constraint. `name=` replaces it with a name of your choosing:
+
+```python
+body_encrypt = AUTO_PIPELINE(poly1305_body, name="poly1305_body_encrypt")
+body_decrypt = AUTO_PIPELINE(poly1305_body, name="poly1305_body_decrypt")
+```
+
+- **Two names on one function are two groups.** Each gets its own latency, even when
+  the two need different depths. Without names, two unconstrained tags on one function
+  would be one group, and differing depths would be an error.
+- **The key is the name.** A `latency=` or `max_latency=` constraint adds its usual
+  suffix (`poly1305_body_encrypt_max_latency_6`). `start_latency=` is not part of a
+  named key, so changing a starting guess renames nothing.
+- **Reports and hints use the name.** It appears in sweep reports
+  (`AUTO_PIPELINE poly1305_body_encrypt: 3 clks`), in latency hints and the
+  [latency memory](#starting-latencies-the-latency-memory-and---latency_hints), in
+  `name_index.log`, and as the label of the call's VHDL instance. The wrapped function's
+  own entity keeps its own name.
+- **A name is one group.** Tags that share a name must wrap the same function with the
+  same `latency=` / `start_latency=` / `max_latency=`. A conflict is an error that names
+  both construction sites. Identical tags are fine: they are one group, like two unnamed
+  tags on one function.
+
+Name a tag when you want a stable handle for it: a latency hint you commit, a report you
+parse, or a second, independent group over a function. Unnamed tags work everywhere
+else.
+
+#### Starting latencies: the latency memory and `--latency_hints`
+
+A synthesizing build starts each AUTO_PIPELINE and AUTO_MULTI_CYCLE from the latency
+that earlier builds of the same `--out_dir` verified, when there is one. It remembers
+them automatically:
+
+- **What is recorded.** Every synthesizing build writes
+  `<out_dir>/latency_profile.json`: what it built for each tag and whether the
+  `@MAIN`s using it met timing.
+- **What is remembered.** The verified results go into `<out_dir>/latency_memory.json`.
+  With `--syn_cache DIR` they also go into the store, so they survive deleting the
+  output directory.
+- **What the next build does.** Each tag starts from its remembered latency, exactly as
+  if it had that `start_latency=`:
+  - its `.latency` serves that value while the design is first elaborated;
+  - its sweep's first iteration builds that many registers. After that the search is
+    the same as without a start.
+
+  When the build lands on the same latency again, the pin-and-confirm re-elaboration
+  (and its confirmation synthesis) is skipped.
+
+A starting latency is only a start, so a stale one costs time, never correctness.
+- The sweep still grows the latency until timing is met, and trims it afterwards.
+- **A remembered latency starts the sweep only for unchanged hardware.** That means
+  the same function body, part, tool and clock goal. Otherwise the build says so,
+  and the tag is planned as it would be with no memory, so a stale entry can't leave
+  it over-pipelined. A hints file copied from a `latency_profile.json` is checked the
+  same way. A hand-written hint is your explicit start, exactly like `start_latency=`.
+- A remembered AUTO_MULTI_CYCLE count can be confirmed down.
+- A tag whose function holds another AUTO_PIPELINE, or can't take registers, only has
+  its first `.latency` read seeded, just as it can't take a `start_latency=` region.
+
+A fixed `latency=` is never seeded.
+
+`--latency_hints FILE` supplies starting latencies from a file you keep, for builds
+with no memory yet (a fresh clone, a new machine). The file is a
+`latency_profile.json` copied from an earlier build, or a hand-written one:
+
+```json
+{"AUTO_PIPELINE": {"chacha20": 17, "poly1305_body_encrypt": 3},
+ "AUTO_MULTI_CYCLE": {"poly1305_prologue_shared": 6}}
+```
+
+- **Keys are tag keys.** A named tag's key is its name, which is what makes a committed
+  hints file readable and robust to refactoring.
+- **Precedence.** The flag is repeatable, and a later file wins. Remembered latencies
+  win over hints, and hints win over `start_latency=`. A hinted tag needs no
+  `start_latency=` of its own: the hint is its start.
+- **Stale entries are reported.** The build prints one line per starting latency it
+  used, and a note naming every hint no tag took: a renamed or removed tag, or one
+  that isn't part of this configuration (one file can cover several).
+- **Turning the memory off.** `--no_latency_memory` ignores and leaves alone the
+  remembered latencies; the profile is still written and hints still apply. Deleting
+  `latency_memory.json` is always safe.
 
 #### `.latency`: reading back the discovered pipeline depth
 
@@ -3080,8 +3226,15 @@ def my_fsm(i: my_struct_t) -> my_struct_t:
 - **`.latency` is the cycle count.** Before timing-driven implementation it reads
   `latency=`, else `start_latency=`, else 1. Native simulation uses the same source-visible
   value it is supplied.
-- **Automatic selection only raises it.** The count never drops below its starting value
-  and never exceeds `max_latency=`. A cap that prevents the clock goal is a hard failure.
+- **Automatic selection only raises it.** The count never drops below
+  `start_latency=` (or 1) and never exceeds `max_latency=`. A cap that prevents the
+  clock goal is a hard failure. A starting count from the
+  [latency memory or a hints file](#starting-latencies-the-latency-memory-and---latency_hints)
+  is provisional: it may also be confirmed down to what the build measures.
+- **`name=` gives the tag a stable key.** Without one, the key is the source line that
+  constructs the tag, plus a construction ordinal. With one, the key is the name, so
+  hints, the latency memory and reports find it however the code around it changes.
+  Each name belongs to one tag. See [Naming a latency group](#naming-a-latency-group-name).
 - **The source is re-elaborated with the final count.** Like `AUTO_PIPELINE.latency`, this
   keeps every counter, buffer, and handshake derived from `.latency` consistent with the
   implemented constraint.
@@ -4749,7 +4902,7 @@ def buffered_div_inv(
     return stream_auto_pipeline(stream_in_if, stream_out_if)
 ```
 
-`make_stream_auto_pipeline(func, *, latency=None, start_latency=None, max_latency=None)`
+`make_stream_auto_pipeline(func, *, latency=None, start_latency=None, max_latency=None, name=None)`
 returns `(stream_auto_pipeline_func, stream_auto_pipeline_t)`:
 
 | | Type | Meaning |
@@ -4799,6 +4952,22 @@ and `max_latency`, so the core stays a zero-latency passthrough there:
 # Seed the sweep from a previously confirmed core depth of 4
 chacha_pipeline, chacha_pipeline_t = make_stream_auto_pipeline(chacha_loop_body, start_latency=4)
 ```
+
+A synthesizing build also starts the core from the depth earlier builds of the same
+output directory verified (the
+[latency memory](#starting-latencies-the-latency-memory-and---latency_hints)), so a
+`start_latency=` copied from a previous build is rarely needed.
+
+**Naming the core.** `name=` names the core's AUTO_PIPELINE latency group (see
+[Naming a latency group](#naming-a-latency-group-name)):
+
+```python
+chacha_pipeline, chacha_pipeline_t = make_stream_auto_pipeline(chacha_loop_body, name="chacha20")
+```
+
+Hints and reports then find the core as `chacha20`, and the wrapper's generated names
+include `name_chacha20`. Two wrappers over one `func` with different names get
+independently sized cores.
 
 `in_type`/`out_type` are inferred from `func`'s own annotations via `hw_arg_types`/
 `hw_return_type`, the same way
@@ -4886,6 +5055,7 @@ divider_mcp, divider_mcp_t = make_stream_auto_multi_cycle(divider)              
 divider_mcp, divider_mcp_t = make_stream_auto_multi_cycle(divider, start_latency=5)  # known-good start
 divider_mcp, divider_mcp_t = make_stream_auto_multi_cycle(divider, start_latency=5, max_latency=8)
 divider_mcp, divider_mcp_t = make_stream_auto_multi_cycle(divider, latency=5)        # fixed
+divider_mcp, divider_mcp_t = make_stream_auto_multi_cycle(divider, name="divider")    # a stable key
 
 divider_mcp.mcp.latency    # the cycle count (results are valid latency + 1 cycles after launch)
 ```

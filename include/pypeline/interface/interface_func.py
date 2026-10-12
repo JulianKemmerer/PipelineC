@@ -55,6 +55,11 @@ from pypeline import (
     encode_param_value,
     hw_func,
     struct,
+    _describe,
+    _name_digest,
+    _name_identity,
+    _replace_name_info,
+    _value_description,
 )
 
 from interface.interface import (
@@ -412,9 +417,7 @@ def _factory_suffix(orig):
     if frame is None:
         return ""
     factory_args = capture_factory_args(orig.__qualname__, frame)
-    import pypeline_names
-
-    orig._pypeline_name_info = pypeline_names.describe(orig, "function", factory_args)
+    orig._pypeline_name_info = _describe(orig, "function", factory_args)
     if not factory_args and ".<locals>." not in orig.__qualname__:
         return ""
     suffix = "".join(
@@ -422,8 +425,8 @@ def _factory_suffix(orig):
     )
     # A returned factory can outlive its outer frame. Include the original
     # closure and resolved ports even when no complete argument capture exists.
-    suffix += "_s" + pypeline_names.digest(
-        pypeline_names.identity((orig, factory_args, orig.__annotations__))
+    suffix += "_s" + _name_digest(
+        _name_identity((orig, factory_args, orig.__annotations__))
     )
     # The generated module's name becomes a directory name during synthesis, so
     # a factory with many parameters (dsp/fir_interp: coeffs, widths, rounding,
@@ -907,24 +910,22 @@ def make_hw_func_from_interface_func(f):
 
     inst = mod.__dict__[fname_]
     inst_t = mod.__dict__[out_struct]
-    import pypeline_names
-
-    origin = getattr(orig, "_pypeline_name_info", None) or pypeline_names.describe(
+    origin = getattr(orig, "_pypeline_name_info", None) or _describe(
         orig, "function"
     )
     inst._pypeline_name_info = inspect.unwrap(inst)._pypeline_name_info = origin
     inst._pypeline_generated_origin = inspect.unwrap(
         inst
     )._pypeline_generated_origin = True
-    inst_t._pypeline_name_info = pypeline_names.replace(
+    inst_t._pypeline_name_info = _replace_name_info(
         origin,
         kind="interface_result",
         symbol=origin.symbol + "_t",
         fields=tuple(
-            (k, pypeline_names.value_description(v))
+            (k, _value_description(v))
             for k, v in inst_t.__annotations__.items()
         ),
-        identity=pypeline_names.identity(
+        identity=_name_identity(
             ("interface_result", origin.identity, inst_t.__annotations__)
         ),
     )

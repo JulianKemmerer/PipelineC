@@ -135,6 +135,16 @@ def get_tests() -> list:
             cmd=[INST_DIR / "auto_multi_cycle_unit_test.py"],
         )
     )
+    # Latency memory and --latency_hints (SWEEP.py "Latency memory"): file
+    # formats, precedence, what a build remembers, profile verdicts, reports
+    # and the --syn_cache store copy's prune
+    tests.append(
+        Test(
+            name="latency_memory_unit_test",
+            category="unit",
+            cmd=[INST_DIR / "latency_memory_unit_test.py"],
+        )
+    )
     # Pure-unit tests for readable, hierarchical canonical names of
     # factory-closure functions (_canonical_func_name/_callable_canonical_name)
     # against hand-built fixtures, plus a PARSE_FILE regression test for the

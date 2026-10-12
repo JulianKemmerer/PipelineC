@@ -114,6 +114,22 @@ def test_var_ref_naming_design_reparses():
     parse_twice_and_compare(os.path.join(INST_DIR, "var_ref_naming_design.py"))
 
 
+def test_user_names_design_reparses():
+    # Every form of name= gives the same keys in a second parse (the
+    # pin-and-confirm loop's re-elaboration); AUTO tag names are re-registered
+    # per design execution, so the second parse must not see the first's
+    import pypeline
+
+    parse_twice_and_compare(os.path.join(INST_DIR, "user_names_design.py"))
+    rows = pypeline.USER_NAMED_AUTO_TAGS()
+    assert sorted(row[1] for row in rows) == [
+        "square_decrypt", "square_encrypt", "triple", "triple_mcp"
+    ], rows
+    # Library-built tags name the design line that asked for them
+    sites = {row[1]: row[3] for row in rows}
+    assert "(via " in sites["triple"] and "user_names_design.py:" in sites["triple"], sites
+
+
 def test_design_source_is_frozen_across_reparses():
     # pypelinec re-parses the design in later AUTO_PIPELINE passes, possibly
     # hours later. Edits to design files in the meantime must not reach those
@@ -192,5 +208,6 @@ if __name__ == "__main__":
     test_fir_design_reparses()
     test_auto_fsm_design_reparses()
     test_var_ref_naming_design_reparses()
+    test_user_names_design_reparses()
     test_design_source_is_frozen_across_reparses()
     print("All double PARSE_FILE tests passed.")

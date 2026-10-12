@@ -475,11 +475,27 @@ Each test below covers `AUTO_PIPELINE(func, latency= / start_latency= / max_late
 from a different angle:
 - `auto_pipeline_harvest_test.py` (unit):
   - constructor validation;
-  - identity suffixes (an unconstrained tag's key and `pypeline_names` identity are
+  - identity suffixes (an unconstrained tag's key and naming identity are
     unchanged);
   - `.latency` per build mode and cache;
   - the served-value predicate behind the pin-and-confirm pass-2 skip;
-  - `AUTO_PIPELINE.CHECK_AUTO_PIPELINE_CONSTRAINTS_REALIZED`.
+  - `AUTO_PIPELINE.CHECK_AUTO_PIPELINE_CONSTRAINTS_REALIZED`;
+  - named keys (`name=`):
+    - the key is the name plus a fixed/max suffix, never `start_latency`;
+    - identity covers the name;
+    - two names on one function are two groups, harvested to independent
+      latencies, and identical tags share one;
+    - a same-name conflict is a `TypeError` naming both sites;
+  - starting latencies (`SET_LATENCY_SEEDS`):
+    - the served value and a region's `start()`;
+    - clamping to `max_latency`;
+    - an unconstrained tag becomes a start-only region (`is_region()`) while its
+      source constraint stays unconstrained;
+    - fixed tags are never seeded;
+    - equality, hashing, `key_suffix()` and pickling (including a pre-seed
+      3-tuple) ignore the seed;
+    - a harvested value supersedes it;
+    - no seed outside sweep builds.
 - `stream_auto_pipeline_latency_args_test.py` (unit): `make_stream_auto_pipeline` and the
   DSP factories pass `latency=` / `start_latency=` / `max_latency=` to their single core
   AUTO_PIPELINE, in every handshake mode. It checks:
@@ -492,9 +508,9 @@ from a different angle:
   plan trimming, cap bookkeeping, and hotspot-to-region attribution on synthetic
   landscapes.
 - `auto_pipeline_fixed_latency_sim_test.py` (native_sim): plain native sim emulates a
-  fixed latency and ignores start/max. `pipeline_latency_test.py`'s gate test also runs
-  it, both directly and through `pypelinec --sim --comb`, with the compiler import
-  forbidden.
+  fixed latency and ignores start/max. A named fixed tag works the same, keyed by its
+  name. `pipeline_latency_test.py`'s gate test also runs it, both directly and through
+  `pypelinec --sim --comb`, with the compiler import forbidden.
 - `auto_pipeline_constraints_test.py` (build_report_device_models):
   - fixed and start regions are built exactly and pass 2 is skipped;
   - a `max_latency` cap stops an unreachable goal promptly;
@@ -515,6 +531,45 @@ from a different angle:
 - `self_check_fixed_auto_pipeline_test.py` (both native_vs_vhdl categories): compares
   the native delay line against the `--comb` VHDL's fixed registers, and against the
   planned sweep's enforced region.
+
+## Latency memory coverage
+
+The latency memory and `--latency_hints` (see
+[SWEEP_DESIGN.md](SWEEP_DESIGN.md#5-latency-memory)):
+- **`latency_memory_unit_test.py` (unit):**
+  - the three hints/memory file shapes and every rejection;
+  - load precedence: hints in order, the store's copy, then the output directory's
+    own memory;
+  - memory off, an unreadable memory file ignored, an unreadable hints file an error;
+  - what a build remembers (verified replaces, unverified keeps, gone tags dropped);
+  - profile verdicts per owning MAIN, and determinism;
+  - the post-parse report lines;
+  - the store copy's path and its prune;
+  - a seeded tag is a start-only region, unless its function holds another
+    AUTO_PIPELINE;
+  - the guard demotes a seed recorded for another function, goal, part or tool to
+    a served-only value, keeps a hand-written hint as an explicit start, and holds
+    its decision across a re-elaboration.
+- **`latency_memory_build_test.py` (build_report_device_models, sky130):** six
+  builds of `stream_auto_pipeline_test.py`:
+  1. a fresh build runs pass 2 and records its result in the output directory and
+     the `--syn_cache` store;
+  2. a rebuild starts from the remembered latency and skips pass 2;
+  3. `--no_latency_memory` neither seeds nor rewrites the memory;
+  4. after the output directory is deleted, the store's copy seeds it;
+  5. `--latency_hints` from the first build's profile seeds a fresh directory;
+  6. a stale memory entry: `latency_memory_stale_design.py`'s named core is built
+     heavy, then rebuilt light in the same directory. The remembered heavy latency
+     is recognized as recorded for another function, and the light build ends
+     where a memory-less build does. An unmatched hint is reported.
+- **`auto_multi_cycle_unit_test.py` (unit):** a remembered count is elaborated, then
+  registered as a provisional seed with the source floor.
+- **`auto_multi_cycle_sweep_test.py` (build_report_vivado), case (d):**
+  - a rebuild starts from the remembered count and skips pass 2;
+  - a stale hint three cycles too high is confirmed down to the measured count.
+
+The harness sets `PIPELINEC_INTERNAL_NO_LATENCY_MEMORY=1` for every test (see
+[Running](#running)); these two build tests turn it back off for their own builds.
 
 ## Stream wrapper throughput coverage
 
@@ -598,7 +653,15 @@ hand-worked numbers.
     They reject the `cycles_since_launch` controller, look-alike names
     (`not_launch_reg`) and CE pins. The isolated seed rounds raw delay up to
     whole cycles, never below 1 or the elaborated count, never above
-    `max_latency`, and leaves `latency=` tags alone.
+    `max_latency`, and leaves `latency=` tags alone;
+  - named tags:
+    - the key is the name plus a fixed/max suffix;
+    - a named tag consumes no site ordinal;
+    - a second tag with one name is a `TypeError`;
+    - identity ignores a named tag's `start_latency`, but not the count;
+  - a starting count from the latency memory is elaborated, then registered as
+    a provisional seed with the source floor. Evidence that raises it keeps
+    that floor.
 - `stream_auto_multi_cycle_test.py` (native_sim and synth_vivado `--comb`): the handshake waits
   `.latency + 1` cycles for `start_latency=` and fixed `latency=`, and the Xilinx-part
   `--comb` build emits setup/hold exceptions for both wrappers.
@@ -991,6 +1054,48 @@ same-spelling definitions that must coexist, and a deliberately forced identity
 collision that must fail clearly. Existing AUTO_FSM and native-versus-VHDL tests
 exercise generated helpers and specialization reuse in real hardware builds.
 
+**User names (`name=`).**
+- **`generated_naming_test.py` (unit):** a user-named base renders verbatim, and
+  `_h<digest>` is added for each collision kind (another name, a natural key, a
+  protected name). It also checks every validation error and the automatic
+  description kept for `-- Specialization:` comments.
+- **`factory_closure_naming_test.py` (unit):**
+  - a factory's `name=None` is not captured, on both capture paths;
+  - named function, struct and enum keys are `<name>_s<digest of the unnamed key>`;
+  - the decorator errors;
+  - `make_stream_auto_pipeline` / `make_stream_auto_multi_cycle` products keep the
+    names they had before `name=` existed. The unnamed AUTO_MULTI_CYCLE key's
+    `line137` is pinned, because moving that line renames every unnamed holder.
+- **`name_index_test.py` (elab_introspect):**
+  - the `USER NAMES` section;
+  - two named groups on one function stay two instances, each labeled by its group;
+  - a conflicting name fails, naming both sites.
+- **`double_parse_file_test.py` (elab_introspect):** `user_names_design.py`, with
+  every form of `name=`, parses to the same keys twice.
+
+**Known issue: large numpy arguments.** `numpy_factory_arg_identity_test.py`
+(known_issues) builds two specializations of one factory whose only difference is
+the middle of a 2000-element numpy array. Their identities are equal today, because
+`_stable_key` falls back to the array's repr and numpy elides the middle of any array
+over 1000 elements. The second specialization therefore elaborates as a duplicate of
+the first. The test fails while the two share one logical key, and passes once
+they are two functions. Tracked as bug
+[#370](https://github.com/JulianKemmerer/PipelineC/issues/370).
+
+**Known issue: a `.latency` constant in a top-level function.**
+`latency_constant_entity_reuse_test.py` (known_issues) elaborates
+`latency_constant_entity_reuse_design.py` twice in one process, the way the
+pin-and-confirm loop does: first with `.latency` 2, then with 3. Each time it gives
+the function `folds_latency` the same slice and writes the pipelined entities.
+`folds_latency` adds a module-level value read from that `.latency`.
+- **Why the name doesn't change.** A top-level function's key is its module and name,
+  and its timing hash covers child names and slices. The constants 2 and 3 have the
+  same width, so the entity name is the same in both passes.
+- **What goes wrong.** `WRITE_ALL_NON_ZERO_CLK_VHDL_FILES` renders each name once per
+  process, so pass 2 keeps pass 1's file, constant 2 and all.
+- **The test.** It fails while that happens, and passes once pass 2's file holds 3.
+  Tracked as bug [#369](https://github.com/JulianKemmerer/PipelineC/issues/369).
+
 **Tool-side file names.** Generated entity names can also overflow file names
 that a synthesis backend builds from them. Two tests cover this:
 
@@ -1249,8 +1354,12 @@ default timeout (`common.DEFAULT_CATEGORY_TIMEOUT_S`, overridable per `Test` or 
 suite. A summary table reports PASS/FAIL/XFAIL/XPASS/SKIP/TIMEOUT per test, with
 output directories of any failed test printed for inspection (and, for a tool-check
 failure, which tool the log named). `run_test` also sets
-`PIPELINEC_INTERNAL_SKIP_PIPELINE_MAP_PNG=1`; see
-[Choosing a synthesis tool](#choosing-a-synthesis-tool).
+`PIPELINEC_INTERNAL_SKIP_PIPELINE_MAP_PNG=1` (see
+[Choosing a synthesis tool](#choosing-a-synthesis-tool)) and
+`PIPELINEC_INTERNAL_NO_LATENCY_MEMORY=1`. The second keeps each test's sweeps
+independent of what an earlier run of the same test remembered in its reused
+output directory or a shared store. Tests of the latency memory set it back to
+`0` (see [Latency memory coverage](#latency-memory-coverage)).
 
 **Longest tests start first.** Every test is submitted to the pool up front and
 the pool dispatches FIFO, so submission order is start order: a long test

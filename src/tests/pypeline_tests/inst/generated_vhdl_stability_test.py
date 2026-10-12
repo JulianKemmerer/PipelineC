@@ -16,7 +16,7 @@ passes invalidates cached leaf results, even on a warm rerun.
   powers_t, 2 lanes in pass 1 and 5 in pass 2) has a new logical key in
   each pass but the same emitted name. Merged by logical key, the package
   declared that name twice and Vivado rejected it (Synth 8-989). Real
-  pypeline_names.EmissionNames render these chunks.
+  PY_TO_LOGIC.EmissionNames render these chunks.
   c_structs_pkg_relayout_test covers the same case with a real parse.
 - Source comments: a shared C built-in operator entity used to name the call
   site its pass happened to elaborate first.
@@ -40,7 +40,8 @@ sys.path.insert(
 )
 
 import C_TO_LOGIC  # noqa: F401  (import order: VHDL's import chain)
-import pypeline_names
+import PY_TO_LOGIC
+import pypeline
 import SYN
 import VHDL
 
@@ -163,7 +164,7 @@ def _mac_pass(lanes_by_direction):
         acc = f"acc_t_powers_{powers}_valid_uint1_t_direction_{direction}"
         for raw, symbol in ((powers, "powers_t"), (acc, "acc_t")):
             descriptions[raw] = {
-                pypeline_names.NameInfo(
+                pypeline._NameInfo(
                     "struct",
                     symbol,
                     "mac",
@@ -197,7 +198,7 @@ def _mac_pass(lanes_by_direction):
                 f"  function {acc}_to_slv\n",
             )
         )
-    names = pypeline_names.EmissionNames(descriptions)
+    names = PY_TO_LOGIC.EmissionNames(descriptions)
     return chunks, SimpleNamespace(pypeline_emission_names=names)
 
 
@@ -254,11 +255,11 @@ def test_repeated_relayout_passes_settle():
 
 def test_same_declaration_from_another_logical_type_is_kept():
     def one_pass(raw):
-        info = pypeline_names.NameInfo(
+        info = pypeline._NameInfo(
             "struct", "flags_t", "mac", "make_mac.<locals>.flags_t", "/nowhere/mac.py", 3,
             params=(("direction", "encrypt"),), identity=raw,
         )
-        names = pypeline_names.EmissionNames({raw: {info}})
+        names = PY_TO_LOGIC.EmissionNames({raw: {info}})
         chunks = [
             (
                 raw,

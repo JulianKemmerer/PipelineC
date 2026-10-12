@@ -3275,6 +3275,455 @@ def WRITE_SWEEP_HISTORY(parser_state, multimain_timing_params, build_complete):
     return doc
 
 
+# ─────────────────────────────────────────────
+# Latency memory: starting latencies from past builds and hints files
+# ─────────────────────────────────────────────
+# Every synthesizing build writes <out_dir>/latency_profile.json: what it built
+# for each AUTO_PIPELINE / AUTO_MULTI_CYCLE, and whether that met timing. The
+# verified results are remembered (<out_dir>/latency_memory.json, plus a copy in
+# the --syn_cache store keyed by the output directory) and become the next
+# build's starting latencies, as do --latency_hints files. A starting latency is
+# only that, like start_latency=: what .latency serves and where the tag's sweep starts
+# until the build has its own result (see docs/SWEEP_DESIGN.md#5-latency-memory).
+
+LATENCY_MEMORY_SCHEMA_VERSION = 1
+LATENCY_PROFILE_FILE = "latency_profile.json"
+LATENCY_MEMORY_FILE = "latency_memory.json"
+LATENCY_MEMORY_KINDS = ("AUTO_PIPELINE", "AUTO_MULTI_CYCLE")
+# Set by the pipelinec driver: False for --no_latency_memory or
+# PIPELINEC_INTERNAL_NO_LATENCY_MEMORY=1 (the test suite's default)
+LATENCY_MEMORY_ENABLED = True
+# (kind, key) -> (value, source) the first design execution applied
+LATENCY_SEEDS_USED = {}
+# (kind, key) -> {part, tool, goal_mhz, shape} a starting latency was recorded
+# with (the latency memory, or a hints file copied from a latency_profile.json).
+# A hand-written hint has none: it is an explicit start, like start_latency=.
+LATENCY_SEED_ORIGINS = {}
+
+
+def LATENCY_MEMORY_STORE_PATH(out_dir):
+    """The --syn_cache store's copy of out_dir's latency memory, else None."""
+    if SYN.SYNTHESIS_STORE_DIR is None:
+        return None
+    digest = hashlib.sha256(os.path.realpath(out_dir).encode()).hexdigest()[:16]
+    return os.path.join(
+        SYN.SYNTHESIS_STORE_DIR,
+        "latency",
+        f"v{LATENCY_MEMORY_SCHEMA_VERSION}",
+        digest + ".json",
+    )
+
+
+def READ_LATENCY_TABLE(path):
+    """({(kind, key): entry}, metadata) from a latency_profile.json, a
+    latency_memory.json or a hand-written hints file
+    ({"AUTO_PIPELINE": {key: N}, "AUTO_MULTI_CYCLE": {key: N}}). Every entry
+    has an int "latency". Raises ValueError on anything malformed."""
+    with open(path) as f:
+        doc = json.load(f)
+    if not isinstance(doc, dict):
+        raise ValueError(f"{path}: expected a JSON object")
+    meta = {k: doc.get(k) for k in ("part", "tool")}
+    rows = []
+    if "entries" in doc:  # a latency_profile.json
+        for entry in doc["entries"]:
+            rows.append((entry.get("kind"), entry.get("key"), dict(entry)))
+    else:
+        unknown = set(doc) - set(LATENCY_MEMORY_KINDS) - {
+            "schema_version",
+            "part",
+            "tool",
+            "out_dir",
+        }
+        if unknown:
+            raise ValueError(
+                f"{path}: unknown section(s) {sorted(unknown)}; expected "
+                f"{list(LATENCY_MEMORY_KINDS)}"
+            )
+        for kind in LATENCY_MEMORY_KINDS:
+            section = doc.get(kind) or {}
+            if not isinstance(section, dict):
+                raise ValueError(f"{path}: {kind} must map tag keys to latencies")
+            for key, value in section.items():
+                entry = dict(value) if isinstance(value, dict) else {"latency": value}
+                rows.append((kind, key, entry))
+    table = {}
+    for kind, key, entry in rows:
+        latency = entry.get("latency")
+        low = 1 if kind == "AUTO_MULTI_CYCLE" else 0
+        if kind not in LATENCY_MEMORY_KINDS or not isinstance(key, str):
+            raise ValueError(f"{path}: bad entry {kind!r} {key!r}")
+        if not isinstance(latency, int) or isinstance(latency, bool) or latency < low:
+            raise ValueError(
+                f"{path}: {kind} {key}: latency must be an int >= {low}, got {latency!r}"
+            )
+        table[(kind, key)] = entry
+    return table, meta
+
+
+def _seed_source_text(where, entry, meta):
+    parts = []
+    goal, achieved = entry.get("goal_mhz"), entry.get("achieved_mhz")
+    if achieved is not None and goal is not None:
+        parts.append(f"met {achieved:g} MHz at a {goal:g} MHz goal")
+    elif goal is not None:
+        parts.append(f"met a {goal:g} MHz goal")
+    target = "/".join(str(x) for x in (meta.get("part"), meta.get("tool")) if x)
+    if target:
+        parts.append(target)
+    return where + (": " + ", ".join(parts) if parts else "")
+
+
+def _seed_origin(entry, meta):
+    return {
+        "part": meta.get("part"),
+        "tool": meta.get("tool"),
+        "goal_mhz": entry.get("goal_mhz"),
+        "shape": entry.get("shape"),
+    }
+
+
+def LOAD_LATENCY_SEEDS(out_dir, hints_files):
+    """{(kind, key): (latency, source)} for the build's first parse: hints
+    files (a later file wins), then the latency memory over them (the store's
+    copy, then the output directory's own, newest). The memory is skipped when
+    LATENCY_MEMORY_ENABLED is False. A hints file that can't be read is an
+    error; a memory file that can't be read is ignored with a warning."""
+    seeds = {}
+    LATENCY_SEED_ORIGINS.clear()
+    for path in hints_files or ():
+        try:
+            table, _meta = READ_LATENCY_TABLE(path)
+        except (OSError, ValueError) as e:
+            sys.exit(f"ERROR: --latency_hints {path}: {e}")
+        table_meta = _meta
+        for (kind, key), entry in table.items():
+            seeds[(kind, key)] = (
+                entry["latency"],
+                f"hints {os.path.basename(path)}",
+            )
+            if entry.get("shape") is not None:
+                # A copied profile: the hardware it was measured on is known
+                LATENCY_SEED_ORIGINS[(kind, key)] = _seed_origin(entry, table_meta)
+            else:
+                LATENCY_SEED_ORIGINS.pop((kind, key), None)
+    if not LATENCY_MEMORY_ENABLED:
+        return seeds
+    store = LATENCY_MEMORY_STORE_PATH(out_dir)
+    for path, where in (
+        (store, "latency memory (store)"),
+        (os.path.join(out_dir, LATENCY_MEMORY_FILE), "latency memory"),
+    ):
+        if path is None or not os.path.exists(path):
+            continue
+        try:
+            table, meta = READ_LATENCY_TABLE(path)
+        except (OSError, ValueError) as e:
+            print(f"WARNING: ignoring unreadable latency memory {path}: {e}", flush=True)
+            continue
+        for (kind, key), entry in table.items():
+            seeds[(kind, key)] = (entry["latency"], _seed_source_text(where, entry, meta))
+            LATENCY_SEED_ORIGINS[(kind, key)] = _seed_origin(entry, meta)
+        if path == store:
+            try:
+                os.utime(path)  # used: keeps SYN.SYNTHESIS_STORE_PRUNE away
+            except OSError:
+                pass
+    return seeds
+
+
+def PRINT_LATENCY_SEEDS(part=None, tool=None):
+    """After the first parse: one line per starting latency a tag took, a
+    note naming the hints entries no tag took (one hints file often covers
+    several configurations of a design, so some are expected; a renamed or
+    removed tag shows up here too), and a note for remembered entries whose
+    tag is gone. Records the applied seeds for the profile."""
+    import pypeline
+
+    applied = pypeline.LATENCY_SEEDS_APPLIED()
+    LATENCY_SEEDS_USED.clear()
+    LATENCY_SEEDS_USED.update(applied)
+    for (kind, key), (value, source) in sorted(applied.items()):
+        print(f"[latency memory] {kind} {key}: starts at {value} ({source})", flush=True)
+    unused = pypeline.LATENCY_SEEDS_UNUSED()
+    hints = [u for u in unused if u[3].startswith("hints ")]
+    if hints:
+        print(
+            f"NOTE: {len(hints)} latency hint(s) matched no AUTO_PIPELINE / "
+            "AUTO_MULTI_CYCLE in this build that takes a starting latency (not in "
+            "this configuration, renamed, removed or fixed): "
+            + ", ".join(f"{key} ({source})" for _kind, key, _value, source in hints),
+            flush=True,
+        )
+    remembered = len(unused) - len(hints)
+    if remembered:
+        print(
+            f"NOTE: {remembered} remembered latenc{'y' if remembered == 1 else 'ies'} "
+            "matched no tag in this build (renamed or removed); they are "
+            "dropped from the latency memory once this build records its own.",
+            flush=True,
+        )
+    origins = sorted(
+        {
+            (LATENCY_SEED_ORIGINS[k]["part"], LATENCY_SEED_ORIGINS[k]["tool"])
+            for k, (_value, source) in applied.items()
+            if source.startswith("latency memory") and k in LATENCY_SEED_ORIGINS
+        }
+        - {(part, tool)},
+        key=repr,
+    )
+    for recorded_part, recorded_tool in origins:
+        print(
+            f"NOTE: some starting latencies were remembered for part {recorded_part}, "
+            f"tool {recorded_tool}; this build is for part {part}, tool {tool}. They "
+            "are only starting values, and the sweep corrects them.",
+            flush=True,
+        )
+
+
+def _auto_pipeline_tag_instances(parser_state):
+    """(key, main inst, constraint, callee func name) per AUTO_PIPELINE-tagged
+    instance, except fixed ones (latency=, @pipeline_latency callees), whose
+    latency is never a starting value."""
+    marker = C_TO_LOGIC.SUBMODULE_MARKER
+    fixed_funcs = getattr(parser_state, "func_fixed_latency", {}) or {}
+    for inst_name, logic in sorted(parser_state.LogicInstLookupTable.items()):
+        for local_sub, key in sorted(logic.sub_inst_to_auto_pipeline_key.items()):
+            if key is None:
+                continue
+            constraint = logic.sub_inst_to_auto_pipeline_latency.get(local_sub)
+            callee = logic.submodule_instances.get(local_sub)
+            if constraint is not None and constraint.is_fixed():
+                continue
+            if callee is None or callee in fixed_funcs:
+                continue
+            yield key, inst_name.split(marker)[0], constraint, callee
+
+
+def _latency_owners(parser_state):
+    """{(kind, key): (owning main func names, constraint, shape)} for every
+    non-fixed AUTO_PIPELINE / AUTO_MULTI_CYCLE the design elaborated. The shape
+    digests the hardware the latency is for: the AUTO_PIPELINE callee's
+    AUTO_MULTI_CYCLE.FUNCTION_SHAPE, or the AUTO_MULTI_CYCLE's MCP_SHAPE."""
+
+    def main_func(main_inst):
+        logic = parser_state.LogicInstLookupTable.get(main_inst)
+        return logic.func_name if logic is not None else main_inst
+
+    owners = {}
+    shapes = {}
+    for key, main_inst, constraint, callee in _auto_pipeline_tag_instances(parser_state):
+        entry = owners.setdefault(
+            ("AUTO_PIPELINE", key),
+            (set(), constraint, AUTO_MULTI_CYCLE.FUNCTION_SHAPE(callee, parser_state, shapes)),
+        )
+        entry[0].add(main_func(main_inst))
+    for key, group in AUTO_MULTI_CYCLE.COLLECT_AUTO_MULTI_CYCLE_GROUPS(
+        parser_state
+    ).items():
+        if group.constraint.is_fixed():
+            continue
+        mains = {main_func(inst.split(C_TO_LOGIC.SUBMODULE_MARKER)[0]) for inst, _s, _e in group.paths}
+        owners[("AUTO_MULTI_CYCLE", key)] = (
+            mains,
+            group.constraint,
+            AUTO_MULTI_CYCLE.MCP_SHAPE(group, parser_state),
+        )
+    return owners
+
+
+def GUARD_LATENCY_SEEDS(parser_state):
+    """At the start of the pipelined build: an AUTO_PIPELINE seed sets where the
+    tag's sweep starts only when it was recorded for this hardware (the callee's
+    FUNCTION_SHAPE), part, tool and clock goal. Otherwise -- the function
+    changed, or the memory is from another configuration -- it only keeps
+    serving .latency (which the ordinary pin-and-confirm pass corrects), so a
+    stale entry can't start a sweep too high for the post-met trim to recover.
+    A seed with no recorded origin (a hand-written hint) is an explicit start,
+    like start_latency=. Returns {key: reasons} for the seeds it demoted."""
+    import pypeline
+
+    tool = SYN.TOOL_NAME(SYN.SYN_TOOL)
+    groups = {}
+    shapes = {}
+    for key, main_inst, constraint, callee in _auto_pipeline_tag_instances(parser_state):
+        if constraint is None or constraint.seed is None:
+            continue
+        group = groups.setdefault(key, {"constraints": [], "goals": [], "callee": callee})
+        group["constraints"].append(constraint)
+        goal = SYN.GET_TARGET_MHZ(main_inst, parser_state)
+        if goal is not None:
+            group["goals"].append(goal)
+    demoted = {}
+    for key, group in sorted(groups.items()):
+        origin = LATENCY_SEED_ORIGINS.get(("AUTO_PIPELINE", key))
+        if origin is None:
+            continue
+        reasons = []
+        shape = AUTO_MULTI_CYCLE.FUNCTION_SHAPE(group["callee"], parser_state, shapes)
+        if origin.get("shape") is not None and origin["shape"] != shape:
+            reasons.append("its function changed")
+        goal = max(group["goals"]) if group["goals"] else None
+        if origin.get("goal_mhz") is not None and goal is not None and not math.isclose(
+            origin["goal_mhz"], goal
+        ):
+            reasons.append(f"recorded at a {origin['goal_mhz']:g} MHz goal, not {goal:g}")
+        if origin.get("part") is not None and origin["part"] != parser_state.part:
+            reasons.append(f"recorded for part {origin['part']}")
+        if origin.get("tool") is not None and origin["tool"] != tool:
+            reasons.append(f"recorded for tool {origin['tool']}")
+        if not reasons:
+            continue
+        demoted[key] = reasons
+        pypeline.SERVE_LATENCY_SEED_ONLY("AUTO_PIPELINE", key)
+        for constraint in group["constraints"]:
+            constraint.seed = None
+        value = LATENCY_SEEDS_USED.get(("AUTO_PIPELINE", key), (None,))[0]
+        print(
+            f"[latency memory] AUTO_PIPELINE {key}: {'; '.join(reasons)}, so its "
+            f"sweep doesn't start at {value} (only the first .latency read uses it)",
+            flush=True,
+        )
+    return demoted
+
+
+def BUILD_LATENCY_PROFILE(parser_state, multimain_timing_params, history):
+    """The latency_profile.json document (pure but for the harvest walks):
+    deterministic, sorted, without timestamps or absolute paths."""
+    import pypeline
+
+    tpl = multimain_timing_params.TimingParamsLookupTable
+    built = {}
+    latencies, _divergent = AUTO_PIPELINE.HARVEST_AUTO_PIPELINE_LATENCIES(
+        parser_state, tpl
+    )
+    for key, value in latencies.items():
+        built[("AUTO_PIPELINE", key)] = value
+    for key, value in AUTO_MULTI_CYCLE.HARVEST_AUTO_MULTI_CYCLE_NCYCLES(
+        parser_state, multimain_timing_params
+    ).items():
+        built[("AUTO_MULTI_CYCLE", key)] = value
+    finals = {
+        name: (main.get("goal_mhz"), main.get("final") or {})
+        for name, main in ((history or {}).get("mains") or {}).items()
+    }
+    named = {(kind, key): name for kind, name, key, _site in pypeline.USER_NAMED_AUTO_TAGS()}
+    entries = []
+    for (kind, key), (mains, constraint, shape) in sorted(_latency_owners(parser_state).items()):
+        if (kind, key) not in built:
+            continue
+        verdicts = [finals.get(m) for m in sorted(mains)]
+        verified = bool(verdicts) and all(
+            v is not None
+            and v[1].get("met") is True
+            and v[1].get("met_basis") in ("measured", "no_failing_path_reported")
+            for v in verdicts
+        )
+        goals = [v[0] for v in verdicts if v is not None and v[0] is not None]
+        achieved = [
+            v[1].get("achieved_mhz")
+            for v in verdicts
+            if v is not None and v[1].get("achieved_mhz") is not None
+        ]
+        seed = LATENCY_SEEDS_USED.get((kind, key))
+        entries.append(
+            {
+                "kind": kind,
+                "key": key,
+                "name": named.get((kind, key)),
+                "constraint": constraint.describe() if constraint is not None else "unconstrained",
+                "mains": sorted(mains),
+                "goal_mhz": max(goals) if goals else None,
+                "achieved_mhz": min(achieved) if achieved else None,
+                "latency": built[(kind, key)],
+                "verified": verified,
+                "seed": {"latency": seed[0], "source": seed[1]} if seed else None,
+                "shape": shape,
+            }
+        )
+    return {
+        "schema_version": LATENCY_MEMORY_SCHEMA_VERSION,
+        "part": parser_state.part,
+        "tool": SYN.TOOL_NAME(SYN.SYN_TOOL),
+        "mains": {
+            name: {
+                "goal_mhz": goal,
+                "achieved_mhz": final.get("achieved_mhz"),
+                "met": final.get("met"),
+            }
+            for name, (goal, final) in sorted(finals.items())
+        },
+        "entries": entries,
+    }
+
+
+def _merged_latency_memory(path, profile):
+    """The memory document after this build: its verified entries replace the
+    remembered ones, an unverified entry keeps the remembered one, and tags this
+    build no longer has are dropped."""
+    previous = {}
+    if path is not None and os.path.exists(path):
+        try:
+            previous, _meta = READ_LATENCY_TABLE(path)
+        except (OSError, ValueError):
+            previous = {}
+    doc = {
+        "schema_version": LATENCY_MEMORY_SCHEMA_VERSION,
+        "part": profile["part"],
+        "tool": profile["tool"],
+    }
+    for kind in LATENCY_MEMORY_KINDS:
+        doc[kind] = {}
+    for entry in profile["entries"]:
+        kind, key = entry["kind"], entry["key"]
+        fields = ("latency", "goal_mhz", "achieved_mhz", "shape")
+        if entry["verified"]:
+            doc[kind][key] = {k: entry.get(k) for k in fields}
+        elif (kind, key) in previous:
+            doc[kind][key] = {k: previous[(kind, key)].get(k) for k in fields}
+    return doc
+
+
+def RECORD_LATENCY_PROFILE(parser_state, multimain_timing_params, history):
+    """Write <out_dir>/latency_profile.json, then (unless the memory is off)
+    remember its verified results in <out_dir>/latency_memory.json and the
+    --syn_cache store. Prints one summary line. Never fails the build."""
+    try:
+        profile = BUILD_LATENCY_PROFILE(parser_state, multimain_timing_params, history)
+        if not profile["entries"]:
+            return profile
+        out_dir = SYN.SYN_OUTPUT_DIRECTORY
+        SYN._write_json_atomic(os.path.join(out_dir, LATENCY_PROFILE_FILE), profile)
+        verified = sum(e["verified"] for e in profile["entries"])
+        unverified = len(profile["entries"]) - verified
+        if not LATENCY_MEMORY_ENABLED:
+            print(
+                f"Latency profile: {os.path.join(out_dir, LATENCY_PROFILE_FILE)} "
+                "(latency memory off)",
+                flush=True,
+            )
+            return profile
+        places = []
+        for path, where in (
+            (os.path.join(out_dir, LATENCY_MEMORY_FILE), "out_dir"),
+            (LATENCY_MEMORY_STORE_PATH(out_dir), "store"),
+        ):
+            if path is None:
+                continue
+            os.makedirs(os.path.dirname(path), exist_ok=True)
+            SYN._write_json_atomic(path, _merged_latency_memory(path, profile))
+            places.append(where)
+        print(
+            f"Latency memory: recorded {verified} ({', '.join(places)})"
+            + (f"; {unverified} not recorded (timing not met)" if unverified else ""),
+            flush=True,
+        )
+        return profile
+    except Exception as e:  # a report: never the reason a build fails
+        print(f"WARNING: could not record the latency profile: {e}", flush=True)
+        return None
+
+
 def RETAINED_OBSERVATION(parser_state, multimain_timing_params):
     """The newest SYNTHESIS_OBSERVATIONS entry of the implementation these
     timing params build (same IMPLEMENTATION_SIGNATURE), or None."""
@@ -7792,10 +8241,10 @@ def DO_THROUGHPUT_SWEEP(
     if coarse_only:
         print("Doing coarse sweep only...", flush=True)
         for region in AUTO_PIPELINE.COLLECT_AUTO_PIPELINE_REGIONS(parser_state):
-            if region.constraint.start_latency is not None:
+            if region.constraint.start() is not None:
                 print(
                     f"NOTE: AUTO_PIPELINE {region.label()} "
-                    f"start_latency={region.constraint.start_latency} only sets "
+                    f"start {region.constraint.start()} only sets "
                     "its bootstrap .latency under a coarse sweep; coarse slicing "
                     "starts from the main's own latency guess.",
                     flush=True,

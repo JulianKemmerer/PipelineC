@@ -407,6 +407,29 @@ PROVISIONAL_MCP_SEEDS = {}
 CONFIRM_DOWN_USED = set()
 
 
+def FUNCTION_SHAPE(name, parser_state, memo=None):
+    """Digest of one function's elaborated hardware: its wire types, drivers
+    and the shapes of the functions it instantiates, recursively. Changes with
+    any change to arithmetic, types, constants or structure (and with the
+    source locations embedded in its wire names); never with timing. Used by
+    MCP_SHAPE and by the latency memory (SWEEP.GUARD_LATENCY_SEEDS)."""
+    memo = {} if memo is None else memo
+    if name not in memo:
+        logic = parser_state.FuncLogicLookupTable[name]
+        memo[name] = SYN.JSON_DIGEST(
+            {
+                "function": name,
+                "types": sorted(logic.wire_to_c_type.items()),
+                "drivers": sorted(logic.wire_driven_by.items()),
+                "children": sorted(
+                    (local, FUNCTION_SHAPE(child, parser_state, memo))
+                    for local, child in logic.submodule_instances.items()
+                ),
+            }
+        )
+    return memo[name]
+
+
 def MCP_SHAPE(group, parser_state):
     """Fingerprint the capture data cone, excluding the count/ready controller.
 
@@ -417,20 +440,7 @@ def MCP_SHAPE(group, parser_state):
     functions = {}
 
     def function_shape(name):
-        if name not in functions:
-            logic = parser_state.FuncLogicLookupTable[name]
-            functions[name] = SYN.JSON_DIGEST(
-                {
-                    "function": name,
-                    "types": sorted(logic.wire_to_c_type.items()),
-                    "drivers": sorted(logic.wire_driven_by.items()),
-                    "children": sorted(
-                        (local, function_shape(child))
-                        for local, child in logic.submodule_instances.items()
-                    ),
-                }
-            )
-        return functions[name]
+        return FUNCTION_SHAPE(name, parser_state, functions)
 
     shapes = []
     for inst, start, end in group.paths:
@@ -576,6 +586,15 @@ def SEED_COUNTS(parser_state, params):
         if group.constraint.is_fixed():
             continue
         shape = MCP_SHAPE(group, parser_state)
+        seed = getattr(group.constraint, "seed", None)
+        if seed is not None and current.get(key) == seed:
+            # A count from the latency memory or a hints file is only a
+            # starting value: provisional, so confirm-down may lower it to
+            # what this build measures (never below start_latency= or 1)
+            PROVISIONAL_MCP_SEEDS.setdefault(
+                (key, shape),
+                dict(floor=group.constraint.start_latency or 1, seeded=seed),
+            )
         raw = ISOLATED_MCP_EVIDENCE.get((key, shape))
         goals = [
             SYN.GET_TARGET_MHZ(
@@ -594,7 +613,10 @@ def SEED_COUNTS(parser_state, params):
         old = current[key]
         if needed > old:
             current[key] = needed
-            PROVISIONAL_MCP_SEEDS[(key, shape)] = dict(floor=old, seeded=needed)
+            prior = PROVISIONAL_MCP_SEEDS.get((key, shape))
+            PROVISIONAL_MCP_SEEDS[(key, shape)] = dict(
+                floor=min(old, prior["floor"]) if prior else old, seeded=needed
+            )
             print(
                 f"[sweep] AUTO_MULTI_CYCLE {key}: isolated endpoints ~{raw:.3f} ns raw; provisional seed {old}->{needed}",
                 flush=True,

@@ -289,10 +289,17 @@ def run_test(test: Test, tmp_root: Path) -> TestResult:
     # written), and `dot` often costs more than a small test's whole build.
     # Wrapper scripts copy os.environ into their own pypelinec subprocesses,
     # so nested builds inherit it too.
+    #
+    # PIPELINEC_INTERNAL_NO_LATENCY_MEMORY: a test's builds must not start from
+    # latencies a previous run of the same test remembered (its out_dir is
+    # reused, and a --syn_cache store may be shared), or its sweep -- and what
+    # it asserts about it -- would depend on run history. Latency memory tests
+    # set it back to "0" in their own env.
     env = {
         **os.environ,
         "TMPDIR": str(test_dir),
         "PIPELINEC_INTERNAL_SKIP_PIPELINE_MAP_PNG": "1",
+        "PIPELINEC_INTERNAL_NO_LATENCY_MEMORY": "1",
         **{k: str(v) for k, v in test.env.items()},
     }
 

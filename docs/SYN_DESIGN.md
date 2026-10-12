@@ -514,7 +514,10 @@ several share. Examples: WireGuard's per-profile build directories, a fresh
   - A hit refreshes the entry's `manifest.json` time.
   - `--syn_cache_prune DAYS` removes entries no build has used for that long, at
     the end of the build, and any half-written entry an interrupted insert left
-    that long ago.
+    that long ago. It also removes the store's latency memory copies
+    (`DIR/latency/v1/<out_dir digest>.json`, see
+    [SWEEP_DESIGN.md](SWEEP_DESIGN.md#5-latency-memory)) that no build has read or
+    written for that long.
   - Deleting the store is always safe.
   - Each build ends with `Synthesis results: N reused from the output directory,
     M from the store DIR, K new run(s)`, plus a count of stale logs set aside.
@@ -624,6 +627,14 @@ engineering a truncated identifier. It contains:
 - **ENTITIES**: logical function key, emitted VHDL base, definition location, instance
   count, and the full logical canonical name when that key was shortened.
 - **TYPES**: full logical struct/enum names for shortened internal type keys.
+- **USER NAMES** (only when the design uses `name=`):
+  - every function, struct and enum given a name: its logical key, emitted VHDL base,
+    the unnamed key it replaced, and its definition;
+  - every named AUTO_PIPELINE / AUTO_MULTI_CYCLE: its key and where it was constructed
+    (with the design line when a library factory built it).
+
+  The source descriptions below keep the automatic description and add a
+  `user name:` line.
 - **SOURCE DESCRIPTIONS**: source symbol, module/qualname, full source path and line,
   parameters and nested type/callable descriptions, and structural identity. Shared
   types retain all contributing origins. Generated helpers identify the originating
@@ -708,7 +719,7 @@ observation, `fit_status` is `unknown`.
 | `--verilog`, `--yosys_json`, `--xo_axis`, `--pins FILE` | final-output variants: Verilog top, netlist export only, Vivado AXIS XO, bitstream with pin constraints |
 
 Sweep flags (`--coarse`, `--no_sweep`, `--pipeline_min_effort`, ...) are in
-[`SWEEP_DESIGN.md`](SWEEP_DESIGN.md#5-command-line).
+[`SWEEP_DESIGN.md`](SWEEP_DESIGN.md#6-command-line).
 
 ## 9. Operator QoR benchmark
 
@@ -1007,7 +1018,7 @@ dedicated carry chain, where `make_soft_mult_shift_add`'s balanced tree of a
 few full-width carry-propagate adds is the wrong (FPGA-carry-chain-shaped)
 tradeoff. Auto-pipelined via the *planned* sweep (not `--coarse`, which has
 an unrelated pre-existing crash on this design's many narrow leaves —
-[`SWEEP_DESIGN.md` Limitations](SWEEP_DESIGN.md#7-limitations-and-future-work), item 1) with a real `@MAIN(700)` target and the latchup-style
+[`SWEEP_DESIGN.md` Limitations](SWEEP_DESIGN.md#8-limitations-and-future-work), item 1) with a real `@MAIN(700)` target and the latchup-style
 `--no_sweep --no_hier_syn` flags, the first emitted candidate reaches
 700.64 MHz at 30 cycles (31 stages), beating the reference's
 own 684 MHz/33 cycles.

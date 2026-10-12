@@ -16,13 +16,654 @@ import hashlib as _hashlib
 import typing
 import functools as _functools
 import warnings as _warnings
-import pypeline_names as _names
 from enum import IntEnum as _IntEnum, auto as _auto
 
 # If a fully-expanded struct/enum canonical name exceeds this length, it is
 # collapsed via collapse_overflow_name (readable truncated prefix + sha256[:8])
 # to keep VHDL type identifiers manageable.
 _MAX_MANGLE_NAME_LEN = 96
+
+
+# ─────────────────────────────────────────────
+# Naming metadata: source descriptions of generated hardware
+# ─────────────────────────────────────────────
+# Logical type/operator keys are not VHDL presentation. Decorators and
+# generators snapshot a _NameInfo description (symbol, module, scopes,
+# file/line, parameters, fields) alongside those keys while the factory
+# arguments are still available; PY_TO_LOGIC.EmissionNames turns them into
+# VHDL identifiers at the emission boundary. See
+# docs/pypeline_DESIGN.md#naming-metadata and
+# docs/PY_TO_LOGIC_DESIGN.md#generated-vhdl-names.
+
+import dataclasses as _dataclasses
+import inspect as _inspect
+import json as _json
+import os as _os
+import re as _re
+
+# VHDL-93/2008 reserved words (case-insensitive). PY_TO_LOGIC mangles Python
+# identifiers that collide with them; a user name= that collides is rejected.
+_VHDL_RESERVED_WORDS = frozenset(
+    {
+        "abs",
+        "access",
+        "after",
+        "alias",
+        "all",
+        "and",
+        "architecture",
+        "array",
+        "assert",
+        "attribute",
+        "begin",
+        "block",
+        "body",
+        "buffer",
+        "bus",
+        "case",
+        "component",
+        "configuration",
+        "constant",
+        "context",
+        "disconnect",
+        "downto",
+        "else",
+        "elsif",
+        "end",
+        "entity",
+        "exit",
+        "file",
+        "for",
+        "force",
+        "function",
+        "generate",
+        "generic",
+        "group",
+        "guarded",
+        "if",
+        "impure",
+        "in",
+        "inertial",
+        "inout",
+        "is",
+        "label",
+        "library",
+        "linkage",
+        "literal",
+        "loop",
+        "map",
+        "mod",
+        "nand",
+        "new",
+        "next",
+        "nor",
+        "not",
+        "null",
+        "of",
+        "on",
+        "open",
+        "or",
+        "others",
+        "out",
+        "package",
+        "parameter",
+        "port",
+        "postponed",
+        "procedure",
+        "process",
+        "property",
+        "pure",
+        "range",
+        "record",
+        "register",
+        "reject",
+        "release",
+        "rem",
+        "report",
+        "restrict",
+        "return",
+        "rol",
+        "ror",
+        "select",
+        "sequence",
+        "severity",
+        "signal",
+        "shared",
+        "sla",
+        "sll",
+        "sra",
+        "srl",
+        "strong",
+        "subtype",
+        "then",
+        "to",
+        "transport",
+        "type",
+        "unaffected",
+        "units",
+        "until",
+        "use",
+        "variable",
+        "vmode",
+        "vprop",
+        "vunit",
+        "wait",
+        "when",
+        "while",
+        "with",
+        "xnor",
+        "xor",
+    }
+)
+
+_NAME_BASE_LIMIT = 192
+_NAME_IDENTIFIER_LIMIT = 240
+_REPR_ADDRESS = _re.compile(r" at 0x[0-9a-fA-F]+")
+_NAME_SEPARATORS = _re.compile(r"[^A-Za-z0-9]+")
+
+
+def _name_digest(value):
+    return _hashlib.sha256(value.encode()).hexdigest()[:12]
+
+
+def _safe_name(text):
+    text = _NAME_SEPARATORS.sub("_", str(text)).strip("_") or "v"
+    return text if text[0].isalpha() else "v_" + text
+
+
+def _shorten_name(text, limit=_NAME_IDENTIFIER_LIMIT, identity=None):
+    """Keep whole tokens, with an explicit hash of everything omitted."""
+    if len(text) <= limit:
+        return text
+    role = _re.search(
+        r"(_[0-9]+CLK_[0-9a-f]+(?:_top)?|_global_to_module_t|_module_to_global_t|_to_slv|_NULL|_top)$",
+        text,
+    )
+    suffix = "_h" + _name_digest(identity or text) + (role[0] if role else "")
+    budget = limit - len(suffix)
+    prefix = text[: budget + 1].rsplit("_", 1)[0]
+    if len(prefix) > budget or not prefix:
+        prefix = "generated"
+    return prefix + suffix
+
+
+def _stable_key(value, seen=frozenset()):
+    """Typed, address-free specialization snapshot (never a readable name).
+
+    Lists and tuples, strings and numbers, and punctuation-bearing strings
+    must not alias after identifier sanitization. Recursive graphs are bounded
+    by their defining type/symbol, never by the object address used as a guard.
+    """
+    cls = type(value)
+    typename = cls.__module__ + "." + cls.__qualname__
+    if id(value) in seen:
+        return ("cycle", typename, getattr(value, "__qualname__", ""))
+    seen = seen | {id(value)}
+    if isinstance(value, _IntEnum):
+        return ("enum", _stable_key(cls, seen), value.name, int(value))
+    if value is None or isinstance(value, (bool, int, str)):
+        return (typename, value)
+    if isinstance(value, float):
+        return ("float", value.hex())
+    if isinstance(value, type):
+        info = getattr(value, "_pypeline_name_info", None)
+        if info is not None:
+            return ("type", _hashlib.sha256(info.identity.encode()).hexdigest())
+        elem = getattr(value, "_elem_ctype", None)
+        if elem is not None:
+            return ("array", value._arr_len, _stable_key(elem, seen))
+        return (
+            "type",
+            getattr(value, "_pypeline_ctype_canonical", None)
+            or getattr(value, "_ctype_name", None)
+            or (value.__module__, value.__qualname__),
+        )
+    if isinstance(value, (list, tuple)):
+        return (typename, tuple(_stable_key(v, seen) for v in value))
+    if isinstance(value, (dict, set, frozenset)):
+        items = (
+            [(_stable_key(k, seen), _stable_key(v, seen)) for k, v in value.items()]
+            if isinstance(value, dict)
+            else [_stable_key(v, seen) for v in value]
+        )
+        return (typename, tuple(sorted(items, key=repr)))
+    if hasattr(value, "inner_ctype"):
+        return (typename, _stable_key(value.inner_ctype, seen))
+    if isinstance(value, _functools.partial):
+        return (
+            "partial",
+            _stable_key(value.func, seen),
+            _stable_key(value.args, seen),
+            _stable_key(value.keywords, seen),
+        )
+    if getattr(value, "_is_auto_multi_cycle_tag", False) is True:
+        # Unlike an AUTO_PIPELINE's, an AUTO_MULTI_CYCLE's resolved cycle count IS
+        # identity: the function holding its registers bakes .latency-derived
+        # constants (the handshake counter) into its logic, so a pin-and-
+        # confirm pass that changes the count must rename that entity rather
+        # than reuse the previous pass's same-named file.
+        if getattr(value, "name", None) is not None:
+            # A named tag's start_latency is only a starting count: the
+            # resolved count (the hardware) is identity, the hint is not.
+            return (
+                "_is_auto_multi_cycle_tag",
+                value.canonical_key,
+                value.fixed_latency,
+                value.max_latency,
+                value._ncycles,
+            )
+        return (
+            "_is_auto_multi_cycle_tag",
+            value.canonical_key,
+            value.fixed_latency,
+            value.start_latency,
+            value.max_latency,
+            value._ncycles,
+        )
+    if callable(value):
+        for attr in (
+            "_is_auto_pipeline_pragma", "_is_auto_fsm_pragma", "_is_auto_comb_area_opt_pragma", "_is_auto_comb_delay_opt_pragma"
+        ):
+            if getattr(value, attr, False):
+                # An AUTO_PIPELINE's constructor latency constraint is
+                # identity (two tags over one func with different latency=
+                # must name differently); its discovered/served .latency is
+                # not -- that changes during the compiler's pin-and-confirm
+                # elaboration loop. Unconstrained tags keep config () so
+                # their names never moved. A named tag is its name plus the
+                # constraints that change hardware: its start_latency is only
+                # a starting count, so editing it renames nothing.
+                if attr == "_is_auto_pipeline_pragma" and (
+                    getattr(value, "name", None) is not None
+                ):
+                    config = (("name", value.name),) + tuple(
+                        (name, getattr(value, attr_name))
+                        for name, attr_name in (
+                            ("latency", "fixed_latency"),
+                            ("max_latency", "max_latency"),
+                        )
+                        if getattr(value, attr_name, None) is not None
+                    )
+                    return (attr, _stable_key(value.func, seen), config)
+                config = (
+                    tuple(
+                        (name, getattr(value, attr_name, None))
+                        for name, attr_name in (
+                            ("latency", "fixed_latency"),
+                            ("start_latency", "start_latency"),
+                            ("max_latency", "max_latency"),
+                        )
+                        if getattr(value, attr_name, None) is not None
+                    )
+                    if attr == "_is_auto_pipeline_pragma"
+                    else (
+                        () if attr in ("_is_auto_comb_area_opt_pragma", "_is_auto_comb_delay_opt_pragma") else (
+                            getattr(value, "max_latency", None),
+                            getattr(value, "register_output", True),
+                        )
+                    )
+                )
+                return (attr, _stable_key(value.func, seen), config)
+        value = _inspect.unwrap(value)
+        code = getattr(value, "__code__", None)
+        if code is not None:
+            cells = []
+            for name, cell in zip(code.co_freevars, value.__closure__ or ()):
+                try:
+                    cells.append((name, _stable_key(cell.cell_contents, seen)))
+                except ValueError:
+                    cells.append((name, "empty_cell"))
+            # co_code and constants distinguish same-qualname lambdas/defs;
+            # repr(code objects) would introduce addresses and absolute paths.
+            return (
+                "callable",
+                value.__module__,
+                value.__qualname__,
+                code.co_code.hex(),
+                _code_constants(code),
+                tuple(cells),
+                _stable_key(value.__defaults__, seen),
+                _stable_key(value.__kwdefaults__, seen),
+            )
+    state = getattr(value, "__dict__", None)
+    if state is not None:
+        return (typename, _stable_key(state, seen))
+    return (typename, _REPR_ADDRESS.sub("", repr(value)))
+
+
+def _code_constants(code):
+    return tuple(
+        ("code", c.co_code.hex(), _code_constants(c))
+        if _inspect.iscode(c)
+        else _stable_key(c)
+        for c in code.co_consts
+    )
+
+
+def _name_identity(value):
+    return _json.dumps(_stable_key(value), ensure_ascii=True, separators=(",", ":"))
+
+
+@_dataclasses.dataclass(frozen=True)
+class _NameInfo:
+    kind: str
+    symbol: str
+    module: str = ""
+    qualname: str = ""
+    source: str = ""
+    line: int = 0
+    params: tuple = ()
+    fields: tuple = ()
+    identity: str = ""
+    # A user's name= (validated by _check_user_name): rendered verbatim in
+    # place of the automatic description. render(user=False) still gives the
+    # automatic one, for -- Specialization: comments and the name index.
+    user_name: str = ""
+
+    def render(self, limit=None, context=True, user=True):
+        if user and self.user_name:
+            return self.user_name
+        base = _safe_name(self.symbol)
+        if context and self.module:
+            base += "_from_" + _safe_name(self.module)
+            scopes = self.qualname.split(".<locals>.")[:-1]
+            # make_kept_data_bus_t / kept_data_bus_t repeats the symbol.
+            scopes = [
+                s
+                for s in scopes
+                if (s[5:] if s.startswith("make_") else s)
+                not in (
+                    self.symbol,
+                    self.symbol[:-2] if self.symbol.endswith("_t") else self.symbol,
+                )
+            ]
+            if scopes:
+                base += "_" + "_".join(_safe_name(s) for s in scopes)
+        values = self.params or self.fields
+        # Scalar settings precede nested types so e.g. n=4 survives deep
+        # composition. Ties retain Python declaration order.
+        values = sorted(
+            values,
+            key=lambda p: (1 if p[1].kind == "scalar_type" else 2)
+            if isinstance(p[1], _NameInfo)
+            else 0,
+        )
+        rendered = [
+            v.render(context=False) if isinstance(v, _NameInfo) else v for _, v in values
+        ]
+
+        def compose():
+            return base + "".join(
+                "_" + _safe_name(k) + "_" + v for (k, _), v in zip(values, rendered)
+            )
+
+        full = compose()
+        if limit is None or len(full) <= limit:
+            return full
+        # Reduce the largest nested descriptions first; each child keeps
+        # its own scalar parameters and a hash of its complete identity.
+        for _ in range(len(values) * 2):
+            candidates = [
+                i
+                for i, (_, v) in enumerate(values)
+                if isinstance(v, _NameInfo) and len(rendered[i]) > 48
+            ]
+            if not candidates or len(compose()) <= limit:
+                break
+            i = max(candidates, key=lambda j: len(rendered[j]))
+            target = max(48, len(rendered[i]) - (len(compose()) - limit) - 14)
+            rendered[i] = values[i][1].render(target, context=False)
+        result = compose()
+        # One parent digest also covers structure omitted from its nested
+        # presentation; no composition relies on a child's readable prefix.
+        return _shorten_name(
+            result + "_h" + _name_digest(self.identity or full), limit, self.identity or full
+        )
+
+
+def _value_description(value, seen=frozenset()):
+    if id(value) in seen:
+        return (
+            _safe_name(getattr(value, "__name__", type(value).__name__))
+            + "_h"
+            + _name_digest(_name_identity(value))
+        )
+    seen = seen | {id(value)}
+    if isinstance(value, type):
+        info = getattr(value, "_pypeline_name_info", None)
+        if info is not None:
+            return info
+        elem = getattr(value, "_elem_ctype", None)
+        if elem is not None:
+            return _NameInfo(
+                "array",
+                "array",
+                params=(
+                    ("n", str(value._arr_len)),
+                    ("of", _value_description(elem, seen)),
+                ),
+                identity=_name_identity(value),
+            )
+        return _NameInfo(
+            "scalar_type",
+            _safe_name(getattr(value, "_ctype_name", value.__name__)),
+            identity=_name_identity(value),
+        )
+    if hasattr(value, "inner_ctype"):
+        return _NameInfo(
+            "direction",
+            type(value).__name__,
+            params=(("of", _value_description(value.inner_ctype, seen)),),
+            identity=_name_identity(value),
+        )
+    if getattr(value, "_is_auto_multi_cycle_tag", False) is True and (
+        getattr(value, "name", None) is not None
+    ):
+        return _NameInfo(
+            "wrapper",
+            type(value).__name__,
+            params=(("name", value.name),),
+            identity=_name_identity(value),
+        )
+    if callable(value):
+        if any(getattr(value, attr, False) for attr in (
+            "_is_auto_comb_area_opt_pragma", "_is_auto_comb_delay_opt_pragma", "_is_auto_pipeline_pragma", "_is_auto_fsm_pragma"
+        )):
+            if getattr(value, "_is_auto_pipeline_pragma", False) and (
+                getattr(value, "name", None) is not None
+            ):
+                # A named AUTO_PIPELINE stands for its function in descriptions
+                return _NameInfo(
+                    "wrapper",
+                    type(value).__name__,
+                    params=(("name", value.name),),
+                    identity=_name_identity(value),
+                )
+            return _NameInfo(
+                "wrapper",
+                type(value).__name__,
+                params=(("func", _value_description(value.func, seen)),),
+                identity=_name_identity(value),
+            )
+        if isinstance(value, _functools.partial):
+            return _NameInfo(
+                "partial",
+                "partial",
+                params=(
+                    ("func", _value_description(value.func, seen)),
+                    ("args", _value_description(value.args, seen)),
+                    ("kwargs", _value_description(value.keywords, seen)),
+                ),
+                identity=_name_identity(value),
+            )
+        value = _inspect.unwrap(value)
+        info = getattr(value, "_pypeline_name_info", None)
+        if info is not None:
+            return info
+        code = getattr(value, "__code__", None)
+        if code is not None:
+            params = dict(getattr(value, "_pypeline_factory_args", {}) or {})
+            if not params:
+                for k, cell in zip(code.co_freevars, value.__closure__ or ()):
+                    try:
+                        params[k] = cell.cell_contents
+                    except ValueError:
+                        pass
+            return _NameInfo(
+                "function",
+                value.__name__,
+                value.__module__ or "",
+                value.__qualname__,
+                code.co_filename,
+                code.co_firstlineno,
+                tuple((k, _value_description(v, seen)) for k, v in params.items()),
+                identity=_name_identity(value),
+            )
+        return _safe_name(
+            getattr(value, "__qualname__", type(value).__name__).replace(
+                ".<locals>.", "_"
+            )
+        )
+    if isinstance(value, (list, tuple)):
+        return (
+            "_".join(
+                str(v.render(context=False) if isinstance(v, _NameInfo) else v)
+                for v in (_value_description(x, seen) for x in value)
+            )
+            or "empty"
+        )
+    if isinstance(value, dict):
+
+        def fragment(v):
+            desc = _value_description(v, seen)
+            return desc.render(context=False) if isinstance(desc, _NameInfo) else desc
+
+        return (
+            "_".join(
+                fragment(k) + "_" + fragment(v)
+                for k, v in sorted(
+                    value.items(), key=lambda kv: repr(_stable_key(kv[0]))
+                )
+            )
+            or "empty"
+        )
+    if isinstance(value, int):
+        return "neg" + str(-value) if value < 0 else str(value)
+    if isinstance(value, float):
+        return _safe_name(repr(value).replace("-", "neg").replace(".", "p"))
+    if value is None or isinstance(value, str):
+        return _safe_name(value)
+    return _safe_name(type(value).__name__) + "_h" + _name_digest(_name_identity(value))
+
+
+def _describe(obj, kind, params=None, frame=None):
+    """Snapshot a declaration while its factory parameters are available."""
+    obj = _inspect.unwrap(obj)
+    params = params or {}
+    if kind == "function" and not params:
+        for name, cell in zip(
+            getattr(obj, "__code__", None).co_freevars
+            if hasattr(obj, "__code__")
+            else (),
+            getattr(obj, "__closure__", None) or (),
+        ):
+            try:
+                params[name] = cell.cell_contents
+            except ValueError:
+                pass
+    source, line = "", 0
+    try:
+        source = _inspect.getsourcefile(obj) or ""
+        line = _inspect.getsourcelines(obj)[1]
+    except (OSError, TypeError):
+        if frame is not None:
+            source, line = frame.f_code.co_filename, frame.f_lineno
+    fields = getattr(obj, "__annotations__", {}) if kind != "function" else {}
+    # Snapshot before stamping the object, avoiding a self-reference.
+    semantic = _name_identity((kind, obj.__name__, params, fields))
+    module = getattr(obj, "__module__", "") or ""
+    if module == "pypeline_design" and source:
+        module = _os.path.splitext(_os.path.basename(source))[0]
+    return _NameInfo(
+        kind,
+        obj.__name__,
+        module,
+        getattr(obj, "__qualname__", obj.__name__),
+        source,
+        line,
+        tuple((k, _value_description(v)) for k, v in params.items()),
+        tuple((k, _value_description(v)) for k, v in fields.items()),
+        semantic,
+    )
+
+
+def _derived_type(iface, role, fields):
+    info = iface._pypeline_name_info
+    return _dataclasses.replace(
+        info,
+        kind="interface_" + role,
+        symbol=info.symbol + "_" + role + "_t",
+        fields=tuple((k, _value_description(v)) for k, v in fields),
+        identity=_name_identity((info.identity, role, dict(fields))),
+    )
+
+
+_replace_name_info = _dataclasses.replace
+
+
+# ── User names (name=) ──────────────────────────────────────────────────────
+# A user name is a prefix: the logical key is "<name>_s<digest of the key the
+# object would have had>", so it stays unique and changes exactly when the
+# unnamed key would; the VHDL base is the name itself (EmissionNames adds
+# "_h<digest>" only on a collision). See docs/pypeline_DESIGN.md#user-names.
+_USER_NAME_RE = _re.compile(r"[A-Za-z](?:_?[A-Za-z0-9])*")
+_USER_NAME_MAX_LEN = 64
+# Suffixes the compiler itself appends to generated identifiers: a user name
+# ending in one could collide with a generated name, or be mistaken for one.
+_USER_NAME_ROLE_SUFFIX_RE = _re.compile(
+    r"(?:_top|_NULL|_to_slv|_global_to_module_t|_module_to_global_t"
+    r"|_[0-9]+CLK_[0-9a-f]+|_[sh][0-9a-f]{8,})$"
+)
+
+
+def _check_user_name(name, what):
+    """Validate a user name= for `what` (e.g. "@hw_func"); returns it. Never
+    sanitizes: a name that would not appear verbatim in VHDL is an error."""
+    if not isinstance(name, str):
+        raise TypeError(f"{what}(name=...): must be a str, got {type(name).__name__}")
+    problem = None
+    if len(name) > _USER_NAME_MAX_LEN:
+        problem = f"is longer than {_USER_NAME_MAX_LEN} characters"
+    elif not _USER_NAME_RE.fullmatch(name):
+        problem = (
+            "must start with a letter and use only letters, digits and single "
+            "underscores between them (a VHDL basic identifier)"
+        )
+    elif name.lower() in _VHDL_RESERVED_WORDS:
+        problem = "is a VHDL reserved word"
+    elif _USER_NAME_ROLE_SUFFIX_RE.search(name):
+        problem = (
+            "ends like a generated name (_top, _NULL, _to_slv, "
+            "_global_to_module_t, _module_to_global_t, _<n>CLK_<hex>, "
+            "_s<hex>, _h<hex>)"
+        )
+    if problem is not None:
+        raise ValueError(f"{what}(name={name!r}): the name {problem}")
+    return name
+
+
+def _user_name(obj):
+    """The user name= given to a hardware function or type, else None."""
+    obj = _inspect.unwrap(obj) if callable(obj) and not isinstance(obj, type) else obj
+    return getattr(obj, "_pypeline_user_name", None)
+
+
+def _named_key(name, unnamed_key):
+    """Logical key of a named function or type: the user's name, then the
+    digest of the key the object would have had without one."""
+    return f"{name}_s{_name_digest(unnamed_key)}"
+
+
 
 
 # ─────────────────────────────────────────────
@@ -968,7 +1609,7 @@ def encode_param_value(val) -> str:
             # Interfaces are classes too, but their literal __name__ does
             # not identify the payload. This key is used for function reuse.
             return collapse_overflow_name(
-                val._pypeline_iface_canonical + "_h" + _names.digest(info.identity),
+                val._pypeline_iface_canonical + "_h" + _name_digest(info.identity),
                 val.__name__,
                 _MAX_MANGLE_NAME_LEN,
             )
@@ -1015,6 +1656,9 @@ def encode_param_value(val) -> str:
         if getattr(val, "_is_auto_comb_area_opt_pragma", False):
             return "AUTO_COMB_AREA_OPT_" + encode_param_value(val.func)
         if getattr(val, "_is_auto_pipeline_pragma", False):
+            if getattr(val, "name", None) is not None:
+                # One name is one group over one function: the name suffices
+                return "AUTO_PIPELINE_" + val.name + val.latency_suffix()
             return (
                 "AUTO_PIPELINE_" + encode_param_value(val.func) + val.latency_suffix()
             )
@@ -1108,6 +1752,11 @@ def capture_factory_args(qualname: str, frame) -> dict:
         n = code.co_argcount + code.co_kwonlyargcount
         for name in code.co_varnames[:n]:
             if name in f.f_locals and name not in result:
+                if name == "name" and f.f_locals[name] is None:
+                    # A factory's name= forwarded to an AUTO tag or decorator:
+                    # left at None it describes nothing, so adding the
+                    # parameter to a factory renames none of its products
+                    continue
                 result[name] = f.f_locals[name]
         f = f.f_back
     return result
@@ -1140,7 +1789,7 @@ class _CastDispatchMeta(type):
         return super().__call__(*args, **kwargs)
 
 
-def struct(cls):
+def struct(cls=None, *, name=None):
     """Decorator that adds array subscript support and stamps a canonical C type name.
     The canonical name is derived from the class name, field types, and (for a
     struct defined directly inside a factory function) that factory's own
@@ -1160,7 +1809,19 @@ def struct(cls):
 
         # Now point_t[10] works as an annotation, and point_t._pypeline_ctype_name
         # is set to "point_t_x_uint32_t_y_uint32_t"
+
+    @struct(name="...") replaces the automatic name with a name of your
+    choosing (see hw_func): the C type name becomes "<name>_s<digest>" and
+    the VHDL record name is the name itself.
     """
+    if cls is None:
+        return lambda c: _struct(c, name, _sys._getframe(1))
+    return _struct(cls, name, _sys._getframe(1))
+
+
+def _struct(cls, name, frame):
+    if name is not None:
+        _check_user_name(name, "@struct")
     cls.__class_getitem__ = classmethod(_struct_class_getitem)
 
     def _typeof(cls, field_name):
@@ -1191,18 +1852,26 @@ def struct(cls):
             ann_str = str(ann)
         parts.append(f"{field}_{_mangle_type(ann_str)}")
     canonical = cls.__name__ + ("_" + "_".join(parts) if parts else "")
-    factory_args = capture_factory_args(cls.__qualname__, _sys._getframe(1))
-    cls._pypeline_name_info = _names.describe(
-        cls, "struct", factory_args, _sys._getframe(1)
-    )
+    factory_args = capture_factory_args(cls.__qualname__, frame)
+    cls._pypeline_name_info = _describe(cls, "struct", factory_args, frame)
     if factory_args:
         canonical += "_" + "_".join(
-            f"{name}_{encode_param_value(val)}" for name, val in factory_args.items()
+            f"{arg}_{encode_param_value(val)}" for arg, val in factory_args.items()
         )
     cls._pypeline_ctype_canonical = canonical  # full name retained for debugging
     cls._pypeline_ctype_name = collapse_overflow_name(
         canonical, cls.__name__, _MAX_MANGLE_NAME_LEN
     )
+    if name is not None:
+        cls._pypeline_user_name = name
+        cls._pypeline_unnamed_ctype_name = cls._pypeline_ctype_name
+        cls._pypeline_ctype_name = _named_key(name, cls._pypeline_ctype_name)
+        info = cls._pypeline_name_info
+        cls._pypeline_name_info = _replace_name_info(
+            info,
+            user_name=name,
+            identity=_name_identity(("user_name", name, info.identity)),
+        )
 
     # Override __new__ so that scalar integer fields are auto-wrapped in SimVals.
     # This makes float32_t(sign=0, exp=127, man=0) produce typed SimVal fields for
@@ -1327,7 +1996,7 @@ def struct(cls):
     return cls
 
 
-def enum(cls):
+def enum(cls=None, *, name=None):
     """Decorator for pypeline enum types. Stamps canonical _pypeline_ctype_name and
     pypeline metadata onto an IntEnum subclass (or plain class, which is auto-converted).
 
@@ -1350,8 +2019,20 @@ def enum(cls):
             if include_err:
                 members["ERR"] = 2
             return enum(IntEnum("my_enum_t", members))
+
+    @enum(name="...") replaces the automatic name with a name of your choosing
+    (see hw_func): the C type name becomes "<name>_s<digest>" and the VHDL
+    type name is the name itself.
     """
-    name_info = _names.describe(cls, "enum", frame=_sys._getframe(1))
+    if cls is None:
+        return lambda c: _enum(c, name, _sys._getframe(1))
+    return _enum(cls, name, _sys._getframe(1))
+
+
+def _enum(cls, name, frame):
+    if name is not None:
+        _check_user_name(name, "@enum")
+    name_info = _describe(cls, "enum", frame=frame)
     if not isinstance(cls, type) or not issubclass(cls, _IntEnum):
         # Plain class body: extract members in definition order, supporting both
         # explicit int values and auto() (which assigns 0-based sequential values).
@@ -1387,14 +2068,24 @@ def enum(cls):
 
     n_bits = _enum_bit_width(cls)
     cls._pypeline_ctype_name = ctype_name
-    cls._pypeline_name_info = _names.replace(
+    cls._pypeline_name_info = _replace_name_info(
         name_info,
-        fields=tuple((m.name, _names.value_description(m.value)) for m in cls),
-        identity=_names.identity(
+        fields=tuple((m.name, _value_description(m.value)) for m in cls),
+        identity=_name_identity(
             ("enum", cls.__name__, tuple((m.name, m.value) for m in cls))
         ),
     )
     cls._pypeline_ctype_canonical = canonical
+    if name is not None:
+        cls._pypeline_user_name = name
+        cls._pypeline_unnamed_ctype_name = ctype_name
+        cls._pypeline_ctype_name = _named_key(name, ctype_name)
+        info = cls._pypeline_name_info
+        cls._pypeline_name_info = _replace_name_info(
+            info,
+            user_name=name,
+            identity=_name_identity(("user_name", name, info.identity)),
+        )
     cls._pypeline_is_enum = True
     cls._pypeline_enum_int_ctype = f"uint{n_bits}_t"
     return cls
@@ -2313,6 +3004,80 @@ _auto_pipeline_read_sites: list = []
 # Per-construction serial: disambiguates plain-native-sim delay-line keys
 # without importing the compiler (see AUTO_PIPELINE._sim_key).
 _auto_pipeline_serial: int = 0
+# name -> (signature, "file:line") of the first AUTO_PIPELINE(..., name=) this
+# design execution constructed under that name. A name is one latency group:
+# every tag sharing it must wrap the same function with the same constraint.
+# Reset with the other per-execution tracking (RESET_AUTO_MULTI_CYCLE_TRACKING).
+_auto_pipeline_names: dict = {}
+
+
+def _construction_site():
+    """Where a design constructed an AUTO tag: "file:line", plus the design
+    frame that called the library when a library factory built it (the same
+    form as a .latency read site, see _latency_read_site)."""
+    return _latency_read_site()
+
+
+# (kind, canonical_key) -> (latency, source text): starting latencies from the
+# latency memory and --latency_hints files, installed by the pipelinec driver
+# before its first parse of a synthesizing build (SWEEP.LOAD_LATENCY_SEEDS).
+# kind is "AUTO_PIPELINE" or "AUTO_MULTI_CYCLE". A seed is only a starting
+# value, like start_latency=: it is what .latency serves (and where the tag's
+# planned sweep starts) until the build has its own result; the harvested cache of a
+# later pin-and-confirm pass always wins over it, and it is never identity.
+_latency_seeds: dict = {}
+# (kind, key) -> (value served, source) for every seed applied during the
+# current design execution; and every (kind, key) a constructed tag looked up
+_latency_seeds_applied: dict = {}
+_latency_seeds_looked_up: set = set()
+# AUTO_PIPELINE (kind, key)s whose seed only serves .latency and never sets
+# where the sweep starts: SWEEP.GUARD_LATENCY_SEEDS found it was remembered for
+# other hardware, another part or tool, or another clock goal
+_latency_seeds_served_only: set = set()
+
+
+def SET_LATENCY_SEEDS(seeds: dict) -> None:
+    """pipelinec-driver hook: install starting latencies
+    ({(kind, canonical_key): (latency, source)}) for the next design
+    executions of a synthesizing build; {} removes them."""
+    global _latency_seeds
+    _latency_seeds = dict(seeds)
+    _latency_seeds_served_only.clear()
+
+
+def SERVE_LATENCY_SEED_ONLY(kind, key) -> None:
+    """pipelinec-driver hook (SWEEP.GUARD_LATENCY_SEEDS): from now on this
+    tag's seed only serves .latency; its sweep plans it as without a start."""
+    _latency_seeds_served_only.add((kind, key))
+
+
+def LATENCY_SEEDS_APPLIED() -> dict:
+    """(kind, key) -> (value, source) of every seed the current design
+    execution's AUTO_PIPELINE / AUTO_MULTI_CYCLE constructions applied."""
+    return dict(_latency_seeds_applied)
+
+
+def LATENCY_SEEDS_UNUSED() -> list:
+    """Installed seeds no tag of the current design execution looked up
+    (a renamed or removed tag, or a stale hint), sorted."""
+    return sorted(
+        (kind, key, value, source)
+        for (kind, key), (value, source) in _latency_seeds.items()
+        if (kind, key) not in _latency_seeds_looked_up
+    )
+
+
+def _latency_seed(kind, key, max_latency):
+    """The installed seed for one tag, clamped to max_latency, or None."""
+    _latency_seeds_looked_up.add((kind, key))
+    entry = _latency_seeds.get((kind, key))
+    if entry is None:
+        return None
+    value, source = entry
+    if max_latency is not None:
+        value = min(value, max_latency)
+    _latency_seeds_applied[(kind, key)] = (value, source)
+    return value
 
 
 def SET_AUTO_PIPELINE_LATENCY_CACHE(cache: dict) -> None:
@@ -2561,6 +3326,16 @@ class AUTO_PIPELINE:
     out(t) = func(in(t-N)), cycle-accurate against the generated VHDL (see
     _sim_delay_line below); at .latency 0 it is a plain passthrough.
 
+    name="..." names this tag's latency group (see docs/pypeline_guide.md,
+    "Naming hardware"). The group key becomes the name (plus `_latency_N` /
+    `_max_latency_M` for those constraints), so latency hints and the
+    latency memory find it by that name, sweep reports print it, and the
+    call's VHDL instance is labeled with it. start_latency= is not part of a
+    named key, so changing it renames nothing. Two names on one function are
+    two independent groups (each planned to its own latency); tags sharing
+    a name must wrap the same function with the same constraints. The
+    function's own entity keeps its own name.
+
     CONSTRUCTION TIMING MATTERS: construct AUTO_PIPELINE(...) once, eagerly,
     as plain Python (typically at a factory function's own top level) and
     capture the object by closure into whatever @hw_func body calls it —
@@ -2579,6 +3354,7 @@ class AUTO_PIPELINE:
         latency=None,
         start_latency=None,
         max_latency=None,
+        name=None,
         **removed,
     ):
         global _auto_pipeline_serial
@@ -2636,8 +3412,22 @@ class AUTO_PIPELINE:
         self.fixed_latency = latency
         self.start_latency = start_latency
         self.max_latency = max_latency
+        self.name = name
         self._canonical_key = None
         self._sim_key_str = None
+        if name is not None:
+            _check_user_name(name, "AUTO_PIPELINE")
+            signature = (_name_identity(func), latency, start_latency, max_latency)
+            site = _construction_site()
+            prior = _auto_pipeline_names.setdefault(name, (signature, site, self))
+            if prior[0] != signature:
+                raise TypeError(
+                    f"AUTO_PIPELINE(name={name!r}) at {site} differs from the "
+                    f"AUTO_PIPELINE(name={name!r}) at {prior[1]}: tags sharing a "
+                    "name are one latency group, so they must wrap the same "
+                    "function with the same latency= / start_latency= / "
+                    "max_latency=. Give one of them another name."
+                )
         _auto_pipeline_serial += 1
         self._serial = _auto_pipeline_serial
         if latency is not None:
@@ -2646,6 +3436,20 @@ class AUTO_PIPELINE:
             self._latency = start_latency
         else:
             self._latency = 0
+        # A starting latency from the latency memory or a hints file (see
+        # SET_LATENCY_SEEDS): sweep builds only, never for a fixed latency
+        self.seed = None
+        if (
+            _latency_seeds
+            and latency is None
+            and fixed is None
+            and _auto_pipeline_build_mode == "sweep"
+        ):
+            self.seed = _latency_seed("AUTO_PIPELINE", self.canonical_key, max_latency)
+            if self.seed is not None:
+                self._latency = self.seed
+                if ("AUTO_PIPELINE", self.canonical_key) in _latency_seeds_served_only:
+                    self.seed = None
         # Skip key computation entirely when the cache is empty (native sim,
         # comb builds, bootstrap pass): keeps pure-sim runs from importing
         # the compiler (see canonical_key).
@@ -2658,10 +3462,14 @@ class AUTO_PIPELINE:
                         f"fixed, but the build harvested {cached} clocks for it"
                     )
                 self._latency = cached
+                self.seed = None  # the build's own result supersedes it
 
     def latency_suffix(self) -> str:
+        # A named tag's start_latency is a starting count, not identity
         return _auto_pipeline_latency_suffix(
-            self.fixed_latency, self.start_latency, self.max_latency
+            self.fixed_latency,
+            None if self.name is not None else self.start_latency,
+            self.max_latency,
         )
 
     @property
@@ -2676,6 +3484,10 @@ class AUTO_PIPELINE:
     @property
     def canonical_key(self) -> str:
         if self._canonical_key is None:
+            if self.name is not None:
+                # A named group's key is its name: no compiler needed
+                self._canonical_key = self.name + self.latency_suffix()
+                return self._canonical_key
             # Lazy so pure native-sim runs never import the compiler; any
             # context that needs the key (elaboration, non-empty cache) has
             # PY_TO_LOGIC loaded already.
@@ -2831,14 +3643,16 @@ def _auto_pipeline_with_io_regs(
     latency=None,
     start_latency=None,
     max_latency=None,
+    name=None,
 ):
     """Internal helper: AUTO_PIPELINE(func) plus optional unconditional
     every-cycle Reg[T] input/output boundary registers around the call
     (the registered-input/registered-output idiom).
 
-    latency= / start_latency= / max_latency= are forwarded unchanged to the
-    AUTO_PIPELINE(func, ...) constructed here (see AUTO_PIPELINE), so they
-    constrain func's core register count only, never the boundary registers.
+    latency= / start_latency= / max_latency= / name= are forwarded unchanged
+    to the AUTO_PIPELINE(func, ...) constructed here (see AUTO_PIPELINE), so
+    they constrain and name func's core register count only, never the
+    boundary registers.
 
     Returns (wrapped_func, auto_pipeline_call): wrapped_func has func's own
     (in_type) -> out_type signature; auto_pipeline_call is the AUTO_PIPELINE
@@ -2852,6 +3666,7 @@ def _auto_pipeline_with_io_regs(
         latency=latency,
         start_latency=start_latency,
         max_latency=max_latency,
+        name=name,
     )
     (in_type,) = hw_arg_types(func)
     out_type = hw_return_type(func)
@@ -4285,6 +5100,9 @@ _auto_multi_cycle_constructed: dict = {}
 # the current design execution; the ordinal disambiguates one factory line
 # building several AUTO_MULTI_CYCLE tags (see AUTO_MULTI_CYCLE.canonical_key)
 _auto_multi_cycle_site_counts: dict = {}
+# name -> "file:line" of the AUTO_MULTI_CYCLE(name=) constructed under it during
+# the current design execution: one tag object per name
+_auto_multi_cycle_names: dict = {}
 # Pseudo file names the decorator / elaborator compile compile-time
 # expressions under. An AUTO_MULTI_CYCLE constructed under one of these is being built
 # inside a @hw_func body, which re-creates it on every evaluation.
@@ -4319,6 +5137,24 @@ def RESET_AUTO_MULTI_CYCLE_TRACKING() -> None:
     _auto_multi_cycle_read_sites.clear()
     _auto_multi_cycle_constructed.clear()
     _auto_multi_cycle_site_counts.clear()
+    _auto_multi_cycle_names.clear()
+    _auto_pipeline_names.clear()
+    _latency_seeds_applied.clear()
+    _latency_seeds_looked_up.clear()
+
+
+def USER_NAMED_AUTO_TAGS() -> list:
+    """(kind, name, canonical_key, "file:line") for every AUTO_PIPELINE /
+    AUTO_MULTI_CYCLE given a name= during the current design execution, sorted."""
+    rows = [
+        ("AUTO_PIPELINE", name, tag.canonical_key, site)
+        for name, (_, site, tag) in _auto_pipeline_names.items()
+    ]
+    rows += [
+        ("AUTO_MULTI_CYCLE", name, tag.canonical_key, site)
+        for name, (site, tag) in _auto_multi_cycle_names.items()
+    ]
+    return sorted(rows)
 
 
 def AUTO_MULTI_CYCLE_SERVED_LATENCIES() -> dict:
@@ -4401,12 +5237,20 @@ class AUTO_MULTI_CYCLE:
 
     Construct it once, eagerly, outside any @hw_func body (e.g. at a factory's
     top level) and capture it by closure.
+
+    name="..." names the tag: its key becomes the name (plus `_latency_N` /
+    `_max_latency_M`) instead of the constructing source line and a
+    construction ordinal, so latency hints and the latency memory find it by
+    that name and reports print it. start_latency= is not part of a named
+    key. Each name belongs to one tag per design execution.
     """
 
-    # Duck-type marker (pypeline_names.stable_key, PY_TO_LOGIC)
+    # Duck-type marker (_stable_key, PY_TO_LOGIC)
     _is_auto_multi_cycle_tag = True
 
-    def __init__(self, *, latency=None, start_latency=None, max_latency=None):
+    def __init__(
+        self, *, latency=None, start_latency=None, max_latency=None, name=None
+    ):
         _check_auto_multi_cycle_latency_arg("latency", latency)
         _check_auto_multi_cycle_latency_arg("start_latency", start_latency)
         _check_auto_multi_cycle_latency_arg("max_latency", max_latency)
@@ -4438,21 +5282,48 @@ class AUTO_MULTI_CYCLE:
         self.fixed_latency = latency
         self.start_latency = start_latency
         self.max_latency = max_latency
+        self.name = name
         self.start = _MultiCycleRole(self, is_start=True)
         self.end = _MultiCycleRole(self, is_start=False)
-        site = (frame.f_globals.get("__name__", "?"), code.co_name, frame.f_lineno)
-        ordinal = _auto_multi_cycle_site_counts.get(site, 0)
-        _auto_multi_cycle_site_counts[site] = ordinal + 1
-        self.canonical_key = (
-            f"{site[0]}.{site[1]}_line{site[2]}_{ordinal}"
-            + _auto_multi_cycle_latency_suffix(latency, start_latency, max_latency)
-        )
+        if name is not None:
+            _check_user_name(name, "AUTO_MULTI_CYCLE")
+            where = _construction_site()
+            prior = _auto_multi_cycle_names.get(name)
+            if prior is not None:
+                raise TypeError(
+                    f"AUTO_MULTI_CYCLE(name={name!r}) at {where}: the name is "
+                    f"already used by the AUTO_MULTI_CYCLE at {prior[0]}. Each "
+                    "AUTO_MULTI_CYCLE is its own multi-cycle path, so each needs "
+                    "its own name."
+                )
+            _auto_multi_cycle_names[name] = (where, self)
+            # Named tags never consume a site ordinal, so unnamed keys at the
+            # same site don't move
+            self.canonical_key = name + _auto_multi_cycle_latency_suffix(
+                latency, None, max_latency
+            )
+        else:
+            site = (frame.f_globals.get("__name__", "?"), code.co_name, frame.f_lineno)
+            ordinal = _auto_multi_cycle_site_counts.get(site, 0)
+            _auto_multi_cycle_site_counts[site] = ordinal + 1
+            self.canonical_key = (
+                f"{site[0]}.{site[1]}_line{site[2]}_{ordinal}"
+                + _auto_multi_cycle_latency_suffix(latency, start_latency, max_latency)
+            )
         if latency is not None:
             ncycles = latency
         elif start_latency is not None:
             ncycles = start_latency
         else:
             ncycles = 1
+        # A starting count from the latency memory or a hints file (see
+        # SET_LATENCY_SEEDS): sweep builds only, never for a fixed count. The
+        # sweep may still lower it (it is registered as a provisional seed).
+        self.seed = None
+        if _latency_seeds and latency is None and _auto_pipeline_build_mode == "sweep":
+            seed = _latency_seed("AUTO_MULTI_CYCLE", self.canonical_key, max_latency)
+            if seed is not None and seed >= 1:
+                self.seed = ncycles = seed
         cached = _auto_multi_cycle_latency_cache.get(self.canonical_key)
         if cached is not None:
             if latency is not None and cached != latency:
@@ -4466,6 +5337,7 @@ class AUTO_MULTI_CYCLE:
                     f"{cached} cycles, above max_latency={max_latency}"
                 )
             ncycles = cached
+            self.seed = None  # the build's own result supersedes it
         self._ncycles = ncycles
         _auto_multi_cycle_constructed[self.canonical_key] = self
 
@@ -5138,7 +6010,7 @@ def _exec_generated_func(
         symbol = symbol[5:]
     if folder == "pypeline_generated_casts":
         symbol = "cast"
-    info = _names.describe(original, "function")
+    info = _describe(original, "function")
     # The signature identifies wrap/unwrap and bytes input/output directions;
     # settings consumed during generation (e.g. endian) come from the caller.
     n_args = frame.f_code.co_argcount + frame.f_code.co_kwonlyargcount
@@ -5146,12 +6018,14 @@ def _exec_generated_func(
         k: frame.f_locals[k]
         for k in frame.f_code.co_varnames[:n_args]
         if k in frame.f_locals
+        # Same rule as capture_factory_args: an unset name= describes nothing
+        and not (k == "name" and frame.f_locals[k] is None)
     }
-    params = tuple((k, _names.value_description(v)) for k, v in args.items())
+    params = tuple((k, _value_description(v)) for k, v in args.items())
     params += tuple(
-        (k, _names.value_description(v)) for k, v in original.__annotations__.items()
+        (k, _value_description(v)) for k, v in original.__annotations__.items()
     )
-    info = _names.replace(
+    info = _replace_name_info(
         info,
         symbol=symbol,
         module=frame.f_globals.get("__name__", ""),
@@ -8409,7 +9283,7 @@ def _sim_type_wrap(fn):
     # values (e.g. make_fifo's depth/mode) instead of hashing whatever
     # derived locals happen to survive into the closure.
     _factory_args = capture_factory_args(fn.__qualname__, _sys._getframe(1))
-    fn._pypeline_name_info = _names.describe(fn, "function", _factory_args)
+    fn._pypeline_name_info = _describe(fn, "function", _factory_args)
     ann = fn.__annotations__
     try:
         params = list(_inspect.signature(fn).parameters.keys())
@@ -8634,18 +9508,53 @@ def _sim_type_wrap(fn):
     return wrapper
 
 
-hw_func = _sim_type_wrap
-"""Decorator that marks an inner pypeline hardware function for bit-accurate simulation.
-Apply to inner function definitions inside make_* factory functions:
+def hw_func(fn=None, *, name=None):
+    """Decorator that marks an inner pypeline hardware function for bit-accurate simulation.
+    Apply to inner function definitions inside make_* factory functions:
 
-    def make_negate(value_t, out_t):
-        @hw_func
-        def negate(a: value_t) -> out_t:
-            ...
-        return negate
+        def make_negate(value_t, out_t):
+            @hw_func
+            def negate(a: value_t) -> out_t:
+                ...
+            return negate
 
-Transparent to the hardware elaborator (inspect.unwrap recovers the original).
-"""
+    Transparent to the hardware elaborator (inspect.unwrap recovers the original).
+
+    name="..." gives a factory-produced function a name of your choosing
+    instead of the automatic description of its factory arguments:
+
+        def make_quarter_round(a, b, c, d):
+            @hw_func(name=f"quarter_round_{a}_{b}_{c}_{d}")
+            def quarter_round(s: state_t) -> state_t:
+                ...
+
+    The function's logical key becomes "<name>_s<digest>" (the digest of the
+    key it would have had, so specializations stay distinct) and its VHDL
+    entity name starts with the name. Only factory-produced functions take a
+    name: a top-level function's own Python name already is its name.
+    """
+    if fn is None:
+        return lambda f: hw_func(f, name=name)
+    if name is None:
+        return _sim_type_wrap(fn)
+    _check_user_name(name, "@hw_func")
+    if is_hw_func(fn):
+        raise TypeError(
+            f"@hw_func(name={name!r}): {getattr(fn, '__qualname__', fn)!r} is "
+            "already a hardware function; give name= on its own @hw_func"
+        )
+    if ".<locals>." not in getattr(fn, "__qualname__", ""):
+        raise TypeError(
+            f"@hw_func(name={name!r}): {getattr(fn, '__qualname__', fn)!r} is a "
+            "top-level function, whose Python name already is its hardware "
+            "name; name= is for functions a factory produces"
+        )
+    fn._pypeline_user_name = name
+    wrapper = _sim_type_wrap(fn)
+    info = _replace_name_info(fn._pypeline_name_info, user_name=name)
+    fn._pypeline_name_info = wrapper._pypeline_name_info = info
+    wrapper._pypeline_user_name = name
+    return wrapper
 
 
 def hw_arg_types(func):

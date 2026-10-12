@@ -117,7 +117,7 @@ def make_stream_multi_cycle(func, latency: int):
 
 
 def make_stream_auto_multi_cycle(
-    func, *, latency=None, start_latency=None, max_latency=None
+    func, *, latency=None, start_latency=None, max_latency=None, name=None
 ):
     """make_stream_multi_cycle whose multi-cycle count the pypelinec
     throughput sweep picks: an AUTO_MULTI_CYCLE(latency=, start_latency=,
@@ -134,7 +134,11 @@ def make_stream_auto_multi_cycle(
     func_mcp.mcp is the AUTO_MULTI_CYCLE tag (read func_mcp.mcp.latency for the count).
     A result is valid mcp.latency + 1 cycles after its input is accepted.
     """
-    MC = AUTO_MULTI_CYCLE(latency=latency, start_latency=start_latency, max_latency=max_latency)
+    MC = AUTO_MULTI_CYCLE(latency=latency, start_latency=start_latency, max_latency=max_latency, name=name)  # noqa: E501
+    # name= names the tag (see AUTO_MULTI_CYCLE): latency hints, the latency
+    # memory and sweep reports find it by that name. Keep the construction on
+    # this one line: an unnamed tag's key is the source line it is built on,
+    # so moving it renames every unnamed make_stream_auto_multi_cycle holder.
     _check_mcp_latency("make_stream_auto_multi_cycle", MC._ncycles_for_compiler())
     in_type, out_type, in_intrf, out_intrf = _mcp_stream_types(
         func, "make_stream_auto_multi_cycle"

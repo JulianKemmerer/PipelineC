@@ -11,6 +11,10 @@
 #  (b) start_latency = (a)'s count: the sweep starts and settles there -- no
 #      AUTO_MULTI_CYCLE change, pass 2 skipped
 #  (c) max_latency=1: the cap blocks the goal, the sweep says so, build fails
+#  (d) latency memory: (a) runs with the memory on, so a rebuild of its output
+#      directory starts from the remembered count and skips pass 2; and a
+#      --latency_hints count far above the need (a stale entry) is
+#      provisional, so confirm-down brings it back to (a)'s count
 import argparse
 import os
 import re
@@ -22,7 +26,7 @@ PYPELINEC = os.path.join(THIS_DIR, "../../../pypelinec")
 DESIGN = os.path.join(THIS_DIR, "auto_multi_cycle_sweep_design.py")
 
 
-def run(out_dir, start=None, max_latency=None, extra=()):
+def run(out_dir, start=None, max_latency=None, extra=(), memory=False):
     cmd = [sys.executable, PYPELINEC, DESIGN, "-j", "1"]
     if out_dir:
         cmd += ["--out_dir", out_dir]
@@ -32,8 +36,12 @@ def run(out_dir, start=None, max_latency=None, extra=()):
     if max_latency is not None:
         cmd += ["-D", f"AUTO_MULTI_CYCLE_SWEEP_MAX={max_latency}"]
     print("Running:", " ".join(cmd), flush=True)
+    # The harness turns the latency memory off for every test; (d) wants it
+    env = dict(os.environ)
+    if memory:
+        env["PIPELINEC_INTERNAL_NO_LATENCY_MEMORY"] = "0"
     result = subprocess.run(
-        cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True
+        cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True, env=env
     )
     print(result.stdout)
     return result.returncode, result.stdout
@@ -61,7 +69,7 @@ def final_xdc_counts(out_dir):
 
 
 def check_raises_count(out_dir):
-    rc, out = run(out_dir, extra=["--sim", "--run", "60"])
+    rc, out = run(out_dir, extra=["--sim", "--run", "60"], memory=True)
     if rc != 0:
         fail(f"default-start AUTO_MULTI_CYCLE build/sim exited {rc}")
     # Endpoint characterization now seeds all groups before the first top run.
@@ -80,7 +88,32 @@ def check_raises_count(out_dir):
         fail(f"final XDC multi-cycle counts {xdc}, expected {{{count}}}")
     if "TIMING NOT MET" in out:
         fail("timing not met")
+    if out_dir and "Latency memory: recorded 1 (out_dir)" not in out:
+        fail("the verified count was not remembered")
     return count
+
+
+def check_remembered_count(out_dir, count, hints_dir):
+    rc, out = run(out_dir, memory=True)
+    if rc != 0:
+        fail(f"remembered-count rebuild exited {rc}")
+    if not re.search(rf"^\[latency memory\] AUTO_MULTI_CYCLE \S+: starts at {count} \(latency memory", out, re.M):
+        fail(f"the rebuild did not start from the remembered {count} cycles")
+    if list(harvested(out).values()) != [count] or "AUTO_PIPELINE Pass 2" in out:
+        fail("a rebuild starting from the remembered count must keep it and skip pass 2")
+    # A stale, far too high count: provisional, confirmed down to the need
+    key = list(harvested(out))[0]
+    os.makedirs(hints_dir, exist_ok=True)
+    hints = os.path.join(hints_dir, "stale_hints.json")
+    with open(hints, "w") as f:
+        f.write('{"AUTO_MULTI_CYCLE": {"%s": %d}}' % (key, count + 3))
+    rc, out = run(os.path.join(hints_dir, "build"), extra=["--latency_hints", hints])
+    if rc != 0:
+        fail(f"stale-hint build exited {rc}")
+    if f"starts at {count + 3} (hints stale_hints.json)" not in out:
+        fail("the stale hint was not taken as the starting count")
+    if "MCP confirm-down passed" not in out or list(harvested(out).values()) != [count]:
+        fail(f"a too-high starting count was not confirmed down to {count}: {harvested(out)}")
 
 
 def check_starts_and_settles(out_dir, count):
@@ -115,6 +148,8 @@ def main():
     sub = (lambda name: os.path.join(args.out_dir, name)) if args.out_dir else (lambda name: None)
     shared = sub("sweep")
     count = check_raises_count(shared)
+    if shared:
+        check_remembered_count(shared, count, sub("stale_hint"))
     check_starts_and_settles(shared, count)
     check_max_latency_cap(sub("max_latency"))
     print(f"All AUTO_MULTI_CYCLE sweep end-to-end tests passed (settled on {count} cycles).")

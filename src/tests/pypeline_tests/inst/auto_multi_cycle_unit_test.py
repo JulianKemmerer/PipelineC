@@ -4,7 +4,7 @@
   - AUTO_MULTI_CYCLE constructor validation and .latency resolution (default/start/
     fixed/cache), construction-site keys, the inline-construction guard,
     design-read tracking (served / unread);
-  - pypeline_names identity follows the resolved cycle count;
+  - the naming identity (pypeline._name_identity) follows the resolved cycle count;
   - SYN: MCP_EFFECTIVE_NCYCLES, ELABORATED/HARVEST_AUTO_MULTI_CYCLE_NCYCLES, the
     MultiMainTimingParams hash (unchanged unless a count was overridden);
   - SWEEP: timing-report register matching, needed-cycle math, feedback with
@@ -26,7 +26,6 @@ sys.path.insert(0, os.path.join(SRC_DIR, "..", "include", "pypeline"))
 
 import pypeline
 from pypeline import AUTO_MULTI_CYCLE, Reg, uint32_t
-import pypeline_names
 import C_TO_LOGIC
 import PY_TO_LOGIC
 import AUTO_PIPELINE
@@ -138,13 +137,13 @@ def test_identity_follows_count_and_reg_tag():
     def holder():
         return tag
 
-    id_tag = pypeline_names.identity(tag)
-    id_holder = pypeline_names.identity(holder)
+    id_tag = pypeline._name_identity(tag)
+    id_holder = pypeline._name_identity(holder)
     tag._ncycles = 6
-    assert pypeline_names.identity(tag) != id_tag
-    assert pypeline_names.identity(holder) != id_holder
+    assert pypeline._name_identity(tag) != id_tag
+    assert pypeline._name_identity(holder) != id_holder
     tag._ncycles = 2
-    assert pypeline_names.identity(tag) == id_tag
+    assert pypeline._name_identity(tag) == id_tag
     reg_t = Reg[uint32_t, tag.start]
     assert reg_t.multi_cycle_role.tag is tag and reg_t.multi_cycle_role.is_start
     assert "start_latency=2" in repr(tag)
@@ -416,6 +415,113 @@ def test_unread_tag_fails_build_check():
     print("test_unread_tag_fails_build_check PASS")
 
 
+def test_named_tags():
+    pypeline.RESET_AUTO_MULTI_CYCLE_TRACKING()
+    first = make_tag(start_latency=2).canonical_key
+    named = make_tag(start_latency=2, max_latency=6, name="prologue")
+    assert named.canonical_key == "prologue_max_latency_6", named.canonical_key
+    assert make_tag(latency=3, name="fixed_one").canonical_key == "fixed_one_latency_3"
+    # A named tag consumes no site ordinal, so unnamed keys never move
+    second = make_tag(start_latency=2).canonical_key
+    assert first.endswith("_0_start_latency_2") and second.endswith("_1_start_latency_2")
+    # One tag per name per design execution
+    try:
+        make_tag(name="prologue")
+    except TypeError as e:
+        assert "already used" in str(e) and __file__ in str(e), str(e)
+    else:
+        raise AssertionError("a second AUTO_MULTI_CYCLE(name='prologue') was accepted")
+    expect_raises(ValueError, make_tag, name="has__double")
+    assert ("AUTO_MULTI_CYCLE", "prologue", "prologue_max_latency_6") in [
+        r[:3] for r in pypeline.USER_NAMED_AUTO_TAGS()
+    ]
+    # A re-execution starts over
+    pypeline.RESET_AUTO_MULTI_CYCLE_TRACKING()
+    assert make_tag(name="prologue").canonical_key == "prologue"
+    # Identity: the resolved count is, a named tag's start_latency is not
+    try:
+        identities = {}
+        for name in ("n", None):
+            for start in (2, 3):
+                pypeline.RESET_AUTO_MULTI_CYCLE_TRACKING()
+                key = make_tag(start_latency=start, name=name).canonical_key
+                pypeline.RESET_AUTO_MULTI_CYCLE_TRACKING()
+                pypeline.SET_AUTO_MULTI_CYCLE_LATENCY_CACHE({key: 5})
+                tag = make_tag(start_latency=start, name=name)
+                assert tag._ncycles_for_compiler() == 5
+                identities[(name, start)] = pypeline._name_identity(tag)
+                pypeline.SET_AUTO_MULTI_CYCLE_LATENCY_CACHE({})
+        assert identities[("n", 2)] == identities[("n", 3)]
+        assert identities[(None, 2)] != identities[(None, 3)]
+    finally:
+        pypeline.SET_AUTO_MULTI_CYCLE_LATENCY_CACHE({})
+        pypeline.RESET_AUTO_MULTI_CYCLE_TRACKING()
+    print("test_named_tags PASS")
+
+
+def test_seeds_are_provisional():
+    """A starting count from the latency memory or a hints file is elaborated
+    like start_latency=, but registered as a provisional seed whose floor is
+    the source start_latency, so confirm-down may lower it."""
+    from types import SimpleNamespace
+    from unittest.mock import patch
+    import SYN
+
+    try:
+        pypeline.SET_AUTO_PIPELINE_BUILD_MODE("sweep")
+        pypeline.RESET_AUTO_MULTI_CYCLE_TRACKING()
+        pypeline.SET_LATENCY_SEEDS(
+            {("AUTO_MULTI_CYCLE", "seeded_max_latency_8"): (12, "latency memory")}
+        )
+        tag = make_tag(start_latency=2, max_latency=8, name="seeded")
+        assert tag._ncycles_for_compiler() == 8 and tag.seed == 8  # clamped
+        constraint = C_TO_LOGIC.AutoMultiCycleConstraint.from_tag(tag)
+        assert constraint.seed == 8
+        assert constraint == C_TO_LOGIC.AutoMultiCycleConstraint(
+            "seeded_max_latency_8", None, 2, 8
+        )
+        fixed = make_tag(latency=3, name="fixed_tag")
+        assert fixed._ncycles_for_compiler() == 3 and fixed.seed is None
+
+        design = os.path.join(THIS_DIR, "stream_auto_multi_cycle_test.py")
+        pypeline.SET_LATENCY_SEEDS({})
+        unseeded = PY_TO_LOGIC.PARSE_FILE(design)
+        (auto_key,) = [
+            k
+            for k, g in AUTO_MULTI_CYCLE_MODULE.COLLECT_AUTO_MULTI_CYCLE_GROUPS(
+                unseeded
+            ).items()
+            if not g.constraint.is_fixed()
+        ]
+        pypeline.SET_LATENCY_SEEDS({("AUTO_MULTI_CYCLE", auto_key): (6, "latency memory")})
+        parser_state = PY_TO_LOGIC.PARSE_FILE(design)
+        counts = AUTO_MULTI_CYCLE_MODULE.ELABORATED_AUTO_MULTI_CYCLE_NCYCLES(parser_state)
+        assert counts[auto_key] == 6, counts
+        groups = AUTO_MULTI_CYCLE_MODULE.COLLECT_AUTO_MULTI_CYCLE_GROUPS(parser_state)
+        group = groups[auto_key]
+        assert group.constraint.seed == 6 and group.constraint.start_latency == 3
+        shape = AUTO_MULTI_CYCLE_MODULE.MCP_SHAPE(group, parser_state)
+        with patch.object(AUTO_MULTI_CYCLE_MODULE, "ISOLATED_MCP_EVIDENCE", {}), \
+                patch.object(AUTO_MULTI_CYCLE_MODULE, "PROVISIONAL_MCP_SEEDS", {}) as seeds, \
+                patch.object(AUTO_MULTI_CYCLE_MODULE, "CONFIRM_DOWN_USED", set()), \
+                patch.object(SYN, "GET_TARGET_MHZ", lambda inst, ps: 100.0):
+            params = SimpleNamespace(auto_multi_cycle_ncycles={})
+            AUTO_MULTI_CYCLE_MODULE.SEED_COUNTS(parser_state, params)
+            assert seeds == {(auto_key, shape): dict(floor=3, seeded=6)}, seeds
+            # Evidence that needs more raises it and keeps the source floor
+            with patch.object(
+                AUTO_MULTI_CYCLE_MODULE, "ISOLATED_MCP_EVIDENCE", {(auto_key, shape): 71.0}
+            ):
+                params = SimpleNamespace(auto_multi_cycle_ncycles={})
+                assert AUTO_MULTI_CYCLE_MODULE.SEED_COUNTS(parser_state, params)[auto_key] == 8
+            assert seeds[(auto_key, shape)] == dict(floor=3, seeded=8), seeds
+    finally:
+        pypeline.SET_LATENCY_SEEDS({})
+        pypeline.SET_AUTO_PIPELINE_BUILD_MODE(None)
+        pypeline.RESET_AUTO_MULTI_CYCLE_TRACKING()
+    print("test_seeds_are_provisional PASS")
+
+
 if __name__ == "__main__":
     test_constructor_validation()
     test_latency_resolution()
@@ -428,4 +534,6 @@ if __name__ == "__main__":
     test_elaboration_and_cache_reparse()
     test_endpoint_selection_on_elaborated_wrapper()
     test_unread_tag_fails_build_check()
+    test_named_tags()
+    test_seeds_are_provisional()
     print("All AUTO_MULTI_CYCLE unit tests passed.")

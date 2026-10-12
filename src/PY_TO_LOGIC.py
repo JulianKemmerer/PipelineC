@@ -16,7 +16,6 @@ import sysconfig
 import textwrap
 import tokenize
 import types as _types
-import pypeline_names
 
 import C_TO_LOGIC
 import VHDL
@@ -538,7 +537,7 @@ def _callable_hash(val):
     Used by callable naming fallbacks (lambdas, opaque objects and recursion
     limits). Typed snapshots distinguish equal-looking parameter values.
     """
-    return pypeline_names.digest(pypeline_names.identity(val))[:8]
+    return _pypeline_mod._name_digest(_pypeline_mod._name_identity(val))[:8]
 
 
 _ILLEGAL_IDENT_CHARS_RE = re.compile(r"[^A-Za-z0-9_]+")
@@ -666,10 +665,13 @@ def _callable_canonical_name(val, module_globals, _seen=None, _depth=0):
     # qualname/closure of its own (every instance would otherwise collapse to
     # "pypeline_AUTO_PIPELINE" via the class attrs).
     if getattr(val, "_is_auto_pipeline_pragma", False):
-        inner = _callable_canonical_name(val.func, module_globals, _seen, _depth + 1)
         latency_suffix = (
             val.latency_suffix() if hasattr(val, "latency_suffix") else ""
         )
+        if getattr(val, "name", None) is not None:
+            # A named group is its name (its suffix leaves out start_latency)
+            return _sanitize_vhdl_name(f"AUTO_PIPELINE_{val.name}{latency_suffix}")
+        inner = _callable_canonical_name(val.func, module_globals, _seen, _depth + 1)
         return _sanitize_vhdl_name(f"AUTO_PIPELINE_{inner}{latency_suffix}")
 
     # AUTO_FSM tag objects: same reasoning as AUTO_PIPELINE above -- identity is
@@ -691,14 +693,14 @@ def _callable_canonical_name(val, module_globals, _seen=None, _depth=0):
             if isinstance(a, (int, bool)) or a is None:
                 bound.append(str(a))
             else:
-                bound.append(pypeline_names.digest(pypeline_names.identity(a))[:8])
+                bound.append(_pypeline_mod._name_digest(_pypeline_mod._name_identity(a))[:8])
         for k in sorted(val.keywords):
             v = val.keywords[k]
             if isinstance(v, (int, bool)) or v is None:
                 bound.append(f"{k}_{v}")
             else:
                 bound.append(
-                    f"{k}_{pypeline_names.digest(pypeline_names.identity(v))[:8]}"
+                    f"{k}_{_pypeline_mod._name_digest(_pypeline_mod._name_identity(v))[:8]}"
                 )
         return _sanitize_vhdl_name("_".join([inner] + bound)) if bound else inner
 
@@ -773,7 +775,7 @@ def _collapse_overflow_name(full: str, inner_func_name: str) -> str:
 def _specialization_identity(func, closure_ns):
     # Captured arguments never replace closure state: a returned inner factory
     # can retain only derived flags from an outer factory that is no longer live.
-    return pypeline_names.identity(
+    return _pypeline_mod._name_identity(
         (
             func.__module__,
             func.__qualname__,
@@ -785,7 +787,13 @@ def _specialization_identity(func, closure_ns):
 
 
 def _canonical_func_name(
-    func, closure_ns, module_globals=None, _seen=None, _depth=0, collapse=True
+    func,
+    closure_ns,
+    module_globals=None,
+    _seen=None,
+    _depth=0,
+    collapse=True,
+    user_names=True,
 ):
     """Return a canonical name for a factory-produced closure, or None for top-level functions.
 
@@ -794,7 +802,7 @@ def _canonical_func_name(
         <inner_func_name>_<param1>_<val1>_<param2>_<val2>_..._s<identity12>
 
     The suffix hashes typed arguments, closure values and resolved annotations.
-    This is an internal backend key; pypeline_names renders VHDL separately.
+    This is an internal backend key; EmissionNames renders VHDL separately.
 
     <inner_func_name> is the innermost returned function name (mirrors how
     @struct uses the inner class name, not the factory name), and params are
@@ -844,6 +852,10 @@ def _canonical_func_name(
     valued-param branch makes into its own recursion -- those still collapse
     normally (a nested callable's own name, if collapsed, is independently
     decodable via its own FuncLogicLookupTable entry).
+
+    A function given @hw_func(name=...) gets "<name>_s<digest of the key
+    above>" instead; user_names=False returns the key above (for the name
+    index's "replaces" column).
     """
 
     def _finish(full, fallback_prefix):
@@ -851,7 +863,15 @@ def _canonical_func_name(
         # different defining factories, or equal-looking values can alias.
         # Use a typed snapshot, independent of presentation and call order.
         specialization = _specialization_identity(func, closure_ns)
-        full += "_s" + pypeline_names.digest(specialization)
+        full += "_s" + _pypeline_mod._name_digest(specialization)
+        user_name = getattr(func, "_pypeline_user_name", None) if user_names else None
+        if user_name is not None:
+            # A user name replaces the readable part; the digest of the key
+            # the function would have had keeps specializations apart and
+            # changes exactly when that key would (see pypeline._named_key)
+            return _pypeline_mod._named_key(
+                user_name, _collapse_overflow_name(full, fallback_prefix)
+            )
         return full if not collapse else _collapse_overflow_name(full, fallback_prefix)
 
     def _stable_val_repr(v):
@@ -882,7 +902,7 @@ def _canonical_func_name(
             )
         if callable(v):
             return _callable_canonical_name(v, module_globals, _seen, _depth + 1)
-        return pypeline_names.identity(v)
+        return _pypeline_mod._name_identity(v)
 
     def _encode_one(var_name, val):
         if callable(val) and not isinstance(val, type):
@@ -1068,118 +1088,8 @@ def _bin_func_name(op_name, l_type, r_type, parser_state=None):
 # VHDL identifier safety
 # ─────────────────────────────────────────────
 
-_VHDL_RESERVED_WORDS = frozenset(
-    {
-        "abs",
-        "access",
-        "after",
-        "alias",
-        "all",
-        "and",
-        "architecture",
-        "array",
-        "assert",
-        "attribute",
-        "begin",
-        "block",
-        "body",
-        "buffer",
-        "bus",
-        "case",
-        "component",
-        "configuration",
-        "constant",
-        "context",
-        "disconnect",
-        "downto",
-        "else",
-        "elsif",
-        "end",
-        "entity",
-        "exit",
-        "file",
-        "for",
-        "force",
-        "function",
-        "generate",
-        "generic",
-        "group",
-        "guarded",
-        "if",
-        "impure",
-        "in",
-        "inertial",
-        "inout",
-        "is",
-        "label",
-        "library",
-        "linkage",
-        "literal",
-        "loop",
-        "map",
-        "mod",
-        "nand",
-        "new",
-        "next",
-        "nor",
-        "not",
-        "null",
-        "of",
-        "on",
-        "open",
-        "or",
-        "others",
-        "out",
-        "package",
-        "parameter",
-        "port",
-        "postponed",
-        "procedure",
-        "process",
-        "property",
-        "pure",
-        "range",
-        "record",
-        "register",
-        "reject",
-        "release",
-        "rem",
-        "report",
-        "restrict",
-        "return",
-        "rol",
-        "ror",
-        "select",
-        "sequence",
-        "severity",
-        "signal",
-        "shared",
-        "sla",
-        "sll",
-        "sra",
-        "srl",
-        "strong",
-        "subtype",
-        "then",
-        "to",
-        "transport",
-        "type",
-        "unaffected",
-        "units",
-        "until",
-        "use",
-        "variable",
-        "vmode",
-        "vprop",
-        "vunit",
-        "wait",
-        "when",
-        "while",
-        "with",
-        "xnor",
-        "xor",
-    }
-)
+# The set lives in pypeline.py, which validates user names= without the compiler.
+_VHDL_RESERVED_WORDS = _pypeline_mod._VHDL_RESERVED_WORDS
 
 _CONSEC_UNDERSCORES_RE = re.compile(r"_{2,}")
 
@@ -1295,6 +1205,106 @@ def _var_ref_rd_func_name(output_c_type, base_c_type, ref_toks, covering_ref_tok
     h = hashlib.md5(input_str.encode()).hexdigest()[: C_TO_LOGIC.C_AST_NODE_HASH_LEN]
     func_name += "_" + h
     return func_name
+
+
+# ─────────────────────────────────────────────
+# Generated VHDL names (emission)
+# ─────────────────────────────────────────────
+# pypeline._NameInfo descriptions become VHDL identifiers here, once per
+# elaborated build (see docs/PY_TO_LOGIC_DESIGN.md#generated-vhdl-names).
+
+# VHDL strings (including doubled quotes), comments, extended identifiers,
+# character literals, and basic identifiers. Only the last alternative is
+# rewritten: diagnostics/string payloads and user comments stay verbatim.
+_VHDL_TOKEN = re.compile(
+    r'"(?:[^"\n]|"")*"|--[^\n]*|\\[^\\\n]*\\|\'[^\n]\'|[A-Za-z][A-Za-z0-9_]*'
+)
+
+
+class EmissionNames:
+    """One immutable base mapping and an emission memo per elaborated build."""
+
+    def __init__(self, descriptions, protected=(), reserved=()):
+        self.descriptions = descriptions
+        self.protected = set(protected)
+        protected_lower = {name.lower() for name in self.protected | set(reserved)}
+        candidates = {}
+        self.bases = {}
+        for raw, infos in sorted(descriptions.items()):
+            info = min(infos, key=lambda n: (n.module, n.qualname, n.source, n.line))
+            name = info.render(_pypeline_mod._NAME_BASE_LIMIT)
+            candidates.setdefault(name.lower(), []).append((raw, name, info))
+        for group in candidates.values():
+            for raw, name, info in group:
+                if len(group) > 1 or name.lower() in protected_lower:
+                    name = _pypeline_mod._shorten_name(
+                        name + "_h" + _pypeline_mod._name_digest(raw),
+                        _pypeline_mod._NAME_BASE_LIMIT,
+                        raw,
+                    )
+                self.bases[raw] = name
+        self.memo = {}
+        self.full = {}
+        self.outputs = set(self.bases.values()) | self.protected
+        # A composed helper name can embed a type and/or a function name.
+        # Include emitted bases as protected matches to make rendering
+        # idempotent when GET_ENTITY_NAME already formatted a reference.
+        keys = set(self.bases) | self.outputs
+        self.pattern = (
+            re.compile(
+                r"(?<![A-Za-z0-9])(?:"
+                + "|".join(
+                    re.escape(k) for k in sorted(keys, key=lambda k: (-len(k), k))
+                )
+                + r")(?![A-Za-z0-9])"
+            )
+            if keys
+            else None
+        )
+
+    def identifier(self, raw):
+        if raw in self.protected or raw in self.outputs:
+            return raw
+        if raw in self.memo:
+            return self.memo[raw]
+        full = (
+            self.pattern.sub(
+                lambda m: m[0] if m[0] in self.outputs else self.bases[m[0]], raw
+            )
+            if self.pattern
+            else raw
+        )
+        result = _pypeline_mod._shorten_name(full)
+        self.memo[raw] = result
+        self.outputs.add(result)
+        if result != raw or re.search(r"_[0-9]+CLK_[0-9a-f]+", raw):
+            self.full[result] = (raw, full)
+        return result
+
+    def text(self, text):
+        return _VHDL_TOKEN.sub(
+            lambda m: self.identifier(m[0]) if m[0][0].isalpha() else m[0], text
+        )
+
+    def source_comment(self, raw):
+        infos = self.descriptions.get(raw, ())
+        lines = []
+        for info in sorted(infos, key=lambda n: (n.source, n.line, n.qualname)):
+            source = display_source(info.source)
+            lines.append(
+                f"-- Python: {info.module}.{info.qualname} ({source}:{info.line})"
+            )
+            lines.append(f"-- Specialization: {info.render(user=False)}")
+        return "\n".join(lines) + ("\n" if lines else "")
+
+
+def display_source(source):
+    """Portable source paths in generated HDL; absolute paths remain in index."""
+    root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+    if source.startswith(root + os.sep):
+        return os.path.relpath(source, root)
+    # Synthetic sources and external designs do not embed the scratch root.
+    return os.path.basename(source)
 
 
 # ─────────────────────────────────────────────
@@ -5276,6 +5286,10 @@ class FuncElaborator:
             if callee_name in _GENERIC_INSTANCE_ALIASES
             else callee_name
         )
+        if getattr(auto_pipeline_call, "name", None) is not None:
+            # A named AUTO_PIPELINE group labels its own instances, so two
+            # names on one function stay apart in the hierarchy and reports
+            inst_label = auto_pipeline_call.name
         inst = self._inst(inst_label, expr)
         # A void callee (no -> annotation) has no RETURN_WIRE_NAME entry in wire_to_c_type --
         # tolerate that instead of KeyError, so a bare `foo()` statement call to a void
@@ -5772,10 +5786,22 @@ class FuncElaborator:
         if canonical is not None:
             info = getattr(func_for_source, "_pypeline_name_info", None)
             if info is None:
-                info = pypeline_names.describe(func_for_source, "function", closure_ns)
+                info = _pypeline_mod._describe(func_for_source, "function", closure_ns)
             self.parser_state.pypeline_name_descriptions.setdefault(key, set()).add(
                 info
             )
+            if info.user_name:
+                _record_user_name(
+                    self.parser_state,
+                    key,
+                    info,
+                    replaces=_canonical_func_name(
+                        func_for_source,
+                        closure_ns,
+                        self.module_globals,
+                        user_names=False,
+                    ),
+                )
             # Full, uncollapsed name for SYN's name_index.log -- computed only
             # when there's a factory-closure canonical name at all (a
             # top-level function's `key` comes from _top_level_func_key
@@ -6604,6 +6630,7 @@ def _register_struct_recursive(obj, parser_state, visited=None):
     info = getattr(obj, "_pypeline_name_info", None)
     if info is not None:
         parser_state.pypeline_name_descriptions.setdefault(c_name, set()).add(info)
+        _record_user_name(parser_state, c_name, info, obj)
         prior = parser_state.pypeline_type_identities.setdefault(c_name, info.identity)
         if prior != info.identity:
             raise ElaborationError(
@@ -6649,12 +6676,25 @@ def _discover_structs_from_module(module, parser_state):
         # print(f"  struct: {c_name} -> {fields}")
 
 
+def _record_user_name(parser_state, key, info, obj=None, replaces=None):
+    """Note a named function or type for the name index (see
+    parser_state.pypeline_user_names)."""
+    if not getattr(info, "user_name", ""):
+        return
+    if replaces is None:
+        replaces = getattr(obj, "_pypeline_unnamed_ctype_name", "")
+    parser_state.pypeline_user_names.setdefault(
+        key, (info.kind, info.user_name, replaces, f"{info.source}:{info.line}")
+    )
+
+
 def _register_enum(ctype_obj, parser_state):
     """Register a @enum-decorated IntEnum class in parser_state.enum_info_dict."""
     ctype_name = getattr(ctype_obj, "_pypeline_ctype_name", None)
     info = getattr(ctype_obj, "_pypeline_name_info", None)
     if info is not None:
         parser_state.pypeline_name_descriptions.setdefault(ctype_name, set()).add(info)
+        _record_user_name(parser_state, ctype_name, info, ctype_obj)
     if not ctype_name or ctype_name in parser_state.enum_info_dict:
         return
     full_ctype_name = getattr(ctype_obj, "_pypeline_ctype_canonical", None)
@@ -7706,6 +7746,9 @@ def _new_parser_state(module_globals):
     parser_state.pypeline_name_full = {}
     parser_state.pypeline_type_canonical = {}
     parser_state.pypeline_name_descriptions = {}
+    # logical key -> (kind, user name, the key it replaced, "file:line") for
+    # every function and type given a name= (SYN's name_index.log USER NAMES)
+    parser_state.pypeline_user_names = {}
     parser_state.pypeline_type_identities = {}
     parser_state.pypeline_global_wire_names = {}
     parser_state.pypeline_module_wire_keys = {}
@@ -8240,7 +8283,7 @@ def PARSE_FILE(py_file, run_syn_initial_hooks=False):
     reserved = set(parser_state.FuncLogicLookupTable) - set(
         parser_state.pypeline_name_descriptions
     )
-    names = pypeline_names.EmissionNames(
+    names = EmissionNames(
         parser_state.pypeline_name_descriptions, protected, reserved
     )
     parser_state.pypeline_emission_names = names

@@ -63,7 +63,7 @@ def SOURCE_COMMENT(name, parser_state):
         return ""
     comment = names.source_comment(name)
     if not comment:
-        import pypeline_names
+        import PY_TO_LOGIC
 
         logic = parser_state.FuncLogicLookupTable.get(name)
         meta = getattr(logic, "ast_meta", None)
@@ -72,7 +72,7 @@ def SOURCE_COMMENT(name, parser_state):
         # site a parse pass elaborated first. Naming it would make the
         # entity file differ between passes of one run.
         if meta is not None and not logic.is_c_built_in:
-            comment = f"-- Source: {pypeline_names.display_source(meta.src_file)}:{meta.line}\n"
+            comment = f"-- Source: {PY_TO_LOGIC.display_source(meta.src_file)}:{meta.line}\n"
     return comment
 
 

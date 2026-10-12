@@ -2571,6 +2571,23 @@ def SYNTHESIS_STORE_PRUNE(days):
             if stale:
                 shutil.rmtree(dirpath, ignore_errors=True)
                 removed += 1
+    # The latency memory copies (SWEEP.LATENCY_MEMORY_STORE_PATH): one small
+    # file per output directory, touched by every build that reads or writes it
+    for dirpath, _dirnames, filenames in os.walk(
+        os.path.join(SYNTHESIS_STORE_DIR, "latency")
+    ):
+        for filename in filenames:
+            path = os.path.join(dirpath, filename)
+            try:
+                stale = os.path.getmtime(path) < cutoff
+            except OSError:
+                continue
+            if stale:
+                try:
+                    os.remove(path)
+                    removed += 1
+                except OSError:
+                    pass
     return removed
 
 
@@ -3502,13 +3519,34 @@ def WRITE_NAME_INDEX_LOG(parser_state):
         lines.append(f"  {type_name}")
         lines.append(f"    full:   {type_canonical[type_name]}")
 
+    # Present only when the design gave something a name= (see
+    # docs/SYN_DESIGN.md#build-output-name_indexlog)
+    user_names = getattr(parser_state, "pypeline_user_names", {})
+    named_tags = pypeline.USER_NAMED_AUTO_TAGS()
+    if user_names or named_tags:
+        lines.extend(["", "USER NAMES"])
+        for key, (kind, user_name, replaces, source) in sorted(user_names.items()):
+            lines.append(f"  {user_name} ({kind})")
+            lines.append(f"    logical:  {key}")
+            if names is not None:
+                lines.append(f"    vhdl:     {names.identifier(key)}")
+            if replaces:
+                lines.append(f"    replaces: {replaces}")
+            lines.append(f"    source:   {source}")
+        for kind, user_name, key, site in named_tags:
+            lines.append(f"  {user_name} ({kind})")
+            lines.append(f"    key:      {key}")
+            lines.append(f"    source:   {site}")
+
     if names is not None:
         lines.extend(["", "SOURCE DESCRIPTIONS"])
         seen_descriptions = set()
 
         def describe(info, indent="    "):
             key = (info.identity, info.source, info.line, info.kind)
-            lines.append(f"{indent}{info.kind}: {info.render()}")
+            lines.append(f"{indent}{info.kind}: {info.render(user=False)}")
+            if info.user_name:
+                lines.append(f"{indent}user name: {info.user_name}")
             lines.append(
                 f"{indent}source: {info.source}:{info.line} ({info.module}.{info.qualname})"
             )

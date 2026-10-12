@@ -1293,7 +1293,7 @@ def make_auto_pipeline_ram(
     ram_exec_globals(ns, elem_t, out_t, *in_ts)
     init = cfg.init_desc
     ram = py._exec_generated_func(name, source, ns, folder=RAM_GENERATED_FOLDER)
-    info = py._names.replace(
+    info = py._replace_name_info(
         ram._pypeline_name_info,
         params=(("implementation", plan.fingerprint),) + ram._pypeline_name_info.params,
     )

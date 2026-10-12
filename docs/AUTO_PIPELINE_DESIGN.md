@@ -384,7 +384,8 @@ repeat-the-sweep one:
 
 1. **Pass 1 (bootstrap, identical to a normal build):** `PARSE_FILE` with an empty
    latency cache (`.latency` reads 0, or a call site's fixed `latency=N` /
-   `start_latency=S`) → path delays → full throughput
+   `start_latency=S`, or a starting latency from the
+   [latency memory or `--latency_hints`](SWEEP_DESIGN.md#5-latency-memory)) → path delays → full throughput
    sweep → `HARVEST_AUTO_PIPELINE_LATENCIES` walks the finished
    TimingParamsLookupTable and groups each AUTO_PIPELINE-tagged instance's
    `GET_TOTAL_LATENCY` by the tag's canonical key (a pure in-memory walk; no
@@ -399,7 +400,8 @@ repeat-the-sweep one:
    value it read already equals the stage count harvested for that key, the
    loop ends here. The second check compares `pypeline.AUTO_PIPELINE_SERVED_LATENCIES()`
    with the harvest using `AUTO_PIPELINE_SERVED_VALUES_MATCH`, and holds for fixed
-   `latency=` call sites, a correct `start_latency=` guess, or a discovered 0. It
+   `latency=` call sites, a correct `start_latency=` guess or remembered latency, or a
+   discovered 0. It
    prints "skipping pin-and-confirm pass 2". Either way the loop ends here — the cache couldn't have influenced the elaborated design, so
    pass 1's result is final. Cost is exactly the classic single parse + single
    sweep. `.c` designs never enter the loop at all (`AUTO_PIPELINE` is
@@ -578,17 +580,30 @@ delay axis, and the container can't count the region's latency.
 
 - **Register count K.**
   - Fixed: K = N.
-  - `start_latency` on its first iteration: K = S. The region's private budget divisor
+  - A start on its first iteration: K = S, where S is `constraint.start()`, the
+    tag's seed from the latency memory or a hints file, else its `start_latency`. A
+    capped region with a seed starts there too. The region's private budget divisor
     `region.scale` is calibrated so that unchanged knobs keep reproducing S. A
     region whose landscape already holds mini-sweep locks (`Segment.LOCKED`,
     e.g. carried into a later pass) skips this bootstrap: S more cuts on top
-    of the locks would over-pipeline it.
+    of the locks would over-pipeline it. A seed also makes an unconstrained tag a
+    start-only region (`AutoPipelineLatency.is_region`), as if it had that
+    `start_latency=`. The exceptions are a callee that holds another AUTO_PIPELINE
+    or can't take added latency, which `COLLECT_AUTO_PIPELINE_REGIONS` leaves as
+    unconstrained as its source. `SWEEP.GUARD_LATENCY_SEEDS` first demotes a seed
+    recorded for other hardware, part, tool or goal to a served-only value
+    ([SWEEP_DESIGN.md §5](SWEEP_DESIGN.md#5-latency-memory)). In pass 2 and later
+    the harvested cache supersedes the seed (`constraint.seed` is `None`), so every
+    region again starts from its source constraint.
   - Otherwise: the planner's own count for the plan's clock period, with the budget
     divided by `global_scale * region.scale` and in-region weights including
     `func_delay_scale`, capped at M.
 
   Instances that share a canonical key form one group and are planned to one K, so the
-  harvested `.latency` can't diverge between them.
+  harvested `.latency` can't diverge between them. `AUTO_PIPELINE(func, name=)` gives
+  a group its own key, so two names on one function are two groups planned
+  independently. Their instances are labeled by group name, and duplicate-call
+  collapse never merges two groups.
 - **Count-targeted placement (`COUNT_TARGETED_PLACEMENTS`).** Bisect the budget given to
   `SWEEP.PLAN_PIPELINE_PLACEMENTS` until it yields K; cut count never increases as the budget
   grows. The result is the planner's own tightest-stage placement for exactly K
@@ -952,8 +967,7 @@ approaches its timing limit without splitting. Placement seeds and register
 overhead matter; the search measures candidates instead of assuming that
 adding stages always helps.
 
-The Vivado-support regression rerun on 2026-10-10 uses the current fixture's
-dense irregular initialization. Its 64K x 32 seed-1 results are **81.87, 84.83,
+The current regression fixture uses dense irregular initialization. Its 64K x 32 seed-1 results are **81.87, 84.83,
 and 80.44 MHz** at latencies 3, 7, and 9, with **128 DP16KD** at every point.
 The seven-cycle candidate improves timing by 3.6% over three cycles; adding
 another two cycles loses that gain. The historical fixture used sparse

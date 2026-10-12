@@ -1314,7 +1314,7 @@ inside factory closures (like `def concat` inside `make_concat`) are deliberatel
 **Canonical function identity and readable names:**
 
 Factory functions have two names with different jobs. `_canonical_func_name` supplies
-an internal `FuncLogicLookupTable` key; `pypeline_names.EmissionNames` supplies the
+an internal `FuncLogicLookupTable` key; `EmissionNames` supplies the
 VHDL presentation after elaboration. Python aliases such as `bcast4` are call-site
 names, not function identities.
 
@@ -1333,6 +1333,17 @@ contribute their structural identity, including nested payload fields and dimens
 Callable identity uses code, defaults and closure values without process addresses;
 an AUTO_PIPELINE tag contributes its constructor latency constraint (nothing when
 unconstrained) but never its discovered `.latency`, which changes during pin-and-confirm.
+A named tag (`AUTO_PIPELINE(func, name=)`) contributes its name, `latency=` and
+`max_latency=` instead, and `_callable_canonical_name` encodes it as
+`AUTO_PIPELINE_<name><suffix>`.
+
+**User names.** A function decorated `@hw_func(name=...)` inside a factory has the
+logical key `<name>_s<digest>`. `_finish` computes the key above and returns
+`pypeline._named_key(name, key)`, so the digest covers the complete unnamed key. With
+`user_names=False` it returns the unnamed key instead: `name_index.log`'s USER NAMES
+section shows it as the key the name replaced (`parser_state.pypeline_user_names`,
+filled by `_record_user_name`). Named structs and enums carry their key from the
+decorator (see [pypeline_DESIGN.md](pypeline_DESIGN.md#user-names-name)).
 
 `capture_factory_args` runs at decoration time and walks enclosing factory frames,
 skipping decorator plumbing and comprehension frames. It captures parameters even
@@ -1362,7 +1373,8 @@ key. For example, `make_fifo(uint32_t, 9)` can retain `depth_9` even when the fa
 rounds its storage capacity to 16; nested callable descriptions retain the wrapped
 function's name. See [Generated VHDL names](#generated-vhdl-names) for concrete output
 examples and limits. Hardware source does not need manual `__name__` or `__qualname__`
-assignments, and those overrides are unsupported.
+assignments, and those overrides are unsupported: a factory that wants its own name for
+what it produces passes `name=` to `@hw_func` / `@struct` / `@enum`.
 
 ### Specialised Types
 
@@ -3785,9 +3797,7 @@ compiler assigns `__qualname__ == __name__` with no `.<locals>.` marker by const
 "Closure Factory Pattern" above) is therefore naturally `False`, so naming/dedup
 already goes through the plain top-level path (`_top_level_func_key` →
 `_hw_func_name`), using exactly the name written into the generated `def` line — no
-post-hoc `__name__`/`__qualname__` manipulation is needed (contrast with
-`make_quarter_round` in wireguard-fpga's `chacha20.py`, which *does* need that
-override, precisely because it defines a genuine nested closure).
+post-hoc `__name__`/`__qualname__` manipulation is needed.
 
 **Packing (`to_bytes`)**, per scalar leaf at byte offset `base`, width `w`,
 `k = ceil(w / 8)`:
@@ -5261,7 +5271,7 @@ the tracked design read.
 
 On a pin-and-confirm pass 2, `PARSE_FILE` re-executes the design with
 `pypeline.SET_AUTO_MULTI_CYCLE_LATENCY_CACHE` installed, and the tag resolves to the built count.
-The resolved count is part of the tag's `pypeline_names` identity, so the function holding
+The resolved count is part of the tag's naming identity (`pypeline._stable_key`), so the function holding
 the registers gets a new canonical name. Its content (the handshake constant) changed, so
 a skip-if-exists entity file from pass 1 is never reused.
 `auto_multi_cycle_unit_test.py::test_elaboration_and_cache_reparse` checks both the count and the
@@ -5649,11 +5659,14 @@ The mapping is automatic and is also recorded in each build's `name_index.log`.
 
 ### Generated VHDL names
 
-`pypeline_names.py` is shared by the runtime decorators and compiler. `NameInfo`
-snapshots a declaration's symbol, module, enclosing scopes, file/line, parameters and
-nested field/type descriptions. `@struct`, `@enum`, `@interface` and hardware-function
+Descriptions come from `pypeline.py`'s naming metadata (see
+[pypeline_DESIGN.md](pypeline_DESIGN.md#naming-metadata)). A `_NameInfo` snapshots a
+declaration's symbol, module, enclosing scopes, file/line, parameters and nested
+field/type descriptions. `@struct`, `@enum`, `@interface` and hardware-function
 decorators capture these while the original Python objects and factory arguments are
-available. Derived interface records retain their interface origin and `fwd`, `fb` or
+available. Rendering them into VHDL identifiers is this module's job:
+`EmissionNames`, `_VHDL_TOKEN` and `display_source` live in the "Generated VHDL names
+(emission)" section of `PY_TO_LOGIC.py`. Derived interface records retain their interface origin and `fwd`, `fb` or
 `wire` role. Generated interface functions, cast/bytes helpers and AUTO_FSM functions
 retain the factory or user function that caused their generation, alongside the
 synthetic source available in the build index.
@@ -5688,7 +5701,11 @@ uses whole underscore-delimited tokens and preserves terminal timing, `_top`,
 global-record direction and conversion-role suffixes where applicable. Hashes provide
 uniqueness; the readable prefix is never used as structural identity. Case-insensitive
 base collisions are resolved deterministically with a logical-key digest, independent
-of discovery order. Structurally shared types choose a deterministic source description
+of discovery order. A `_NameInfo` with a `user_name` (a `name=` on `@hw_func`, `@struct`
+or `@enum`) renders as that name verbatim. The same rule hashes it apart from another
+name, a natural key (`reserved`) or a protected `@MAIN` or port name, by adding
+`_h<digest of the logical key>`. Its `-- Specialization:` comment still shows the
+automatic description (`render(user=False)`). Structurally shared types choose a deterministic source description
 and retain all origins in the index.
 
 **Emitted names are unique within one pass, not across the passes of a run.** Each
@@ -5803,6 +5820,17 @@ callee's own canonical `func_name` instead — a factory's own pass-through para
 source) says nothing about what's actually instantiated, and was the 6th most common
 instance label in a real build's `module_instances.log` (4247 occurrences, all bare
 `func`). The call-site location suffix still pins the exact call either way.
+
+**Named AUTO_PIPELINE groups:** a call through `AUTO_PIPELINE(func, name=...)` is labeled
+with the group name, whatever the call-site alias: `poly1305_body_encrypt[<loc_str>]`. Two
+groups over one function stay apart in the hierarchy, in timing reports and in
+`name_index.log`, while both instantiate the function's own entity.
+
+**Duplicate calls.** `C_TO_LOGIC.TRIM_COLLAPSE_FUNC_DEFS_RECURSIVE` collapses identical
+calls (same function, same input drivers) into one `_DUPLICATE_<hash>` instance. The
+calls' AUTO_PIPELINE key and constraint and AUTO_FSM key are part of what must match.
+Two latency groups, or a tagged and an untagged call, are never merged. A collapsed
+instance keeps its group's tags (`Logic.COPY_SUBMODULE_INFO`).
 
 `<loc_str>` (`_loc_str`) is `<file_base>_l<line>_c<col>`, plus `_el<end_line>` only when
 the node spans more than one line (omitted for the common single-line case, since it would

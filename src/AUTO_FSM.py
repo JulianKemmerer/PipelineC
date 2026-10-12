@@ -4260,15 +4260,15 @@ def BUILD_AUTO_FSM_FUNC(tag, parser_state, elaborator=None):
             AUTO_COMB_OPT.prepare(tag.func, parser_state, elaborator, strict=False, objective="delay")
         name, src, extra_globals = GENERATE_FSM_SOURCE(tag, schedule, parser_state)
         fn = AUTO._exec_generated(name, src, extra_globals)
-    import pypeline_names
     import inspect
+    import pypeline
 
     original = inspect.unwrap(tag.func)
-    origin = getattr(original, "_pypeline_name_info", None) or pypeline_names.describe(
+    origin = getattr(original, "_pypeline_name_info", None) or pypeline._describe(
         original, "function"
     )
     symbol = "auto_fsm_" + origin.symbol + ("_comb" if schedule is None else "")
-    info = pypeline_names.replace(
+    info = pypeline._replace_name_info(
         origin,
         symbol=symbol,
         params=origin.params + (("max_latency", str(tag.max_latency)),),

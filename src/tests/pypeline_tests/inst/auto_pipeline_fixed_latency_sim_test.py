@@ -42,6 +42,9 @@ FIXED3 = AUTO_PIPELINE(plus_seven, latency=3)
 FIXED0 = AUTO_PIPELINE(plus_seven, latency=0)
 STARTED = AUTO_PIPELINE(plus_seven, start_latency=2, max_latency=4)
 CAPPED = AUTO_PIPELINE(plus_seven, max_latency=1)
+# A named group: the same contract, keyed by its name (no compiler needed)
+NAMED2 = AUTO_PIPELINE(plus_seven, latency=2, name="plus_seven_two")
+assert NAMED2.latency == 2 and NAMED2.canonical_key == "plus_seven_two_latency_2"
 
 # Known at construction, no build needed
 LAT3 = FIXED3.latency
@@ -67,6 +70,11 @@ def through_started(x: uint16_t) -> uint16_t:
 @hw_func
 def through_capped(x: uint16_t) -> uint16_t:
     return CAPPED(x)
+
+
+@hw_func
+def through_named2(x: uint16_t) -> uint16_t:
+    return NAMED2(x)
 
 
 @hw_func
@@ -103,6 +111,12 @@ def test_fixed_latency_delay_line():
     assert outs == [0, 0, 0, 8, 9, 10, 11, 12], outs
 
 
+def test_named_fixed_latency_delay_line():
+    sim_reset()
+    outs = [int(sim_call(through_named2, i)) for i in range(1, 7)]
+    assert outs == [0, 0, 8, 9, 10, 11], outs
+
+
 def test_zero_fixed_and_unfixed_are_passthrough():
     for func in (through_fixed0, through_started, through_capped):
         sim_reset()
@@ -126,6 +140,7 @@ def test_reset_clears_delay_line():
 
 if __name__ == "__main__":
     test_fixed_latency_delay_line()
+    test_named_fixed_latency_delay_line()
     test_zero_fixed_and_unfixed_are_passthrough()
     test_nested_call_sites_keep_separate_delay_lines()
     test_reset_clears_delay_line()
