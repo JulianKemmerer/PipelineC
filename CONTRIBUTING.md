@@ -1,7 +1,7 @@
-How to contribute to PipelineC
+How to contribute to PypelineC
 =====================================
 
-Thank you for considering contributing to the PipelineC project!
+Thank you for considering contributing to the PypelineC project!
 
 ```
 “We do these things not because they are easy 
@@ -9,13 +9,13 @@ but because we thought they would be easy”
                            - programming meme
 ```
 
-# Pre-contributors (How did it get like _this_?)
+# PipelineC pre-contributors 2014~2026 (How did it get like _this_?)
 
 Back in `2014` I was looking for a hobby project, something to work on a few hours per week. Something not too hard but would also be beneficial to myself and hopefully others in some way (I am an FPGA engineer). I estimated that implementing some C -> VHDL with a little pipelining would take a few months, maybe a year at most...
 
 The code would fit all one file - one quick python script making use of an excellent python library `pycparser` for all the _real_ work around dealing with C language. How hard could it be?
 
-There was no real plan in the design because it seemed so simple... and I was off writing a quick script with a handful of big functions, so I gave them all big capitalized names, `PARSE_FILE`, `WRITE_VHDL`, etc... 
+There was no real plan in the design because it seemed so simple... and I was off writing a quick script with a handful of big functions, so I gave them all big capitalized names, `PARSE_FILE`, `WRITE_VHDL`, etc...
 
 I am familiar with large scale industry programming practices - good style+formatting, unit tests, documentation, continuous integration, code reviews, thought out organization into classes/interfaces/generators/factories, object oriented best practices, blah blah...
 
@@ -31,48 +31,59 @@ But nothing was ever good enough for anyone (including myself) it seems. And now
 
 `- Julian`
 
-
-# General Information
+# What to change?
 
 * Looking for something to work on? Start with the [open issues inventory](docs/issues_inventory.md). It lists every open [issue](https://github.com/JulianKemmerer/PipelineC/issues), most serious first, with how to reproduce it, where to look in the code, and any workaround.
 * Fully expect to begin with [discussions](https://github.com/JulianKemmerer/PipelineC/discussions) about changes.
-  * The code base is large and only loosely structured. The design docs described under [Architecture](#architecture) are most of its documentation.
+  * The codebase is large and loosely structured. The design documents in `docs/` are the primary architectural record.
   * You will almost certainly need some pointing in the right direction - happy to help.
-* Move onto PRs w/ code once the idea is making sense
-  * Try to keep PRs small/compartmentalized for easy review
+* Move onto PRs with code once the implementation direction is clear.
+  * Keep PRs small and compartmentalized for review.
 
-# Architecture
+# When making changes
 
-See the [How does the compiler work?](https://github.com/JulianKemmerer/PipelineC/wiki/How-does-the-compiler-work%3F) page.
+Before making changes in the PipelineC repo please read this entire section.
 
-Most of the compiler's main modules also have an LLM-generated design document in [`docs/`](docs/), named after the module: `src/SWEEP.py` is described in [`docs/SWEEP_DESIGN.md`](docs/SWEEP_DESIGN.md), `src/PY_TO_LOGIC.py` in [`docs/PY_TO_LOGIC_DESIGN.md`](docs/PY_TO_LOGIC_DESIGN.md), and so on. Read the one for the code you are changing: it explains how the module works and where a change belongs. The C front end (`src/C_TO_LOGIC.py`, `src/C_TO_FSM.py`) and the synthesis-tool backends do not have one yet.
+See the [what the tool does](docs/README.md#what-the-tool-does) section for additional context.
 
-# Tests
+## Module-to-Documentation Coupling
 
-[`docs/pypeline_TESTS.md`](docs/pypeline_TESTS.md) describes the test suites under `src/tests/pypeline_tests/`: what each category checks and how to run them with `run_all.py`. The C front end has a smaller smoke-build script, `src/tests/c_tests/test_builds.sh`.
+Most of the compiler's main modules have an LLM-generated design document in [`docs/`](docs/). Read the one for the code you are changing: it explains how the module works and where a change belongs. If you modify a source file, you must find and update all related design documents.
 
-# Pre-Commit
+## Documentation Integrity Rules
 
-We use ruff for formatting and linting (currently most lint rules are disabled, we are enabling them incrementally as the codebase is cleaned up). To ensure this is done, we use a pre-commit hook.
+* **Audience Separation:** Keep user guides (`docs/pypeline_guide.md`, top-level `README.md`) focused strictly on user workflows, practical CLI usage, and functional explanations in plain terms. Implementation details, intermediate representation structures, and internal memory schemas belong exclusively in the respective `docs/<MODULE>_DESIGN.md`.
+* **Edit In-Place (No Appendices):** Locate the exact section that already covers the subject and edit it directly. Never append duplicate summary paragraphs or trailing notes to the bottom of files or under historical sections.
+* **Exhaustive Reference Updating:** When changing CLI flags, configuration variables, or generated output paths, grep across all files in `docs/` and `README.md` to update every occurrence (e.g., flag tables and artifact summaries in `docs/README.md`).
+* **Sanitize Paths and Validate Links:** Never commit machine-local absolute paths into repository documentation or issue logs. Inspect all markdown anchors manually; do not assume automated checks catch formatting bugs.
+* **Issues Inventory Standards:** If planning to create a GitHub issue `docs/issues_inventory.md` must adhere to standard issue formatting: Title, What Happens (with a minimal reproducible code snippet), Why (root cause), Reproduce command, Fix Directions, and Workarounds.
 
-You can install Poetry (for dev dependency management) via https://python-poetry.org/docs/#installation. Once you have poetry installed, you can run 'poetry install' to get the dev dependencies installed. From there, you must run 'poetry run pre-commit install' once before making a commit. This will ensure that the pre-commit hook gets run when you make any commit. If the lint fails, follow the guidance given by Ruff (you can look up the name of the error, such as E721, online, if necessary to understand) to fix the lint error.
+## Implementation and Code Hygiene
 
-Cheers!
+* **Plan Bounds:** Implement agreed architectural designs faithfully. Do not introduce unrequested heuristic bounds, arbitrary floors, or behavioral limits without explicit confirmation and targeted test coverage.
+* **Parameter Handling:** Do not accept unused parameters, configuration flags, or state arguments; wire all received parameters into execution paths or remove them.
+* **Module Globals:** Document every module global variable with an explanatory single-line comment matching adjacent conventions.
+* **Console Noise:** Deduplicate compiler informational messages and warnings (`NOTE: ...`) so they display once per build phase or session rather than repeating across every candidate pass or iteration.
+
+## Verification and Testing
+
+Consult [`docs/pypeline_TESTS.md`](docs/pypeline_TESTS.md) for full descriptions of test categories, test suite layouts, and runner options.
+
+### Test Suite Structure and Reproducers
+
+* **Standalone Reproducers:** Place regression tests and known-issue reproducers in `src/tests/pypeline_tests/inst/` rather than inlining them directly into test drivers. Register each new file inside the appropriate runner (e.g., `known_issues_tests.py`, `unit_tests.py`, `build_report_tests.py`) accompanied by an explanatory registration comment.
+* **Metadata Accuracy:** Keep test header comments and registration docstrings in sync with actual build numbers, test scenarios, and expected runtime durations.
+* **Long Hardware Verification:** When validating long runs (e.g., iterative timing sweeps), avoid polling waiting to finish, instead let the test run in the background without constant polling.
+
+## Pre-Commit and Formatting
+
+We use Ruff for linting and formatting (lint rules are being enabled incrementally as the codebase is cleaned up).
 
 # Future Goals
 
-This section is painful because it is essentially enabling this whole multi-years long hackathon to continue - its both exciting and exhausting.
+This section is painful because it is essentially enabling this whole multi-years long hackathon to continue - its both exciting and exhausting, especially with LLMs in the mix.
 
-First, see the [open issues inventory](docs/issues_inventory.md), which ranks the existing [issues](https://github.com/JulianKemmerer/PipelineC/issues). Some are pretty easy for new folks to do.
-
-But generally, in kinda easier first order:
-
-* Improved support for [FSM style](https://github.com/JulianKemmerer/PipelineC/wiki/FSM-Style) code
-  * is the most hacky of recent hacking - another layer of dumb code gen
-* Template types+functions for [~C++ like syntax](https://github.com/JulianKemmerer/PipelineC/discussions/32)
-  * Open to other syntaxs+languages Rust, Python, Zig, Go...
-* Improvements to auto-pipelining, maybe with modes to also track area/resources (not just timing as is)
-* 'Just compile all the user code with a C compiler for fast simulation' built in
-* Integration with modern hardware compiler framework/intermediates+tools like [CIRCT](https://circt.llvm.org/)
-  * Would enable/eliminate alot of above features/issues.
-
+Review the [open issues inventory](docs/issues_inventory.md) for ranked, accessible entry tasks. Major architectural directions include:
+* Improved support for [FSM style](https://github.com/JulianKemmerer/PipelineC/wiki/FSM-Style) code generation.
+* Enhancements to auto-pipelining to track FPGA area/resources alongside timing.
+* Integration with modern hardware compiler frameworks and intermediate representations such as [CIRCT](https://circt.llvm.org/).

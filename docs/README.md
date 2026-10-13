@@ -7,8 +7,8 @@ We are happy to help, reach out: [PipelineC Discord](https://discord.gg/Aupm3DDr
 ## Table of Contents
 
 1. [Quick Start](#quick-start): Install, Simulate, Generate VHDL
-2. [Overview](#overview): Semantics, Ports and Clocks, Automatic Implementations
-3. [What the Tool Does](#what-the-tool-does): Elaboration, Timing Feedback, HLS-like Adjustments, Reports
+2. [Overview](#overview): Semantics, Ports and Clocks, HLS-like Features
+3. [What the Tool Does](#what-the-tool-does): Elaboration, Timing Feedback, HLS-like Iterations, Reports
 4. [Getting Started on a Dev Board](#getting-started-on-a-dev-board): Board Files, Clocks, Wrapper HDL, Example Projects
 5. [Tools & CLI](#tools--cli): Commands, Design Parameters, Simulation, Synthesis Backends, Output Files
 6. [Set up your tools](#set-up-your-tools): Synthesis and Simulation Tool Installs, Environment Variables
@@ -452,123 +452,9 @@ while `--cocotb --ghdl`, `--verilator` and others simulate the generated VHDL (s
 [Simulation](#simulation)). How:
 [pypeline_sim_DESIGN.md](pypeline_sim_DESIGN.md).
 
-### Synthesis and place-and-route reports
+### Produces Bitstreams
 
-Synthesis converts HDL into a netlist of FPGA elements, and place and route finds
-positions for those elements and connects them. The timing `pypelinec` reads comes from
-the same reports you will see when building a bitstream for a board, so it pays to be
-familiar with them. The examples below come from the
-[dev board examples](#getting-started-on-a-dev-board) and the counter above.
-
-#### Resources
-
-Synthesis tells you how your HDL compiled down into FPGA resources. The
-[pico-ice blinky](../examples/pypeline/pico_ice/top.py) uses a handful of lookup tables
-(LUTs), carry logic and flip-flops (FFs), plus the PLL:
-
-* [yosys](https://github.com/YosysHQ/yosys)'s `stat` command prints a resource summary
-  like so:
-
-```
-   Number of cells:                120
-     $scopeinfo                     11
-     SB_CARRY                       30
-     SB_DFFESR                       1
-     SB_DFFSR                       32
-     SB_LUT4                        45
-     SB_PLL40_PAD                    1
-```
-
-* [nextpnr](https://github.com/YosysHQ/nextpnr) prints something similar:
-
-```
-Info: Device utilisation:
-Info:              ICESTORM_LC:      49/   5280     0%
-Info:             ICESTORM_RAM:       0/     30     0%
-Info:                    SB_IO:      26/     96    27%
-Info:                    SB_GB:       2/      8    25%
-Info:             ICESTORM_PLL:       1/      1   100%
-...
-```
-
-* Vivado can be asked to `report_utilization`, which writes full reports, ex. the
-  [Arty example](../examples/pypeline/arty)'s `utilization.rpt`, with sections like so:
-
-```
-+------------+------+---------------------+
-|  Ref Name  | Used | Functional Category |
-+------------+------+---------------------+
-| FDRE       |   67 |        Flop & Latch |
-| LUT5       |   45 |                 LUT |
-| LUT6       |   22 |                 LUT |
-| OBUF       |   17 |                  IO |
-| LUT4       |   13 |                 LUT |
-| CARRY4     |    8 |          CarryLogic |
-| LUT3       |    4 |                 LUT |
-| LUT2       |    2 |                 LUT |
-| LUT1       |    2 |                 LUT |
-| MMCME2_ADV |    1 |               Clock |
-| IBUF       |    1 |                  IO |
-| BUFG       |    1 |               Clock |
-+------------+------+---------------------+
-```
-
-#### Timing
-
-Part of solving the place and route problem is making sure the signals propagating
-between FPGA elements still meet the
-[timing requirements](https://nandland.com/lesson-12-setup-and-hold-time/) of the
-circuit, imposed by your selected operating frequency (FMAX) target. Sometimes this is not
-possible: the design has "failed to meet timing".
-
-* For the counter at 400 MHz above, [nextpnr](https://github.com/YosysHQ/nextpnr)'s log
-  (`<out_dir>/top/open_tools_*.log`) reports:
-
-```
-Warning: Max frequency for clock 'clk_400p0$SB_IO_IN_$glb_clk': 68.29 MHz (FAIL at 400.00 MHz)
-```
-
-  followed by the path in the design with the worst timing:
-
-```
-Info: Critical path report for clock 'clk_400p0$SB_IO_IN_$glb_clk' (posedge -> posedge):
-Info:       type curr  total name
-Info:   clk-to-q  1.39  1.39 Source counter_0clk_ae495f72.bin_op_plus_counter_py_l25_c4_ec24.left_SB_DFF_Q_15_DFFLC.O
-Info:    routing  3.60  4.99 Net counter_debug[0]$SB_IO_OUT (11,8) -> (11,1)
-...
-Info:      setup  1.23  14.64 Source counter_0clk_ae495f72.bin_op_plus_counter_py_l25_c4_ec24.left_SB_DFF_Q_DFFLC.I0
-Info: 8.06 ns logic, 6.58 ns routing
-```
-
-  Names point back to the Pypeline source: `counter_0clk_ae495f72` is an instance of the
-  `counter` function, and `bin_op_plus_counter_py_l25_c4` is the `+` at line 25, column 4
-  of `counter.py` (`the_counter_reg += 1`). `name_index.log` maps every generated name
-  to its source (see [Generated files and reports](#generated-files-and-reports)). A
-  board build that misses timing stops the same way, ex. the pico-ice Makefile with
-  `PLL_CLK_MHZ=100.0`:
-  `ERROR: Max frequency for clock 'pll_clk_$glb_clk': 59.73 MHz (FAIL at 100.00 MHz)`.
-
-* When Vivado fails to meet the timing requirements, its implementation log shows:
-
-```
-CRITICAL WARNING: [Timing 38-282] The design failed to meet the timing requirements. Please see the timing summary report for details on the timing violations.
-```
-
-  and the timing summary shows a failed, red, timing value:
-
-  ![Vivado timing summary showing a negative worst negative slack in red](https://github.com/user-attachments/assets/6bfc36fc-9c38-47e9-998b-375ac95f23a0)
-
-  `report_timing_summary` (the Arty example writes `timing_summary.rpt`) and
-  `report_timing` break down the paths with the worst timing. A design that meets timing
-  has a positive worst negative slack (WNS), like the Arty example at 25 MHz:
-
-```
-    WNS(ns)      TNS(ns)  TNS Failing Endpoints  TNS Total Endpoints      WHS(ns)      THS(ns)  THS Failing Endpoints  THS Total Endpoints
-    -------      -------  ---------------------  -------------------      -------      -------  ---------------------  -------------------
-     35.508        0.000                      0                   75        0.178        0.000                      0                   75
-
-All user specified timing constraints are met.
-```
+Supply a `--pins` pin-constraint file used for the final implementation (see [Full bitstream builds](#full-bitstream-builds---pins)).
 
 ## Getting Started on a Dev Board
 
@@ -737,6 +623,123 @@ instantiated in the same area of VHDL or Verilog as your original blinking demo.
 output clock(s) from the PLL can be used once the PLL's "locked" signal is asserted.
 Typically "not locked" is used as a reset condition, holding the design in reset until
 the PLL is stable.
+
+#### Synthesis and place-and-route reports
+
+Synthesis converts HDL into a netlist of FPGA elements, and place and route finds
+positions for those elements and connects them. The timing `pypelinec` reads comes from
+the same reports you will see when building a bitstream for a board, so it pays to be
+familiar with them.
+
+##### Resources
+
+Synthesis tells you how your HDL compiled down into FPGA resources. The
+[pico-ice blinky](../examples/pypeline/pico_ice/top.py) uses a handful of lookup tables
+(LUTs), carry logic and flip-flops (FFs), plus the PLL:
+
+* [yosys](https://github.com/YosysHQ/yosys)'s `stat` command prints a resource summary
+  like so:
+
+```
+   Number of cells:                120
+     $scopeinfo                     11
+     SB_CARRY                       30
+     SB_DFFESR                       1
+     SB_DFFSR                       32
+     SB_LUT4                        45
+     SB_PLL40_PAD                    1
+```
+
+* [nextpnr](https://github.com/YosysHQ/nextpnr) prints something similar:
+
+```
+Info: Device utilisation:
+Info:              ICESTORM_LC:      49/   5280     0%
+Info:             ICESTORM_RAM:       0/     30     0%
+Info:                    SB_IO:      26/     96    27%
+Info:                    SB_GB:       2/      8    25%
+Info:             ICESTORM_PLL:       1/      1   100%
+...
+```
+
+* Vivado can be asked to `report_utilization`, which writes full reports, ex. the
+  [Arty example](../examples/pypeline/arty)'s `utilization.rpt`, with sections like so:
+
+```
++------------+------+---------------------+
+|  Ref Name  | Used | Functional Category |
++------------+------+---------------------+
+| FDRE       |   67 |        Flop & Latch |
+| LUT5       |   45 |                 LUT |
+| LUT6       |   22 |                 LUT |
+| OBUF       |   17 |                  IO |
+| LUT4       |   13 |                 LUT |
+| CARRY4     |    8 |          CarryLogic |
+| LUT3       |    4 |                 LUT |
+| LUT2       |    2 |                 LUT |
+| LUT1       |    2 |                 LUT |
+| MMCME2_ADV |    1 |               Clock |
+| IBUF       |    1 |                  IO |
+| BUFG       |    1 |               Clock |
++------------+------+---------------------+
+```
+
+##### Timing
+
+Part of solving the place and route problem is making sure the signals propagating
+between FPGA elements still meet the
+[timing requirements](https://nandland.com/lesson-12-setup-and-hold-time/) of the
+circuit, imposed by your selected operating frequency (FMAX) target. Sometimes this is not
+possible: the design has "failed to meet timing".
+
+* For the counter at 400 MHz above, [nextpnr](https://github.com/YosysHQ/nextpnr)'s log
+  (`<out_dir>/top/open_tools_*.log`) reports:
+
+```
+Warning: Max frequency for clock 'clk_400p0$SB_IO_IN_$glb_clk': 68.29 MHz (FAIL at 400.00 MHz)
+```
+
+  followed by the path in the design with the worst timing:
+
+```
+Info: Critical path report for clock 'clk_400p0$SB_IO_IN_$glb_clk' (posedge -> posedge):
+Info:       type curr  total name
+Info:   clk-to-q  1.39  1.39 Source counter_0clk_ae495f72.bin_op_plus_counter_py_l25_c4_ec24.left_SB_DFF_Q_15_DFFLC.O
+Info:    routing  3.60  4.99 Net counter_debug[0]$SB_IO_OUT (11,8) -> (11,1)
+...
+Info:      setup  1.23  14.64 Source counter_0clk_ae495f72.bin_op_plus_counter_py_l25_c4_ec24.left_SB_DFF_Q_DFFLC.I0
+Info: 8.06 ns logic, 6.58 ns routing
+```
+
+  Names point back to the Pypeline source: `counter_0clk_ae495f72` is an instance of the
+  `counter` function, and `bin_op_plus_counter_py_l25_c4` is the `+` at line 25, column 4
+  of `counter.py` (`the_counter_reg += 1`). `name_index.log` maps every generated name
+  to its source (see [Generated files and reports](#generated-files-and-reports)). A
+  board build that misses timing stops the same way, ex. the pico-ice Makefile with
+  `PLL_CLK_MHZ=100.0`:
+  `ERROR: Max frequency for clock 'pll_clk_$glb_clk': 59.73 MHz (FAIL at 100.00 MHz)`.
+
+* When Vivado fails to meet the timing requirements, its implementation log shows:
+
+```
+CRITICAL WARNING: [Timing 38-282] The design failed to meet the timing requirements. Please see the timing summary report for details on the timing violations.
+```
+
+  and the timing summary shows a failed, red, timing value:
+
+  ![Vivado timing summary showing a negative worst negative slack in red](https://github.com/user-attachments/assets/6bfc36fc-9c38-47e9-998b-375ac95f23a0)
+
+  `report_timing_summary` (the Arty example writes `timing_summary.rpt`) and
+  `report_timing` break down the paths with the worst timing. A design that meets timing
+  has a positive worst negative slack (WNS), like the Arty example at 25 MHz:
+
+```
+    WNS(ns)      TNS(ns)  TNS Failing Endpoints  TNS Total Endpoints      WHS(ns)      THS(ns)  THS Failing Endpoints  THS Total Endpoints
+    -------      -------  ---------------------  -------------------      -------      -------  ---------------------  -------------------
+     35.508        0.000                      0                   75        0.178        0.000                      0                   75
+
+All user specified timing constraints are met.
+```
 
 ### Bring In Pypeline
 
