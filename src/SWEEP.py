@@ -3298,7 +3298,7 @@ LATENCY_SEEDS_USED = {}
 LATENCY_MEMORY_SELECTED = {}
 # MAIN func name -> its matched implementation piece (TRY_LATENCY_MEMORY_REPLAY)
 LATENCY_MEMORY_MAIN_REPLAYS = {}
-# key -> count/depth of a lower-goal piece: a higher goal never needs fewer
+# key -> count/depth required as a floor by a selected lower-goal piece
 LATENCY_MEMORY_MCP_FLOORS = {}
 LATENCY_MEMORY_AP_FLOORS = {}
 # (MAIN func, locked func, goal) -> depth of a lower-goal mini-sweep lock
@@ -3629,10 +3629,16 @@ def RESOLVE_LATENCY_MEMORY(parser_state, hints, reparse):
         identities = _latency_piece_identities(parser_state)
         selected = {}
     LATENCY_MEMORY_SELECTED.update(selected)
+    # Only a region's count is enforced (_ENFORCE_ONE_AUTO_PIPELINE_REGION), so
+    # only a region takes a depth floor: a seeded tag whose callee holds
+    # another AUTO_PIPELINE, or can't take registers, stays planned as if unseeded.
+    region_keys = {r.key for r in AUTO_PIPELINE.COLLECT_AUTO_PIPELINE_REGIONS(parser_state)}
     for (kind, key), piece in selected.items():
         if piece["goal_mhz"] < identities[(kind, key)]["goal_mhz"]:
-            floors = LATENCY_MEMORY_AP_FLOORS if kind == "AUTO_PIPELINE" else LATENCY_MEMORY_MCP_FLOORS
-            floors[key] = piece["latency"]
+            if kind == "AUTO_MULTI_CYCLE":
+                LATENCY_MEMORY_MCP_FLOORS[key] = piece["latency"]
+            elif key in region_keys:
+                LATENCY_MEMORY_AP_FLOORS[key] = piece["latency"]
     for (kind, key), item in identities.items():
         if kind != "main":
             continue
@@ -3737,6 +3743,10 @@ def TRY_LATENCY_MEMORY_REPLAY(parser_state, args):
     snapshots = {}
     for main in parser_state.main_mhz:
         name = parser_state.LogicInstLookupTable[main].func_name
+        if name in parser_state.func_marked_wires:
+            # Wire MAINs cannot add latency and are excluded from sweep timing.
+            # Keep their fresh zero-clock table; there is no piece to load.
+            continue
         piece = LATENCY_MEMORY_MAIN_REPLAYS.get(name)
         try:
             concrete = NORMALIZE_CONCRETE_PIPELINE(piece["concrete"]) if piece else None
@@ -3747,9 +3757,18 @@ def TRY_LATENCY_MEMORY_REPLAY(parser_state, args):
             print("NOTE: latency memory MAIN replay skipped: not every MAIN matches", flush=True)
             return None
         snapshots[main] = concrete
-    params = AUTO_PIPELINE.MultiMainTimingParams()
     for main, concrete in snapshots.items():
         AUTO_PIPELINE.RESTORE_CONCRETE_PIPELINE(main, concrete, table, parser_state)
+    # Zero-clock VHDL can stay identical when a tag's cap/fixed count changes.
+    # Validate the restored implementation before any confirmation synthesis.
+    problems = AUTO_PIPELINE.AUTO_PIPELINE_CONSTRAINTS_REALIZED_PROBLEMS(
+        parser_state, table, memory_floors=True)
+    if problems:
+        print("NOTE: latency memory MAIN replay skipped: remembered implementation "
+              "violates current AUTO_PIPELINE bounds\n" + "\n".join(problems), flush=True)
+        return None
+    params = AUTO_PIPELINE.MultiMainTimingParams()
+    for main in snapshots:
         piece = LATENCY_MEMORY_MAIN_REPLAYS[parser_state.LogicInstLookupTable[main].func_name]
         print(f"[latency memory] Replaying MAIN {main} ({piece['source']}, goal {piece['goal_mhz']:g} MHz)", flush=True)
         try:

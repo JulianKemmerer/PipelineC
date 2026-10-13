@@ -16,6 +16,7 @@ import AUTO_PIPELINE
 import C_TO_LOGIC
 import SWEEP
 import SYN
+import VHDL
 import pypeline
 
 AP, MC = "AUTO_PIPELINE", "AUTO_MULTI_CYCLE"
@@ -323,6 +324,149 @@ def mcp_main(stream_in_if: MCP.in_fwd_t, stream_out_if: MCP.out_fb_t) -> mcp_t:
 """
 
 
+def test_replay_bounds_and_lower_goal_floor(tmp):
+    """A changed cap rejects replay; a floor survives a smaller planned count."""
+    import PY_TO_LOGIC
+
+    design = os.path.join(THIS_DIR, "latency_memory_constraints_design.py")
+    out_dir = os.path.join(tmp, "bounds_out")
+    os.makedirs(out_dir)
+    SYN.SYN_OUTPUT_DIRECTORY = out_dir
+    SYN.TOP_LEVEL_MODULE = "top"
+    original_tool = SYN.SYN_TOOL
+    SYN.SYN_TOOL = SYN.TOOL_MODULES["vivado"]
+    pypeline.SET_AUTO_PIPELINE_BUILD_MODE("sweep")
+
+    def parse(cap, seeds=None):
+        pypeline.SET_DESIGN_PARAMS({"MEMORY_CAP": str(cap)})
+        pypeline.SET_LATENCY_SEEDS(seeds or {})
+        ps = PY_TO_LOGIC.PARSE_FILE(design)
+        ps.part = "xc7a35ticsg324-1l"
+        C_TO_LOGIC.WRITE_0_ADDED_CLKS_INIT_FILES(ps)
+        return ps
+
+    try:
+        old = parse(2)
+        main = next(m for m in old.main_mhz if old.LogicInstLookupTable[m].func_name not in old.func_marked_wires)
+        wire_main = next(m for m in old.main_mhz if old.LogicInstLookupTable[m].func_name in old.func_marked_wires)
+        assert SYN.GET_TARGET_MHZ(wire_main, old) == 50.0
+        name = old.LogicInstLookupTable[main].func_name
+        table = AUTO_PIPELINE.GET_ZERO_ADDED_CLKS_TIMING_PARAMS_LOOKUP(old)
+        inst = next(iter(old.FuncToInstances["bounds_work"]))
+        table[inst]._has_input_regs = True
+        table[inst]._has_output_regs = True
+        table[inst].INVALIDATE_CACHE()
+        assert table[inst].GET_TOTAL_LATENCY(old, table) == 2
+        assert not AUTO_PIPELINE.AUTO_PIPELINE_CONSTRAINTS_REALIZED_PROBLEMS(old, table)
+        digest = SWEEP._latency_piece_identities(old)[("main", name)]["digest"]
+        write(os.path.join(out_dir, "latency_memory.json"), dict(schema_version=2, pieces=[
+            dict(kind="main", key=name, digest=digest, goal_mhz=50.0, part=old.part,
+                 tool="vivado", concrete=AUTO_PIPELINE.CAPTURE_CONCRETE_PIPELINE(main, table, old))]))
+        # Bounds can change without changing the zero-clock VHDL or hierarchy.
+        for cap, replay in ((1, False), (2, True)):
+            SWEEP.LOAD_LATENCY_SEEDS(out_dir, [])
+            ps = parse(cap)
+            assert SWEEP._latency_piece_identities(ps)[("main", name)]["digest"] == digest
+            ps = SWEEP.RESOLVE_LATENCY_MEMORY(ps, {}, lambda seeds: parse(cap, seeds))
+            with patch.object(SWEEP, "DO_SEEDED_CONFIRM_OR_SWEEP", side_effect=lambda ps, p: (p, True)) as confirm:
+                result = SWEEP.TRY_LATENCY_MEMORY_REPLAY(ps, None)
+            assert (result is not None) == replay
+            assert confirm.call_count == int(replay), "invalid replay reached synthesis"
+
+        # Real placement/lowering, with deterministic weights rather than synthesis.
+        # Start below a matched lower-goal floor to exercise enforcement itself,
+        # rather than only observing the remembered initial guess.
+        ps = parse(0, {(AP, "bounds_core"): (1, "fixture")})
+        for logic in ps.FuncLogicLookupTable.values():
+            logic.delay = int(SYN.DELAY_UNIT_MULT)
+        for floor in (0, 1):
+            table = AUTO_PIPELINE.GET_ZERO_ADDED_CLKS_TIMING_PARAMS_LOOKUP(ps)
+            region = next(r for r in AUTO_PIPELINE.COLLECT_AUTO_PIPELINE_REGIONS(ps) if r.key == "bounds_core")
+            region.landscape = SWEEP.BUILD_SLICE_LANDSCAPE(region.inst, ps, table, {})
+            with patch.dict(SWEEP.LATENCY_MEMORY_AP_FLOORS, {"bounds_core": floor}, clear=True):
+                table = AUTO_PIPELINE._ENFORCE_ONE_AUTO_PIPELINE_REGION(region, 0, ps, table, {})
+                built = table[region.inst].GET_TOTAL_LATENCY(ps, table)
+                assert built == floor, (floor, built)
+                assert not AUTO_PIPELINE.AUTO_PIPELINE_CONSTRAINTS_REALIZED_PROBLEMS(ps, table)
+        # A mini-sweep writes its winner before the lock sets the planner's
+        # fixed flag, and a replay renders it already fixed. The entity's text
+        # must not depend on that flag, so the replay's synthesis inputs match.
+        logic = ps.LogicInstLookupTable[region.inst]
+        texts = []
+        for fixed in (False, True):
+            render = dict(table)
+            render[region.inst] = table[region.inst].DEEPCOPY()
+            render[region.inst].params_are_fixed = fixed
+            texts.append(VHDL.WRITE_LOGIC_ENTITY(region.inst, logic, out_dir, ps, render, return_text=True))
+        assert texts[0] == texts[1], "the planner's fixed flag changed an entity's VHDL"
+        # MAIN replay must respect the floor too, rather than bypassing the planner.
+        SWEEP.LOAD_LATENCY_SEEDS(out_dir, [])
+        ps = parse(0, {(AP, "bounds_core"): (2, "fixture")})
+        zero = AUTO_PIPELINE.GET_ZERO_ADDED_CLKS_TIMING_PARAMS_LOOKUP(ps)
+        SWEEP.LATENCY_MEMORY_MAIN_REPLAYS[name] = dict(source="fixture", goal_mhz=50.0,
+            concrete=AUTO_PIPELINE.CAPTURE_CONCRETE_PIPELINE(main, zero, ps), path="missing")
+        with patch.dict(SWEEP.LATENCY_MEMORY_AP_FLOORS, {"bounds_core": 2}, clear=True), patch.object(
+                SWEEP, "DO_SEEDED_CONFIRM_OR_SWEEP") as confirm:
+            assert SWEEP.TRY_LATENCY_MEMORY_REPLAY(ps, None) is None
+            confirm.assert_not_called()
+        print("test_replay_bounds_and_lower_goal_floor PASS")
+    finally:
+        pypeline.SET_DESIGN_PARAMS({})
+        pypeline.SET_LATENCY_SEEDS({})
+        pypeline.SET_AUTO_PIPELINE_BUILD_MODE(None)
+        SWEEP.LATENCY_MEMORY_MAIN_REPLAYS.clear()
+        SYN.SYN_TOOL = original_tool
+
+
+def test_lower_goal_floor_only_for_regions(tmp):
+    """A lower-goal depth floors only a region: a seeded tag whose callee holds
+    another AUTO_PIPELINE is planned as if unseeded, so a floor there could
+    never be enforced. The final-table check never reports floors."""
+    import PY_TO_LOGIC
+
+    design = os.path.join(tmp, "floor_regions.py")
+    with open(design, "w") as f:
+        f.write(_NESTED_SRC.format(src=os.path.join(THIS_DIR, "..", "..", ".."))
+                .replace("@MAIN\ndef nested_main", "@MAIN(50.0)\ndef nested_main"))
+    out_dir = os.path.join(tmp, "floor_regions_out")
+    os.makedirs(out_dir)
+    SYN.SYN_OUTPUT_DIRECTORY = out_dir
+    SYN.TOP_LEVEL_MODULE = "top"
+    original_tool = SYN.SYN_TOOL
+    SYN.SYN_TOOL = SYN.TOOL_MODULES["vivado"]
+
+    def parse(seeds):
+        pypeline.SET_LATENCY_SEEDS(seeds)
+        state = PY_TO_LOGIC.PARSE_FILE(design)
+        state.part = "xc7a35ticsg324-1l"
+        C_TO_LOGIC.WRITE_0_ADDED_CLKS_INIT_FILES(state)
+        return state
+
+    try:
+        pypeline.SET_AUTO_PIPELINE_BUILD_MODE("sweep")
+        first = parse({})
+        identities = SWEEP._latency_piece_identities(first)
+        write(os.path.join(out_dir, "latency_memory.json"), {"schema_version": 2, "pieces": [
+            dict(kind=AP, key=key, digest=identities[(AP, key)]["digest"], goal_mhz=40.0,
+                 part=first.part, tool="vivado", latency=latency)
+            for key, latency in (("inner", 2), ("outer", 3))]})
+        SWEEP.LOAD_LATENCY_SEEDS(out_dir, [])
+        final = SWEEP.RESOLVE_LATENCY_MEMORY(parse({}), {}, parse)
+        assert set(SWEEP.LATENCY_MEMORY_SELECTED) == {(AP, "inner"), (AP, "outer")}
+        assert SWEEP.LATENCY_MEMORY_AP_FLOORS == {"inner": 2}, SWEEP.LATENCY_MEMORY_AP_FLOORS
+        zero = AUTO_PIPELINE.GET_ZERO_ADDED_CLKS_TIMING_PARAMS_LOOKUP(final)
+        assert not AUTO_PIPELINE.AUTO_PIPELINE_CONSTRAINTS_REALIZED_PROBLEMS(final, zero)
+        problems = AUTO_PIPELINE.AUTO_PIPELINE_CONSTRAINTS_REALIZED_PROBLEMS(
+            final, zero, memory_floors=True)
+        assert len(problems) == 1 and "floor=2" in problems[0], problems
+    finally:
+        pypeline.SET_LATENCY_SEEDS({})
+        pypeline.SET_AUTO_PIPELINE_BUILD_MODE(None)
+        SWEEP.LOAD_LATENCY_SEEDS(out_dir, [])
+        SYN.SYN_TOOL = original_tool
+    print("test_lower_goal_floor_only_for_regions PASS")
+
+
 def test_dependent_piece_resolution(tmp):
     import PY_TO_LOGIC
     design = os.path.join(tmp, "dependent.py")
@@ -386,5 +530,7 @@ if __name__ == "__main__":
         test_selection_and_store(tmp)
         test_digest_changes_only_ancestors(tmp)
         test_recording_per_piece_and_lock_roundtrip(tmp)
+        test_replay_bounds_and_lower_goal_floor(tmp)
+        test_lower_goal_floor_only_for_regions(tmp)
         test_dependent_piece_resolution(tmp)
     print("All latency memory unit tests passed.")

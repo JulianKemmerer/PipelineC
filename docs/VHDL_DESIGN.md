@@ -331,6 +331,17 @@ here — they are evidence about the synthesis recipe and device model, not
 about this file's own VHDL-lowering correctness, and belong to one owner so
 they can't drift out of sync with it.
 
+## Entity text is a function of its name
+
+`WRITE_LOGIC_ENTITY` prints only physical timing params in an entity's header
+comment (pipeline slices, input and output registers), never planner state such
+as `params_are_fixed`. The entity's name carries a timing hash of exactly those
+params, and the per-process write cache (`AUTO_PIPELINE._NON_ZERO_CLK_FILES_WRITTEN`)
+writes each name once, so any text the hash leaves out would let one name render
+two ways depending on which write came first. Synthesis-store and output-directory
+reuse key on file contents, so a later build that renders the same design must
+produce the same bytes.
+
 ## Rendering for latency-piece identity
 
 `WRITE_LOGIC_ENTITY(return_text=True)` returns the rendered entity text before

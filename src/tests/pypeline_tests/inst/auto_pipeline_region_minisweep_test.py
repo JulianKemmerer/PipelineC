@@ -5,8 +5,11 @@
 # then start_latency=1 -- and asserts both:
 #  - take the measured mini-sweep of the repeated `step` helper and lock it,
 #  - meet timing with the same total depth, in at most 3 full syntheses.
-# Then three latency-memory builds sharing one --syn_cache store:
+# Then four latency-memory builds sharing one --syn_cache store:
 #  - a baseline that records the `step` lock;
+#  - a same-goal rebuild in a fresh output directory: the MAIN replays in one
+#    confirmation with no new synthesis, so the locked winner's VHDL is the
+#    same bytes the mini-sweep wrote before the lock marked it fixed;
 #  - an edit outside `step` (REGION_MINISWEEP_OUTSIDE=1): the MAIN no longer
 #    replays, but the unchanged lock is reused, in fewer full syntheses;
 #  - a raised goal (130 MHz): the 120 MHz lock becomes a mini-sweep hint that
@@ -85,6 +88,37 @@ def build(out_dir, start_latency, extra=(), memory=False, reused=False, hint=Fal
     return depth, syns
 
 
+def check_replay(out_dir, base_dir, store):
+    """A same-goal rebuild in a fresh output directory replays the recorded
+    MAIN, step lock included, in one confirmation the store answers. The
+    mini-sweep wrote step's winner before its lock marked it fixed, while the
+    replay renders it fixed: its VHDL must not depend on that flag."""
+    cmd = [sys.executable, PYPELINEC, DESIGN, "--syn_tool", "device_models",
+           "--out_dir", out_dir, "--syn_cache", store]
+    print("Running:", " ".join(cmd), flush=True)
+    result = subprocess.run(
+        cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True,
+        env=dict(os.environ, PIPELINEC_INTERNAL_NO_LATENCY_MEMORY="0"))
+    out = result.stdout
+    print(out)
+    if result.returncode != 0:
+        fail(f"replay build exited {result.returncode}")
+    if "Replaying MAIN" not in out or "Isolated coarse sweep" in out:
+        fail("the same-goal rebuild did not replay the recorded MAIN")
+    if re.search(r"^Running syn w timing params", out, re.M):
+        fail("the replay ran planned sweep iterations")
+    if len(re.findall(r"^Running confirmation synthesis", out, re.M)) != 1:
+        fail("the replay did not run exactly one confirmation")
+    if "0 new run(s)" not in out:
+        fail("the replay's synthesis inputs missed the store (did step's VHDL change?)")
+    latencies = []
+    for d in (base_dir, out_dir):
+        with open(os.path.join(d, "latency_profile.json")) as f:
+            latencies.append({e["key"]: e["latency"] for e in json.load(f)["entries"]})
+    if latencies[0] != latencies[1]:
+        fail(f"replay built {latencies[1]}, the recorded build {latencies[0]}")
+
+
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--out_dir", default=None)
@@ -97,13 +131,15 @@ def main():
         fail(f"start_latency=1 built {seeded} slices, the untagged call site {untagged}")
     store = sub("store")
     baseline, cold_syns = build(sub("memory_base"), None, ("--syn_cache", store), memory=True)
+    check_replay(sub("memory_replay"), sub("memory_base"), store)
     edited, warm_syns = build(sub("memory_edited"), None,
         ("--syn_cache", store, "-D", "REGION_MINISWEEP_OUTSIDE=1"), memory=True, reused=True)
     if warm_syns >= cold_syns:
         fail(f"lock reuse did not save synthesis: {warm_syns} vs {cold_syns}")
     build(sub("goal_raised"), None,
           ("--syn_cache", store, "-D", "REGION_MINISWEEP_GOAL=130"), memory=True, hint=True)
-    print(f"PASS: both starts built {untagged} slices; outside edit reused step; goal raise used the lock hint")
+    print(f"PASS: both starts built {untagged} slices; a same-goal rebuild replayed from the store; "
+          "outside edit reused step; goal raise used the lock hint")
 
 
 if __name__ == "__main__":

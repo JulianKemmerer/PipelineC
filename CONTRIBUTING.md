@@ -48,15 +48,16 @@ See the [what the tool does](docs/README.md#what-the-tool-does) section for addi
 
 ## Module-to-Documentation Coupling
 
-Most of the compiler's main modules have an LLM-generated design document in [`docs/`](docs/). Read the one for the code you are changing: it explains how the module works and where a change belongs. If you modify a source file, you must find and update all related design documents.
+Most of the compiler's main modules have an LLM-generated design document in [`docs/`](docs/). Read the ones for the code you are changing: it explains how the module works and where a change belongs. If you modify a source file, you must find and update all related design documents.
 
 ## Documentation Integrity Rules
 
 * **Audience Separation:** Keep user guides (`docs/pypeline_guide.md`, top-level `README.md`) focused strictly on user workflows, practical CLI usage, and functional explanations in plain terms. Implementation details, intermediate representation structures, and internal memory schemas belong exclusively in the respective `docs/<MODULE>_DESIGN.md`.
 * **Edit In-Place (No Appendices):** Locate the exact section that already covers the subject and edit it directly. Never append duplicate summary paragraphs or trailing notes to the bottom of files or under historical sections.
 * **Exhaustive Reference Updating:** When changing CLI flags, configuration variables, or generated output paths, grep across all files in `docs/` and `README.md` to update every occurrence (e.g., flag tables and artifact summaries in `docs/README.md`).
-* **Sanitize Paths and Validate Links:** Never commit machine-local absolute paths into repository documentation or issue logs. Inspect all markdown anchors manually; do not assume automated checks catch formatting bugs.
-* **Issues Inventory Standards:** If planning to create a GitHub issue `docs/issues_inventory.md` must adhere to standard issue formatting: Title, What Happens (with a minimal reproducible code snippet), Why (root cause), Reproduce command, Fix Directions, and Workarounds.
+* **Sanitize Paths and Validate Links:** Never commit machine-local absolute paths into repository documentation or issue logs. Read every link you add: `doc_links_test` checks the links it can parse, but a malformed one (for example a space in the URL) is not parsed as a link at all and passes silently.
+* **Describe Current Behavior:** Design docs and guides describe what the code does now, in the present tense. Version history belongs under a `## History` section.
+* **Issue Drafts and the Inventory:** If an issue to be addressed later is found. Draft some text for a GitHub issue and update docs and tests. A GitHub issue draft has a title, and description of what happens with a minimal reproducible snippet, the observed effect, and any known workarounds. An entry in `docs/issues_inventory.md` and `known_issues_tests.py` is expected, can leave issue number TBD until GitHub issue made later.
 
 ## Implementation and Code Hygiene
 
@@ -64,6 +65,7 @@ Most of the compiler's main modules have an LLM-generated design document in [`d
 * **Parameter Handling:** Do not accept unused parameters, configuration flags, or state arguments; wire all received parameters into execution paths or remove them.
 * **Module Globals:** Document every module global variable with an explanatory single-line comment matching adjacent conventions.
 * **Console Noise:** Deduplicate compiler informational messages and warnings (`NOTE: ...`) so they display once per build phase or session rather than repeating across every candidate pass or iteration.
+* **Names And Caches Are Tricky:** Caches of synthesis results are there to reduce user synthesis runs. Try to use cached results when possible. Be careful to make sure code identifies and ignores stale pieces. Cached or remembered data must never make a build fail that would succeed without it. The synthesis sweep attributes a timing path to a function by finding the function's name inside instance labels and register names. Changing how instances, entities or functions are named, or restructuring which function is tagged, can change sweep decisions: compare the sweep's attribution and actions in sweep history before and after. If a fix invalidates cache, that is fine, do not need any complex workarounds to preserve existing old caches when things change for the better. A generated file's content must depend only on what names it (its entity name and inputs), never on planner state or the order files were written in; if two renderings can share one name, fix that rather than reproducing whichever was written first.
 
 ## Verification and Testing
 
@@ -73,7 +75,10 @@ Consult [`docs/pypeline_TESTS.md`](docs/pypeline_TESTS.md) for full descriptions
 
 * **Standalone Reproducers:** Place regression tests and known-issue reproducers in `src/tests/pypeline_tests/inst/` rather than inlining them directly into test drivers. Register each new file inside the appropriate runner (e.g., `known_issues_tests.py`, `unit_tests.py`, `build_report_tests.py`) accompanied by an explanatory registration comment.
 * **Metadata Accuracy:** Keep test header comments and registration docstrings in sync with actual build numbers, test scenarios, and expected runtime durations.
-* **Long Hardware Verification:** When validating long runs (e.g., iterative timing sweeps), avoid polling waiting to finish, instead let the test run in the background without constant polling.
+* **One Behavior per Test:** Name each test function after the behavior it checks, and split a test that checks several.
+* **Measure Before Claiming:** Report only observed results. Never summarize results before the run that measures them finishes. Reccomended changes should be based on test results.
+* **Compare Like with Like:** Gate changes against a baseline built from the same commit and cache state, so unrelated commits can neither hide nor fake a difference.
+* **Long Hardware Verification:** Run long builds (timing sweeps, hardware runs) in the background and wait for their completion notice instead of polling. Consider building from a frozen copy of the compiler and design, so later source edits can't change a run in progress.
 
 ## Pre-Commit and Formatting
 

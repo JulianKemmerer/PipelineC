@@ -184,8 +184,9 @@ def get_tests() -> list:
     # start_latency= is only a starting guess: a ChaCha-shaped repeated
     # helper inside a start_latency=1 region takes the same mini-sweep lock
     # and reaches the same depth as the untagged call site. Then the latency
-    # memory: an edit outside the helper reuses its remembered lock, and a
-    # raised goal starts the mini-sweep from it (five builds, ~13 min).
+    # memory: a same-goal rebuild replays from the store with no new synthesis,
+    # an edit outside the helper reuses its remembered lock, and a raised goal
+    # starts the mini-sweep from it (six builds, ~6-14 min).
     tests.append(
         Test(
             name="auto_pipeline_region_minisweep_test",

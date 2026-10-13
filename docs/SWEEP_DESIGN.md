@@ -1166,7 +1166,7 @@ result was reached, such as depth 8 from a mini-sweep of `poly1305_body`.
 
 | Piece | Digest/key | Same goal | Lower goal |
 |---|---|---|---|
-| AUTO_PIPELINE depth | tag key and callee subtree digest | serves `.latency` and region `seed` start | serves and starts at the remembered depth, also a floor the region never realizes below (`LATENCY_MEMORY_AP_FLOORS`, see [AUTO_PIPELINE_DESIGN.md](AUTO_PIPELINE_DESIGN.md)) |
+| AUTO_PIPELINE depth | tag key and callee subtree digest | serves `.latency` and region `seed` start | serves and starts at the remembered depth; for a region, also a floor it never realizes below (`LATENCY_MEMORY_AP_FLOORS`, see [AUTO_PIPELINE_DESIGN.md](AUTO_PIPELINE_DESIGN.md)) |
 | AUTO_MULTI_CYCLE count | tag key and capture callee subtree/cone digest | provisional seed, with confirm-down | floor start, never confirmed below the remembered count |
 | mini-sweep lock | MAIN function / locked function and `SUBTREE_MODEL_FINGERPRINT` | loaded through `CARRIED_LOCKS` / `LOAD_CARRIED_LOCKS` | mini-sweep hint: skips the streak wait and starts coarse search at the old depth |
 | MAIN implementation | MAIN function and MAIN subtree digest under the same served values | `CAPTURE_CONCRETE_PIPELINE` / `RESTORE_CONCRETE_PIPELINE`, confirmed by synthesis | never replayed |
@@ -1218,12 +1218,24 @@ changing the count/ready controller does not invalidate that datapath piece.
    `MINISWEEP_HOTSPOT_STREAK` for a hint; `RUN_HOTSPOT_MINISWEEP` passes its depth as
    `starting_guess_latency`. Minimality bisect uses a failed guess as a known-failing
    lower bound.
-5. Replay only when **every MAIN** implementation matches and its concrete capture
-   is compatible. Partial matches plan normally, retaining matching depths/locks;
-   this avoids an intentionally failing confirmation for unmatched MAINs. All-MAIN
-   replay runs one confirmation through `DO_SEEDED_CONFIRM_OR_SWEEP`; its existing
-   `confirmation_preserved_mains` path preserves unaffected MAINs if feedback fails.
-   A synthesis store hit counts as confirmation. Served == built skips pass 2.
+5. Replay only when **every MAIN** matches; partial matches plan normally with
+   their other matching pieces, so no confirmation is spent on a known mismatch.
+   - **Matching.** Each MAIN's implementation piece matches and its concrete
+     capture is compatible. `@wires` MAINs are skipped: they can't add latency,
+     have no piece and keep their fresh zero-clock table, even with a clock.
+   - **Bounds.** A constraint edit need not change zero-clock VHDL, so the restored
+     table must still realize the current caps, fixed counts and lower-goal floors
+     (`AUTO_PIPELINE_CONSTRAINTS_REALIZED_PROBLEMS(..., memory_floors=True)`),
+     checked before any synthesis.
+   - **Identical files.** An entity's VHDL depends only on its name and physical
+     params, never on the planner's `params_are_fixed` flag
+     ([VHDL_DESIGN.md](VHDL_DESIGN.md#entity-text-is-a-function-of-its-name)). A
+     mini-sweep writes its winner before the lock marks it fixed, and the replay
+     renders it fixed: both give the same bytes, so the confirmation's inputs match
+     the recorded run and hit the synthesis store.
+   - **Confirmation.** One run through `DO_SEEDED_CONFIRM_OR_SWEEP`; if it fails,
+     its `confirmation_preserved_mains` path keeps the unaffected MAINs. A
+     synthesis-store hit counts as confirmation, and served == built skips pass 2.
 6. MAIN replay is skipped, with one NOTE, for RAM plan searches and AUTO_FSM, whose
    outer flows re-parse the design, and for `--coarse` builds, whose `--start` /
    `--stop` bound a search a remembered implementation may lie outside. Other

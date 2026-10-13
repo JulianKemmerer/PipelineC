@@ -648,10 +648,11 @@ delay axis, and the container can't count the region's latency.
     region again starts from its source constraint.
   - A floor from a lower goal: a depth remembered at a lower clock goal is also the
     least the region realizes at this one (`SWEEP.LATENCY_MEMORY_AP_FLOORS`, applied
-    by `_ENFORCE_ONE_AUTO_PIPELINE_REGION` in every pass, capped at M). A faster
-    clock needs at least the stages a slower one needed for unchanged hardware, so
-    the sweep doesn't probe below it. The cost: a lower-goal result that was itself
-    deeper than necessary (the post-met trim is limited) carries that depth upward.
+    by `_ENFORCE_ONE_AUTO_PIPELINE_REGION` in every pass, capped at M), so the sweep
+    doesn't probe below it. Only a region takes a floor: the seeded tags
+    `COLLECT_AUTO_PIPELINE_REGIONS` leaves unconstrained never get one, since nothing
+    would enforce it. The cost: a lower-goal result that was itself deeper than
+    necessary (the post-met trim is limited) carries that depth upward.
   - Otherwise: the planner's own count for the plan's clock period, with the budget
     divided by `global_scale * region.scale` and in-region weights including
     `func_delay_scale`, capped at M.
@@ -708,8 +709,13 @@ delay axis, and the container can't count the region's latency.
   - snapshots;
   - `sweep_history.json` and placement traces (`auto_pipeline_regions`);
   - the final summary (`[sweep] AUTO_PIPELINE <key> (<constraint>): N clk(s) built at <inst>`);
-  - `CHECK_AUTO_PIPELINE_CONSTRAINTS_REALIZED`, a safety net run on every final
-    table and after every harvest.
+  - `AUTO_PIPELINE_CONSTRAINTS_REALIZED_PROBLEMS`, which lists violated source caps
+    and fixed counts without exiting, plus the lower-goal memory floors when asked
+    (`memory_floors=True`). MAIN replay asks before confirmation, since a constraint
+    edit need not change zero-clock VHDL;
+  - `CHECK_AUTO_PIPELINE_CONSTRAINTS_REALIZED`, the safety net run on every final
+    table and after every harvest. It checks source constraints only: a remembered
+    floor is a reuse policy, never a reason a build fails.
 
 **Coarse sweep.** `BUILD_AND_WRITE_COARSE_SLICED_TIMING_PARAMS` enforces fixed regions
 before slicing the main's even fractions; slicing skips locked children. Afterwards it

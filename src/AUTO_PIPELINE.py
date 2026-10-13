@@ -2612,38 +2612,60 @@ def AUTO_PIPELINE_DIVERGENCE_EXIT(divergences):
     )
 
 
-def CHECK_AUTO_PIPELINE_CONSTRAINTS_REALIZED(parser_state, TimingParamsLookupTable):
-    """Safety net: every constrained AUTO_PIPELINE call site (latency=N /
-    max_latency=M, or C #pragma AUTOPIPELINE N) must have been built within
-    its constraint -- the sweep's region enforcement (SWEEP.
-    ENFORCE_AUTO_PIPELINE_REGIONS) guarantees it, and this exits loudly if any
-    path to final files ever did not. Walks Logic.sub_inst_to_auto_pipeline_
-    latency, so it covers C designs (no latency-cache key) too."""
+def AUTO_PIPELINE_CONSTRAINTS_REALIZED_PROBLEMS(
+    parser_state, TimingParamsLookupTable, memory_floors=False
+):
+    """Bounds violated by this concrete table, without printing or exiting.
+
+    Source caps and fixed counts also cover C call sites without a
+    latency-cache key. memory_floors adds the lower-goal latency memory floors
+    (SWEEP.LATENCY_MEMORY_AP_FLOORS): MAIN replay checks them before
+    confirmation. The final-table safety net does not, since a remembered
+    depth is a reuse policy, never a reason a build fails.
+    """
+    import SWEEP
+
     if not TimingParamsLookupTable:
-        return
+        return []
     marker = C_TO_LOGIC.SUBMODULE_MARKER
     checks = []
     for inst_name, logic in parser_state.LogicInstLookupTable.items():
         for local_sub, constraint in logic.sub_inst_to_auto_pipeline_latency.items():
-            if constraint is None or constraint.upper_bound() is None:
+            key = logic.sub_inst_to_auto_pipeline_key.get(local_sub)
+            floor = SWEEP.LATENCY_MEMORY_AP_FLOORS.get(key, 0) if memory_floors else 0
+            if (constraint is None or constraint.upper_bound() is None) and not floor:
                 continue
             sub_inst = inst_name + marker + local_sub
             if sub_inst in TimingParamsLookupTable:
-                checks.append((sub_inst, constraint))
+                checks.append((sub_inst, constraint, floor))
     if not checks:
-        return
+        return []
     for timing_params in TimingParamsLookupTable.values():
         timing_params.INVALIDATE_CACHE()
     problems = []
-    for sub_inst, constraint in checks:
+    for sub_inst, constraint, floor in checks:
         built = TimingParamsLookupTable[sub_inst].GET_TOTAL_LATENCY(
             parser_state, TimingParamsLookupTable
         )
-        cap = constraint.upper_bound()
-        if built > cap or (constraint.is_fixed() and built != cap):
+        cap = constraint.upper_bound() if constraint is not None else None
+        if cap is not None and (built > cap or (constraint.is_fixed() and built != cap)):
             problems.append(
                 f"  {sub_inst}: {constraint.describe()} but {built} clks built"
             )
+        elif built < floor:
+            problems.append(
+                f"  {sub_inst}: latency memory floor={floor} but {built} clks built"
+            )
+    return problems
+
+
+def CHECK_AUTO_PIPELINE_CONSTRAINTS_REALIZED(parser_state, TimingParamsLookupTable):
+    """Exit if a final/harvested table violates a source bound (latency=N,
+    max_latency=M or C #pragma AUTOPIPELINE N): region enforcement guarantees
+    them, so a violation is an internal error."""
+    problems = AUTO_PIPELINE_CONSTRAINTS_REALIZED_PROBLEMS(
+        parser_state, TimingParamsLookupTable
+    )
     if problems:
         print("\n".join(problems), flush=True)
         sys.exit(

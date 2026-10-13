@@ -62,6 +62,7 @@ def main():
     warm, profile = build(sub("g2"), "--syn_cache", store, "-D", "LATENCY_MEMORY_GOAL=55")
     expect(f"core: starts at {depth} (latency memory (store)" in warm, "lower-goal piece was not served")
     expect("50 MHz goal" in warm and "Replaying MAIN" not in warm, "lower goal MAIN replayed")
+    expect(profile["entries"][0]["latency"] >= depth, "higher-goal build went below its remembered depth floor")
     cold, _ = build(sub("g2_cold"), "--no_latency_memory", "-D", "LATENCY_MEMORY_GOAL=55")
     expect(full_syntheses(warm) < full_syntheses(cold), "warm G2 did not reduce full syntheses")
     # A store containing only G2 must not seed G1.

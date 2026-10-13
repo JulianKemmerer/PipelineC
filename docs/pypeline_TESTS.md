@@ -563,13 +563,22 @@ The latency memory and `--latency_hints` (see
     bounded variants, the store layout and its prune, v1 files ignored;
   - a mini-sweep lock survives a JSON round trip (`NORMALIZE_CONCRETE_PIPELINE`),
     and malformed parameters are rejected;
+  - `latency_memory_constraints_design.py`:
+    - a lowered cap rejects MAIN replay before synthesis, and an unchanged cap
+      still replays with a declared-clock `@wires` MAIN present;
+    - real placement and lowering enforce a lower-goal floor even when the
+      proposed count is zero, and replay rejects an implementation below it;
+    - an entity's VHDL is the same whether or not the planner marked it fixed;
+  - a lower-goal floor goes only to a region: a seeded tag holding another
+    AUTO_PIPELINE gets none, and the final-table check never reports floors;
   - an AUTO_MULTI_CYCLE whose datapath size depends on an AUTO_PIPELINE depth
     resolves in two memory re-parses.
 - **`latency_memory_build_test.py` (build_report_device_models, sky130):**
   1. a same-goal rebuild replays every MAIN in one confirmation, with no new
      syntheses and no pass 2;
   2. a lower-goal piece from the store starts a higher-goal build in another output
-     directory, in fewer full syntheses than a cold build;
+     directory, never builds below that depth, and takes fewer full syntheses than
+     a cold build;
   3. a store holding only a higher goal's pieces seeds nothing;
   4. `--no_latency_memory` neither seeds nor rewrites the memory;
   5. a hints file is a start, and an unused hint is reported;
@@ -578,7 +587,10 @@ The latency memory and `--latency_hints` (see
   7. of two MAINs, a failing one keeps its old pieces while the met one records its
      own.
 - **`auto_pipeline_region_minisweep_test.py` (build_report_device_models):** after
-  its two start-latency builds, three latency-memory builds:
+  its two start-latency builds, four latency-memory builds:
+  - a same-goal rebuild in a fresh output directory replays the MAIN, `step` lock
+    included, in one confirmation with no new synthesis run: the locked winner's
+    VHDL matches what its mini-sweep wrote;
   - an edit outside the `step` helper rejects the MAIN replay but reuses the `step`
     lock, in fewer full syntheses;
   - a raised goal turns the lock into a mini-sweep hint, which skips the streak wait

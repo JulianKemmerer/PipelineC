@@ -5383,8 +5383,10 @@ def WRITE_LOGIC_ENTITY(
 
     rv = ""
     rv += SOURCE_COMMENT(Logic.func_name, parser_state)
+    # Only physical params: an entity file's text must be a function of its
+    # name. params_are_fixed is a planner flag the name's timing hash leaves
+    # out, so printing it let one entity name render two ways.
     rv += "-- Timing params:\n"
-    rv += "--   Fixed?: " + str(timing_params.params_are_fixed) + "\n"
     rv += "--   Pipeline Slices: " + str(timing_params._slices) + "\n"
     rv += "--   Input regs?: " + str(timing_params._has_input_regs) + "\n"
     rv += "--   Output regs?: " + str(timing_params._has_output_regs) + "\n"

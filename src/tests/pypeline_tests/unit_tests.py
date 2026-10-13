@@ -147,7 +147,8 @@ def get_tests() -> list:
     # Latency memory and --latency_hints (SWEEP.py "Latency memory"): hints
     # formats, profile verdicts, zero-clock subtree digests, goal/digest/part/
     # tool piece selection, per-piece recording, store layout and prune, lock
-    # JSON round trips, and a dependent body-to-MCP resolution (two re-parses)
+    # JSON round trips, winner RTL bytes, restored bounds/lower-goal floors, and a
+    # dependent body-to-MCP resolution (two re-parses)
     tests.append(
         Test(
             name="latency_memory_unit_test",
