@@ -549,40 +549,53 @@ from a different angle:
 
 The latency memory and `--latency_hints` (see
 [SWEEP_DESIGN.md](SWEEP_DESIGN.md#5-latency-memory)):
+
 - **`latency_memory_unit_test.py` (unit):**
-  - the three hints/memory file shapes and every rejection;
-  - load precedence: hints in order, the store's copy, then the output directory's
-    own memory;
-  - memory off, an unreadable memory file ignored, an unreadable hints file an error;
-  - what a build remembers (verified replaces, unverified keeps, gone tags dropped);
+  - every hints file shape, and every rejection;
   - profile verdicts per owning MAIN, and determinism;
-  - the post-parse report lines;
-  - the store copy's path and its prune;
   - a seeded tag is a start-only region, unless its function holds another
     AUTO_PIPELINE;
-  - the guard demotes a seed recorded for another function, goal, part or tool to
-    a served-only value, keeps a hand-written hint as an explicit start, and holds
-    its decision across a re-elaboration.
-- **`latency_memory_build_test.py` (build_report_device_models, sky130):** six
-  builds of `stream_auto_pipeline_test.py`:
-  1. a fresh build runs pass 2 and records its result in the output directory and
-     the `--syn_cache` store;
-  2. a rebuild starts from the remembered latency and skips pass 2;
-  3. `--no_latency_memory` neither seeds nor rewrites the memory;
-  4. after the output directory is deleted, the store's copy seeds it;
-  5. `--latency_hints` from the first build's profile seeds a fresh directory;
-  6. a stale memory entry: `latency_memory_stale_design.py`'s named core is built
-     heavy, then rebuilt light in the same directory. The remembered heavy latency
-     is recognized as recorded for another function, and the light build ends
-     where a memory-less build does. An unmatched hint is reported.
-- **`auto_multi_cycle_unit_test.py` (unit):** a remembered count is elaborated, then
-  registered as a provisional seed with the source floor.
+  - zero-clock subtree digests: the same for two parses, and an edit changes only
+    the edited function's ancestors;
+  - piece selection: the current goal first, then the highest lower goal; a higher
+    goal, another part or tool, or another digest never matches;
+  - recording per piece (a failing MAIN records nothing, a met one its pieces),
+    bounded variants, the store layout and its prune, v1 files ignored;
+  - a mini-sweep lock survives a JSON round trip (`NORMALIZE_CONCRETE_PIPELINE`),
+    and malformed parameters are rejected;
+  - an AUTO_MULTI_CYCLE whose datapath size depends on an AUTO_PIPELINE depth
+    resolves in two memory re-parses.
+- **`latency_memory_build_test.py` (build_report_device_models, sky130):**
+  1. a same-goal rebuild replays every MAIN in one confirmation, with no new
+     syntheses and no pass 2;
+  2. a lower-goal piece from the store starts a higher-goal build in another output
+     directory, in fewer full syntheses than a cold build;
+  3. a store holding only a higher goal's pieces seeds nothing;
+  4. `--no_latency_memory` neither seeds nor rewrites the memory;
+  5. a hints file is a start, and an unused hint is reported;
+  6. an edited callee's stale piece is rejected, and the build matches a memory-less
+     one;
+  7. of two MAINs, a failing one keeps its old pieces while the met one records its
+     own.
+- **`auto_pipeline_region_minisweep_test.py` (build_report_device_models):** after
+  its two start-latency builds, three latency-memory builds:
+  - an edit outside the `step` helper rejects the MAIN replay but reuses the `step`
+    lock, in fewer full syntheses;
+  - a raised goal turns the lock into a mini-sweep hint, which skips the streak wait
+    and starts the isolated sweep at the old depth.
 - **`auto_multi_cycle_sweep_test.py` (build_report_vivado), case (d):**
   - a rebuild starts from the remembered count and skips pass 2;
-  - a stale hint three cycles too high is confirmed down to the measured count.
+  - a same-goal count three cycles too high is still confirmed down;
+  - at a raised goal, the lower goal's count is a floor.
+- **`auto_multi_cycle_unit_test.py` (unit):** a remembered count is elaborated, then
+  registered as a provisional seed.
+- **`imported_auto_pipeline_attribution_test.py` (known_issues):** the in-process
+  reproducer for tagging an imported function directly. It builds a register path
+  from the real emitted hierarchy (`SYN._VHDL_INSTANCE_TRIE`) and expects the region
+  root to be blamed; XFAIL until that attribution is fixed.
 
 The harness sets `PIPELINEC_INTERNAL_NO_LATENCY_MEMORY=1` for every test (see
-[Running](#running)); these two build tests turn it back off for their own builds.
+[Running](#running)); the memory build tests turn it back off for their own builds.
 
 ## Stream wrapper throughput coverage
 
@@ -1135,7 +1148,8 @@ exercise generated helpers and specialization reuse in real hardware builds.
     `line137` is pinned, because moving that line renames every unnamed holder.
 - **`name_index_test.py` (elab_introspect):**
   - the `USER NAMES` section;
-  - two named groups on one function stay two instances, each labeled by its group;
+  - two named groups on one function stay two instances with callee-derived call-site labels;
+  - direct and stream-factory AUTO_PIPELINE names preserve emitted instance hierarchy;
   - a conflicting name fails, naming both sites.
 - **`double_parse_file_test.py` (elab_introspect):** `user_names_design.py`, with
   every form of `name=`, parses to the same keys twice.

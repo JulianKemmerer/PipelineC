@@ -263,7 +263,7 @@ def test_user_names_section_and_named_groups():
     assert "function: adder_from_d_user_names_k_3" in index
     assert "user name: add_3" in index
     # Two names on one function: two instances (never collapsed as duplicate
-    # calls of one function), labeled by their group and tagged separately
+    # calls of one function), with the callee's call-site labels and separate tags
     top = state.FuncLogicLookupTable["top"]
     keys = {
         top.sub_inst_to_auto_pipeline_key[inst]: inst
@@ -272,7 +272,7 @@ def test_user_names_section_and_named_groups():
     }
     assert sorted(keys) == ["square_decrypt", "square_encrypt"], keys
     for key, inst in keys.items():
-        assert inst.startswith(key + "["), (key, inst)
+        assert inst.startswith("square["), (key, inst)
     pypeline.RESET_AUTO_MULTI_CYCLE_TRACKING()
 
 
@@ -290,6 +290,63 @@ def test_conflicting_auto_pipeline_name_names_both_sites():
             assert "one latency group" in msg, msg
             return
     raise AssertionError("Expected TypeError for two different square_encrypt tags")
+
+
+def test_auto_tag_names_preserve_instance_hierarchy():
+    """Names on a direct tag and a stream factory preserve emitted labels."""
+    import pypeline
+
+    src = textwrap.dedent('''
+        import sys
+        sys.path.insert(0, {repo!r})
+        sys.path.insert(0, {library!r})
+        from pypeline import MAIN, hw_func, uint8_t, AUTO_PIPELINE
+        from stream.stream_auto_pipeline import make_stream_auto_pipeline
+
+        @hw_func
+        def square(x: uint8_t) -> uint8_t:
+            return x * x
+
+        TAG = AUTO_PIPELINE(square{direct})
+        stream_core, stream_t = make_stream_auto_pipeline(square{stream})
+
+        @MAIN
+        def direct_top(x: uint8_t) -> uint8_t:
+            return TAG(x)
+
+        @MAIN
+        def stream_top(stream_in_if: stream_core.in_fwd_t, stream_out_if: stream_core.out_fb_t) -> stream_t:
+            return stream_core(stream_in_if, stream_out_if)
+    ''')
+    with tempfile.TemporaryDirectory() as tmp:
+        def parse(named):
+            return _parse(tmp, "neutral", src.format(
+                repo=REPO_SRC, library=os.path.join(REPO_SRC, "..", "include", "pypeline"),
+                direct=', name="direct_group"' if named else "",
+                stream=', name="stream_group"' if named else ""))
+        plain = parse(False)
+        named = parse(True)
+        def instances(state):
+            # Inline expressions have no VHDL instance: their internal names
+            # contain factory-derived type identities, which may include a tag key.
+            return sorted(i for i, logic in state.LogicInstLookupTable.items()
+                          if not (logic.is_vhdl_expr or logic.is_vhdl_func))
+        assert instances(plain) == instances(named)
+        def labels(state):
+            trie = SYN._VHDL_INSTANCE_TRIE(state)
+            result = []
+            def walk(node, path):
+                inst = node.get(SYN._PATH_TRIE_INST)
+                if inst in instances(state):
+                    result.append(path)
+                for label, child in node.items():
+                    if label != SYN._PATH_TRIE_INST:
+                        walk(child, path + (label,))
+            for main, node in trie.items():
+                walk(node, (main,))
+            return sorted(result)
+        assert labels(plain) == labels(named)
+    pypeline.RESET_AUTO_MULTI_CYCLE_TRACKING()
 
 
 if __name__ == "__main__":

@@ -2936,13 +2936,28 @@ body_decrypt = AUTO_PIPELINE(poly1305_body, name="poly1305_body_decrypt")
   named key, so changing a starting guess renames nothing.
 - **Reports and hints use the name.** It appears in sweep reports
   (`AUTO_PIPELINE poly1305_body_encrypt: 3 clks`), in latency hints and the
-  [latency memory](#starting-latencies-the-latency-memory-and---latency_hints), in
-  `name_index.log`, and as the label of the call's VHDL instance. The wrapped function's
-  own entity keeps its own name.
+  [latency memory](#starting-latencies-the-latency-memory-and---latency_hints), and in
+  `name_index.log`. It never changes the call's VHDL instance label or the emitted
+  hierarchy, so the sweep attributes timing paths exactly as for an unnamed tag. The
+  wrapped function's own entity keeps its own name.
 - **A name is one group.** Tags that share a name must wrap the same function with the
   same `latency=` / `start_latency=` / `max_latency=`. A conflict is an error that names
   both construction sites. Identical tags are fine: they are one group, like two unnamed
   tags on one function.
+
+- **For the best sweep results, tag a wrapper.** Tagging a function imported from
+  another module, as above, makes it the root of its latency region. The sweep then
+  can't tell when a slow path runs through it, and it never mini-sweeps a region
+  root ([known issue](issues_inventory.md#35-not-yet-filed-auto_pipelinef-on-an-imported-function-sweeps-worse-than-a-wrapper)). A one-line local wrapper per
+  group keeps the function inside the region:
+
+  ```python
+  @hw_func
+  def poly1305_body_encrypt(x: body_in_stream_t) -> body_out_stream_t:
+      return poly1305_body(x)
+
+  body_encrypt = AUTO_PIPELINE(poly1305_body_encrypt, name="poly1305_body_encrypt")
+  ```
 
 Name a tag when you want a stable handle for it: a latency hint you commit, a report you
 parse, or a second, independent group over a function. Unnamed tags work everywhere
@@ -2950,37 +2965,44 @@ else.
 
 #### Starting latencies: the latency memory and `--latency_hints`
 
-A synthesizing build starts each AUTO_PIPELINE and AUTO_MULTI_CYCLE from the latency
-that earlier builds of the same `--out_dir` verified, when there is one. It remembers
-them automatically:
+A synthesizing build remembers what it verified, so later builds need fewer synthesis
+runs. It remembers it in pieces, so a later build can reuse every piece that still
+matches even after you edit part of the design or change a clock goal:
 
-- **What is recorded.** Every synthesizing build writes
-  `<out_dir>/latency_profile.json`: what it built for each tag and whether the
-  `@MAIN`s using it met timing.
-- **What is remembered.** The verified results go into `<out_dir>/latency_memory.json`.
-  With `--syn_cache DIR` they also go into the store, so they survive deleting the
-  output directory.
-- **What the next build does.** Each tag starts from its remembered latency, exactly as
-  if it had that `start_latency=`:
-  - its `.latency` serves that value while the design is first elaborated;
-  - its sweep's first iteration builds that many registers. After that the search is
-    the same as without a start.
+- **AUTO_PIPELINE depths and AUTO_MULTI_CYCLE counts**, per tag;
+- **mini-sweep locks**: how a depth was reached, for example "`poly1305_body` locked at
+  8 stages by a mini-sweep", not just the number 8;
+- **whole `@MAIN` implementations**: every register placement the build kept.
 
-  When the build lands on the same latency again, the pin-and-confirm re-elaboration
-  (and its confirmation synthesis) is skipped.
+**What is recorded.**
+- Every synthesizing build writes `<out_dir>/latency_profile.json`: what it built for
+  each tag and whether the `@MAIN`s using it met timing.
+- A piece is remembered in `<out_dir>/latency_memory.json` when every `@MAIN` using it
+  met timing. A `@MAIN` that misses keeps its earlier pieces, and the others still
+  record theirs.
+- With `--syn_cache DIR`, pieces also go into the store. The store isn't tied to an
+  output directory, so a 60 MHz build directory can start an 85 MHz one.
 
-A starting latency is only a start, so a stale one costs time, never correctness.
-- The sweep still grows the latency until timing is met, and trims it afterwards.
-- **A remembered latency starts the sweep only for unchanged hardware.** That means
-  the same function body, part, tool and clock goal. Otherwise the build says so,
-  and the tag is planned as it would be with no memory, so a stale entry can't leave
-  it over-pipelined. A hints file copied from a `latency_profile.json` is checked the
-  same way. A hand-written hint is your explicit start, exactly like `start_latency=`.
-- A remembered AUTO_MULTI_CYCLE count can be confirmed down.
-- A tag whose function holds another AUTO_PIPELINE, or can't take registers, only has
-  its first `.latency` read seeded, just as it can't take a `start_latency=` region.
+**What a later build reuses.** A piece is reused only for unchanged hardware: the same
+part and tool, and the same pre-pipelining VHDL for its function and everything that
+function calls. Then:
+- **At the same clock goal**, depths, counts and locks are restored. When every `@MAIN`
+  is unchanged, the whole implementation is replayed with one confirmation synthesis,
+  usually a store hit, and the pin-and-confirm re-elaboration is skipped.
+- **At a higher goal**, results from the highest lower goal are the starting point. A
+  depth or count starts there and never goes below it; a lock starts its mini-sweep at
+  the old depth, without waiting for the sweep to blame that function again.
+- **At a lower goal**, results from higher goals are never used: they would build more
+  registers than the lower goal needs. Leaf delays and synthesis-store hits don't
+  depend on the goal, so those are still reused.
 
-A fixed `latency=` is never seeded.
+**Stale pieces cost time, never correctness.** A piece whose hardware changed is
+ignored and the build says so, before any synthesis. Everything reused is confirmed by
+synthesis, and a build with no usable memory runs the normal sweep. Deleting
+`latency_memory.json` or the store is always safe. Two kinds of builds don't replay
+whole `@MAIN`s but still reuse the other pieces: designs whose RAM plan search or
+AUTO_FSM passes re-elaborate them, and `--coarse` builds. A fixed `latency=` is never
+seeded.
 
 `--latency_hints FILE` supplies starting latencies from a file you keep, for builds
 with no memory yet (a fresh clone, a new machine). The file is a
@@ -2993,15 +3015,19 @@ with no memory yet (a fresh clone, a new machine). The file is a
 
 - **Keys are tag keys.** A named tag's key is its name, which is what makes a committed
   hints file readable and robust to refactoring.
-- **Precedence.** The flag is repeatable, and a later file wins. Remembered latencies
-  win over hints, and hints win over `start_latency=`. A hinted tag needs no
-  `start_latency=` of its own: the hint is its start.
-- **Stale entries are reported.** The build prints one line per starting latency it
-  used, and a note naming every hint no tag took: a renamed or removed tag, or one
-  that isn't part of this configuration (one file can cover several).
-- **Turning the memory off.** `--no_latency_memory` ignores and leaves alone the
-  remembered latencies; the profile is still written and hints still apply. Deleting
-  `latency_memory.json` is always safe.
+- **A hint is a start, exactly like `start_latency=`.** A hinted tag needs no
+  `start_latency=` of its own.
+- **Precedence.** The flag is repeatable, and a later file wins. Matching remembered
+  pieces win over hints, and hints win over `start_latency=`.
+- **What the build reports.** One line per starting latency it used, naming its source
+  and recorded goal; locks also show their depth. One note names every hint no tag
+  took: a renamed or removed tag, or one that isn't part of this configuration (one
+  file can cover several).
+- **Turning the memory off.** `--no_latency_memory` neither reads nor writes remembered
+  pieces; the profile is still written and hints still apply.
+
+How pieces are identified and matched is in
+[SWEEP_DESIGN.md](SWEEP_DESIGN.md#5-latency-memory).
 
 #### `.latency`: reading back the discovered pipeline depth
 

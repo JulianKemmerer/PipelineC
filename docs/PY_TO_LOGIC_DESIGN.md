@@ -5831,10 +5831,11 @@ source) says nothing about what's actually instantiated, and was the 6th most co
 instance label in a real build's `module_instances.log` (4247 occurrences, all bare
 `func`). The call-site location suffix still pins the exact call either way.
 
-**Named AUTO_PIPELINE groups:** a call through `AUTO_PIPELINE(func, name=...)` is labeled
-with the group name, whatever the call-site alias: `poly1305_body_encrypt[<loc_str>]`. Two
-groups over one function stay apart in the hierarchy, in timing reports and in
-`name_index.log`, while both instantiate the function's own entity.
+**Named AUTO_PIPELINE groups:** `name=` identifies a latency group in keys,
+reports, hints and `name_index.log`. Instance labels remain callee-derived (with
+call-site locations), identical to an unnamed tag. A group name never changes
+emitted hierarchy or path attribution. Duplicate-call collapse preserves distinct
+groups, even when both instantiate the same function's entity.
 
 **Duplicate calls.** `C_TO_LOGIC.TRIM_COLLAPSE_FUNC_DEFS_RECURSIVE` collapses identical
 calls (same function, same input drivers) into one `_DUPLICATE_<hash>` instance. The

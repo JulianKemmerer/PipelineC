@@ -112,6 +112,7 @@ Within each group, bugs that affect both front ends come first, problems in the 
 | 32 | [#365][i365] | Both | `--coarse --sweep` may crash on narrow leaves | Not reproduced |
 | 33 | [#372][i372] | Python | `AUTO_PIPELINE(latency=N)` adds N cuts when `@pipeline_latency` calls already supply N cycles | Yes |
 | 34 | [#366][i366] | Python | AUTO_FSM deeply opened schedules may fail to elaborate | No, needs a long AUTO_FSM search |
+| 35 | Not yet filed | Python | `AUTO_PIPELINE(f)` on an imported function sweeps worse than tagging a local wrapper | Yes, in process |
 
 ## Wrong hardware, or simulation disagrees with hardware
 
@@ -597,6 +598,14 @@ Within each group, bugs that affect both front ends come first, problems in the 
 - **What happens (from the docs):** rescheduling the donut design (`examples/pypeline/vga_donut.py`) under a tightened budget produced a 412-operation, 131-state plan whose generated source failed to elaborate with "Bit index [14:14] out of range for uint9_t". The default control path avoids it only by meeting timing before the search opens the schedule that far.
 - **Where to look:** AUTO_FSM's source generation for opened operations in `src/AUTO_FSM.py`; `docs/AUTO_FSM_DESIGN.md` §6.
 - **Reproduce:** not re-run here; it needs a long AUTO_FSM search.
+
+### 35. Not yet filed: `AUTO_PIPELINE(f)` on an imported function sweeps worse than a wrapper
+
+- **Front ends:** Python.
+- **What happens:** the call's instance is labeled with the bare Python name (`square`), while the callee's function name is module-prefixed (`imported_math_square`). The sweep attributes a critical path by finding function names inside its register names, so a path through the region root matches nothing and the sweep replans the whole MAIN blindly. Separately, the sweep never mini-sweeps a region root, only functions inside a region. Seen on WireGuard: tagging `poly1305_body` directly built the bodies 6 and 12 deep and overflowed the device's DSPs, where tagging a one-line wrapper built 8 and 8.
+- **Where to look:** `SWEEP.RANK_PATH_FUNC_CANDIDATES` and `ATTRIBUTION_BASIS` (name matching); `SYN.PATH_CELLS_BY_MAIN` already maps path names to instances through the emitted hierarchy. The region-root exclusion is the `hotspot_func != region.func_name` test in `SWEEP.DO_PLANNED_THROUGHPUT_SWEEP`.
+- **Reproduce:** `python3 src/tests/pypeline_tests/known_issues_tests.py -k imported_auto_pipeline_attribution` (XFAIL while the bug is present).
+- **Workaround:** tag a small local wrapper that calls the function, so the function sits inside the region.
 
 [issues]: https://github.com/JulianKemmerer/PipelineC/issues
 [discussions]: https://github.com/JulianKemmerer/PipelineC/discussions

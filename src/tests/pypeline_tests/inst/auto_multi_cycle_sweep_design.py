@@ -46,7 +46,7 @@ mix_mcp, mix_mcp_t = make_stream_auto_multi_cycle(
 )
 
 
-@MAIN(100.0)
+@MAIN(param("AUTO_MULTI_CYCLE_SWEEP_GOAL", 100.0, type=float))
 @hw_func
 def auto_multi_cycle_sweep_main() -> uint32_t:
     x: Reg[uint32_t] = 1

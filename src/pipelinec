@@ -310,8 +310,8 @@ parser.add_argument(
     action="store_true",
     default=False,
     help="Neither use nor update the latency memory: the AUTO_PIPELINE / "
-    "AUTO_MULTI_CYCLE latencies earlier builds of this --out_dir verified "
-    "(<out_dir>/latency_memory.json and the --syn_cache store). "
+    "AUTO_MULTI_CYCLE depths/counts, mini-sweep locks and MAIN implementations "
+    "verified by earlier builds (out_dir memory and shared --syn_cache pieces). "
     "latency_profile.json is still written and --latency_hints still apply.",
 )
 parser.add_argument(
@@ -548,18 +548,16 @@ import pypeline
 pypeline.SET_AUTO_PIPELINE_BUILD_MODE(
     "fixed_only" if (args.comb or args.no_synth or args.yosys_json) else "sweep"
 )
-# Starting latencies for a synthesizing build: the latency memory of earlier
-# builds of this --out_dir, and --latency_hints (see SWEEP.LOAD_LATENCY_SEEDS)
+# Parse hints/source starts first. Matching memory pieces are selected below,
+# once part, tool, goals and zero-clock hardware digests are known.
 SWEEP.LATENCY_MEMORY_ENABLED = not args.no_latency_memory and (
     os.environ.get("PIPELINEC_INTERNAL_NO_LATENCY_MEMORY", "") != "1"
 )
-_latency_seeds_installed = False
 if src_file.endswith(".py") and pypeline.AUTO_PIPELINE_BUILD_MODE() == "sweep":
     _latency_seeds = SWEEP.LOAD_LATENCY_SEEDS(
         SYN.SYN_OUTPUT_DIRECTORY, args.latency_hints
     )
     pypeline.SET_LATENCY_SEEDS(_latency_seeds)
-    _latency_seeds_installed = bool(_latency_seeds)
 elif args.latency_hints:
     print(
         "NOTE: --latency_hints only applies to synthesizing builds of Pypeline "
@@ -618,8 +616,6 @@ parser_state.part, _resolved_tool = SYN.RESOLVE_PART_AND_TOOL(
     src_tool=parser_state.syn_tool_name,
     allow_fail=True,
 )
-if _latency_seeds_installed:
-    SWEEP.PRINT_LATENCY_SEEDS(parser_state.part, SYN.TOOL_NAME(_resolved_tool))
 if src_file.endswith(".py"):
     parser_state = AUTO_PIPELINE.RAM_PREPARE_TARGET(parser_state, src_file)
 
@@ -640,6 +636,20 @@ print(
 )
 print("Writing output files before adding pipelining...", flush=True)
 C_TO_LOGIC.WRITE_0_ADDED_CLKS_INIT_FILES(parser_state)
+
+# Resolve independent memory pieces now: part/tool/goals and fresh zero-clock
+# VHDL are available, and no synthesis has run.
+if src_file.endswith(".py") and pypeline.AUTO_PIPELINE_BUILD_MODE() == "sweep" and SYN.SYN_TOOL is not None:
+    def _reparse_latency_memory(seeds):
+        pypeline.SET_LATENCY_SEEDS(seeds)
+        state = PY_TO_LOGIC.PARSE_FILE(src_file)
+        state.part = parser_state.part
+        state.syn_tool_name = parser_state.syn_tool_name
+        C_TO_LOGIC.WRITE_0_ADDED_CLKS_INIT_FILES(state)
+        return state
+
+    parser_state = SWEEP.RESOLVE_LATENCY_MEMORY(parser_state, _latency_seeds, _reparse_latency_memory)
+    SWEEP.PRINT_LATENCY_SEEDS(parser_state.part, SYN.TOOL_NAME(SYN.SYN_TOOL))
 
 # If no synth tools installed, switch over to --comb --no_synth mode for user with warning...
 SYN.PART_SET_TOOL(parser_state.part, allow_fail=True)

@@ -1,188 +1,119 @@
 #!/usr/bin/env python3
-"""Latency memory end to end (build_report_device_models, sky130).
-
-Builds stream_auto_pipeline_test.py -- whose make_stream_auto_pipeline sizes
-its FIFO from the core AUTO_PIPELINE's .latency, so an unseeded build always
-needs the pin-and-confirm pass 2 -- six times:
-
-  1. fresh output directory with --syn_cache: pass 2 runs, and the verified
-     latency is recorded in the output directory and the store;
-  2. the same output directory again: the core starts at the remembered
-     latency, pass 2 is skipped, and the build ends at the same latency;
-  3. the same directory with --no_latency_memory: no starting latency, pass 2
-     runs again, same latency, memory left alone;
-  4. the output directory deleted, --syn_cache: seeded from the store's copy;
-  5. a fresh output directory without a store, --latency_hints <the first
-     build's latency_profile.json>: seeded from the hints, pass 2 skipped;
-  6. a stale memory entry: latency_memory_stale_design.py's named core
-     ("core") is built heavy, then rebuilt light in the same directory. The
-     remembered heavy latency was recorded for another function, so it only
-     serves the first .latency read: the sweep plans the light core as it
-     would unseeded and ends where a memory-less build does, through pass 2.
-     An unmatched hint is reported.
-
-The harness sets PIPELINEC_INTERNAL_NO_LATENCY_MEMORY=1 for every test; this
-one turns it back off for its own builds. See docs/SWEEP_DESIGN.md#5-latency-memory.
-"""
+"""Sky130: all-MAIN replay, cross-goal/store reuse, stale pieces and partial failure."""
 import argparse
 import json
 import os
 import re
-import shutil
 import subprocess
 import sys
 import tempfile
 
 THIS_DIR = os.path.dirname(os.path.abspath(__file__))
 PYPELINEC = os.path.join(THIS_DIR, "../../../pypelinec")
-DESIGN = os.path.join(THIS_DIR, "stream_auto_pipeline_test.py")
-STALE_DESIGN = os.path.join(THIS_DIR, "latency_memory_stale_design.py")
-PASS2 = "AUTO_PIPELINE Pass 2"
-SKIPPED = "skipping pin-and-confirm pass 2"
+DESIGN = os.path.join(THIS_DIR, "latency_memory_stale_design.py")
 
 
-def build(out_dir, *extra, design=DESIGN):
-    cmd = [sys.executable, PYPELINEC, design, "--syn_tool", "device_models", "-j", "1"]
-    cmd += ["--out_dir", out_dir] + list(extra)
-    env = dict(os.environ, PIPELINEC_INTERNAL_NO_LATENCY_MEMORY="0")
+def expect(condition, message):
+    if not condition:
+        raise AssertionError(message)
+
+
+def build(out_dir, *extra, design=DESIGN, fails=False):
+    cmd = [sys.executable, PYPELINEC, design, "--syn_tool", "device_models", "-j", "1",
+           "--out_dir", out_dir] + list(extra)
     print("Running:", " ".join(cmd), flush=True)
-    result = subprocess.run(
-        cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True, env=env
-    )
-    out = result.stdout
-    log = out_dir.rstrip("/") + ".log"
-    with open(log, "w") as f:
-        f.write(out)
-    if result.returncode != 0:
-        print(out[-4000:])
-        fail(f"pypelinec exited {result.returncode} (log: {log})")
-    latencies = dict(re.findall(r"^AUTO_PIPELINE (\S+): (\d+) clks$", out, re.M))
-    seeds = re.findall(r"^\[latency memory\] AUTO_PIPELINE (\S+): starts at (\d+) \((.*)\)$", out, re.M)
-    return out, {k: int(v) for k, v in latencies.items()}, seeds
-
-
-def profile_latencies(out_dir):
-    """key -> built latency, from the build's latency_profile.json (written by
-    every synthesizing build, whether or not pass 2 printed a harvest line)."""
+    env = dict(os.environ, PIPELINEC_INTERNAL_NO_LATENCY_MEMORY="0")
+    result = subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True, env=env)
+    with open(out_dir + ".log", "w") as f:
+        f.write(result.stdout)
+    expect((result.returncode != 0) if fails else (result.returncode == 0),
+           f"exit {result.returncode}: {out_dir}.log\n{result.stdout[-3000:]}")
     with open(os.path.join(out_dir, "latency_profile.json")) as f:
-        return {e["key"]: e["latency"] for e in json.load(f)["entries"]}
+        profile = json.load(f)
+    return result.stdout, profile
 
 
-def fail(msg):
-    print("FAIL:", msg, flush=True)
-    sys.exit(1)
+def pieces(out_dir):
+    with open(os.path.join(out_dir, "latency_memory.json")) as f:
+        return json.load(f)["pieces"]
 
 
-def expect(cond, msg):
-    if not cond:
-        fail(msg)
+def full_syntheses(out):
+    return len(re.findall(r"^Running syn w timing params|^Running confirmation synthesis", out, re.M))
 
 
 def main():
     parser = argparse.ArgumentParser()
-    parser.add_argument("--out_dir", default=None)
+    parser.add_argument("--out_dir")
     args = parser.parse_args()
-    root = args.out_dir or tempfile.mkdtemp(prefix="latency_memory_build_test_")
+    root = args.out_dir or tempfile.mkdtemp(prefix="latency_memory_v2_")
     os.makedirs(root, exist_ok=True)
-    out_dir = os.path.join(root, "build")
-    store = os.path.join(root, "store")
-    for path in (
-        out_dir, store, os.path.join(root, "hinted"), os.path.join(root, "stale"),
-        os.path.join(root, "light"),
-    ):
-        shutil.rmtree(path, ignore_errors=True)
-
-    # 1. Fresh: unseeded, pass 2, recorded in both places
-    out, first, seeds = build(out_dir, "--syn_cache", store)
-    expect(first and all(v > 0 for v in first.values()), f"no latency > 0 built: {first}")
-    expect(PASS2 in out and not seeds, "a fresh build must run pass 2, unseeded")
-    expect(
-        re.search(r"^Latency memory: recorded 1 \(out_dir, store\)$", out, re.M),
-        "the verified latency was not recorded in the output directory and the store",
-    )
-    with open(os.path.join(out_dir, "latency_profile.json")) as f:
-        profile = json.load(f)
-    (entry,) = profile["entries"]
-    expect(entry["verified"] and entry["latency"] == list(first.values())[0], profile)
-    expect(entry["seed"] is None and profile["tool"] == "device_models", profile)
-    expect(profile["part"] is not None, f"the resolved part was not recorded: {profile}")
-    with open(os.path.join(out_dir, "latency_memory.json")) as f:
-        memory = json.load(f)
-    expect(memory["AUTO_PIPELINE"][entry["key"]]["latency"] == entry["latency"], memory)
-    store_files = [
-        os.path.join(d, n) for d, _, ns in os.walk(os.path.join(store, "latency")) for n in ns
-    ]
-    expect(len(store_files) == 1, f"expected one store copy: {store_files}")
-
-    # 2. Rebuild: seeded from the output directory, pass 2 skipped
-    out, again, seeds = build(out_dir, "--syn_cache", store)
-    expect(again == first, f"latency changed on a seeded rebuild: {first} -> {again}")
-    expect(
-        [(k, int(v)) for k, v, _ in seeds] == list(first.items()),
-        f"the rebuild did not start from the remembered latency: {seeds}",
-    )
-    expect(seeds[0][2].startswith("latency memory:"), seeds)
-    expect(SKIPPED in out and PASS2 not in out, "a seeded rebuild must skip pass 2")
-    with open(os.path.join(out_dir, "latency_profile.json")) as f:
-        entry = json.load(f)["entries"][0]
-    expect(entry["seed"]["latency"] == entry["latency"], entry)
-
-    # 3. --no_latency_memory: unseeded, pass 2, memory untouched
-    before = os.path.getmtime(os.path.join(out_dir, "latency_memory.json"))
-    out, off, seeds = build(out_dir, "--syn_cache", store, "--no_latency_memory")
-    expect(off == first and not seeds and PASS2 in out, "--no_latency_memory must not seed")
-    expect("(latency memory off)" in out, "the profile line should say the memory is off")
-    expect(
-        os.path.getmtime(os.path.join(out_dir, "latency_memory.json")) == before,
-        "--no_latency_memory rewrote the memory",
-    )
-
-    # 4. Output directory gone: the store's copy seeds it
-    shutil.rmtree(out_dir)
-    out, restored, seeds = build(out_dir, "--syn_cache", store)
-    expect(restored == first and SKIPPED in out, "the store's copy did not seed the build")
-    expect(seeds and seeds[0][2].startswith("latency memory (store)"), seeds)
-
-    # 5. A fresh directory, hints from the first profile
-    hinted = os.path.join(root, "hinted")
-    hints = os.path.join(root, "hints_profile.json")
-    shutil.copy(os.path.join(out_dir, "latency_profile.json"), hints)
-    out, from_hints, seeds = build(hinted, "--latency_hints", hints)
-    expect(from_hints == first and SKIPPED in out, "hints did not seed a fresh directory")
-    expect(seeds and seeds[0][2] == "hints hints_profile.json", seeds)
-
-    # 6. A stale memory entry: same tag key, another function
-    stale_dir = os.path.join(root, "stale")
-    unmatched = os.path.join(root, "unmatched_hints.json")
-    with open(unmatched, "w") as f:
-        json.dump({"AUTO_PIPELINE": {"renamed_tag": 2}}, f)
-    build(stale_dir, design=STALE_DESIGN)
-    heavy = profile_latencies(stale_dir)
-    expect(heavy.get("core", 0) > 0, f"the heavy core needs registers at 50 MHz: {heavy}")
-    light_out, _, seeds = build(
-        stale_dir, "-D", "LATENCY_MEMORY_HEAVY=0", "--latency_hints", unmatched,
-        design=STALE_DESIGN,
-    )
-    expect(
-        seeds and int(seeds[0][1]) == heavy["core"],
-        f"the light rebuild should first read the remembered {heavy['core']}: {seeds}",
-    )
-    expect(
-        "core: its function changed, so its sweep doesn't start at" in light_out,
-        "the stale remembered latency was not recognized",
-    )
-    expect(
-        "latency hint(s) matched no AUTO_PIPELINE" in light_out and "renamed_tag (hints" in light_out,
-        "an unmatched hint was not reported",
-    )
-    light = profile_latencies(stale_dir)
-    build(
-        os.path.join(root, "light"), "-D", "LATENCY_MEMORY_HEAVY=0", "--no_latency_memory",
-        design=STALE_DESIGN,
-    )
-    fresh = profile_latencies(os.path.join(root, "light"))
-    expect(light == fresh, f"a stale entry changed the result: {light} vs memory-less {fresh}")
-    print("PASS: latency memory seeds rebuilds, survives in the store, and stale entries are corrected")
+    sub = lambda name: os.path.join(root, name)
+    store = sub("store")
+    first, profile = build(sub("g1"), "--syn_cache", store)
+    depth = profile["entries"][0]["latency"]
+    expect(depth > 0 and "AUTO_PIPELINE Pass 2" in first, "cold G1 must find depth and reparse")
+    expect({e["kind"] for e in pieces(sub("g1"))} == {"AUTO_PIPELINE", "main"}, "depth and MAIN not recorded")
+    again, profile = build(sub("g1"), "--syn_cache", store)
+    expect("Replaying MAIN" in again and full_syntheses(again) == 1, "same-goal rebuild did not replay in one confirmation")
+    expect("0 new run(s)" in again and "from the store" in again, "same-goal rebuild synthesized new inputs")
+    expect("AUTO_PIPELINE Pass 2" not in again, "replay needed pass 2")
+    # Different out_dir, same library key/store: G1 starts G2, and beats cold G2.
+    warm, profile = build(sub("g2"), "--syn_cache", store, "-D", "LATENCY_MEMORY_GOAL=55")
+    expect(f"core: starts at {depth} (latency memory (store)" in warm, "lower-goal piece was not served")
+    expect("50 MHz goal" in warm and "Replaying MAIN" not in warm, "lower goal MAIN replayed")
+    cold, _ = build(sub("g2_cold"), "--no_latency_memory", "-D", "LATENCY_MEMORY_GOAL=55")
+    expect(full_syntheses(warm) < full_syntheses(cold), "warm G2 did not reduce full syntheses")
+    # A store containing only G2 must not seed G1.
+    high_store = sub("high_store")
+    build(sub("high"), "--syn_cache", high_store, "-D", "LATENCY_MEMORY_GOAL=55")
+    lower, _ = build(sub("lower"), "--syn_cache", high_store)
+    expect("core: starts at" not in lower and "Replaying MAIN" not in lower, "higher goal piece used at lower goal")
+    before = open(os.path.join(sub("g1"), "latency_memory.json")).read()
+    off, _ = build(sub("g1"), "--syn_cache", store, "--no_latency_memory")
+    expect("[latency memory]" not in off and "AUTO_PIPELINE Pass 2" in off, "memory-off build was seeded")
+    expect(before == open(os.path.join(sub("g1"), "latency_memory.json")).read(), "memory-off build rewrote memory")
+    hints = sub("hints.json")
+    with open(hints, "w") as f:
+        json.dump({"AUTO_PIPELINE": {"core": depth, "absent": 2}}, f)
+    hinted, hinted_profile = build(sub("hinted"), "--latency_hints", hints)
+    expect(f"core: starts at {depth} (hints hints.json)" in hinted, "hint did not behave as a start")
+    expect("AUTO_PIPELINE Pass 2" not in hinted and "absent (hints" in hinted, "hint/unused-note semantics changed")
+    # Same key, edited callee: reject the stale depth before serving it.
+    stale, light_profile = build(sub("g1"), "--syn_cache", store, "-D", "LATENCY_MEMORY_HEAVY=0")
+    expect("core: starts at" not in stale and "Replaying MAIN" not in stale, "stale piece survived its digest change")
+    _, fresh_profile = build(sub("light"), "--no_latency_memory", "-D", "LATENCY_MEMORY_HEAVY=0")
+    expect(light_profile["entries"][0]["latency"] == fresh_profile["entries"][0]["latency"], "stale piece changed the light result")
+    # Two independent MAINs: one failure preserves its previous records while
+    # the passing MAIN records its own pieces.
+    partial_design = sub("partial.py")
+    with open(partial_design, "w") as f:
+        f.write('''from pypeline import MAIN, AUTO_PIPELINE, Reg, hw_func, param, uint8_t
+@hw_func
+def good(x: uint8_t) -> uint8_t:
+    return x * x
+@hw_func
+def bad(x: uint8_t) -> uint8_t:
+    return x + 1
+GOOD = AUTO_PIPELINE(good, name="good", start_latency=1)
+BAD = AUTO_PIPELINE(bad, name="bad", start_latency=1)
+@MAIN(30.0)
+def good_main(x: uint8_t) -> uint8_t:
+    return GOOD(x)
+@MAIN(param("BAD_GOAL", 30.0, type=float))
+def bad_main(x: uint8_t) -> uint8_t:
+    acc: Reg[uint8_t]
+    acc = acc + 1
+    return BAD(x) + acc
+''')
+    build(sub("partial"), design=partial_design)
+    old_bad = [e for e in pieces(sub("partial")) if e["key"] in ("bad", "bad_main")]
+    failed, _ = build(sub("partial"), "-D", "BAD_GOAL=100000", design=partial_design, fails=True)
+    expect("not every MAIN matches" in failed, "partial replay did not skip confirmation")
+    now = pieces(sub("partial"))
+    expect([e for e in now if e["key"] in ("bad", "bad_main")] == old_bad, "failed MAIN overwrote its pieces")
+    expect(any(e["key"] == "good" for e in now), "met MAIN's piece was not recorded")
+    print("PASS: latency pieces replay, seed higher goals across output directories and retain per-MAIN results")
 
 
 if __name__ == "__main__":

@@ -12,10 +12,12 @@
 #      AUTO_MULTI_CYCLE change, pass 2 skipped
 #  (c) max_latency=1: the cap blocks the goal, the sweep says so, build fails
 #  (d) latency memory: (a) runs with the memory on, so a rebuild of its output
-#      directory starts from the remembered count and skips pass 2; and a
-#      --latency_hints count far above the need (a stale entry) is
-#      provisional, so confirm-down brings it back to (a)'s count
+#      directory starts from the remembered count and skips pass 2; a
+#      same-goal memory count three cycles too high stays provisional, so
+#      confirm-down brings it back to (a)'s count; and at a raised goal the
+#      same piece from the lower goal is a floor the count never goes below
 import argparse
+import json
 import os
 import re
 import subprocess
@@ -88,7 +90,7 @@ def check_raises_count(out_dir):
         fail(f"final XDC multi-cycle counts {xdc}, expected {{{count}}}")
     if "TIMING NOT MET" in out:
         fail("timing not met")
-    if out_dir and "Latency memory: recorded 1 (out_dir)" not in out:
+    if out_dir and "Latency memory: recorded 2 pieces (out_dir)" not in out:
         fail("the verified count was not remembered")
     return count
 
@@ -101,19 +103,29 @@ def check_remembered_count(out_dir, count, hints_dir):
         fail(f"the rebuild did not start from the remembered {count} cycles")
     if list(harvested(out).values()) != [count] or "AUTO_PIPELINE Pass 2" in out:
         fail("a rebuild starting from the remembered count must keep it and skip pass 2")
-    # A stale, far too high count: provisional, confirmed down to the need
-    key = list(harvested(out))[0]
+    # A matching current-goal piece remains provisional and confirms down.
+    memory_path = os.path.join(out_dir, "latency_memory.json")
+    with open(memory_path) as f:
+        memory = json.load(f)
+    for piece in memory["pieces"]:
+        if piece["kind"] == "AUTO_MULTI_CYCLE":
+            piece["latency"] = count + 3
+    with open(memory_path, "w") as f:
+        json.dump(memory, f)
+    rc, out = run(out_dir, memory=True)
+    if rc != 0 or "MCP confirm-down passed" not in out or list(harvested(out).values()) != [count]:
+        fail("a current-goal MCP piece was not confirmed down")
+    # The same verified datapath piece at a lower goal is a floor at a raised
+    # goal, even if its known-good starting implementation was conservative.
+    for piece in memory["pieces"]:
+        if piece["kind"] == "AUTO_MULTI_CYCLE":
+            piece["latency"] = count + 3
     os.makedirs(hints_dir, exist_ok=True)
-    hints = os.path.join(hints_dir, "stale_hints.json")
-    with open(hints, "w") as f:
-        f.write('{"AUTO_MULTI_CYCLE": {"%s": %d}}' % (key, count + 3))
-    rc, out = run(os.path.join(hints_dir, "build"), extra=["--latency_hints", hints])
-    if rc != 0:
-        fail(f"stale-hint build exited {rc}")
-    if f"starts at {count + 3} (hints stale_hints.json)" not in out:
-        fail("the stale hint was not taken as the starting count")
-    if "MCP confirm-down passed" not in out or list(harvested(out).values()) != [count]:
-        fail(f"a too-high starting count was not confirmed down to {count}: {harvested(out)}")
+    with open(os.path.join(hints_dir, "latency_memory.json"), "w") as f:
+        json.dump(memory, f)
+    rc, out = run(hints_dir, extra=["-D", "AUTO_MULTI_CYCLE_SWEEP_GOAL=110"], memory=True)
+    if rc != 0 or list(harvested(out).values())[0] < count + 3:
+        fail("the lower-goal MCP piece did not act as a floor")
 
 
 def check_starts_and_settles(out_dir, count):

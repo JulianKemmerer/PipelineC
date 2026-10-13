@@ -1116,8 +1116,9 @@ compiler.
   a library built the tag). A later tag under that name with a different signature
   raises `TypeError` naming both sites.
 - **Two names on one function** are two keys, so two groups, sized independently by
-  the sweep. The elaborator labels each call's instance with the group name. The
-  callee's own entity is the function's, unchanged.
+  the sweep. The elaborator keeps callee-derived call-site instance labels, identical
+  to unnamed tags. A group name never changes the emitted hierarchy or attribution.
+  The callee's own entity is the function's, unchanged.
 - **Reports.** `USER_NAMED_AUTO_TAGS()` lists the named tags for `name_index.log`.
   `RESET_AUTO_MULTI_CYCLE_TRACKING` clears both name registries at the start of every
   design execution.

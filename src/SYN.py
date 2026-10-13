@@ -2571,8 +2571,8 @@ def SYNTHESIS_STORE_PRUNE(days):
             if stale:
                 shutil.rmtree(dirpath, ignore_errors=True)
                 removed += 1
-    # The latency memory copies (SWEEP.LATENCY_MEMORY_STORE_PATH): one small
-    # file per output directory, touched by every build that reads or writes it
+    # Latency v2: bounded variants per library piece, touched on reuse/write.
+    # Also prune obsolete v1 files; they are never loaded by current builds.
     for dirpath, _dirnames, filenames in os.walk(
         os.path.join(SYNTHESIS_STORE_DIR, "latency")
     ):

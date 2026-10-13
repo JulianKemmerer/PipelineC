@@ -60,6 +60,17 @@ SWEEP_FLOAT32_BLOCKED = {
 
 def get_tests() -> list:
     tests = []
+    # AUTO_PIPELINE(imported_f): the instance label is the bare name, the
+    # func_name module-prefixed, so path attribution misses the region root
+    # and the sweep replans blindly (WireGuard without its body wrappers).
+    tests.append(
+        Test(
+            name="imported_auto_pipeline_attribution_known_issue",
+            category="known_issues",
+            cmd=[INST_DIR / "imported_auto_pipeline_attribution_test.py"],
+            expect_fail=True,
+        )
+    )
     # A sim_print(..., debug=True) call the SAME cycle as sim_finish() races
     # GHDL's write-flush against std.env.finish and the print is silently
     # dropped from the VHDL/cocotb log entirely (present in native sim,

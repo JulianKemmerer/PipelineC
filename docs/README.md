@@ -1108,12 +1108,15 @@ timing-params caches, etc.), instead of a freshly generated default directory.
   A plan can therefore depend on what earlier builds left behind;
   `--no_stored_measurements` turns this off. See
   [SYN_DESIGN.md](SYN_DESIGN.md#stored-measurements).
-- **Starting latencies from earlier builds.** A synthesizing build starts each
-  AUTO_PIPELINE and AUTO_MULTI_CYCLE from the latency earlier builds of the same
-  `--out_dir` verified (`latency_memory.json`, and a copy in the `--syn_cache` store).
-  `--latency_hints FILE` supplies starting latencies from a file you keep, and
-  `--no_latency_memory` turns the memory off. A starting latency only changes where
-  the search starts, never what a correct build produces. See
+- **Results remembered from earlier builds.** A synthesizing build reuses what
+  earlier builds verified, piece by piece: AUTO_PIPELINE depths, AUTO_MULTI_CYCLE
+  counts, mini-sweep locks and whole MAIN implementations. A piece is reused only
+  for unchanged hardware on the same part and tool, at the same clock goal or as
+  the start for a higher one. The output directory's `latency_memory.json` holds
+  them, and with `--syn_cache` so does the store, which shares them across output
+  directories. Everything reused is confirmed by synthesis. `--latency_hints FILE`
+  supplies starting latencies from a file you keep, and `--no_latency_memory` turns
+  the memory off. See
   [pypeline_guide.md](pypeline_guide.md#starting-latencies-the-latency-memory-and---latency_hints)
   and [SWEEP_DESIGN.md](SWEEP_DESIGN.md#5-latency-memory).
 - **Default and layout.** Without `--out_dir`, a new output directory is created inside
@@ -1135,8 +1138,8 @@ timing-params caches, etc.), instead of a freshly generated default directory.
 | `--full_hier_syn` | Measure every hierarchy level rather than estimating hierarchy from measured leaves |
 | `--no_hier_syn` | Measure primitive leaves only; fastest warm-cache path, but disables fallback when hierarchy estimates are inaccurate |
 | `--no_stored_measurements` | Estimate hierarchy delays and areas even when this `--out_dir` or the `--syn_cache` store holds an earlier synthesis of the same exact inputs (by default such a measurement replaces the estimate) |
-| `--latency_hints FILE` | Starting latencies for AUTO_PIPELINE / AUTO_MULTI_CYCLE tags, by tag key (a named tag's key is its name): a `latency_profile.json` from an earlier build, or `{"AUTO_PIPELINE": {key: N}, "AUTO_MULTI_CYCLE": {key: N}}`. Repeatable; remembered latencies take precedence |
-| `--no_latency_memory` | Neither use nor update the latencies earlier builds of this `--out_dir` verified; `latency_profile.json` is still written and hints still apply |
+| `--latency_hints FILE` | Starting latencies for AUTO_PIPELINE / AUTO_MULTI_CYCLE tags, by tag key (a named tag's key is its name): a `latency_profile.json` from an earlier build, or `{"AUTO_PIPELINE": {key: N}, "AUTO_MULTI_CYCLE": {key: N}}`. Each is a start, like `start_latency=`. Repeatable; a matching remembered result takes precedence |
+| `--no_latency_memory` | Neither use nor update the results earlier builds verified (`latency_memory.json` and the `--syn_cache` store's pieces); `latency_profile.json` is still written and hints still apply |
 | `--pipeline_min_effort N` | After timing is met, allow up to N additional full-design runs to reduce register count; zero accepts the first passing result |
 | `--mult infer\|fabric` | Infer target multiplier/DSP primitives or force multipliers into fabric logic |
 | `--verilog` | Convert the final VHDL top to Verilog through GHDL and Yosys |
@@ -1273,8 +1276,9 @@ Consume the explicit manifests and indexes instead of globbing generated directo
   verified or unverified status.
 - `latency_profile.json` (synthesizing builds of Pypeline designs) records what the build
   built for each AUTO_PIPELINE / AUTO_MULTI_CYCLE and whether that met timing. Copy it to
-  keep as a `--latency_hints` file. `latency_memory.json` holds the verified latencies the
-  next build of this directory starts from; deleting it is always safe.
+  keep as a `--latency_hints` file. `latency_memory.json` holds the verified results
+  (depths, counts, mini-sweep locks, MAIN implementations) later builds reuse; deleting
+  it is always safe.
 - `host/pypeline_host_types.py` is a standalone standard-library-only Python module for
   types registered by byte serialization or `host_export(...)`. Copy it beside host
   software; exported structs are namedtuples with `zero()`, `_replace`, `to_bytes`,

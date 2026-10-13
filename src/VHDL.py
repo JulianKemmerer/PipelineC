@@ -5348,6 +5348,7 @@ def WRITE_LOGIC_ENTITY(
     parser_state,
     TimingParamsLookupTable,
     is_final_files=False,
+    return_text=False,
 ):
     import AUTO_PIPELINE
 
@@ -5662,6 +5663,9 @@ def WRITE_LOGIC_ENTITY(
 
     # Done with entity
     rv += "\n" + "end arch;" + "\n"
+
+    if return_text:
+        return RENDER_TEXT(rv, parser_state)
 
     if not os.path.exists(output_directory):
         os.makedirs(output_directory)

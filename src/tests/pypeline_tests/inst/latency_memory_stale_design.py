@@ -21,7 +21,7 @@ HEAVY = param("LATENCY_MEMORY_HEAVY", 1, choices=(0, 1), help="the heavy core, e
 @hw_func
 def heavy_core(x: uint8_t) -> uint8_t:
     a: uint8_t = x / ~x
-    return a / (x + 1)
+    return a
 
 
 @hw_func
@@ -35,7 +35,7 @@ core_pipeline, core_pipeline_t = make_stream_auto_pipeline(
 )
 
 
-@MAIN(50.0)
+@MAIN(param("LATENCY_MEMORY_GOAL", 50.0, type=float))
 def latency_memory_stale_top(
     stream_in_if: uint8_stream_intrf.fwd_t, stream_out_if: uint8_stream_intrf.fb_t
 ) -> core_pipeline_t:

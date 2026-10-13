@@ -1,19 +1,5 @@
 #!/usr/bin/env python3
-"""Latency memory and hints (SWEEP.py "Latency memory"), without a synthesis tool:
-  - READ_LATENCY_TABLE: the three accepted file shapes and every rejection;
-  - LOAD_LATENCY_SEEDS: hints in order, the memory over them, the output
-    directory's own memory over the store's copy, memory off, an unreadable
-    memory file ignored;
-  - what a build remembers: verified results replace, unverified ones keep the
-    remembered value, tags the build no longer has are dropped;
-  - BUILD_LATENCY_PROFILE: per-tag verdicts from the owning MAINs, the seed
-    each tag started from, a deterministic document;
-  - PRINT_LATENCY_SEEDS: applied seeds, unused hints, unused memory;
-  - the --syn_cache store copy path and its prune.
-See docs/SWEEP_DESIGN.md#5-latency-memory.
-"""
-import contextlib
-import io
+"""Independent latency pieces: identity, goal selection, recording, JSON and prune."""
 import json
 import os
 import sys
@@ -104,103 +90,6 @@ def test_read_latency_table_formats(tmp):
     print("test_read_latency_table_formats PASS")
 
 
-def test_load_latency_seeds_precedence(tmp):
-    out_dir = os.path.join(tmp, "out")
-    store = os.path.join(tmp, "store")
-    h1 = write(os.path.join(tmp, "h1.json"), {AP: {"a": 1, "b": 1, "c": 1, "d": 1}})
-    h2 = write(os.path.join(tmp, "h2.json"), {AP: {"b": 2, "c": 2, "d": 2}})
-    with patch.object(SYN, "SYNTHESIS_STORE_DIR", store), patch.object(
-        SWEEP, "LATENCY_MEMORY_ENABLED", True
-    ):
-        store_path = SWEEP.LATENCY_MEMORY_STORE_PATH(out_dir)
-        assert store_path.startswith(os.path.join(store, "latency", "v1") + os.sep)
-        assert store_path == SWEEP.LATENCY_MEMORY_STORE_PATH(out_dir + "/")
-        assert store_path != SWEEP.LATENCY_MEMORY_STORE_PATH(out_dir + "_other")
-        write(store_path, {"part": "p", "tool": "t", AP: {"c": {"latency": 3}, "d": 3}})
-        write(
-            os.path.join(out_dir, SWEEP.LATENCY_MEMORY_FILE),
-            {"part": "p", "tool": "t", AP: {"d": {"latency": 4, "goal_mhz": 50.0}}},
-        )
-        old = time.time() - 30 * 86400
-        os.utime(store_path, (old, old))
-        seeds = SWEEP.LOAD_LATENCY_SEEDS(out_dir, [h1, h2])
-        assert {k: v[0] for k, v in seeds.items()} == {
-            (AP, "a"): 1,  # hints h1
-            (AP, "b"): 2,  # a later hints file wins
-            (AP, "c"): 3,  # the memory wins over hints
-            (AP, "d"): 4,  # the output directory's own memory wins over the store
-        }, seeds
-        assert seeds[(AP, "a")][1] == "hints h1.json"
-        assert seeds[(AP, "c")][1] == "latency memory (store): p/t"
-        assert SWEEP.LATENCY_SEED_ORIGINS[(AP, "c")] == {
-            "part": "p", "tool": "t", "goal_mhz": None, "shape": None
-        }
-        assert (AP, "a") not in SWEEP.LATENCY_SEED_ORIGINS  # hand-written hint
-        assert seeds[(AP, "d")][1] == "latency memory: met a 50 MHz goal, p/t"
-        # Reading the store's copy marks it used (SYNTHESIS_STORE_PRUNE)
-        assert os.path.getmtime(store_path) > old + 86400
-        # Memory off: hints only
-        with patch.object(SWEEP, "LATENCY_MEMORY_ENABLED", False):
-            seeds = SWEEP.LOAD_LATENCY_SEEDS(out_dir, [h1])
-            assert {k: v[0] for k, v in seeds.items()} == {
-                (AP, k): 1 for k in "abcd"
-            }
-        # An unreadable memory file is ignored with a warning
-        with open(store_path, "w") as f:
-            f.write("{not json")
-        captured = io.StringIO()
-        with contextlib.redirect_stdout(captured):
-            seeds = SWEEP.LOAD_LATENCY_SEEDS(out_dir, [])
-        assert "ignoring unreadable latency memory" in captured.getvalue()
-        assert {k: v[0] for k, v in seeds.items()} == {(AP, "d"): 4}
-    # An unreadable hints file is an error
-    bad = write(os.path.join(tmp, "bad_hints.json"), {AP: {"x": -2}})
-    try:
-        SWEEP.LOAD_LATENCY_SEEDS(out_dir, [bad])
-    except SystemExit as e:
-        assert "--latency_hints" in str(e) and ">= 0" in str(e), str(e)
-    else:
-        raise AssertionError("bad hints accepted")
-    with patch.object(SYN, "SYNTHESIS_STORE_DIR", None):
-        assert SWEEP.LATENCY_MEMORY_STORE_PATH(out_dir) is None
-    print("test_load_latency_seeds_precedence PASS")
-
-
-def test_memory_merge_rules(tmp):
-    path = write(
-        os.path.join(tmp, "merge", SWEEP.LATENCY_MEMORY_FILE),
-        {
-            AP: {"kept": {"latency": 5, "goal_mhz": 60.0}, "gone": 9, "replaced": 1},
-            MC: {"m": 4},
-        },
-    )
-    profile = {
-        "part": "p",
-        "tool": "t",
-        "entries": [
-            {"kind": AP, "key": "kept", "latency": 7, "verified": False,
-             "goal_mhz": 60.0, "achieved_mhz": 40.0},
-            {"kind": AP, "key": "replaced", "latency": 2, "verified": True,
-             "goal_mhz": 60.0, "achieved_mhz": 63.0, "shape": "abc"},
-            {"kind": AP, "key": "new_unverified", "latency": 3, "verified": False,
-             "goal_mhz": 60.0, "achieved_mhz": None},
-            {"kind": MC, "key": "m", "latency": 3, "verified": True,
-             "goal_mhz": 60.0, "achieved_mhz": None},
-        ],
-    }
-    doc = SWEEP._merged_latency_memory(path, profile)
-    assert doc[AP] == {
-        "kept": {"latency": 5, "goal_mhz": 60.0, "achieved_mhz": None, "shape": None},
-        "replaced": {"latency": 2, "goal_mhz": 60.0, "achieved_mhz": 63.0, "shape": "abc"},
-    }, doc[AP]
-    assert doc[MC] == {"m": {"latency": 3, "goal_mhz": 60.0, "achieved_mhz": None, "shape": None}}
-    assert (doc["part"], doc["tool"], doc["schema_version"]) == ("p", "t", 1)
-    # No previous memory: only the verified entries
-    doc = SWEEP._merged_latency_memory(os.path.join(tmp, "absent.json"), profile)
-    assert sorted(doc[AP]) == ["replaced"] and sorted(doc[MC]) == ["m"]
-    print("test_memory_merge_rules PASS")
-
-
 def test_build_latency_profile_verdicts_and_seeds():
     parser_state = SimpleNamespace(part="xc7a200t")
     owners = {
@@ -257,51 +146,6 @@ def test_build_latency_profile_verdicts_and_seeds():
     print("test_build_latency_profile_verdicts_and_seeds PASS")
 
 
-def test_print_latency_seeds():
-    try:
-        pypeline.SET_AUTO_PIPELINE_BUILD_MODE("sweep")
-        pypeline.RESET_AUTO_MULTI_CYCLE_TRACKING()
-        pypeline.SET_LATENCY_SEEDS(
-            {
-                (MC, "taken"): (4, "latency memory: met a 60 MHz goal, other_part/vivado"),
-                (MC, "stale_hint"): (2, "hints h.json"),
-                (MC, "gone"): (3, "latency memory: xc7a200t/vivado"),
-            }
-        )
-        SWEEP.LATENCY_SEED_ORIGINS.clear()
-        SWEEP.LATENCY_SEED_ORIGINS[(MC, "taken")] = {
-            "part": "other_part", "tool": "vivado", "goal_mhz": 60.0, "shape": None
-        }
-        pypeline.AUTO_MULTI_CYCLE(start_latency=2, name="taken")
-        captured = io.StringIO()
-        with contextlib.redirect_stdout(captured):
-            SWEEP.PRINT_LATENCY_SEEDS("xc7a200t", "vivado")
-        out = captured.getvalue()
-        assert "[latency memory] AUTO_MULTI_CYCLE taken: starts at 4 (latency memory" in out, out
-        assert "NOTE: 1 latency hint(s) matched no" in out and "stale_hint (hints h.json)" in out, out
-        assert "NOTE: 1 remembered latency matched no tag" in out, out
-        assert "remembered for part other_part, tool vivado; this build is for part xc7a200t" in out, out
-        assert SWEEP.LATENCY_SEEDS_USED == {(MC, "taken"): (4, "latency memory: met a 60 MHz goal, other_part/vivado")}
-    finally:
-        pypeline.SET_LATENCY_SEEDS({})
-        pypeline.SET_AUTO_PIPELINE_BUILD_MODE(None)
-        pypeline.RESET_AUTO_MULTI_CYCLE_TRACKING()
-        SWEEP.LATENCY_SEEDS_USED.clear()
-    print("test_print_latency_seeds PASS")
-
-
-def test_store_prune_covers_latency_memory(tmp):
-    store = os.path.join(tmp, "prune_store")
-    with patch.object(SYN, "SYNTHESIS_STORE_DIR", store):
-        fresh = write(SWEEP.LATENCY_MEMORY_STORE_PATH(os.path.join(tmp, "a")), {AP: {}})
-        stale = write(SWEEP.LATENCY_MEMORY_STORE_PATH(os.path.join(tmp, "b")), {AP: {}})
-        old = time.time() - 30 * 86400
-        os.utime(stale, (old, old))
-        assert SYN.SYNTHESIS_STORE_PRUNE(7) == 1
-        assert os.path.exists(fresh) and not os.path.exists(stale)
-    print("test_store_prune_covers_latency_memory PASS")
-
-
 _NESTED_SRC = """
 import sys
 sys.path.insert(0, {src!r})
@@ -354,89 +198,193 @@ def test_seeded_tags_are_start_only_regions(tmp):
     print("test_seeded_tags_are_start_only_regions PASS")
 
 
-_GUARD_SRC = """
+def test_selection_and_store(tmp):
+    def piece(goal, **kw):
+        return dict(kind=AP, key="core", digest="d", goal_mhz=goal,
+                    part="sky130", tool="device_models", latency=3, **kw)
+    entries = [piece(30), piece(60), piece(85), dict(piece(60), digest="stale")]
+    select = lambda goal, digest="d": SWEEP.SELECT_LATENCY_PIECE(
+        entries, AP, "core", digest, goal, "sky130", "device_models")
+    assert select(60)["goal_mhz"] == 60
+    assert select(80)["goal_mhz"] == 60
+    assert select(20) is None and select(60, "missing") is None
+    assert SWEEP.SELECT_LATENCY_PIECE(entries, AP, "core", "d", 60, "other", "device_models") is None
+    assert SWEEP.SELECT_LATENCY_PIECE(entries, AP, "core", "d", 60, "sky130", "vivado") is None
+    with patch.object(SYN, "SYNTHESIS_STORE_DIR", os.path.join(tmp, "store")):
+        path = SWEEP.LATENCY_MEMORY_STORE_PATH("device_models", "sky130", AP, "core")
+        assert "/latency/v2/device_models/sky130/AUTO_PIPELINE/" in path
+        assert len(os.path.basename(path)) == 21
+        write(path, {"schema_version": 2, "pieces": entries})
+        assert SWEEP._read_latency_pieces(path) == entries
+        old = time.time() - 30 * 86400
+        os.utime(path, (old, old))
+        assert SYN.SYNTHESIS_STORE_PRUNE(7) == 1 and not os.path.exists(path)
+    many = [dict(piece(30), digest=str(i)) for i in range(25)]
+    merged = SWEEP.MERGE_LATENCY_PIECES(many, [dict(piece(60), latency=8)])
+    assert len(merged) == SWEEP.LATENCY_MEMORY_MAX_ENTRIES
+    assert merged[-1]["latency"] == 8
+    # A failure records no replacement, preserving all previous variants.
+    assert SWEEP.MERGE_LATENCY_PIECES(merged, []) == merged
+    assert SWEEP._read_latency_pieces(write(os.path.join(tmp, "v1.json"),
+                                          {"schema_version": 1, AP: {"core": 99}})) == []
+    h1 = write(os.path.join(tmp, "h1.json"), {AP: {"core": 2}})
+    h2 = write(os.path.join(tmp, "h2.json"), {AP: {"core": 4}})
+    assert SWEEP.LOAD_LATENCY_SEEDS(tmp, [h1, h2])[(AP, "core")] == (4, "hints h2.json")
+
+
+def test_digest_changes_only_ancestors(tmp):
+    import PY_TO_LOGIC
+    src = _NESTED_SRC.format(src=os.path.join(THIS_DIR, "..", "..", ".."))
+    src = src.replace('PLAIN = AUTO_PIPELINE(leaf, name="plain")',
+                      '@hw_func\ndef other(x: uint8_t) -> uint8_t:\n    return x + 2\nPLAIN = AUTO_PIPELINE(other, name="plain")')
+    design = os.path.join(tmp, "digest_design.py")
+    SYN.SYN_OUTPUT_DIRECTORY = os.path.join(tmp, "digest_out")
+    SYN.TOP_LEVEL_MODULE = "top"
+    pypeline.SET_AUTO_PIPELINE_BUILD_MODE("sweep")
+    pypeline.SET_LATENCY_SEEDS({})
+    try:
+        def parse(text):
+            with open(design, "w") as f:
+                f.write(text)
+            ps = PY_TO_LOGIC.PARSE_FILE(design)
+            C_TO_LOGIC.WRITE_0_ADDED_CLKS_INIT_FILES(ps)
+            return ps, SWEEP.LATENCY_SUBTREE_DIGESTS(ps)
+        ps, first = parse(src)
+        ps._latency_subtree_digests = None
+        assert first == SWEEP.LATENCY_SUBTREE_DIGESTS(ps)
+        _same, same = parse(src)
+        assert first == same
+        _ps, second = parse(src.replace("return x * x", "return x + x"))
+        assert first["other"] == second["other"]
+        for name in ("leaf", "holder", "nested_main"):
+            assert first[name] != second[name], name
+    finally:
+        pypeline.SET_AUTO_PIPELINE_BUILD_MODE(None)
+        pypeline.SET_LATENCY_SEEDS({})
+
+
+def test_recording_per_piece_and_lock_roundtrip(tmp):
+    ps = SimpleNamespace(part="sky130", main_mhz={"a": 50, "b": 60},
+                         LogicInstLookupTable={"a": SimpleNamespace(func_name="a"),
+                                               "b": SimpleNamespace(func_name="b")})
+    identities = {(AP, "good"): dict(digest="d", mains={"a"}, goal_mhz=50),
+                  (AP, "bad"): dict(digest="e", mains={"b"}, goal_mhz=60),
+                  (AP, "shared"): dict(digest="f", mains={"a", "b"}, goal_mhz=50)}
+    profile = {"entries": [dict(kind=AP, key=k, latency=3, achieved_mhz=55)
+                           for k in ("good", "bad", "shared")]}
+    history = {"mains": {"a": {"final": dict(met=True, met_basis="no_failing_path_reported")},
+                         "b": {"final": dict(met=False, met_basis="timing_failure")}}}
+    with patch.object(SWEEP, "_latency_piece_identities", lambda _: identities), patch.dict(
+            SWEEP.CARRIED_LOCKS, {}, clear=True):
+        pieces = SWEEP.BUILD_LATENCY_PIECES(ps, SimpleNamespace(), history, profile)
+        assert [e["key"] for e in pieces] == ["good"]
+    import PY_TO_LOGIC
+    design = os.path.join(tmp, "lock_design.py")
+    with open(design, "w") as f:
+        f.write(_NESTED_SRC.format(src=os.path.join(THIS_DIR, "..", "..", "..")))
+    SYN.SYN_OUTPUT_DIRECTORY = os.path.join(tmp, "lock_out")
+    os.makedirs(SYN.SYN_OUTPUT_DIRECTORY)
+    ps = PY_TO_LOGIC.PARSE_FILE(design)
+    table = AUTO_PIPELINE.GET_ZERO_ADDED_CLKS_TIMING_PARAMS_LOOKUP(ps)
+    inst = sorted(ps.FuncToInstances["leaf"])[0]
+    snapshot = AUTO_PIPELINE.CAPTURE_CONCRETE_PIPELINE(inst, table, ps)
+    lock = SWEEP.MiniSweepLock([0.5], concrete=snapshot, model_fingerprint="fingerprint")
+    decoded = json.loads(json.dumps(lock.to_dict()))
+    normalized = SWEEP.NORMALIZE_CONCRETE_PIPELINE(decoded["concrete"])
+    assert AUTO_PIPELINE.CONCRETE_PIPELINE_COMPATIBLE(inst, normalized, table, ps)
+    AUTO_PIPELINE.RESTORE_CONCRETE_PIPELINE(inst, normalized, table, ps)
+
+
+_DEPENDENT_SRC = """
 import sys
 sys.path.insert(0, {src!r})
-from pypeline import AUTO_PIPELINE, MAIN, hw_func, uint8_t
-
+sys.path.insert(0, {library!r})
+from pypeline import MAIN, AUTO_PIPELINE, hw_func, uint8_t
+from stream.stream_multi_cycle import make_stream_auto_multi_cycle
 @hw_func
-def leaf(x: uint8_t) -> uint8_t:
+def body(x: uint8_t) -> uint8_t:
     return x * x
-
-TAG = AUTO_PIPELINE(leaf, name="seeded_tag")
-
+BODY = AUTO_PIPELINE(body, name="body_core")
+def make_compute(n):
+    @hw_func
+    def compute(x: uint8_t) -> uint8_t:
+        a: uint8_t = x
+        for i in range(n):
+            a = a * 3 + x
+        return a
+    return compute
+MCP, mcp_t = make_stream_auto_multi_cycle(make_compute(BODY.latency + 2), name="dependent")
 @MAIN(50.0)
-def guard_main(x: uint8_t) -> uint8_t:
-    return TAG(x)
+def body_main(x: uint8_t) -> uint8_t:
+    return BODY(x)
+@MAIN(50.0)
+def mcp_main(stream_in_if: MCP.in_fwd_t, stream_out_if: MCP.out_fb_t) -> mcp_t:
+    return MCP(stream_in_if, stream_out_if)
 """
 
 
-def test_guard_latency_seeds(tmp):
-    """A seed steers the sweep only when recorded for this hardware, part,
-    tool and goal; otherwise it only serves .latency."""
+def test_dependent_piece_resolution(tmp):
     import PY_TO_LOGIC
-
-    design = os.path.join(tmp, "guard_seed_design.py")
+    design = os.path.join(tmp, "dependent.py")
     with open(design, "w") as f:
-        f.write(_GUARD_SRC.format(src=os.path.join(THIS_DIR, "..", "..", "..")))
-    SYN.SYN_OUTPUT_DIRECTORY = os.path.join(tmp, "guard_out")
-    os.makedirs(SYN.SYN_OUTPUT_DIRECTORY, exist_ok=True)
-
-    def parse():
-        pypeline.SET_AUTO_PIPELINE_BUILD_MODE("sweep")
-        pypeline.SET_LATENCY_SEEDS({(AP, "seeded_tag"): (3, "latency memory")})
-        ps = PY_TO_LOGIC.PARSE_FILE(design)
-        ps.part = "sky130"
-        return ps
-
-    def regions(ps):
-        return [r.key for r in AUTO_PIPELINE.COLLECT_AUTO_PIPELINE_REGIONS(ps)]
-
+        f.write(_DEPENDENT_SRC.format(src=os.path.abspath(os.path.join(THIS_DIR, "..", "..", "..")),
+                                     library=os.path.abspath(os.path.join(THIS_DIR, "..", "..", "..", "..", "include", "pypeline"))))
+    out_dir = os.path.join(tmp, "dependent_out")
+    SYN.SYN_OUTPUT_DIRECTORY = out_dir
+    SYN.TOP_LEVEL_MODULE = "top"
+    os.makedirs(out_dir)
+    calls = []
+    original_tool = SYN.SYN_TOOL
+    SYN.SYN_TOOL = SYN.TOOL_MODULES["vivado"]
+    def parse(seeds):
+        pypeline.SET_LATENCY_SEEDS(seeds)
+        state = PY_TO_LOGIC.PARSE_FILE(design)
+        state.part = "xc7a35ticsg324-1l"
+        C_TO_LOGIC.WRITE_0_ADDED_CLKS_INIT_FILES(state)
+        return state
     try:
-        with patch.object(SYN, "SYN_TOOL", SYN.TOOL_MODULES["device_models"]):
-            ps = parse()
-            shape = AUTO_MULTI_CYCLE.FUNCTION_SHAPE("leaf", ps)
-            good = {"part": "sky130", "tool": "device_models", "goal_mhz": 50.0, "shape": shape}
-            cases = [
-                (None, []),  # a hand-written hint: an explicit start
-                (good, []),
-                (dict(good, shape="other"), ["its function changed"]),
-                (dict(good, goal_mhz=60.0), ["recorded at a 60 MHz goal, not 50"]),
-                (dict(good, part="xc7a35t"), ["recorded for part xc7a35t"]),
-                (dict(good, tool="vivado"), ["recorded for tool vivado"]),
-            ]
-            for origin, reasons in cases:
-                ps = parse()
-                SWEEP.LATENCY_SEED_ORIGINS.clear()
-                if origin is not None:
-                    SWEEP.LATENCY_SEED_ORIGINS[(AP, "seeded_tag")] = origin
-                captured = io.StringIO()
-                with contextlib.redirect_stdout(captured):
-                    demoted = SWEEP.GUARD_LATENCY_SEEDS(ps)
-                assert demoted == ({"seeded_tag": reasons} if reasons else {}), (origin, demoted)
-                assert regions(ps) == ([] if reasons else ["seeded_tag"]), (origin, regions(ps))
-                # A re-elaboration (e.g. the RAM plan search) keeps the decision
-                again = PY_TO_LOGIC.PARSE_FILE(design)
-                assert regions(again) == ([] if reasons else ["seeded_tag"])
-                assert pypeline.LATENCY_SEEDS_APPLIED()[(AP, "seeded_tag")][0] == 3
-                if reasons:
-                    assert "its sweep doesn't start at" in captured.getvalue()
+        pypeline.SET_AUTO_PIPELINE_BUILD_MODE("sweep")
+        served = {(AP, "body_core"): (3, "fixture"), (MC, "dependent"): (5, "fixture")}
+        winning = parse(served)
+        identities = SWEEP._latency_piece_identities(winning)
+        records = [dict(kind=kind, key=key, digest=identities[(kind, key)]["digest"],
+                        goal_mhz=50.0, part=winning.part, tool="vivado", latency=value[0])
+                   for (kind, key), value in served.items()]
+        write(os.path.join(out_dir, "latency_memory.json"), {"schema_version": 2, "pieces": records})
+        SWEEP.LOAD_LATENCY_SEEDS(out_dir, [])
+        initial = parse({})
+        def reparse(seeds):
+            calls.append(dict(seeds))
+            return parse(seeds)
+        final = SWEEP.RESOLVE_LATENCY_MEMORY(initial, {}, reparse)
+        assert len(calls) == 2, calls
+        assert (MC, "dependent") not in calls[0] and calls[1][(MC, "dependent")][0] == 5
+        assert set(SWEEP.LATENCY_MEMORY_SELECTED) == set(served)
+        assert AUTO_MULTI_CYCLE.ELABORATED_AUTO_MULTI_CYCLE_NCYCLES(final)["dependent"] == 5
+        # Invalid JSON parameters must be rejected before they can reach VHDL.
+        table = AUTO_PIPELINE.GET_ZERO_ADDED_CLKS_TIMING_PARAMS_LOOKUP(final)
+        snapshot = AUTO_PIPELINE.CAPTURE_CONCRETE_PIPELINE("body_main", table, final)
+        snapshot[""]["slices"] = ["bad"]
+        try:
+            SWEEP.NORMALIZE_CONCRETE_PIPELINE(snapshot)
+        except ValueError:
+            pass
+        else:
+            raise AssertionError("malformed concrete slices accepted")
     finally:
         pypeline.SET_LATENCY_SEEDS({})
         pypeline.SET_AUTO_PIPELINE_BUILD_MODE(None)
-        pypeline.RESET_AUTO_MULTI_CYCLE_TRACKING()
-        SWEEP.LATENCY_SEED_ORIGINS.clear()
-    print("test_guard_latency_seeds PASS")
+        SWEEP.LATENCY_MEMORY_SELECTED.clear()
+        SYN.SYN_TOOL = original_tool
 
 
 if __name__ == "__main__":
     with tempfile.TemporaryDirectory() as tmp:
         test_read_latency_table_formats(tmp)
-        test_load_latency_seeds_precedence(tmp)
-        test_memory_merge_rules(tmp)
         test_build_latency_profile_verdicts_and_seeds()
-        test_print_latency_seeds()
-        test_store_prune_covers_latency_memory(tmp)
         test_seeded_tags_are_start_only_regions(tmp)
-        test_guard_latency_seeds(tmp)
+        test_selection_and_store(tmp)
+        test_digest_changes_only_ancestors(tmp)
+        test_recording_per_piece_and_lock_roundtrip(tmp)
+        test_dependent_piece_resolution(tmp)
     print("All latency memory unit tests passed.")

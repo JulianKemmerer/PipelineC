@@ -412,7 +412,7 @@ def FUNCTION_SHAPE(name, parser_state, memo=None):
     and the shapes of the functions it instantiates, recursively. Changes with
     any change to arithmetic, types, constants or structure (and with the
     source locations embedded in its wire names); never with timing. Used by
-    MCP_SHAPE and by the latency memory (SWEEP.GUARD_LATENCY_SEEDS)."""
+    MCP_SHAPE for build-local isolated timing evidence."""
     memo = {} if memo is None else memo
     if name not in memo:
         logic = parser_state.FuncLogicLookupTable[name]
@@ -430,7 +430,7 @@ def FUNCTION_SHAPE(name, parser_state, memo=None):
     return memo[name]
 
 
-def MCP_SHAPE(group, parser_state):
+def MCP_SHAPE(group, parser_state, function_digest=None):
     """Fingerprint the capture data cone, excluding the count/ready controller.
 
     Stop at register outputs: their next-state logic is outside this path.
@@ -440,7 +440,7 @@ def MCP_SHAPE(group, parser_state):
     functions = {}
 
     def function_shape(name):
-        return FUNCTION_SHAPE(name, parser_state, functions)
+        return function_digest(name) if function_digest else FUNCTION_SHAPE(name, parser_state, functions)
 
     shapes = []
     for inst, start, end in group.paths:
@@ -579,6 +579,8 @@ def HOLDER_DELAY_FROM_EVIDENCE(logic, parser_state):
 
 def SEED_COUNTS(parser_state, params):
     """Use endpoint-qualified raw requirement-minus-slack, before confirmation."""
+    import SWEEP
+
     groups = COLLECT_AUTO_MULTI_CYCLE_GROUPS(parser_state)
     current = dict(ELABORATED_AUTO_MULTI_CYCLE_NCYCLES(parser_state))
     current.update(getattr(params, "auto_multi_cycle_ncycles", {}) or {})
@@ -593,7 +595,8 @@ def SEED_COUNTS(parser_state, params):
             # what this build measures (never below start_latency= or 1)
             PROVISIONAL_MCP_SEEDS.setdefault(
                 (key, shape),
-                dict(floor=group.constraint.start_latency or 1, seeded=seed),
+                dict(floor=max(group.constraint.start_latency or 1,
+                               SWEEP.LATENCY_MEMORY_MCP_FLOORS.get(key, 1)), seeded=seed),
             )
         raw = ISOLATED_MCP_EVIDENCE.get((key, shape))
         goals = [

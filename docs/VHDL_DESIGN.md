@@ -330,3 +330,11 @@ gates) are tracked in [`pypeline_TESTS.md`](pypeline_TESTS.md#related), not
 here — they are evidence about the synthesis recipe and device model, not
 about this file's own VHDL-lowering correctness, and belong to one owner so
 they can't drift out of sync with it.
+
+## Rendering for latency-piece identity
+
+`WRITE_LOGIC_ENTITY(return_text=True)` returns the rendered entity text before
+writing its file. `SWEEP.LATENCY_SUBTREE_DIGESTS` uses a fresh zero-clock timing
+table with this mode, so a synthesized ancestor entity file cannot contaminate
+the digest. Inline functions and expressions use their declarations/connections.
+See [latency memory](SWEEP_DESIGN.md#5-latency-memory).

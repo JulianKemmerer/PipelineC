@@ -142,10 +142,11 @@ def get_tests() -> list:
             needs_out_dir=True,
         )
     )
-    # Latency memory end to end: a rebuild starts from the remembered latency
-    # and skips pass 2; --no_latency_memory, the --syn_cache store's copy after
-    # the output directory is deleted, --latency_hints from a profile, and a
-    # stale too-high hint that the ordinary pass 2 corrects
+    # Latency memory end to end (sky130, 5-13 min by cache warmth): a same-goal rebuild replays
+    # every MAIN in one store-hit confirmation; a lower-goal store piece starts
+    # a higher goal in another output directory, a higher-goal one is ignored;
+    # --no_latency_memory, hints, an edited callee's stale piece, and a failing
+    # MAIN keeping its old pieces while a met MAIN records its own
     tests.append(
         Test(
             name="latency_memory_build_test",
@@ -182,8 +183,9 @@ def get_tests() -> list:
     )
     # start_latency= is only a starting guess: a ChaCha-shaped repeated
     # helper inside a start_latency=1 region takes the same mini-sweep lock
-    # and reaches the same depth as the untagged call site (two builds,
-    # ~1.5 min each).
+    # and reaches the same depth as the untagged call site. Then the latency
+    # memory: an edit outside the helper reuses its remembered lock, and a
+    # raised goal starts the mini-sweep from it (five builds, ~13 min).
     tests.append(
         Test(
             name="auto_pipeline_region_minisweep_test",

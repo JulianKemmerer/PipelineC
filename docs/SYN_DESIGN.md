@@ -514,10 +514,11 @@ several share. Examples: WireGuard's per-profile build directories, a fresh
   - A hit refreshes the entry's `manifest.json` time.
   - `--syn_cache_prune DAYS` removes entries no build has used for that long, at
     the end of the build, and any half-written entry an interrupted insert left
-    that long ago. It also removes the store's latency memory copies
-    (`DIR/latency/v1/<out_dir digest>.json`, see
-    [SWEEP_DESIGN.md](SWEEP_DESIGN.md#5-latency-memory)) that no build has read or
-    written for that long.
+    that long ago. It also removes the store's latency memory pieces
+    (`DIR/latency/v2/<tool>/<part>/<kind>/<key digest>.json`, shared by every output
+    directory, see [SWEEP_DESIGN.md](SWEEP_DESIGN.md#5-latency-memory)) that no
+    build has read or written for that long, and the old `latency/v1/` files current
+    builds no longer read.
   - Deleting the store is always safe.
   - Each build ends with `Synthesis results: N reused from the output directory,
     M from the store DIR, K new run(s)`, plus a count of stale logs set aside.

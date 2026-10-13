@@ -144,9 +144,10 @@ def get_tests() -> list:
             cmd=[INST_DIR / "auto_multi_cycle_unit_test.py"],
         )
     )
-    # Latency memory and --latency_hints (SWEEP.py "Latency memory"): file
-    # formats, precedence, what a build remembers, profile verdicts, reports
-    # and the --syn_cache store copy's prune
+    # Latency memory and --latency_hints (SWEEP.py "Latency memory"): hints
+    # formats, profile verdicts, zero-clock subtree digests, goal/digest/part/
+    # tool piece selection, per-piece recording, store layout and prune, lock
+    # JSON round trips, and a dependent body-to-MCP resolution (two re-parses)
     tests.append(
         Test(
             name="latency_memory_unit_test",

@@ -5286,10 +5286,6 @@ class FuncElaborator:
             if callee_name in _GENERIC_INSTANCE_ALIASES
             else callee_name
         )
-        if getattr(auto_pipeline_call, "name", None) is not None:
-            # A named AUTO_PIPELINE group labels its own instances, so two
-            # names on one function stay apart in the hierarchy and reports
-            inst_label = auto_pipeline_call.name
         inst = self._inst(inst_label, expr)
         # A void callee (no -> annotation) has no RETURN_WIRE_NAME entry in wire_to_c_type --
         # tolerate that instead of KeyError, so a bare `foo()` statement call to a void

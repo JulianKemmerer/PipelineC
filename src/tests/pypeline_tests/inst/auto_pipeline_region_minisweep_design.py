@@ -65,6 +65,7 @@ def chain(s: st4_t) -> st4_t:
     return f
 
 
+_OUTSIDE = param("REGION_MINISWEEP_OUTSIDE", 0, type=int)
 _START = param("AUTO_PIPELINE_REGION_MINISWEEP_START_LATENCY", type=int)
 CHAIN_AP = (
     AUTO_PIPELINE(chain, start_latency=_START)
@@ -73,10 +74,12 @@ CHAIN_AP = (
 )
 
 
-@MAIN(120.0)
+@MAIN(param("REGION_MINISWEEP_GOAL", 120.0, type=float))
 def region_minisweep_main(s: st4_t) -> st4_t:
     # State makes the main itself unsliceable: only the tagged call site
     # takes registers
     toggle: Reg[uint1_t]
     toggle = ~toggle
-    return CHAIN_AP(s)
+    result: st4_t = CHAIN_AP(s)
+    result.w[0] = result.w[0] ^ _OUTSIDE
+    return result

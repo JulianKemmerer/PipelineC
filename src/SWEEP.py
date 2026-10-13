@@ -3278,40 +3278,45 @@ def WRITE_SWEEP_HISTORY(parser_state, multimain_timing_params, build_complete):
 # ─────────────────────────────────────────────
 # Latency memory: starting latencies from past builds and hints files
 # ─────────────────────────────────────────────
-# Every synthesizing build writes <out_dir>/latency_profile.json: what it built
-# for each AUTO_PIPELINE / AUTO_MULTI_CYCLE, and whether that met timing. The
-# verified results are remembered (<out_dir>/latency_memory.json, plus a copy in
-# the --syn_cache store keyed by the output directory) and become the next
-# build's starting latencies, as do --latency_hints files. A starting latency is
-# only that, like start_latency=: what .latency serves and where the tag's sweep starts
-# until the build has its own result (see docs/SWEEP_DESIGN.md#5-latency-memory).
-
-LATENCY_MEMORY_SCHEMA_VERSION = 1
+# Reuse independently matched pieces; every reused implementation is synthesized.
+# Hints are unconditional starts. Memory is resolved after the normal parse,
+# before synthesis. Independent pieces need one re-parse; dependencies may
+# require more, always with already matched served values.
+LATENCY_MEMORY_SCHEMA_VERSION = 2
 LATENCY_PROFILE_FILE = "latency_profile.json"
 LATENCY_MEMORY_FILE = "latency_memory.json"
 LATENCY_MEMORY_KINDS = ("AUTO_PIPELINE", "AUTO_MULTI_CYCLE")
+LATENCY_PIECE_KINDS = LATENCY_MEMORY_KINDS + ("lock", "main")
+# (digest, goal) variants kept per piece file, newest last
+LATENCY_MEMORY_MAX_ENTRIES = 16
 # Set by the pipelinec driver: False for --no_latency_memory or
 # PIPELINEC_INTERNAL_NO_LATENCY_MEMORY=1 (the test suite's default)
 LATENCY_MEMORY_ENABLED = True
-# (kind, key) -> (value, source) the first design execution applied
+# (kind, key) -> (value, source) the final parse applied, for the profile
 LATENCY_SEEDS_USED = {}
-# (kind, key) -> {part, tool, goal_mhz, shape} a starting latency was recorded
-# with (the latency memory, or a hints file copied from a latency_profile.json).
-# A hand-written hint has none: it is an explicit start, like start_latency=.
-LATENCY_SEED_ORIGINS = {}
+# (kind, key) -> the matched depth/count piece RESOLVE_LATENCY_MEMORY served
+LATENCY_MEMORY_SELECTED = {}
+# MAIN func name -> its matched implementation piece (TRY_LATENCY_MEMORY_REPLAY)
+LATENCY_MEMORY_MAIN_REPLAYS = {}
+# key -> count/depth of a lower-goal piece: a higher goal never needs fewer
+LATENCY_MEMORY_MCP_FLOORS = {}
+LATENCY_MEMORY_AP_FLOORS = {}
+# (MAIN func, locked func, goal) -> depth of a lower-goal mini-sweep lock
+MINISWEEP_LOCK_HINTS = {}
+# (path, mtime, size) -> parsed pieces: one read per file per build
+_LATENCY_MEMORY_READ_CACHE = {}
+# Why MAIN replay was skipped, printed once (RAM plan search and AUTO_FSM
+# call the sweep once per candidate or schedule)
+_LATENCY_MEMORY_REPLAY_SKIPS = set()
 
 
-def LATENCY_MEMORY_STORE_PATH(out_dir):
-    """The --syn_cache store's copy of out_dir's latency memory, else None."""
+def LATENCY_MEMORY_STORE_PATH(tool, part, kind, key):
+    """Shared library pieces, independent of the build's output directory."""
     if SYN.SYNTHESIS_STORE_DIR is None:
         return None
-    digest = hashlib.sha256(os.path.realpath(out_dir).encode()).hexdigest()[:16]
-    return os.path.join(
-        SYN.SYNTHESIS_STORE_DIR,
-        "latency",
-        f"v{LATENCY_MEMORY_SCHEMA_VERSION}",
-        digest + ".json",
-    )
+    digest = hashlib.sha256(key.encode()).hexdigest()[:16]
+    return os.path.join(SYN.SYNTHESIS_STORE_DIR, "latency", "v2",
+                        tool, SYN.PART_CACHE_DIR_NAME(part), kind, digest + ".json")
 
 
 def READ_LATENCY_TABLE(path):
@@ -3374,70 +3379,32 @@ def _seed_source_text(where, entry, meta):
     return where + (": " + ", ".join(parts) if parts else "")
 
 
-def _seed_origin(entry, meta):
-    return {
-        "part": meta.get("part"),
-        "tool": meta.get("tool"),
-        "goal_mhz": entry.get("goal_mhz"),
-        "shape": entry.get("shape"),
-    }
-
-
 def LOAD_LATENCY_SEEDS(out_dir, hints_files):
-    """{(kind, key): (latency, source)} for the build's first parse: hints
-    files (a later file wins), then the latency memory over them (the store's
-    copy, then the output directory's own, newest). The memory is skipped when
-    LATENCY_MEMORY_ENABLED is False. A hints file that can't be read is an
-    error; a memory file that can't be read is ignored with a warning."""
+    """Hints only for the first parse; memory needs resolved identities/goals.
+
+    Copied latency_profile.json files have exactly the same unconditional
+    starting-value meaning as hand-written hints and start_latency=.
+    """
     seeds = {}
-    LATENCY_SEED_ORIGINS.clear()
+    LATENCY_MEMORY_SELECTED.clear()
+    LATENCY_MEMORY_MAIN_REPLAYS.clear()
+    _LATENCY_MEMORY_REPLAY_SKIPS.clear()
+    LATENCY_MEMORY_MCP_FLOORS.clear()
+    LATENCY_MEMORY_AP_FLOORS.clear()
+    MINISWEEP_LOCK_HINTS.clear()
+    _LATENCY_MEMORY_READ_CACHE.clear()
+    LATENCY_SEEDS_USED.clear()
     for path in hints_files or ():
         try:
             table, _meta = READ_LATENCY_TABLE(path)
         except (OSError, ValueError) as e:
             sys.exit(f"ERROR: --latency_hints {path}: {e}")
-        table_meta = _meta
-        for (kind, key), entry in table.items():
-            seeds[(kind, key)] = (
-                entry["latency"],
-                f"hints {os.path.basename(path)}",
-            )
-            if entry.get("shape") is not None:
-                # A copied profile: the hardware it was measured on is known
-                LATENCY_SEED_ORIGINS[(kind, key)] = _seed_origin(entry, table_meta)
-            else:
-                LATENCY_SEED_ORIGINS.pop((kind, key), None)
-    if not LATENCY_MEMORY_ENABLED:
-        return seeds
-    store = LATENCY_MEMORY_STORE_PATH(out_dir)
-    for path, where in (
-        (store, "latency memory (store)"),
-        (os.path.join(out_dir, LATENCY_MEMORY_FILE), "latency memory"),
-    ):
-        if path is None or not os.path.exists(path):
-            continue
-        try:
-            table, meta = READ_LATENCY_TABLE(path)
-        except (OSError, ValueError) as e:
-            print(f"WARNING: ignoring unreadable latency memory {path}: {e}", flush=True)
-            continue
-        for (kind, key), entry in table.items():
-            seeds[(kind, key)] = (entry["latency"], _seed_source_text(where, entry, meta))
-            LATENCY_SEED_ORIGINS[(kind, key)] = _seed_origin(entry, meta)
-        if path == store:
-            try:
-                os.utime(path)  # used: keeps SYN.SYNTHESIS_STORE_PRUNE away
-            except OSError:
-                pass
+        for pair, entry in table.items():
+            seeds[pair] = (entry["latency"], f"hints {os.path.basename(path)}")
     return seeds
 
 
 def PRINT_LATENCY_SEEDS(part=None, tool=None):
-    """After the first parse: one line per starting latency a tag took, a
-    note naming the hints entries no tag took (one hints file often covers
-    several configurations of a design, so some are expected; a renamed or
-    removed tag shows up here too), and a note for remembered entries whose
-    tag is gone. Records the applied seeds for the profile."""
     import pypeline
 
     applied = pypeline.LATENCY_SEEDS_APPLIED()
@@ -3445,40 +3412,354 @@ def PRINT_LATENCY_SEEDS(part=None, tool=None):
     LATENCY_SEEDS_USED.update(applied)
     for (kind, key), (value, source) in sorted(applied.items()):
         print(f"[latency memory] {kind} {key}: starts at {value} ({source})", flush=True)
-    unused = pypeline.LATENCY_SEEDS_UNUSED()
-    hints = [u for u in unused if u[3].startswith("hints ")]
+    hints = [u for u in pypeline.LATENCY_SEEDS_UNUSED() if u[3].startswith("hints ")]
     if hints:
-        print(
-            f"NOTE: {len(hints)} latency hint(s) matched no AUTO_PIPELINE / "
-            "AUTO_MULTI_CYCLE in this build that takes a starting latency (not in "
-            "this configuration, renamed, removed or fixed): "
-            + ", ".join(f"{key} ({source})" for _kind, key, _value, source in hints),
-            flush=True,
-        )
-    remembered = len(unused) - len(hints)
-    if remembered:
-        print(
-            f"NOTE: {remembered} remembered latenc{'y' if remembered == 1 else 'ies'} "
-            "matched no tag in this build (renamed or removed); they are "
-            "dropped from the latency memory once this build records its own.",
-            flush=True,
-        )
-    origins = sorted(
-        {
-            (LATENCY_SEED_ORIGINS[k]["part"], LATENCY_SEED_ORIGINS[k]["tool"])
-            for k, (_value, source) in applied.items()
-            if source.startswith("latency memory") and k in LATENCY_SEED_ORIGINS
-        }
-        - {(part, tool)},
-        key=repr,
-    )
-    for recorded_part, recorded_tool in origins:
-        print(
-            f"NOTE: some starting latencies were remembered for part {recorded_part}, "
-            f"tool {recorded_tool}; this build is for part {part}, tool {tool}. They "
-            "are only starting values, and the sweep corrects them.",
-            flush=True,
-        )
+        print(f"NOTE: {len(hints)} latency hint(s) matched no AUTO_PIPELINE / "
+              "AUTO_MULTI_CYCLE in this build that takes a starting latency "
+              "(not in this configuration, renamed, removed or fixed): "
+              + ", ".join(f"{key} ({source})" for _kind, key, _value, source in hints),
+              flush=True)
+
+
+def LATENCY_SUBTREE_DIGESTS(parser_state):
+    """SHA-256 of (function, SHA-256 of zero-clock VHDL), per subtree.
+
+    Render zero-clock text independently of synthesized ancestor files. Inline
+    VHDL functions/expressions use their zero-clock declarations/connections.
+    No synthesis or delay estimate participates in this identity.
+    """
+    cached = getattr(parser_state, "_latency_subtree_digests", None)
+    if cached is not None:
+        return cached
+    table = AUTO_PIPELINE.GET_ZERO_ADDED_CLKS_TIMING_PARAMS_LOOKUP(parser_state)
+    hashes = {}
+    for name in sorted(parser_state.FuncToInstances):
+        inst = sorted(parser_state.FuncToInstances[name])[0]
+        logic = parser_state.FuncLogicLookupTable[name]
+        if logic.is_vhdl_func:
+            text = VHDL.RENDER_TEXT(VHDL.GET_VHDL_FUNC_DECL(
+                inst, logic, parser_state, table[inst]), parser_state)
+        elif logic.is_vhdl_expr:
+            parent = C_TO_LOGIC.GET_CONTAINER_INST(inst)
+            local = inst[len(parent + C_TO_LOGIC.SUBMODULE_MARKER):]
+            text = VHDL.RENDER_TEXT(VHDL.GET_VHDL_EXPR_ENTITY_CONNECTION_TEXT(
+                logic, local, parent, parser_state.LogicInstLookupTable[parent],
+                table, parser_state), parser_state)
+        else:
+            text = VHDL.WRITE_LOGIC_ENTITY(inst, logic, SYN.SYN_OUTPUT_DIRECTORY,
+                                          parser_state, table, return_text=True)
+        hashes[name] = hashlib.sha256(text.encode()).hexdigest()
+    result = {}
+    for name in hashes:
+        values = [(child, hashes[child]) for child in SUBTREE_FUNCTIONS(name, parser_state)]
+        result[name] = hashlib.sha256(json.dumps(values).encode()).hexdigest()
+    parser_state._latency_subtree_digests = result
+    return result
+
+
+def _latency_piece_identities(parser_state):
+    digests = LATENCY_SUBTREE_DIGESTS(parser_state)
+    identities = {}
+    for key, main, constraint, callee in _auto_pipeline_tag_instances(parser_state):
+        pair = ("AUTO_PIPELINE", key)
+        item = identities.setdefault(pair, {"digest": digests[callee], "mains": set(),
+                                           "cap": constraint.max_latency if constraint else None})
+        if item["digest"] != digests[callee]:
+            item["digest"] = None  # ambiguous tag: never reuse
+        item["mains"].add(main)
+    for key, group in AUTO_MULTI_CYCLE.COLLECT_AUTO_MULTI_CYCLE_GROUPS(parser_state).items():
+        if group.constraint.is_fixed():
+            continue
+        identities[("AUTO_MULTI_CYCLE", key)] = {
+            "digest": AUTO_MULTI_CYCLE.MCP_SHAPE(group, parser_state,
+                                                function_digest=lambda n: digests[n]),
+            "cap": group.constraint.upper_bound(),
+            "mains": {i.split(C_TO_LOGIC.SUBMODULE_MARKER)[0] for i, _s, _e in group.paths}}
+    for main in parser_state.main_mhz:
+        name = parser_state.LogicInstLookupTable[main].func_name
+        identities[("main", name)] = {"digest": digests[name], "mains": {main}}
+    for item in identities.values():
+        goals = [SYN.GET_TARGET_MHZ(m, parser_state) for m in item["mains"]]
+        item["goal_mhz"] = min(goals) if goals and all(g is not None for g in goals) else None
+    return identities
+
+
+def _read_latency_pieces(path):
+    if path is None or not os.path.isfile(path):
+        return []
+    try:
+        stat = os.stat(path)
+    except OSError:
+        return []
+    cache_key = (path, stat.st_mtime_ns, stat.st_size)
+    if cache_key in _LATENCY_MEMORY_READ_CACHE:
+        return _LATENCY_MEMORY_READ_CACHE[cache_key]
+    try:
+        with open(path) as f:
+            doc = json.load(f)
+        if doc.get("schema_version") != LATENCY_MEMORY_SCHEMA_VERSION:
+            return []  # including v1: deliberately invalidated
+        entries = doc["pieces"]
+        if not isinstance(entries, list) or any(not isinstance(e, dict) for e in entries):
+            raise ValueError("pieces must be a list of objects")
+        entries = [e for e in entries if e.get("kind") in LATENCY_PIECE_KINDS
+                   and all(isinstance(e.get(k), str) for k in ("key", "digest", "part", "tool"))
+                   and isinstance(e.get("goal_mhz"), (int, float)) and not isinstance(e["goal_mhz"], bool)
+                   and math.isfinite(e["goal_mhz"]) and e["goal_mhz"] > 0]
+        _LATENCY_MEMORY_READ_CACHE[cache_key] = entries
+        return entries
+    except (OSError, ValueError, KeyError, TypeError) as e:
+        print(f"NOTE: ignoring unreadable latency memory {path}: {e}", flush=True)
+        return []
+
+
+def SELECT_LATENCY_PIECE(entries, kind, key, digest, goal, part, tool, excluded=()):
+    """Current goal first, else highest lower goal; never a higher goal."""
+    if digest is None or goal is None:
+        return None
+    matches = [e for e in entries
+               if e.get("kind") == kind and e.get("key") == key
+               and e.get("digest") == digest and e.get("part") == part
+               and e.get("tool") == tool
+               and (kind, key, digest, e.get("goal_mhz")) not in excluded
+               and isinstance(e.get("goal_mhz"), (int, float))
+               and not isinstance(e["goal_mhz"], bool)
+               and 0 < e["goal_mhz"] <= goal
+               and (kind != "main" or e["goal_mhz"] == goal)
+               and (kind not in LATENCY_MEMORY_KINDS or
+                    (isinstance(e.get("latency"), int) and not isinstance(e["latency"], bool)
+                     and e["latency"] >= (1 if kind == "AUTO_MULTI_CYCLE" else 0)))]
+    return max(matches, key=lambda e: e["goal_mhz"], default=None)
+
+
+def _select_latency_piece(parser_state, kind, key, digest, goal, excluded=()):
+    part, tool = parser_state.part, SYN.TOOL_NAME(SYN.SYN_TOOL)
+    out_path = os.path.join(SYN.SYN_OUTPUT_DIRECTORY, LATENCY_MEMORY_FILE)
+    candidates = []
+    for path, source in ((LATENCY_MEMORY_STORE_PATH(tool, part, kind, key), "store"),
+                         (out_path, "out_dir")):
+        selected = SELECT_LATENCY_PIECE(_read_latency_pieces(path), kind, key,
+                                       digest, goal, part, tool, excluded)
+        if selected:
+            candidates.append(dict(selected, source=source, path=path))
+    # At equal goals the output directory's own record wins.
+    return max(candidates, key=lambda e: (e["goal_mhz"], e["source"] == "out_dir"), default=None)
+
+
+def RESOLVE_LATENCY_MEMORY(parser_state, hints, reparse):
+    """Resolve strictly matched pieces, including dependent callee identities.
+
+    An AP depth may change a separately tagged MCP datapath's size. Recompute
+    identities after serving matched values, then select newly matching pieces.
+    Ordinary independent pieces need one re-parse; dependencies can need more.
+    A piece changing its own digest is blocked and removed before synthesis.
+    """
+    import pypeline
+
+    if not LATENCY_MEMORY_ENABLED:
+        return parser_state
+    blocked = set()
+    previous = {}
+    identities = _latency_piece_identities(parser_state)
+    limit = max(4, 2 * len(identities) + 2)
+    for attempt in range(limit):
+        identities = _latency_piece_identities(parser_state)
+        for pair, piece in previous.items():
+            identity = identities.get(pair)
+            if not identity or identity["digest"] != piece["digest"]:
+                blocked.add((*pair, piece["digest"], piece["goal_mhz"]))
+                print(f"[latency memory] Dropping {pair[0]} {pair[1]}: its digest changed after re-elaboration", flush=True)
+        selected = {}
+        seeds = dict(hints)
+        for (kind, key), item in sorted(identities.items()):
+            if kind not in LATENCY_MEMORY_KINDS:
+                continue
+            piece = _select_latency_piece(parser_state, kind, key, item["digest"],
+                                          item["goal_mhz"], blocked)
+            if piece and item.get("cap") is not None and piece["latency"] > item["cap"]:
+                print(f"NOTE: ignoring latency memory {kind} {key}: remembered count exceeds its cap", flush=True)
+                piece = None
+            if piece:
+                selected[(kind, key)] = piece
+                seeds[(kind, key)] = (piece["latency"], _seed_source_text(
+                    f"latency memory ({piece['source']})", piece, piece))
+        # A constructed tag need not have a .latency read. Its parser
+        # constraint still records what was served, avoiding redundant parses.
+        constraints = {("AUTO_PIPELINE", key): constraint
+                       for key, _main, constraint, _callee
+                       in _auto_pipeline_tag_instances(parser_state)}
+        constraints.update({("AUTO_MULTI_CYCLE", key): group.constraint
+                            for key, group in AUTO_MULTI_CYCLE.COLLECT_AUTO_MULTI_CYCLE_GROUPS(parser_state).items()
+                            if not group.constraint.is_fixed()})
+        consumed_mc = AUTO_MULTI_CYCLE.ELABORATED_AUTO_MULTI_CYCLE_NCYCLES(parser_state)
+        changed = False
+        wanted_values = {}
+        for pair, constraint in constraints.items():
+            kind, key = pair
+            source_start = (constraint.start_latency if constraint else None)
+            source_start = source_start if source_start is not None else (1 if kind == "AUTO_MULTI_CYCLE" else 0)
+            wanted = seeds.get(pair, (source_start, None))[0]
+            cap = constraint.max_latency if constraint else None
+            if cap is not None:
+                wanted = min(wanted, cap)
+            wanted_values[pair] = wanted
+            actual = consumed_mc.get(key) if kind == "AUTO_MULTI_CYCLE" else (
+                constraint.seed if constraint and constraint.seed is not None else source_start)
+            changed |= actual != wanted
+        if not changed:
+            pypeline.SET_LATENCY_SEEDS(seeds)
+            for pair, constraint in constraints.items():
+                if constraint is not None:
+                    constraint.seed = wanted_values[pair] if pair in seeds else None
+                if pair in selected:
+                    pypeline._latency_seeds_applied[pair] = (wanted_values[pair], seeds[pair][1])
+                elif pair in pypeline._latency_seeds_applied:
+                    if pair in hints:
+                        pypeline._latency_seeds_applied[pair] = (wanted_values[pair], hints[pair][1])
+                    else:
+                        pypeline._latency_seeds_applied.pop(pair)
+            break
+        previous = selected
+        print("[latency memory] Re-elaborating with matched starting latencies"
+              + (" (dependent pieces)" if attempt else "") + "...", flush=True)
+        parser_state = reparse(seeds)
+    else:
+        print("NOTE: latency memory starting values did not settle; using hints/source starts", flush=True)
+        parser_state = reparse(hints)
+        identities = _latency_piece_identities(parser_state)
+        selected = {}
+    LATENCY_MEMORY_SELECTED.update(selected)
+    for (kind, key), piece in selected.items():
+        if piece["goal_mhz"] < identities[(kind, key)]["goal_mhz"]:
+            floors = LATENCY_MEMORY_AP_FLOORS if kind == "AUTO_PIPELINE" else LATENCY_MEMORY_MCP_FLOORS
+            floors[key] = piece["latency"]
+    for (kind, key), item in identities.items():
+        if kind != "main":
+            continue
+        piece = _select_latency_piece(parser_state, kind, key, item["digest"], item["goal_mhz"])
+        if piece:
+            LATENCY_MEMORY_MAIN_REPLAYS[key] = piece
+    for piece in selected.values():
+        try:
+            os.utime(piece["path"], None)
+        except OSError:
+            pass
+    return parser_state
+
+
+def NORMALIZE_CONCRETE_PIPELINE(snapshot):
+    """Validate cached parameters and restore JSON wire-type pairs to tuples."""
+    if not isinstance(snapshot, dict) or not snapshot:
+        raise ValueError("empty or malformed concrete pipeline")
+    result = copy.deepcopy(snapshot)
+    for rel, record in result.items():
+        if not isinstance(rel, str) or not isinstance(record, dict) or not isinstance(record.get("func"), str):
+            raise ValueError("malformed concrete instance")
+        types = record["types"]
+        if not isinstance(types, list) or any(not isinstance(pair, (list, tuple)) or len(pair) != 2 for pair in types):
+            raise ValueError("malformed concrete wire types")
+        slices = record["slices"]
+        if not isinstance(slices, list) or any(not isinstance(v, (int, float)) or isinstance(v, bool)
+                or not math.isfinite(v) or not 0 <= v <= 1 for v in slices):
+            raise ValueError("malformed concrete slices")
+        bits = record["exact_bits"]
+        if bits is not None and (not isinstance(bits, list) or any(
+                not isinstance(v, int) or isinstance(v, bool) or v < 0 for v in bits)):
+            raise ValueError("malformed exact-bit boundaries")
+        if any(not isinstance(record[k], bool) for k in ("input", "output", "fixed")):
+            raise ValueError("malformed concrete flags")
+        record["types"] = [tuple(pair) for pair in types]
+    return result
+
+
+def LOAD_LATENCY_MEMORY_LOCKS(parser_state):
+    if not LATENCY_MEMORY_ENABLED:
+        return
+    for main in parser_state.main_mhz:
+        name = parser_state.LogicInstLookupTable[main].func_name
+        goal = SYN.GET_TARGET_MHZ(main, parser_state)
+        for func in SUBTREE_FUNCTIONS(main, parser_state):
+            instances = sorted(i for i in parser_state.FuncToInstances[func]
+                               if i.startswith(main + C_TO_LOGIC.SUBMODULE_MARKER))
+            if not instances:
+                continue
+            paths = [os.path.join(SYN.SYN_OUTPUT_DIRECTORY, LATENCY_MEMORY_FILE),
+                     LATENCY_MEMORY_STORE_PATH(SYN.TOOL_NAME(SYN.SYN_TOOL), parser_state.part,
+                                               "lock", name + "/" + func)]
+            if not any(e.get("kind") == "lock" and e.get("key") == name + "/" + func
+                       for path in paths for e in _read_latency_pieces(path)):
+                continue
+            fingerprint = MEASURED_LOCK_MODEL(func, instances[0], parser_state)
+            piece = _select_latency_piece(parser_state, "lock", name + "/" + func, fingerprint, goal)
+            if not piece:
+                continue
+            try:
+                data = piece["lock"]
+                lock = MiniSweepLock(data["slices"], data["input_registers"], data["output_registers"],
+                    data["boundary_strategy"], NORMALIZE_CONCRETE_PIPELINE(data["concrete"]),
+                    data["model_fingerprint"], data["winner_hash"])
+            except (KeyError, TypeError, ValueError) as e:
+                print(f"NOTE: ignoring invalid latency lock {piece['key']}: {e}", flush=True)
+                continue
+            if piece["goal_mhz"] == goal:
+                CARRIED_LOCKS[(name, func, goal, fingerprint)] = lock
+                what = "concrete lock"
+            else:
+                MINISWEEP_LOCK_HINTS[(name, func, goal)] = len(lock.slices)
+                what = "mini-sweep hint"
+            print(f"[latency memory] Applying {what} for {func} in {name}: "
+                  f"depth {len(lock.slices)} ({piece['source']}, goal {piece['goal_mhz']:g} MHz)", flush=True)
+            try:
+                os.utime(piece["path"], None)
+            except OSError:
+                pass
+
+
+def TRY_LATENCY_MEMORY_REPLAY(parser_state, args):
+    """Conservative all-MAIN replay: no deliberately failing confirmation."""
+    if not LATENCY_MEMORY_ENABLED or not LATENCY_MEMORY_MAIN_REPLAYS:
+        return None
+    import AUTO_FSM
+
+    skip = None
+    if AUTO_PIPELINE.RAM_COLLECT(parser_state) or AUTO_FSM.DESIGN_HAS_AUTO_FSM(parser_state):
+        skip = "RAM plan search or AUTO_FSM re-parses around the sweep"
+    elif getattr(args, "coarse", False):
+        # --start/--stop bound the coarse search; a remembered implementation
+        # from another search could lie outside them
+        skip = "--coarse sweeps choose their own latency range"
+    if skip is not None:
+        if skip not in _LATENCY_MEMORY_REPLAY_SKIPS:
+            _LATENCY_MEMORY_REPLAY_SKIPS.add(skip)
+            print(f"NOTE: latency memory MAIN replay skipped: {skip}", flush=True)
+        return None
+    table = AUTO_PIPELINE.GET_ZERO_ADDED_CLKS_TIMING_PARAMS_LOOKUP(parser_state)
+    snapshots = {}
+    for main in parser_state.main_mhz:
+        name = parser_state.LogicInstLookupTable[main].func_name
+        piece = LATENCY_MEMORY_MAIN_REPLAYS.get(name)
+        try:
+            concrete = NORMALIZE_CONCRETE_PIPELINE(piece["concrete"]) if piece else None
+            compatible = AUTO_PIPELINE.CONCRETE_PIPELINE_COMPATIBLE(main, concrete, table, parser_state)
+        except (KeyError, TypeError, ValueError):
+            compatible = False
+        if not compatible:
+            print("NOTE: latency memory MAIN replay skipped: not every MAIN matches", flush=True)
+            return None
+        snapshots[main] = concrete
+    params = AUTO_PIPELINE.MultiMainTimingParams()
+    for main, concrete in snapshots.items():
+        AUTO_PIPELINE.RESTORE_CONCRETE_PIPELINE(main, concrete, table, parser_state)
+        piece = LATENCY_MEMORY_MAIN_REPLAYS[parser_state.LogicInstLookupTable[main].func_name]
+        print(f"[latency memory] Replaying MAIN {main} ({piece['source']}, goal {piece['goal_mhz']:g} MHz)", flush=True)
+        try:
+            os.utime(piece["path"], None)
+        except OSError:
+            pass
+    params.TimingParamsLookupTable = table
+    params.confirmation_preserved_mains = snapshots
+    params, _met = DO_SEEDED_CONFIRM_OR_SWEEP(parser_state, params)
+    return params
 
 
 def _auto_pipeline_tag_instances(parser_state):
@@ -3530,61 +3811,6 @@ def _latency_owners(parser_state):
             AUTO_MULTI_CYCLE.MCP_SHAPE(group, parser_state),
         )
     return owners
-
-
-def GUARD_LATENCY_SEEDS(parser_state):
-    """At the start of the pipelined build: an AUTO_PIPELINE seed sets where the
-    tag's sweep starts only when it was recorded for this hardware (the callee's
-    FUNCTION_SHAPE), part, tool and clock goal. Otherwise -- the function
-    changed, or the memory is from another configuration -- it only keeps
-    serving .latency (which the ordinary pin-and-confirm pass corrects), so a
-    stale entry can't start a sweep too high for the post-met trim to recover.
-    A seed with no recorded origin (a hand-written hint) is an explicit start,
-    like start_latency=. Returns {key: reasons} for the seeds it demoted."""
-    import pypeline
-
-    tool = SYN.TOOL_NAME(SYN.SYN_TOOL)
-    groups = {}
-    shapes = {}
-    for key, main_inst, constraint, callee in _auto_pipeline_tag_instances(parser_state):
-        if constraint is None or constraint.seed is None:
-            continue
-        group = groups.setdefault(key, {"constraints": [], "goals": [], "callee": callee})
-        group["constraints"].append(constraint)
-        goal = SYN.GET_TARGET_MHZ(main_inst, parser_state)
-        if goal is not None:
-            group["goals"].append(goal)
-    demoted = {}
-    for key, group in sorted(groups.items()):
-        origin = LATENCY_SEED_ORIGINS.get(("AUTO_PIPELINE", key))
-        if origin is None:
-            continue
-        reasons = []
-        shape = AUTO_MULTI_CYCLE.FUNCTION_SHAPE(group["callee"], parser_state, shapes)
-        if origin.get("shape") is not None and origin["shape"] != shape:
-            reasons.append("its function changed")
-        goal = max(group["goals"]) if group["goals"] else None
-        if origin.get("goal_mhz") is not None and goal is not None and not math.isclose(
-            origin["goal_mhz"], goal
-        ):
-            reasons.append(f"recorded at a {origin['goal_mhz']:g} MHz goal, not {goal:g}")
-        if origin.get("part") is not None and origin["part"] != parser_state.part:
-            reasons.append(f"recorded for part {origin['part']}")
-        if origin.get("tool") is not None and origin["tool"] != tool:
-            reasons.append(f"recorded for tool {origin['tool']}")
-        if not reasons:
-            continue
-        demoted[key] = reasons
-        pypeline.SERVE_LATENCY_SEED_ONLY("AUTO_PIPELINE", key)
-        for constraint in group["constraints"]:
-            constraint.seed = None
-        value = LATENCY_SEEDS_USED.get(("AUTO_PIPELINE", key), (None,))[0]
-        print(
-            f"[latency memory] AUTO_PIPELINE {key}: {'; '.join(reasons)}, so its "
-            f"sweep doesn't start at {value} (only the first .latency read uses it)",
-            flush=True,
-        )
-    return demoted
 
 
 def BUILD_LATENCY_PROFILE(parser_state, multimain_timing_params, history):
@@ -3642,7 +3868,7 @@ def BUILD_LATENCY_PROFILE(parser_state, multimain_timing_params, history):
             }
         )
     return {
-        "schema_version": LATENCY_MEMORY_SCHEMA_VERSION,
+        "schema_version": 1,
         "part": parser_state.part,
         "tool": SYN.TOOL_NAME(SYN.SYN_TOOL),
         "mains": {
@@ -3657,69 +3883,85 @@ def BUILD_LATENCY_PROFILE(parser_state, multimain_timing_params, history):
     }
 
 
-def _merged_latency_memory(path, profile):
-    """The memory document after this build: its verified entries replace the
-    remembered ones, an unverified entry keeps the remembered one, and tags this
-    build no longer has are dropped."""
-    previous = {}
-    if path is not None and os.path.exists(path):
-        try:
-            previous, _meta = READ_LATENCY_TABLE(path)
-        except (OSError, ValueError):
-            previous = {}
-    doc = {
-        "schema_version": LATENCY_MEMORY_SCHEMA_VERSION,
-        "part": profile["part"],
-        "tool": profile["tool"],
-    }
-    for kind in LATENCY_MEMORY_KINDS:
-        doc[kind] = {}
-    for entry in profile["entries"]:
-        kind, key = entry["kind"], entry["key"]
-        fields = ("latency", "goal_mhz", "achieved_mhz", "shape")
-        if entry["verified"]:
-            doc[kind][key] = {k: entry.get(k) for k in fields}
-        elif (kind, key) in previous:
-            doc[kind][key] = {k: previous[(kind, key)].get(k) for k in fields}
-    return doc
+def BUILD_LATENCY_PIECES(parser_state, params, history, profile):
+    """Record each piece only if all of its owning MAINs met timing."""
+    identities = _latency_piece_identities(parser_state)
+    finals = (history or {}).get("mains", {})
+
+    def verified(mains):
+        return bool(mains) and all(
+            finals.get(parser_state.LogicInstLookupTable[m].func_name, {}).get("final", {}).get("met") is True
+            and finals[parser_state.LogicInstLookupTable[m].func_name]["final"].get("met_basis")
+                in ("measured", "no_failing_path_reported") for m in mains)
+
+    part, tool = parser_state.part, SYN.TOOL_NAME(SYN.SYN_TOOL)
+    built = {(e["kind"], e["key"]): e for e in profile["entries"]}
+    pieces = []
+    for (kind, key), identity in sorted(identities.items()):
+        if not verified(identity["mains"]) or identity["goal_mhz"] is None:
+            continue
+        piece = dict(kind=kind, key=key, digest=identity["digest"],
+                     goal_mhz=identity["goal_mhz"], part=part, tool=tool)
+        if kind == "main":
+            main = next(iter(identity["mains"]))
+            piece["concrete"] = AUTO_PIPELINE.CAPTURE_CONCRETE_PIPELINE(
+                main, params.TimingParamsLookupTable, parser_state)
+        elif (kind, key) in built:
+            piece.update(latency=built[(kind, key)]["latency"],
+                         achieved_mhz=built[(kind, key)]["achieved_mhz"])
+        else:
+            continue
+        pieces.append(piece)
+    for (main_name, func, goal, fingerprint), lock in sorted(CARRIED_LOCKS.items()):
+        mains = {m for m in parser_state.main_mhz
+                 if parser_state.LogicInstLookupTable[m].func_name == main_name}
+        if not verified(mains) or lock.concrete is None:
+            continue
+        if not any(SYN.GET_TARGET_MHZ(m, parser_state) == goal for m in mains):
+            continue
+        pieces.append(dict(kind="lock", key=main_name + "/" + func,
+            digest=fingerprint, goal_mhz=goal, part=part, tool=tool, lock=lock.to_dict()))
+    return pieces
+
+
+def MERGE_LATENCY_PIECES(previous, pieces):
+    """Retain old variants/failing pieces, bound entries per piece file."""
+    groups = {}
+    for piece in previous + pieces:
+        pair = (piece["kind"], piece["key"])
+        entries = groups.setdefault(pair, {})
+        identity = (piece["part"], piece["tool"], piece["digest"], piece["goal_mhz"])
+        entries.pop(identity, None)
+        entries[identity] = {k: v for k, v in piece.items() if k not in ("source", "path")}
+    return [e for pair in sorted(groups)
+            for e in list(groups[pair].values())[-LATENCY_MEMORY_MAX_ENTRIES:]]
 
 
 def RECORD_LATENCY_PROFILE(parser_state, multimain_timing_params, history):
-    """Write <out_dir>/latency_profile.json, then (unless the memory is off)
-    remember its verified results in <out_dir>/latency_memory.json and the
-    --syn_cache store. Prints one summary line. Never fails the build."""
+    """The profile format stays v1; memory v2 stores independently reusable pieces."""
     try:
         profile = BUILD_LATENCY_PROFILE(parser_state, multimain_timing_params, history)
-        if not profile["entries"]:
-            return profile
         out_dir = SYN.SYN_OUTPUT_DIRECTORY
         SYN._write_json_atomic(os.path.join(out_dir, LATENCY_PROFILE_FILE), profile)
-        verified = sum(e["verified"] for e in profile["entries"])
-        unverified = len(profile["entries"]) - verified
         if not LATENCY_MEMORY_ENABLED:
-            print(
-                f"Latency profile: {os.path.join(out_dir, LATENCY_PROFILE_FILE)} "
-                "(latency memory off)",
-                flush=True,
-            )
+            print(f"Latency profile: {os.path.join(out_dir, LATENCY_PROFILE_FILE)} (latency memory off)", flush=True)
             return profile
-        places = []
-        for path, where in (
-            (os.path.join(out_dir, LATENCY_MEMORY_FILE), "out_dir"),
-            (LATENCY_MEMORY_STORE_PATH(out_dir), "store"),
-        ):
+        pieces = BUILD_LATENCY_PIECES(parser_state, multimain_timing_params, history, profile)
+        out_path = os.path.join(out_dir, LATENCY_MEMORY_FILE)
+        doc = {"schema_version": LATENCY_MEMORY_SCHEMA_VERSION,
+               "pieces": MERGE_LATENCY_PIECES(_read_latency_pieces(out_path), pieces)}
+        SYN._write_json_atomic(out_path, doc)
+        for piece in pieces:
+            path = LATENCY_MEMORY_STORE_PATH(piece["tool"], piece["part"], piece["kind"], piece["key"])
             if path is None:
                 continue
             os.makedirs(os.path.dirname(path), exist_ok=True)
-            SYN._write_json_atomic(path, _merged_latency_memory(path, profile))
-            places.append(where)
-        print(
-            f"Latency memory: recorded {verified} ({', '.join(places)})"
-            + (f"; {unverified} not recorded (timing not met)" if unverified else ""),
-            flush=True,
-        )
+            SYN._write_json_atomic(path, {"schema_version": LATENCY_MEMORY_SCHEMA_VERSION,
+                "pieces": MERGE_LATENCY_PIECES(_read_latency_pieces(path), [piece])})
+        places = "out_dir, store" if SYN.SYNTHESIS_STORE_DIR else "out_dir"
+        print(f"Latency memory: recorded {len(pieces)} pieces ({places})", flush=True)
         return profile
-    except Exception as e:  # a report: never the reason a build fails
+    except Exception as e:
         print(f"WARNING: could not record the latency profile: {e}", flush=True)
         return None
 
@@ -5349,7 +5591,8 @@ def SUBTREE_FUNCTIONS(root, parser_state):
             visit(child)
         result.append(name)
 
-    visit(parser_state.LogicInstLookupTable[root].func_name)
+    visit(root if root in parser_state.FuncLogicLookupTable else
+          parser_state.LogicInstLookupTable[root].func_name)
     return result
 
 
@@ -5479,7 +5722,9 @@ def TRY_HOTSPOT_MINISWEEP(hotspot_func, plan, parser_state):
         if f != hotspot_func:
             plan.hotspot_streak[f] = 0
     if (
-        plan.hotspot_streak[hotspot_func] < MINISWEEP_HOTSPOT_STREAK
+        ((parser_state.LogicInstLookupTable[plan.main_inst].func_name, hotspot_func,
+          plan.target_mhz) not in MINISWEEP_LOCK_HINTS
+         and plan.hotspot_streak[hotspot_func] < MINISWEEP_HOTSPOT_STREAK)
         or plan.minisweeps_used >= MAX_MINISWEEPS
     ):
         return False
@@ -5526,6 +5771,11 @@ def RUN_HOTSPOT_MINISWEEP(hotspot_func, plan, parser_state):
         flush=True,
     )
     inst_sweep_state = InstSweepState()
+    hint = MINISWEEP_LOCK_HINTS.get((
+        parser_state.LogicInstLookupTable[plan.main_inst].func_name,
+        hotspot_func, plan.target_mhz))
+    if hint is not None:
+        print(f"[latency memory] Starting mini-sweep of {hotspot_func} at remembered depth {hint}", flush=True)
     (
         inst_sweep_state,
         working_slices,
@@ -5535,7 +5785,7 @@ def RUN_HOTSPOT_MINISWEEP(hotspot_func, plan, parser_state):
         plan.target_mhz,
         inst_sweep_state,
         parser_state,
-        starting_guess_latency=None,
+        starting_guess_latency=hint,
         do_incremental_guesses=True,
         max_allowed_latency_mult=MAX_ALLOWED_LATENCY_MULT,
         stop_at_n_worse_result=4,

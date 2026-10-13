@@ -3030,11 +3030,6 @@ _latency_seeds: dict = {}
 # current design execution; and every (kind, key) a constructed tag looked up
 _latency_seeds_applied: dict = {}
 _latency_seeds_looked_up: set = set()
-# AUTO_PIPELINE (kind, key)s whose seed only serves .latency and never sets
-# where the sweep starts: SWEEP.GUARD_LATENCY_SEEDS found it was remembered for
-# other hardware, another part or tool, or another clock goal
-_latency_seeds_served_only: set = set()
-
 
 def SET_LATENCY_SEEDS(seeds: dict) -> None:
     """pipelinec-driver hook: install starting latencies
@@ -3042,13 +3037,6 @@ def SET_LATENCY_SEEDS(seeds: dict) -> None:
     executions of a synthesizing build; {} removes them."""
     global _latency_seeds
     _latency_seeds = dict(seeds)
-    _latency_seeds_served_only.clear()
-
-
-def SERVE_LATENCY_SEED_ONLY(kind, key) -> None:
-    """pipelinec-driver hook (SWEEP.GUARD_LATENCY_SEEDS): from now on this
-    tag's seed only serves .latency; its sweep plans it as without a start."""
-    _latency_seeds_served_only.add((kind, key))
 
 
 def LATENCY_SEEDS_APPLIED() -> dict:
@@ -3448,8 +3436,6 @@ class AUTO_PIPELINE:
             self.seed = _latency_seed("AUTO_PIPELINE", self.canonical_key, max_latency)
             if self.seed is not None:
                 self._latency = self.seed
-                if ("AUTO_PIPELINE", self.canonical_key) in _latency_seeds_served_only:
-                    self.seed = None
         # Skip key computation entirely when the cache is empty (native sim,
         # comb builds, bootstrap pass): keeps pure-sim runs from importing
         # the compiler (see canonical_key).

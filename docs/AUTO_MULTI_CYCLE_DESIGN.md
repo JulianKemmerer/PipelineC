@@ -157,8 +157,11 @@ Unmapped hierarchy is left unclassified rather than guessed.
    - **Remembered counts.** A count elaborated from a
      [latency memory or hints](SWEEP_DESIGN.md#5-latency-memory) seed
      (`AutoMultiCycleConstraint.seed`) is registered by `SEED_COUNTS` as provisional
-     from the start. Its floor is `start_latency=` (or 1), not the remembered count, so a
-     stale high count can be confirmed down.
+     from the start. A current-goal memory piece or an explicit hint has its floor at
+     source `start_latency=` (or 1), so confirm-down can lower it. A matching
+     lower-goal memory piece is a floor start at its remembered count. Memory v2
+     matches callee-subtree/cone digests, part and tool; it never uses higher-goal
+     pieces for a lower goal.
    - **Raising keeps the lower floor.** When isolated evidence raises a provisional
      count further, the lower floor is kept.
    - **Why Vivado suffices.** AUTO_MULTI_CYCLE synthesizes only on Vivado, whose `mcp:`

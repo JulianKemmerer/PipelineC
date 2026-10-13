@@ -1150,128 +1150,101 @@ feature's module:
 
 ## 5. Latency memory
 
-A synthesizing build of a Pypeline design starts each AUTO_PIPELINE and
-AUTO_MULTI_CYCLE tag from the latency earlier builds verified. The memory is code
-in `SWEEP.py` ("Latency memory"); the hooks it drives sit in `pypeline.py`,
-`C_TO_LOGIC.py`, `AUTO_PIPELINE.py` and `AUTO_MULTI_CYCLE.py`.
+Every cache saves synthesis runs: the synthesis store, `cache/delay|area`, output
+files and latency memory. Reuse as many matching pieces as possible across partial
+edits and goals. A lower-goal result starts a higher-goal build. Higher-goal pieces
+never seed a lower goal; goal-independent leaf delays and exact synthesis store
+hits remain usable. Every reused implementation is checked by synthesis. Missing,
+invalid or stale memory leaves the normal build flow available; a cached build may
+follow a different path to an equally valid implementation.
 
-**Files.**
+**Pieces and identities.** Each piece has a part, tool, key, digest and owning MAIN
+goal. A tag shared by MAINs has the *lowest* owner goal, and is recorded only when
+all owners met timing (`measured` or `no_failing_path_reported`). A failure in an
+unrelated MAIN does not discard a passing MAIN's depths or locks. Remember how a
+result was reached, such as depth 8 from a mini-sweep of `poly1305_body`.
 
-| file | written by | holds |
-|---|---|---|
-| `<out_dir>/latency_profile.json` | every synthesizing build, failing ones included | what the build built for each tag, the owning MAINs' goals and verdicts, and the starting latency it used; deterministic (sorted, no timestamps or absolute paths) |
-| `<out_dir>/latency_memory.json` | builds with the memory on | per tag, the newest verified latency (with its goal and achieved MHz) |
-| `<store>/latency/v1/<sha256(realpath(out_dir))[:16]>.json` | the same, with `--syn_cache` | a copy of `latency_memory.json`, which survives deleting the output directory |
+| Piece | Digest/key | Same goal | Lower goal |
+|---|---|---|---|
+| AUTO_PIPELINE depth | tag key and callee subtree digest | serves `.latency` and region `seed` start | serves and starts at the remembered depth, also a floor the region never realizes below (`LATENCY_MEMORY_AP_FLOORS`, see [AUTO_PIPELINE_DESIGN.md](AUTO_PIPELINE_DESIGN.md)) |
+| AUTO_MULTI_CYCLE count | tag key and capture callee subtree/cone digest | provisional seed, with confirm-down | floor start, never confirmed below the remembered count |
+| mini-sweep lock | MAIN function / locked function and `SUBTREE_MODEL_FINGERPRINT` | loaded through `CARRIED_LOCKS` / `LOAD_CARRIED_LOCKS` | mini-sweep hint: skips the streak wait and starts coarse search at the old depth |
+| MAIN implementation | MAIN function and MAIN subtree digest under the same served values | `CAPTURE_CONCRETE_PIPELINE` / `RESTORE_CONCRETE_PIPELINE`, confirmed by synthesis | never replayed |
 
-- **Profile entries.** An entry has `kind`, `key`, the user `name` (if any), the
-  source `constraint`, the owning `mains`, `goal_mhz` (the highest owner goal),
-  `achieved_mhz` (the lowest measured owner fmax), the built `latency`, `verified`,
-  the `seed` it started from, and `shape`. `shape` digests the hardware the latency
-  is for: the AUTO_PIPELINE callee's `AUTO_MULTI_CYCLE.FUNCTION_SHAPE`, or the
-  AUTO_MULTI_CYCLE's `MCP_SHAPE`.
-- **What `verified` means.** Every owning MAIN's `sweep_history.json` final record is
-  met, with `met_basis` `measured` or `no_failing_path_reported`.
-- **What is never recorded.** Fixed tags (`latency=`, or a callee in
-  `func_fixed_latency`, which includes RAM plans).
-- **How memory updates.** A verified entry replaces the remembered one; an unverified
-  entry keeps it. Tags the build no longer has are dropped, so the memory only ever
-  describes the current design.
-- **The store copy.** It is keyed by the output directory because part, tool and
-  clock goals are only known after the design is parsed, while starting latencies
-  are needed before that. An output directory is one build configuration (WireGuard
-  uses one per design and clock), and the post-parse report notes a part or tool
-  that differs from the recorded one.
+`LATENCY_SUBTREE_DIGESTS` hashes each function's zero-clock VHDL text with SHA-256,
+then hashes the ordered `(func_name, text hash)` pairs from `SUBTREE_FUNCTIONS`.
+VHDL is rendered fresh in memory (`WRITE_LOGIC_ENTITY(return_text=True)`), so
+synthesized ancestor entity files cannot contaminate the digest. Inline functions
+and expressions use their zero-clock declarations/connections. These digests are
+known before synthesis; no synthesis result or delay estimate enters them.
+MCP identity follows the capture cone and callee digests, stopping at registers;
+changing the count/ready controller does not invalidate that datapath piece.
 
-**Seeds.**
-- **Loading.** Before the first parse of a synthesizing (`"sweep"` mode) build,
-  `src/pipelinec` calls `LOAD_LATENCY_SEEDS` and installs the result with
-  `pypeline.SET_LATENCY_SEEDS`: `{(kind, key): (latency, source)}`.
-- **Precedence.** `--latency_hints` files come first, a later file winning. The
-  store's copy goes over them, then the output directory's own memory.
-- **File shapes.** `READ_LATENCY_TABLE` accepts a `latency_profile.json`, a
-  `latency_memory.json`, or `{"AUTO_PIPELINE": {key: N}, "AUTO_MULTI_CYCLE": {key: N}}`.
-- **Bad files.** A malformed hints file is an error; an unreadable memory file is
-  ignored with a warning.
+**Storage.**
 
-The seed table is separate from the harvested caches of the
-[pin-and-confirm loop](AUTO_PIPELINE_DESIGN.md#5-latency-pin-and-confirm-loop-pypeline-designs-only).
-The auto-pipelined RAM search empties those caches before each of its
-re-elaborations.
+- `<out_dir>/latency_profile.json` is unchanged (schema 1). Every synthesizing
+  build writes it, including failing builds and `--no_latency_memory` builds.
+  Existing profile fields include source `constraint`, `mains`, highest owner
+  `goal_mhz`, lowest measured `achieved_mhz`, `latency`, `verified`, `seed` and `shape`.
+- `<out_dir>/latency_memory.json` uses schema 2, with independently reusable
+  `pieces`. A verified piece replaces its `(digest, goal)` variant; other variants
+  and failed MAINs' old records remain available.
+- With `--syn_cache DIR`, each piece also goes into
+  `DIR/latency/v2/<tool>/<part>/<kind>/<sha256(key)[:16]>.json`. Entries are keyed by
+  digest and goal, bounded to 16 variants per piece file. The part directory uses
+  `SYN.PART_CACHE_DIR_NAME` for filesystem safety.
+- Store entries are independent of out_dir. WireGuard's 60 MHz directory can seed
+  its 85 MHz directory, and designs sharing a library piece can share that record.
+  Without a store, only the same out_dir's previous record is read.
+- V1 memory and `latency/v1/<out_dir digest>` files are ignored. Cache invalidation
+  is intentional. `SYN.SYNTHESIS_STORE_PRUNE` also covers latency files, which are
+  touched on use and write.
 
-A tag looks its seed up at construction (`pypeline._latency_seed`), clamps it to
-`max_latency`, and never seeds a fixed `latency=` or a `@pipeline_latency` callee.
+**Resolution (`src/pipelinec`, sweep mode only).**
 
-| | AUTO_PIPELINE | AUTO_MULTI_CYCLE |
-|---|---|---|
-| bootstrap `.latency` | fixed > harvested cache > seed > `start_latency` (sweep builds) > 0 | fixed > harvested cache > seed > `start_latency` > 1 |
-| where the seed goes | `AutoPipelineLatency.seed`; `start()` (seed, else `start_latency`) is where the region's planned sweep starts, and `is_region()` makes a seeded unconstrained tag a start-only region, as if it had that `start_latency=` (`COLLECT_AUTO_PIPELINE_REGIONS` leaves a callee that holds another AUTO_PIPELINE or can't take added latency unconstrained) | `AutoMultiCycleConstraint.seed`; `SEED_COUNTS` registers it in `PROVISIONAL_MCP_SEEDS` with the floor at `start_latency` (or 1), so `PROPOSE_CONFIRM_DOWN` may lower it |
-| what it never changes | keys, `key_suffix()`, equality, hashing and `is_unconstrained()` (source constraint only), so names and PY_TO_LOGIC's constraint validation never see it | keys, equality and hashing |
+1. Parse normally with hints and `start_latency=`; resolve part, tool and goals.
+2. Emit zero-clock VHDL and select each piece: current goal first, otherwise the
+   highest lower goal. A digest/part/tool mismatch or higher goal is ignored.
+   Matching memory beats hints; at equal goals the out_dir record beats the store.
+3. If selected served values differ, re-parse with them and re-check digests. Drop
+   pieces whose digest changed and report the reason. Recompute identities and
+   select newly matching dependent pieces: for example, a body depth changes the
+   MCP callee's array size, so that MCP can require an extra parse. Every value
+   served from memory has already matched its current identity, and a stale one
+   is gone before any synthesis. Independent pieces
+   normally need one memory re-parse; dependency chains may need more.
+4. After delay characterization, match locks against their measured model. Load
+   same-goal locks and lower-goal hints. `TRY_HOTSPOT_MINISWEEP` skips
+   `MINISWEEP_HOTSPOT_STREAK` for a hint; `RUN_HOTSPOT_MINISWEEP` passes its depth as
+   `starting_guess_latency`. Minimality bisect uses a failed guess as a known-failing
+   lower bound.
+5. Replay only when **every MAIN** implementation matches and its concrete capture
+   is compatible. Partial matches plan normally, retaining matching depths/locks;
+   this avoids an intentionally failing confirmation for unmatched MAINs. All-MAIN
+   replay runs one confirmation through `DO_SEEDED_CONFIRM_OR_SWEEP`; its existing
+   `confirmation_preserved_mains` path preserves unaffected MAINs if feedback fails.
+   A synthesis store hit counts as confirmation. Served == built skips pass 2.
+6. MAIN replay is skipped, with one NOTE, for RAM plan searches and AUTO_FSM, whose
+   outer flows re-parse the design, and for `--coarse` builds, whose `--start` /
+   `--stop` bound a search a remembered implementation may lie outside. Other
+   pieces still apply.
 
-**The guard: a seed starts the sweep only for the hardware it was measured on.**
-- **Where it runs.** `GUARD_LATENCY_SEEDS` runs at the top of
-  `AUTO_PIPELINE.DO_PIPELINED_BUILD`, once part, tool and goals are known.
-- **What it compares.** For every seeded AUTO_PIPELINE, it compares the seed's
-  recorded origin (`LATENCY_SEED_ORIGINS`) with the build: the callee's
-  `FUNCTION_SHAPE`, the owning MAINs' highest goal, the part and the tool.
-- **What a mismatch does.** On any mismatch the seed is demoted
-  (`pypeline.SERVE_LATENCY_SEED_ONLY`). It keeps serving the first `.latency` read,
-  but the constraint's `seed` is cleared, so the sweep plans the tag as it would
-  unseeded. The decision holds for later re-elaborations of the same build.
-- **The report.** It prints the reason: `[latency memory] AUTO_PIPELINE core: its
-  function changed, so its sweep doesn't start at 2 ...`.
-- **Which seeds have an origin.** Memory entries do, and so do hints copied from a
-  profile. A hand-written hint has none: it is an explicit start, like
-  `start_latency=`.
-- **Why this is needed.** A start too high for the hardware can meet timing at once,
-  leaving the post-met trim (`--pipeline_min_effort`) too few runs to come all the
-  way down. The memory would then record and repeat that over-pipelined result, for
-  example after a function was edited under an unchanged key.
-- **AUTO_MULTI_CYCLE needs no guard.** Its remembered counts are provisional, and
-  confirm-down lowers a count that is too high.
+`NORMALIZE_CONCRETE_PIPELINE` restores JSON wire-type lists to tuples, preserving
+`CONCRETE_PIPELINE_COMPATIBLE`. Seeds never change keys, source constraints,
+identity or labels. Harvested values supersede seeds during normal pin-and-confirm
+passes. `seed`, `is_region()` and `start()` retain their existing meanings.
 
-**When a seed is superseded.** A harvested cache value always wins over a seed. In
-pass 2 and later the tag's `seed` is `None`, and every region starts from its source
-`start_latency` as before. The driver clears the seed table after
-`DO_PIPELINED_BUILD`, so the `--sim` import uses only built values. The no-tool
-fallback also clears the table, and re-elaborates if any seed was served.
+**Hints.** `--latency_hints FILE` accepts an unchanged `latency_profile.json`, a
+legacy per-tag table, or `{"AUTO_PIPELINE": {key: N}, "AUTO_MULTI_CYCLE": {key: N}}`.
+All hints are unconditional starts like `start_latency=`, including copied profiles.
+A later hints file wins; malformed hints are an error. Unused hints are named in a
+single NOTE, since one file may cover several design configurations. Unreadable
+memory is ignored with a NOTE. Applied depths/counts print one line naming source
+and recorded goal; locks also print depth and whether they are locks or hints.
 
-**Why a stale entry can't produce wrong hardware.**
-- **Seeds are only starting values.** A seeded region searches exactly as a
-  `start_latency=` region does: past its first iteration, as an unseeded call site
-  would. A served value the build doesn't land on is the ordinary pin-and-confirm
-  case.
-- **A remembered latency steers only the hardware it was measured on.** The guard
-  above demotes it to a served value otherwise. Pass 2 re-elaborates with the built value, exactly as
-  it does for an unseeded tag's bootstrap 0.
-- **Regions correct themselves both ways.** They grow on failure, and the post-met
-  trim can go below the start.
-- **Remembered MCP counts can come down.** AUTO_MULTI_CYCLE synthesizes only on
-  Vivado, whose `mcp:` path reports drive confirm-down.
-- **Nothing is identity.** Seeds never enter keys, names or identity, so they can't
-  make a stale entity file look current.
-
-The cost of a wrong seed is sweep time. Starting from the latency the build lands on
-again skips pass 2 entirely: no re-parse, and no confirmation synthesis.
-
-**Reports.**
-- After the parse, `PRINT_LATENCY_SEEDS` prints:
-  - one line per seed taken:
-    `[latency memory] AUTO_PIPELINE poly1305_body_encrypt: starts at 3 (latency memory: met 61.2 MHz at a 60 MHz goal, xc7a200t/vivado)`;
-  - one note naming the hints no tag took. One hints file often covers several
-    configurations of a design, so some are expected; a renamed or removed tag
-    shows up here too.
-  - a note counting remembered entries whose tag is gone;
-  - a note when remembered entries came from another part or tool.
-- At the end of the build, `RECORD_LATENCY_PROFILE` runs after
-  `SYN.WRITE_FINAL_FILES` and before the TIMING NOT MET exit. It prints
-  `Latency memory: recorded N (out_dir, store); M not recorded (timing not met)`.
-- Recording is a report: an error there is a warning, never a failed build.
-
-**Turning it off.** `--no_latency_memory`, or `PIPELINEC_INTERNAL_NO_LATENCY_MEMORY=1`
-(set by the test harness for every test, see
-[pypeline_TESTS.md](pypeline_TESTS.md#running)), skips reading and writing the
-memory. The profile is still written and hints still apply. `--syn_cache_prune` also
-removes store copies no build has read or written for that many days.
+**Disable.** `--no_latency_memory` (or the test harness's
+`PIPELINEC_INTERNAL_NO_LATENCY_MEMORY=1`) skips reading/writing memory but keeps the
+profile and explicit hints. Builds with no usable cache work normally.
 
 ## 6. Command line
 

@@ -641,11 +641,17 @@ delay axis, and the container can't count the region's latency.
     start-only region (`AutoPipelineLatency.is_region`), as if it had that
     `start_latency=`. The exceptions are a callee that holds another AUTO_PIPELINE
     or can't take added latency, which `COLLECT_AUTO_PIPELINE_REGIONS` leaves as
-    unconstrained as its source. `SWEEP.GUARD_LATENCY_SEEDS` first demotes a seed
-    recorded for other hardware, part, tool or goal to a served-only value
+    unconstrained as its source. The driver selects matching callee-subtree digests,
+    part and tool at the current goal or highest lower goal before the final parse
     ([SWEEP_DESIGN.md §5](SWEEP_DESIGN.md#5-latency-memory)). In pass 2 and later
     the harvested cache supersedes the seed (`constraint.seed` is `None`), so every
     region again starts from its source constraint.
+  - A floor from a lower goal: a depth remembered at a lower clock goal is also the
+    least the region realizes at this one (`SWEEP.LATENCY_MEMORY_AP_FLOORS`, applied
+    by `_ENFORCE_ONE_AUTO_PIPELINE_REGION` in every pass, capped at M). A faster
+    clock needs at least the stages a slower one needed for unchanged hardware, so
+    the sweep doesn't probe below it. The cost: a lower-goal result that was itself
+    deeper than necessary (the post-met trim is limited) carries that depth upward.
   - Otherwise: the planner's own count for the plan's clock period, with the budget
     divided by `global_scale * region.scale` and in-region weights including
     `func_delay_scale`, capped at M.
@@ -653,8 +659,8 @@ delay axis, and the container can't count the region's latency.
   Instances that share a canonical key form one group and are planned to one K, so the
   harvested `.latency` can't diverge between them. `AUTO_PIPELINE(func, name=)` gives
   a group its own key, so two names on one function are two groups planned
-  independently. Their instances are labeled by group name, and duplicate-call
-  collapse never merges two groups.
+  independently. Their instances retain callee-derived call-site labels; `name=` never changes
+  emitted hierarchy or path attribution. Duplicate-call collapse never merges two groups.
 - **Count-targeted placement (`COUNT_TARGETED_PLACEMENTS`).** Bisect the budget given to
   `SWEEP.PLAN_PIPELINE_PLACEMENTS` until it yields K; cut count never increases as the budget
   grows. The result is the planner's own tightest-stage placement for exactly K

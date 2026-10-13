@@ -3421,14 +3421,17 @@ def DO_SWEEP_AND_AUTO_PIPELINE(parser_state, args, src_file, _ram_search=True):
         "================== Beginning Throughput Sweep ================================",
         flush=True,
     )
-    multimain_timing_params = SWEEP.DO_THROUGHPUT_SWEEP(
-        parser_state,
-        coarse_only=args.coarse,
-        starting_guess_latency=args.start,
-        do_incremental_guesses=not (args.sweep),
-        comb_only=args.comb,
-        stop_at_latency=args.stop,
-    )
+    SWEEP.LOAD_LATENCY_MEMORY_LOCKS(parser_state)
+    multimain_timing_params = SWEEP.TRY_LATENCY_MEMORY_REPLAY(parser_state, args)
+    if multimain_timing_params is None:
+        multimain_timing_params = SWEEP.DO_THROUGHPUT_SWEEP(
+            parser_state,
+            coarse_only=args.coarse,
+            starting_guess_latency=args.start,
+            do_incremental_guesses=not (args.sweep),
+            comb_only=args.comb,
+            stop_at_latency=args.stop,
+        )
 
     if src_file.endswith(".py") and not args.comb and not args.yosys_json:
         parser_state, multimain_timing_params = DO_AUTO_PIPELINE_LATENCY_PASSES(
@@ -3442,12 +3445,6 @@ def DO_PIPELINED_BUILD(parser_state, args, src_file):
     """Dispatch to the AUTO_FSM schedule-and-confirm loop when the design contains
     AUTO_FSM call sites, otherwise straight to the sweep + AUTO_PIPELINE convergence
     flow. Both paths return (parser_state, multimain_timing_params)."""
-    if src_file.endswith(".py"):
-        import SWEEP
-
-        # Starting latencies remembered for other hardware or another
-        # configuration only keep serving .latency (see SWEEP_DESIGN.md §5)
-        SWEEP.GUARD_LATENCY_SEEDS(parser_state)
     auto_fsm_possible = (
         src_file.endswith(".py") and not args.comb and not args.yosys_json
     )
@@ -4276,6 +4273,10 @@ def _ENFORCE_ONE_AUTO_PIPELINE_REGION(
             target = goal
         elif cap is not None and realized > cap:
             target = cap
+        elif realized < SWEEP.LATENCY_MEMORY_AP_FLOORS.get(region.key, 0):
+            target = SWEEP.LATENCY_MEMORY_AP_FLOORS[region.key]
+            if cap is not None:
+                target = min(target, cap)
         else:
             target = None
         if target is None or realized == target:
