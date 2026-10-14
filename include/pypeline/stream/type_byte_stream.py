@@ -11,7 +11,7 @@ software, so a host program and the hardware agree by construction rather than
 by a separately generated C header staying in sync.
 
 Sizing comes from `byte_length(t)`, the pypeline equivalent of the old flow's
-`sizeof(out_t)` (`C_TO_LOGIC.C_TYPE_SIZE`): a packed, unpadded struct where
+`sizeof(out_t)` (`LOGIC.C_TYPE_SIZE`): a packed, unpadded struct where
 each leaf scalar rounds up to a whole byte. When that length is not a multiple
 of the bus width the final beat is partial and its `keep` says so; nothing is
 padded into the data. `padding="exact"` rejects the case up front instead.

@@ -10,7 +10,15 @@ Run standalone: python3 native_sim_tests.py [-j N]
 
 import sys
 
-from common import EXAMPLES_PYPELINE_DIR, INST_DIR, PYPELINEC, PYPELINE_SIM, Test, main
+from common import (
+    EXAMPLES_PYPELINE_DIR,
+    INST_DIR,
+    NO_TIMEOUT_S,
+    PYPELINEC,
+    PYPELINE_SIM,
+    Test,
+    main,
+)
 
 # fmt: off
 PLAIN_PYTHON_TEST_FILES = [
@@ -328,189 +336,10 @@ def get_tests() -> list:
                 needs_out_dir=True,
             )
         )
-    # PDW project: hysteresis SM / candidate-PDW extractor (3 @MAINs --
-    # elastic, valid_only, and a CW/jamming max_width-cap check).
-    tests.append(
-        Test(
-            name="pulse_detect_tb",
-            category="native_sim",
-            cmd=[
-                PYPELINEC,
-                EXAMPLES_PYPELINE_DIR / "dsp" / "pdw" / "pulse_detect_tb.py",
-                "--sim",
-                "--comb",
-                "--run",
-                "500",
-            ],
-        )
-    )
-    # PDW project: Qualified AXIS Storage & PDW Engine unit tests -- 5 @MAINs
-    # (accept path + PDW/packet ordering, glitch reject, CW reject,
-    # status_flags, long-stall backpressure), synthetic gate streams so the
-    # cases the real detector cannot produce on demand are reachable.
-    tests.append(
-        Test(
-            name="pulse_extract_tb",
-            category="native_sim",
-            cmd=[
-                PYPELINEC,
-                EXAMPLES_PYPELINE_DIR / "dsp" / "pdw" / "pulse_extract_tb.py",
-                "-D",
-                "PDW_ATAN2_METHOD=cordic",
-                "--sim",
-                "--comb",
-                "--run",
-                "800",
-            ],
-        )
-    )
-    # PDW project: the pulse generator. Registered here because it was not
-    # registered anywhere before -- the file existed and never ran. It now
-    # covers the carrier, the LFM chirp and the noise source, including the
-    # zero-mean check that a DC-biased noise source would fail.
-    tests.append(
-        Test(
-            name="pulse_gen_tb",
-            category="native_sim",
-            cmd=[
-                PYPELINEC,
-                EXAMPLES_PYPELINE_DIR / "dsp" / "pdw" / "pulse_gen_tb.py",
-                "--sim",
-                "--comb",
-                "--run",
-                "600",
-            ],
-        )
-    )
-    tests.append(
-        Test(
-            name="pulse_extract_tb_rom",
-            category="native_sim",
-            cmd=[
-                PYPELINEC,
-                EXAMPLES_PYPELINE_DIR / "dsp" / "pdw" / "pulse_extract_tb.py",
-                "--sim",
-                "--comb",
-                "--run",
-                "800",
-                "-D",
-                "PDW_ATAN2_METHOD=rom",
-            ],
-        )
-    )
-    # PDW project: the per-pulse measurement engine on its own. pdw_tb.py
-    # already checks it bit-exactly inside the whole pipeline, but only over
-    # the few phasor magnitudes and power levels the real detector happens to
-    # produce; this drives the full input range, where a width or
-    # normalization mistake would show up.
-    tests.append(
-        Test(
-            name="pulse_measure_test",
-            category="native_sim",
-            env={"PDW_ATAN2_METHOD": "cordic"},
-            cmd=[EXAMPLES_PYPELINE_DIR / "dsp" / "pdw" / "pulse_measure_test.py"],
-        )
-    )
-    # PDW project: the AXIS-written control register file. pdw_tb.py exercises
-    # it inside the pipeline, but only with well-formed frames arriving at
-    # convenient moments; this drives the malformed traffic a real host
-    # eventually produces (short writes, padded writes, back-to-back writes)
-    # and pins the always-ready and apply-latency promises pdw_tb.py's whole
-    # phase schedule is built on.
-    tests.append(
-        Test(
-            name="pdw_ctrl_test",
-            category="native_sim",
-            cmd=[EXAMPLES_PYPELINE_DIR / "dsp" / "pdw" / "pdw_ctrl_test.py"],
-        )
-    )
-    # PDW project: reset semantics -- block, drain, clear. pdw_tb.py only ever
-    # resets at power-on, where nothing is buffered; this drives a reset
-    # MID-PULSE, with a part-written packet in the data FIFO whose descriptor
-    # was never pushed. That case is unreachable by the normal release path,
-    # so it is what the drain exists for. Composed with sim_call rather than a
-    # pipelinec build -- seconds instead of pdw_tb.py's ~18 minutes.
-    tests.append(
-        Test(
-            name="pdw_reset_test",
-            category="native_sim",
-            env={"PDW_ATAN2_METHOD": "cordic"},
-            cmd=[EXAMPLES_PYPELINE_DIR / "dsp" / "pdw" / "pdw_reset_test.py"],
-        )
-    )
-    tests.append(
-        Test(
-            name="pulse_extract_alignment_test",
-            category="native_sim",
-            cmd=[EXAMPLES_PYPELINE_DIR / "dsp" / "pdw" / "pulse_extract_alignment_test.py"],
-            env={"PDW_ATAN2_METHOD": "cordic"},
-        )
-    )
-    for filename in ("pulse_measure_test.py", "pdw_reset_test.py", "pulse_extract_alignment_test.py"):
-        tests.append(
-            Test(
-                name=filename[:-3] + "_rom",
-                category="native_sim",
-                cmd=[EXAMPLES_PYPELINE_DIR / "dsp" / "pdw" / filename],
-                env={"PDW_ATAN2_METHOD": "rom"},
-            )
-        )
-    # PDW project: the internal-error alarm, on its own. The alarm's job is to
-    # destroy a known number of ADC samples so the platform raises an overflow
-    # software can see, so the property that matters is "exactly N samples were
-    # dropped", not "tready went low" -- and those two only diverge when the
-    # input is GAPPED. That test carries its own negative control: the same
-    # stimulus through a deliberately-wrong cycle-counting model, asserted to
-    # get a different answer, so the number is discriminating rather than
-    # merely correct. sim_call, under a second.
-    tests.append(
-        Test(
-            name="pdw_alarm_test",
-            category="native_sim",
-            cmd=[EXAMPLES_PYPELINE_DIR / "dsp" / "pdw" / "pdw_alarm_test.py"],
-        )
-    )
-    # PDW project: airt_pdw_test.py's capture loop, with no radio. That script
-    # is the only file here that runs on real hardware and was the only one
-    # with no test at all -- the framing, the record validation and the loop
-    # itself had never been executed against so much as a synthetic byte, and a
-    # bug there does not surface as a wrong number but as a bring-up session
-    # that cannot be interpreted. Its --record/--replay path is what makes this
-    # possible: the real loop runs, served from a file instead of a stream.
-    # Mostly negative controls, on the invariants that catch a desynchronised
-    # stream before its pkt_samples is used to allocate memory.
-    tests.append(
-        Test(
-            name="airt_pdw_replay_test",
-            category="native_sim",
-            cmd=[EXAMPLES_PYPELINE_DIR / "dsp" / "pdw" / "airt_pdw_replay_test.py"],
-        )
-    )
-    tests.append(
-        Test(
-            name="airt_pdw_host_test",
-            category="native_sim",
-            cmd=[EXAMPLES_PYPELINE_DIR / "dsp" / "pdw" / "airt_pdw_host_test.py"],
-        )
-    )
-    # PDW project: the independent software check of a PDW record against its
-    # own pulse samples (FFT here vs the hardware's phasor/CORDIC, so the two
-    # are genuinely different algorithms). Mostly negative controls: corrupt
-    # one record field and assert the check for THAT field fails and the
-    # others do not -- a verifier that cannot fail would launder every future
-    # hardware failure into a green run. Also generates this design's
-    # pypeline_host_types.py (nothing is committed) and checks that the host
-    # files compose with it -- which is what replaced the old drift guard,
-    # since a generated layout has nothing left to drift from.
-    tests.append(
-        Test(
-            name="pdw_verify_test",
-            category="native_sim",
-            cmd=[EXAMPLES_PYPELINE_DIR / "dsp" / "pdw" / "pdw_verify_test.py"],
-        )
-    )
-    # PDW project: top-level testbench (top.py) -- exact golden model of the
-    # WHOLE pipeline, pulse_gen -> pulse_detect -> pulse_measure -> pulse_extract,
+    # PDW project: the suite's only PDW test, the most current whole design.
+    # Its block-level tests (examples/pypeline/dsp/pdw/*_test.py, *_tb.py) run
+    # by hand; see that directory's README. Top-level testbench (top.py) -- exact
+    # golden model of the WHOLE pipeline, pulse_gen -> pulse_detect -> pulse_measure -> pulse_extract,
     # across eight pulse settings: released ones, two that Path A never
     # detects, two that it detects and the engine then rejects (glitch and
     # CW), and an LFM chirp. Also the acceptance test for Path B's
@@ -529,9 +358,12 @@ def get_tests() -> list:
             # matcher-registered soft operators by default it measured
             # ~523 ms/cycle alone (~148 with PYPELINE_SIM_SOFT_OPS=none) and
             # reached only 5846 of its 7323 cycles in 7200 s under run_all -j 5
-            # (~1.23 s/cycle, ~9000 s projected) -- hence its own timeout.
+            # (~1.23 s/cycle, ~9000 s projected; those figures are for the
+            # cordic atan2, this runs the default rom). It once ran past a
+            # 4-hour timeout on a loaded machine, so it has none: it ends
+            # itself (sim_finish or its deadline assert, below).
             long_pole=True,
-            timeout=4 * 3600,
+            timeout=NO_TIMEOUT_S,
             cmd=[
                 PYPELINEC,
                 EXAMPLES_PYPELINE_DIR / "dsp" / "pdw" / "pdw_tb.py",
@@ -541,26 +373,7 @@ def get_tests() -> list:
                 # its deadline assert; its @final hook checks the run finished
                 "--run",
                 "all",
-                "-D",
-                "PDW_ATAN2_METHOD=cordic",
-            ],
-        )
-    )
-    tests.append(
-        Test(
-            name="pdw_tb_rom",
-            category="native_sim",
-            long_pole=True,
-            timeout=4 * 3600,
-            cmd=[
-                PYPELINEC,
-                EXAMPLES_PYPELINE_DIR / "dsp" / "pdw" / "pdw_tb.py",
-                "--sim",
-                "--comb",
-                "--run",
-                "all",
-                "-D",
-                "PDW_ATAN2_METHOD=rom",
+                # The design's default PDW_ATAN2_METHOD (rom)
             ],
         )
     )

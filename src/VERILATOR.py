@@ -2,20 +2,24 @@ import os
 import shutil
 import sys
 
-import C_TO_LOGIC
 import OPEN_TOOLS
 import SIM
 import SYN
 import VHDL
-from utilities import GET_TOOL_PATH, REPO_ABS_DIR
+from utilities import GET_SHELL_CMD_OUTPUT, GET_TOOL_PATH, REPO_ABS_DIR
 
 VERILATOR_EXE = "verilator"
-VERILATOR_BIN_PATH = OPEN_TOOLS.OSS_CAD_SUITE_PATH + "/bin"
 
-if not os.path.exists(VERILATOR_BIN_PATH):
-    VERILATOR_EXE_PATH = GET_TOOL_PATH(VERILATOR_EXE)
-    if VERILATOR_EXE_PATH is not None:
-        VERILATOR_BIN_PATH = os.path.abspath(os.path.dirname(VERILATOR_EXE_PATH))
+
+# Directory holding the verilator executable. Resolved on use, not at import: OPEN_TOOLS
+# can still be mid-import (OPEN_TOOLS -> SYN/VHDL -> ... -> VERILATOR) when this loads.
+def GET_VERILATOR_BIN_PATH():
+    verilator_bin_path = OPEN_TOOLS.OSS_CAD_SUITE_PATH + "/bin"
+    if not os.path.exists(verilator_bin_path):
+        verilator_exe_path = GET_TOOL_PATH(VERILATOR_EXE)
+        if verilator_exe_path is not None:
+            verilator_bin_path = os.path.abspath(os.path.dirname(verilator_exe_path))
+    return verilator_bin_path
 
 
 def DO_SIM(multimain_timing_params, parser_state, args):
@@ -83,9 +87,7 @@ cout <<"""
         print(
             OPEN_TOOLS.GHDL_BIN_PATH
             + "\n"
-            + C_TO_LOGIC.GET_SHELL_CMD_OUTPUT(
-                f"{OPEN_TOOLS.GHDL_BIN_PATH}/ghdl --version"
-            ),
+            + GET_SHELL_CMD_OUTPUT(f"{OPEN_TOOLS.GHDL_BIN_PATH}/ghdl --version"),
             flush=True,
         )
     else:
@@ -94,9 +96,7 @@ cout <<"""
         print(
             OPEN_TOOLS.YOSYS_BIN_PATH
             + "\n"
-            + C_TO_LOGIC.GET_SHELL_CMD_OUTPUT(
-                f"{OPEN_TOOLS.YOSYS_BIN_PATH}/yosys --version"
-            ),
+            + GET_SHELL_CMD_OUTPUT(f"{OPEN_TOOLS.YOSYS_BIN_PATH}/yosys --version"),
             flush=True,
         )
     else:
@@ -163,13 +163,12 @@ int main(int argc, char *argv[]) {{
         main_cpp_path = os.path.abspath(args.main_cpp)
 
     # Check verilator exists
+    VERILATOR_BIN_PATH = GET_VERILATOR_BIN_PATH()
     if os.path.exists(f"{VERILATOR_BIN_PATH}/verilator"):
         print(
             VERILATOR_BIN_PATH
             + "\n"
-            + C_TO_LOGIC.GET_SHELL_CMD_OUTPUT(
-                f"{VERILATOR_BIN_PATH}/verilator --version"
-            ),
+            + GET_SHELL_CMD_OUTPUT(f"{VERILATOR_BIN_PATH}/verilator --version"),
             flush=True,
         )
     else:
@@ -189,13 +188,13 @@ make CXXFLAGS="-I{VERILATOR_OUT_DIR} -I{REPO_ABS_DIR()}/include" -j4 -C obj_dir 
     print(f"Running Verilator build w/ {main_cpp_path}...", flush=True)
     bash_cmd = f"bash {sh_path}"
     # print(bash_cmd, flush=True)
-    log_text = C_TO_LOGIC.GET_SHELL_CMD_OUTPUT(bash_cmd, cwd=VERILATOR_OUT_DIR)
+    log_text = GET_SHELL_CMD_OUTPUT(bash_cmd, cwd=VERILATOR_OUT_DIR)
     # print(log_text, flush=True)
 
     # Run the simulation
     print("Starting simulation...", flush=True)
     bash_cmd = "./obj_dir/V" + SYN.TOP_LEVEL_MODULE
     # print(bash_cmd, flush=True)
-    log_text = C_TO_LOGIC.GET_SHELL_CMD_OUTPUT(bash_cmd, cwd=VERILATOR_OUT_DIR)
+    log_text = GET_SHELL_CMD_OUTPUT(bash_cmd, cwd=VERILATOR_OUT_DIR)
     print(log_text, flush=True)
     sys.exit(0)

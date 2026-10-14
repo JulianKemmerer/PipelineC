@@ -189,9 +189,11 @@ def run_sim(
             and pypeline._pipeline_latency_reachable(fn)
         ]
         if candidates:
-            import pypeline_sim_pipeline
+            import PY_TO_LOGIC
 
-            pipeline_models = pypeline_sim_pipeline.prepare(candidates, pipeline_timing)
+            pipeline_models = PY_TO_LOGIC.PREPARE_PIPELINE_LATENCY_SIM(
+                candidates, pipeline_timing
+            )
 
     # Wire up write-side latency emulation for naturally-pipelined pure MAINs.
     pypeline._sim_pipelined_main_info.clear()

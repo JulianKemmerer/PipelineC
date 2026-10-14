@@ -129,7 +129,9 @@ and these functions:
   backends such as OpenXC7 whose final implementation artifact needs a separate
   bitstream-format conversion step;
 - optionally `FUNC_IS_PRIMITIVE` / `GET_PRIMITIVE_MODULE_TEXT`, for tools with
-  vendor primitives that `VHDL.py` instantiates directly.
+  vendor primitives that `VHDL.py` instantiates directly. Callers ask through
+  `SYN.FUNC_IS_PRIMITIVE(func_name, parser_state)`, which selects the part's tool
+  and answers False for a backend without the hook.
 
 A per-function run decides on reuse through `SYN.REUSE_SYNTHESIS_LOG` or
 `SYN.SYNTHESIS_STORE_FETCH`, and calls `SYN.REUSE_ONLY_MISS()` before any other
@@ -604,8 +606,11 @@ earlier run existed.
   print `Estimated register usage: ...` / `Estimated area: ...` before
   synthesis; `PRINT_MEASURED_AREA_IF_AVAILABLE` prints `Measured area: ...` after
   a whole-design run that reports area.
-- **Reports.** `WRITE_MODULE_INSTANCES_REPORT_BY_DELAY_USAGE` and the
-  name index below.
+- **Reports.** `WRITE_MODULE_INSTANCES_REPORT_BY_DELAY_USAGE` (`module_instances.log`)
+  and the name index below. `WRITE_FLOAT_MODULE_INSTANCES_REPORT` and
+  `WRITE_INTEGER_MODULE_INSTANCES_REPORT` (`float_module_instances.log`,
+  `integer_module_instances.log`: operator instance counts by type and width) are
+  written with the zero-added-clocks files by `AUTO_PIPELINE.WRITE_0_ADDED_CLKS_INIT_FILES`.
 
 **A synthesized netlist with no timing paths is always an error.** A design that
 synthesizes away to nothing, typically because it drives no top-level output, has no
@@ -795,7 +800,7 @@ Five harness properties that are easy to get wrong:
   build that runs the benchmark and then a normal build against the same
   cache directory can pick up a comparator shape it never asked for. This is
   already latent, not just hypothetical: the cache's `BIN_OP_{GT,GTE,LT,LTE}_*`
-  entries have mixed provenance today, some measuring the SW_LIB C-generated
+  entries have mixed provenance today, some measuring the C front end's C-generated
   comparator and some the `FORCE_RAW_INT_CMP_FOR_QOR_BENCH` RAW_VHDL one, both
   filed under the same canonical entity name. Harmless only because compares
   are soft by default today; flipping any of `GT`/`GTE`/`LT`/`LTE` back to

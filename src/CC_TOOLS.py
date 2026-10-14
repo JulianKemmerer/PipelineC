@@ -2,10 +2,9 @@ import os
 import shutil
 import sys
 
-import C_TO_LOGIC
 import SYN
 import VHDL
-from utilities import GET_TOOL_PATH
+from utilities import GET_SHELL_CMD_OUTPUT, GET_TOOL_PATH
 
 # Tool path constants
 TOOL_EXE = "p_r"
@@ -196,7 +195,7 @@ def SYN_AND_REPORT_TIMING_NEW(
     # Run the build script
     print("Running CC_TOOLS:", sh_path, flush=True)
     syn_imp_bash_cmd = "bash " + sh_path
-    C_TO_LOGIC.GET_SHELL_CMD_OUTPUT(syn_imp_bash_cmd, cwd=temp_local_out_dir)
+    GET_SHELL_CMD_OUTPUT(syn_imp_bash_cmd, cwd=temp_local_out_dir)
     f = open(log_path, "r")
     log_text = f.read()
     f.close()

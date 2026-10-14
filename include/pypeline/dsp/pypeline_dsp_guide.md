@@ -432,10 +432,11 @@ checks noise variance reduction). Tests:
 library: `fm_radio_decim.py` (a synthesizable I/Q 5× decimator pair at 125 MHz — the
 pypeline port of `examples/sdr/fm_radio.c`'s front end) and the `*_tb.py` files listed
 above alongside each block. Every one of them is registered as a test
-(`src/tests/pypeline_tests/native_sim_tests.py`, `synth_tests.py`: the PDW synth tops
-and `fm_radio_decim.py` under `synth_vivado`) so a documented
-example cannot rot unnoticed; the library's own unit tests are the `inst/` files named
-under each block above.
+(`src/tests/pypeline_tests/native_sim_tests.py`, `synth_tests.py`: `fm_radio_decim.py`
+under `synth_vivado`) so a documented example cannot rot unnoticed; the library's own
+unit tests are the `inst/` files named under each block above. Of the PDW example below,
+only its whole-design testbench `pdw_tb.py` is registered; its block tests and synthesis
+tops run by hand (see its README).
 
 `examples/pypeline/dsp/pdw/` (pulse-descriptor-word detector) is a larger worked
 example — a whole SDR design rather than one block — with its own

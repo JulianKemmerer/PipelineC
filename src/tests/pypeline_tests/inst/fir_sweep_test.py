@@ -43,7 +43,7 @@ fir_sweep, fir_sweep_t = make_fir(
 
 # Goal lowered from 100.0 -- the soft-operator-library default flip
 # (int GT/GTE/LT/LTE now lower to a Pypeline-HDL subtract-based comparator
-# instead of the old SW_LIB-generated one, see include/pypeline/operators/)
+# instead of the old C-code-generated one, see include/pypeline/operators/)
 # measurably slowed integer compares (~70-90% higher delay for the same
 # widths in this design), and this filter's real timing floor is an
 # unrelated inferred MUX around ~76 MHz -- 100 MHz is no longer reachable.

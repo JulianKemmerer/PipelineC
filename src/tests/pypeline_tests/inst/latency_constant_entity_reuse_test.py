@@ -24,7 +24,7 @@ HERE = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, os.path.join(HERE, "..", "..", ".."))
 
 import AUTO_PIPELINE  # noqa: E402
-import C_TO_LOGIC  # noqa: E402
+import LOGIC
 import PY_TO_LOGIC  # noqa: E402
 import SYN  # noqa: E402
 import VHDL  # noqa: E402
@@ -39,12 +39,12 @@ def main():
     SYN.TOP_LEVEL_MODULE = "top"
     os.makedirs(SYN.SYN_OUTPUT_DIRECTORY, exist_ok=True)
     pypeline.SET_AUTO_PIPELINE_BUILD_MODE("sweep")
-    marker = C_TO_LOGIC.SUBMODULE_MARKER
+    marker = LOGIC.SUBMODULE_MARKER
     files = []
     for latency in (2, 3):
         pypeline.SET_AUTO_PIPELINE_LATENCY_CACHE({"core": latency})
         parser_state = PY_TO_LOGIC.PARSE_FILE(DESIGN)
-        C_TO_LOGIC.WRITE_0_ADDED_CLKS_INIT_FILES(parser_state)
+        AUTO_PIPELINE.WRITE_0_ADDED_CLKS_INIT_FILES(parser_state)
         parser_state = SYN.ADD_PATH_DELAY_TO_LOOKUP(parser_state)
         tpl = AUTO_PIPELINE.GET_ZERO_ADDED_CLKS_TIMING_PARAMS_LOOKUP(parser_state)
         (inst,) = [

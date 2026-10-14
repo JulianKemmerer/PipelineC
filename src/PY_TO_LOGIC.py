@@ -1,6 +1,7 @@
 import ast
 import atexit
 import builtins
+import copy
 import functools
 import hashlib
 import importlib.machinery
@@ -16,10 +17,10 @@ import sysconfig
 import textwrap
 import tokenize
 import types as _types
+import weakref
 
-import C_TO_LOGIC
+import LOGIC
 import VHDL
-import AST as pypeline_ast
 from utilities import INDEX_BIT_WIDTH
 from pypeline import (
     _RegType,
@@ -50,33 +51,33 @@ from pypeline import (
 import pypeline as _pypeline_mod
 
 # Recognized by name in FuncElaborator._elab_stmt as a raw-VHDL-passthrough statement.
-# Distinct from C_TO_LOGIC.VHDL_FUNC_NAME ("__vhdl__") — Pypeline's user-facing surface
+# Distinct from LOGIC.VHDL_FUNC_NAME ("__vhdl__") — Pypeline's user-facing surface
 # avoids dunder-style names.
 _VHDL_TEXT_FUNC_NAME = "vhdl"
 
 UNARY_OP_MAP = {
-    ast.Invert: C_TO_LOGIC.UNARY_OP_NOT_NAME,
-    ast.USub: C_TO_LOGIC.UNARY_OP_NEGATE_NAME,
-    ast.Not: C_TO_LOGIC.UNARY_OP_NOT_NAME,
+    ast.Invert: LOGIC.UNARY_OP_NOT_NAME,
+    ast.USub: LOGIC.UNARY_OP_NEGATE_NAME,
+    ast.Not: LOGIC.UNARY_OP_NOT_NAME,
 }
 
 BIN_OP_MAP = {
-    ast.Add: C_TO_LOGIC.BIN_OP_PLUS_NAME,
-    ast.Sub: C_TO_LOGIC.BIN_OP_MINUS_NAME,
-    ast.Mult: C_TO_LOGIC.BIN_OP_INFERRED_MULT_NAME,
-    ast.Div: C_TO_LOGIC.BIN_OP_DIV_NAME,
-    ast.Mod: C_TO_LOGIC.BIN_OP_MOD_NAME,
-    ast.LShift: C_TO_LOGIC.BIN_OP_SL_NAME,
-    ast.RShift: C_TO_LOGIC.BIN_OP_SR_NAME,
-    ast.BitAnd: C_TO_LOGIC.BIN_OP_AND_NAME,
-    ast.BitOr: C_TO_LOGIC.BIN_OP_OR_NAME,
-    ast.BitXor: C_TO_LOGIC.BIN_OP_XOR_NAME,
-    ast.Gt: C_TO_LOGIC.BIN_OP_GT_NAME,
-    ast.GtE: C_TO_LOGIC.BIN_OP_GTE_NAME,
-    ast.Lt: C_TO_LOGIC.BIN_OP_LT_NAME,
-    ast.LtE: C_TO_LOGIC.BIN_OP_LTE_NAME,
-    ast.Eq: C_TO_LOGIC.BIN_OP_EQ_NAME,
-    ast.NotEq: C_TO_LOGIC.BIN_OP_NEQ_NAME,
+    ast.Add: LOGIC.BIN_OP_PLUS_NAME,
+    ast.Sub: LOGIC.BIN_OP_MINUS_NAME,
+    ast.Mult: LOGIC.BIN_OP_INFERRED_MULT_NAME,
+    ast.Div: LOGIC.BIN_OP_DIV_NAME,
+    ast.Mod: LOGIC.BIN_OP_MOD_NAME,
+    ast.LShift: LOGIC.BIN_OP_SL_NAME,
+    ast.RShift: LOGIC.BIN_OP_SR_NAME,
+    ast.BitAnd: LOGIC.BIN_OP_AND_NAME,
+    ast.BitOr: LOGIC.BIN_OP_OR_NAME,
+    ast.BitXor: LOGIC.BIN_OP_XOR_NAME,
+    ast.Gt: LOGIC.BIN_OP_GT_NAME,
+    ast.GtE: LOGIC.BIN_OP_GTE_NAME,
+    ast.Lt: LOGIC.BIN_OP_LT_NAME,
+    ast.LtE: LOGIC.BIN_OP_LTE_NAME,
+    ast.Eq: LOGIC.BIN_OP_EQ_NAME,
+    ast.NotEq: LOGIC.BIN_OP_NEQ_NAME,
 }
 
 # Augmented assignment operators for const_env updates (b += 1 etc.)
@@ -92,12 +93,12 @@ AUG_OP_MAP = {
 # (Bitwise, shift, compare ops are handled separately.)
 _ARITH_OPS = frozenset(
     {
-        C_TO_LOGIC.BIN_OP_PLUS_NAME,
-        C_TO_LOGIC.BIN_OP_MINUS_NAME,
-        C_TO_LOGIC.BIN_OP_MULT_NAME,
-        C_TO_LOGIC.BIN_OP_INFERRED_MULT_NAME,
-        C_TO_LOGIC.BIN_OP_DIV_NAME,
-        C_TO_LOGIC.BIN_OP_MOD_NAME,
+        LOGIC.BIN_OP_PLUS_NAME,
+        LOGIC.BIN_OP_MINUS_NAME,
+        LOGIC.BIN_OP_MULT_NAME,
+        LOGIC.BIN_OP_INFERRED_MULT_NAME,
+        LOGIC.BIN_OP_DIV_NAME,
+        LOGIC.BIN_OP_MOD_NAME,
     }
 )
 
@@ -407,13 +408,13 @@ def _get_elem_positions(base_path, c_type, elem_c_type):
 
 def _var_ref_assign_func_name(output_type, base_type, ref_toks, covering_ref_toks_list):
     """Build VAR_REF_ASSIGN func name."""
-    func_name = C_TO_LOGIC.VAR_REF_ASSIGN_FUNC_NAME_PREFIX
+    func_name = LOGIC.VAR_REF_ASSIGN_FUNC_NAME_PREFIX
     func_name += "_" + output_type.replace("[", "_").replace("]", "")
     func_name += "_" + base_type.replace("[", "_").replace("]", "")
     for tok in ref_toks[1:]:
         func_name += "_VAR" if _is_var_tok(tok) else "_" + str(tok)
     input_str = _covering_ref_toks_str(covering_ref_toks_list)
-    h = hashlib.md5(input_str.encode()).hexdigest()[: C_TO_LOGIC.C_AST_NODE_HASH_LEN]
+    h = hashlib.md5(input_str.encode()).hexdigest()[: LOGIC.C_AST_NODE_HASH_LEN]
     func_name += "_" + h
     return func_name
 
@@ -1026,13 +1027,13 @@ def _inst_name(op_full_name, src_file, node):
 
 
 def _port_wire(inst, port):
-    return f"{inst}{C_TO_LOGIC.SUBMODULE_MARKER}{port}"
+    return f"{inst}{LOGIC.SUBMODULE_MARKER}{port}"
 
 
 def _py_str_to_c_quoted(s):
     """Convert an already-Python-unescaped string (e.g. one built internally by
     _elab_sim_print_stmt) into the raw-quoted-with-C-escapes form
-    C_TO_LOGIC.PRTINTF_STRING_TO_FORMATS / VHDL.C_CONST_STR_TO_VHDL_CONST_STR expect --
+    LOGIC.PRTINTF_STRING_TO_FORMATS / VHDL.C_CONST_STR_TO_VHDL_CONST_STR expect --
     i.e. what a pycparser string-constant .value would contain for the equivalent C source
     literal (surrounding quotes kept, real control chars re-escaped to literal two-char
     backslash sequences)."""
@@ -1052,21 +1053,21 @@ def _alias(var_name, src_file, node):
 def _strip_array_brackets(type_str):
     """Replace array brackets with '_' so a C type string is safe to
     interpolate into a VHDL entity/component name (e.g. 'uint1_t[16]' ->
-    'uint1_t_16'). Mirrors C_TO_LOGIC.BUILD_FUNC_NAME's identical
+    'uint1_t_16'). Mirrors LOGIC.BUILD_FUNC_NAME's identical
     .replace("[", "_").replace("]", "") for the classic C-dialect frontend."""
     return type_str.replace("[", "_").replace("]", "")
 
 
 def _unary_func_name(op_name, typ):
     return (
-        f"{C_TO_LOGIC.UNARY_OP_LOGIC_NAME_PREFIX}_{op_name}_"
+        f"{LOGIC.UNARY_OP_LOGIC_NAME_PREFIX}_{op_name}_"
         f"{_strip_array_brackets(typ)}"
     )
 
 
 def _bin_func_name(op_name, l_type, r_type, parser_state=None):
     name = (
-        f"{C_TO_LOGIC.BIN_OP_LOGIC_NAME_PREFIX}_{op_name}_"
+        f"{LOGIC.BIN_OP_LOGIC_NAME_PREFIX}_{op_name}_"
         f"{_strip_array_brackets(l_type)}_{_strip_array_brackets(r_type)}"
     )
     if parser_state is not None:
@@ -1150,10 +1151,10 @@ def _hw_func_name(mod_prefix, name):
 
 
 _HW_OP_TO_ARITH_OP = {
-    C_TO_LOGIC.BIN_OP_PLUS_NAME: "add",
-    C_TO_LOGIC.BIN_OP_MINUS_NAME: "sub",
-    C_TO_LOGIC.BIN_OP_MULT_NAME: "mul",
-    C_TO_LOGIC.BIN_OP_INFERRED_MULT_NAME: "mul",
+    LOGIC.BIN_OP_PLUS_NAME: "add",
+    LOGIC.BIN_OP_MINUS_NAME: "sub",
+    LOGIC.BIN_OP_MULT_NAME: "mul",
+    LOGIC.BIN_OP_INFERRED_MULT_NAME: "mul",
 }
 
 
@@ -1172,7 +1173,7 @@ def _arith_output_type(op_name, eff_l_type, eff_r_type, result_signed):
 def _infer_const_ctype(val):
     """Minimum bit-accurate C type for an integer literal."""
     if isinstance(val, bool) or val in (0, 1):
-        return C_TO_LOGIC.BOOL_C_TYPE
+        return LOGIC.BOOL_C_TYPE
     if val > 1:
         return f"uint{val.bit_length()}_t"
     bits = max(1, (-val - 1).bit_length() + 1)
@@ -1183,26 +1184,26 @@ def _const_ref_rd_func_name(
     output_c_type, base_c_type, ref_toks, covering_ref_toks_list
 ):
     """Build CONST_REF_RD func name. Only the prefix matters for backend recognition."""
-    func_name = C_TO_LOGIC.CONST_REF_RD_FUNC_NAME_PREFIX
+    func_name = LOGIC.CONST_REF_RD_FUNC_NAME_PREFIX
     func_name += "_" + output_c_type.replace("[", "_").replace("]", "")
     func_name += "_" + base_c_type.replace("[", "_").replace("]", "")
     for tok in ref_toks[1:]:
         func_name += "_" + _ref_tok_str(tok)
     input_str = _covering_ref_toks_str(covering_ref_toks_list)
-    h = hashlib.md5(input_str.encode()).hexdigest()[: C_TO_LOGIC.C_AST_NODE_HASH_LEN]
+    h = hashlib.md5(input_str.encode()).hexdigest()[: LOGIC.C_AST_NODE_HASH_LEN]
     func_name += "_" + h
     return func_name
 
 
 def _var_ref_rd_func_name(output_c_type, base_c_type, ref_toks, covering_ref_toks_list):
     """Build VAR_REF_RD func name. Variable index positions encoded as '_VAR'."""
-    func_name = C_TO_LOGIC.VAR_REF_RD_FUNC_NAME_PREFIX
+    func_name = LOGIC.VAR_REF_RD_FUNC_NAME_PREFIX
     func_name += "_" + output_c_type.replace("[", "_").replace("]", "")
     func_name += "_" + base_c_type.replace("[", "_").replace("]", "")
     for tok in ref_toks[1:]:
         func_name += "_VAR" if _is_var_tok(tok) else "_" + str(tok)
     input_str = _covering_ref_toks_str(covering_ref_toks_list)
-    h = hashlib.md5(input_str.encode()).hexdigest()[: C_TO_LOGIC.C_AST_NODE_HASH_LEN]
+    h = hashlib.md5(input_str.encode()).hexdigest()[: LOGIC.C_AST_NODE_HASH_LEN]
     func_name += "_" + h
     return func_name
 
@@ -1321,13 +1322,13 @@ def _register_bit_manip_logic(
     Returns the registered Logic().
     """
     if func_name not in parser_state.FuncLogicLookupTable:
-        logic = C_TO_LOGIC.Logic()
+        logic = LOGIC.Logic()
         logic.func_name = func_name
         for port_name, c_type in zip(port_names, input_types):
             logic.inputs.append(port_name)
             logic.wire_to_c_type[port_name] = c_type
-        logic.outputs.append(C_TO_LOGIC.RETURN_WIRE_NAME)
-        logic.wire_to_c_type[C_TO_LOGIC.RETURN_WIRE_NAME] = output_type
+        logic.outputs.append(LOGIC.RETURN_WIRE_NAME)
+        logic.wire_to_c_type[LOGIC.RETURN_WIRE_NAME] = output_type
         logic.is_vhdl_func = True
         logic.is_new_style_bit_manip = True
         parser_state.FuncLogicLookupTable[func_name] = logic
@@ -1398,7 +1399,7 @@ def _add_submodule_instance(
                 getattr(ast_node, "end_col_offset", None),
             )
         }
-        logic.submodule_instance_to_ast_meta[inst_name] = pypeline_ast.ASTMeta(
+        logic.submodule_instance_to_ast_meta[inst_name] = LOGIC.ASTMeta(
             src_file=src_file,
             line=ast_node.lineno,
             col=ast_node.col_offset,
@@ -1455,14 +1456,14 @@ def _build_binary_mux_tree(
         )
     bit_inst = f"{bit_func}[var_ref_internal_{counter[0]}]"
     counter[0] += 1
-    bit_wire = _port_wire(bit_inst, C_TO_LOGIC.RETURN_WIRE_NAME)
+    bit_wire = _port_wire(bit_inst, LOGIC.RETURN_WIRE_NAME)
     _add_submodule_instance(
         logic,
         bit_inst,
         bit_func,
         [("x", select_wire, select_type)],
         bit_wire,
-        C_TO_LOGIC.BOOL_C_TYPE,
+        LOGIC.BOOL_C_TYPE,
         None,
         None,
     )
@@ -1489,12 +1490,12 @@ def _build_binary_mux_tree(
         callee_def = elaborator._resolve_registered_impl(mux_impl, None)
         mux_inst = f"{callee_def.func_name}[var_ref_internal_{counter[0]}]"
         counter[0] += 1
-        mux_output = _port_wire(mux_inst, C_TO_LOGIC.RETURN_WIRE_NAME)
+        mux_output = _port_wire(mux_inst, LOGIC.RETURN_WIRE_NAME)
         input_ports = list(
             zip(
                 callee_def.inputs,
                 [bit_wire, right_wire, left_wire],
-                [C_TO_LOGIC.BOOL_C_TYPE, leaf_type, leaf_type],
+                [LOGIC.BOOL_C_TYPE, leaf_type, leaf_type],
             )
         )
         _add_submodule_instance(
@@ -1510,16 +1511,16 @@ def _build_binary_mux_tree(
         return mux_output
 
     mux_suffix = leaf_type.replace("[", "_").replace("]", "")
-    mux_func = f"{C_TO_LOGIC.MUX_LOGIC_NAME}_{mux_suffix}"
+    mux_func = f"{LOGIC.MUX_LOGIC_NAME}_{mux_suffix}"
     mux_inst = f"{mux_func}[var_ref_internal_{counter[0]}]"
     counter[0] += 1
-    mux_output = _port_wire(mux_inst, C_TO_LOGIC.RETURN_WIRE_NAME)
+    mux_output = _port_wire(mux_inst, LOGIC.RETURN_WIRE_NAME)
     _add_submodule_instance(
         logic,
         mux_inst,
         mux_func,
         [
-            ("cond", bit_wire, C_TO_LOGIC.BOOL_C_TYPE),
+            ("cond", bit_wire, LOGIC.BOOL_C_TYPE),
             ("iftrue", right_wire, leaf_type),
             ("iffalse", left_wire, leaf_type),
         ],
@@ -1544,7 +1545,7 @@ def _emit_internal_const_ref_rd(
     )
     crd_inst = f"{crd_func}[internal_{counter[0]}]"
     counter[0] += 1
-    leaf_wire = _port_wire(crd_inst, C_TO_LOGIC.RETURN_WIRE_NAME)
+    leaf_wire = _port_wire(crd_inst, LOGIC.RETURN_WIRE_NAME)
     _add_submodule_instance(
         logic,
         crd_inst,
@@ -1592,7 +1593,7 @@ def _build_var_ref_rd_logic(
     var_dim_info: list of (dim_size, select_type, _index_wire) in ref_toks order
     covering_wires: ordered dict  covering_ref_toks -> (call_site_wire, port_type)
     """
-    logic = C_TO_LOGIC.Logic()
+    logic = LOGIC.Logic()
     logic.func_name = func_name
 
     # ── covering input ports (ref_toks_i) ──
@@ -1612,8 +1613,8 @@ def _build_var_ref_rd_logic(
         var_dim_ports.append((dim_size, port_name, select_type))
 
     # ── output port ──
-    logic.outputs.append(C_TO_LOGIC.RETURN_WIRE_NAME)
-    _add_wire(logic, C_TO_LOGIC.RETURN_WIRE_NAME, c_type)
+    logic.outputs.append(LOGIC.RETURN_WIRE_NAME)
+    _add_wire(logic, LOGIC.RETURN_WIRE_NAME, c_type)
 
     # ── output leaf info ──
     output_leaf_count, output_leaf_paths, output_leaf_types = _get_output_leaf_info(
@@ -1682,7 +1683,7 @@ def _build_var_ref_rd_logic(
 
     # ── Step 3: connect / assemble output ──
     if output_leaf_count == 1:
-        _connect(logic, current_wires[0], C_TO_LOGIC.RETURN_WIRE_NAME)
+        _connect(logic, current_wires[0], LOGIC.RETURN_WIRE_NAME)
     else:
         DUMMY_OUT = "var_ref_out"
         logic.wire_to_c_type[DUMMY_OUT] = c_type
@@ -1697,7 +1698,7 @@ def _build_var_ref_rd_logic(
         asm_func = _const_ref_rd_func_name(c_type, c_type, (DUMMY_OUT,), covering_rts)
         asm_inst = f"{asm_func}[assembly_{counter[0]}]"
         counter[0] += 1
-        asm_output = _port_wire(asm_inst, C_TO_LOGIC.RETURN_WIRE_NAME)
+        asm_output = _port_wire(asm_inst, LOGIC.RETURN_WIRE_NAME)
         _add_submodule_instance(
             logic, asm_inst, asm_func, input_ports, asm_output, c_type, None, None
         )
@@ -1705,7 +1706,7 @@ def _build_var_ref_rd_logic(
         logic.ref_submodule_instance_to_input_port_driven_ref_toks[asm_inst] = (
             covering_rts
         )
-        _connect(logic, asm_output, C_TO_LOGIC.RETURN_WIRE_NAME)
+        _connect(logic, asm_output, LOGIC.RETURN_WIRE_NAME)
 
     return logic
 
@@ -1735,7 +1736,7 @@ def _build_var_ref_assign_logic(
     Port order: elem_val, ref_toks_i ..., var_dim_i ...
     output_type = elem_c_type[var_dim_0][var_dim_1]...
     """
-    logic = C_TO_LOGIC.Logic()
+    logic = LOGIC.Logic()
     logic.func_name = func_name
 
     # ── elem_val input (value being written, type = elem_c_type) ──
@@ -1759,8 +1760,8 @@ def _build_var_ref_assign_logic(
         var_dim_ports.append((dim_size, port_name, select_type))
 
     # ── output port ──
-    logic.outputs.append(C_TO_LOGIC.RETURN_WIRE_NAME)
-    _add_wire(logic, C_TO_LOGIC.RETURN_WIRE_NAME, output_type)
+    logic.outputs.append(LOGIC.RETURN_WIRE_NAME)
+    _add_wire(logic, LOGIC.RETURN_WIRE_NAME, output_type)
 
     # Enumerate concrete positions at elem_c_type level (not decomposed to scalar)
     all_elem_positions, _ = _get_var_ref_elem_positions(
@@ -1811,22 +1812,22 @@ def _build_var_ref_assign_logic(
 
             # Constant wire for the concrete slot value, typed to match the index
             const_name = (
-                f"{C_TO_LOGIC.CONST_PREFIX}{cl_tok}_va_{pos_key}_d{var_dim_i - 1}"
+                f"{LOGIC.CONST_PREFIX}{cl_tok}_va_{pos_key}_d{var_dim_i - 1}"
             )
             _add_wire(logic, const_name, dim_type)
 
             # EQ: var_dim == concrete_val  (same-type comparison, no promotion)
-            eq_func = _bin_func_name(C_TO_LOGIC.BIN_OP_EQ_NAME, dim_type, dim_type)
+            eq_func = _bin_func_name(LOGIC.BIN_OP_EQ_NAME, dim_type, dim_type)
             eq_inst = f"{eq_func}[va_eq_{pos_key}_d{var_dim_i - 1}]"
             counter[0] += 1
-            eq_wire = _port_wire(eq_inst, C_TO_LOGIC.RETURN_WIRE_NAME)
+            eq_wire = _port_wire(eq_inst, LOGIC.RETURN_WIRE_NAME)
             _add_submodule_instance(
                 logic,
                 eq_inst,
                 eq_func,
                 [("left", dim_port, dim_type), ("right", const_name, dim_type)],
                 eq_wire,
-                C_TO_LOGIC.BOOL_C_TYPE,
+                LOGIC.BOOL_C_TYPE,
                 None,
                 None,
             )
@@ -1835,23 +1836,23 @@ def _build_var_ref_assign_logic(
                 cond_wire = eq_wire
             else:
                 and_func = _bin_func_name(
-                    C_TO_LOGIC.BIN_OP_AND_NAME,
-                    C_TO_LOGIC.BOOL_C_TYPE,
-                    C_TO_LOGIC.BOOL_C_TYPE,
+                    LOGIC.BIN_OP_AND_NAME,
+                    LOGIC.BOOL_C_TYPE,
+                    LOGIC.BOOL_C_TYPE,
                 )
                 and_inst = f"{and_func}[va_and_{pos_key}_d{var_dim_i - 1}]"
                 counter[0] += 1
-                and_wire = _port_wire(and_inst, C_TO_LOGIC.RETURN_WIRE_NAME)
+                and_wire = _port_wire(and_inst, LOGIC.RETURN_WIRE_NAME)
                 _add_submodule_instance(
                     logic,
                     and_inst,
                     and_func,
                     [
-                        ("left", cond_wire, C_TO_LOGIC.BOOL_C_TYPE),
-                        ("right", eq_wire, C_TO_LOGIC.BOOL_C_TYPE),
+                        ("left", cond_wire, LOGIC.BOOL_C_TYPE),
+                        ("right", eq_wire, LOGIC.BOOL_C_TYPE),
                     ],
                     and_wire,
-                    C_TO_LOGIC.BOOL_C_TYPE,
+                    LOGIC.BOOL_C_TYPE,
                     None,
                     None,
                 )
@@ -1859,16 +1860,16 @@ def _build_var_ref_assign_logic(
 
         # MUX at elem_c_type level — compound types are fine
         mux_suffix = elem_c_type.replace("[", "_").replace("]", "")
-        mux_func = f"{C_TO_LOGIC.MUX_LOGIC_NAME}_{mux_suffix}"
+        mux_func = f"{LOGIC.MUX_LOGIC_NAME}_{mux_suffix}"
         mux_inst = f"{mux_func}[va_mux_{pos_key}]"
         counter[0] += 1
-        mux_wire = _port_wire(mux_inst, C_TO_LOGIC.RETURN_WIRE_NAME)
+        mux_wire = _port_wire(mux_inst, LOGIC.RETURN_WIRE_NAME)
         _add_submodule_instance(
             logic,
             mux_inst,
             mux_func,
             [
-                ("cond", cond_wire, C_TO_LOGIC.BOOL_C_TYPE),
+                ("cond", cond_wire, LOGIC.BOOL_C_TYPE),
                 ("iftrue", "elem_val", elem_c_type),
                 ("iffalse", old_elem_wires[concrete_pos], elem_c_type),
             ],
@@ -1892,7 +1893,7 @@ def _build_var_ref_assign_logic(
     ordered_updated = [updated_elem_wires[pos] for pos in all_elem_positions]
 
     if len(output_elem_paths) == 1:
-        _connect(logic, ordered_updated[0], C_TO_LOGIC.RETURN_WIRE_NAME)
+        _connect(logic, ordered_updated[0], LOGIC.RETURN_WIRE_NAME)
     else:
         input_ports = []
         for k, (elem_path, elem_wire) in enumerate(
@@ -1904,7 +1905,7 @@ def _build_var_ref_assign_logic(
         )
         asm_inst = f"{asm_func}[va_assembly_{counter[0]}]"
         counter[0] += 1
-        asm_output = _port_wire(asm_inst, C_TO_LOGIC.RETURN_WIRE_NAME)
+        asm_output = _port_wire(asm_inst, LOGIC.RETURN_WIRE_NAME)
         _add_submodule_instance(
             logic, asm_inst, asm_func, input_ports, asm_output, output_type, None, None
         )
@@ -1912,7 +1913,7 @@ def _build_var_ref_assign_logic(
         logic.ref_submodule_instance_to_input_port_driven_ref_toks[asm_inst] = (
             output_elem_paths
         )
-        _connect(logic, asm_output, C_TO_LOGIC.RETURN_WIRE_NAME)
+        _connect(logic, asm_output, LOGIC.RETURN_WIRE_NAME)
 
     return logic
 
@@ -2079,7 +2080,7 @@ class FuncElaborator:
         # module_prefix: set to the import name (e.g. 'file_a') for functions defined in
         # an imported sub-file. Bare wire names and func names are mangled with this prefix.
         self.module_prefix = module_prefix
-        self.logic = C_TO_LOGIC.Logic()
+        self.logic = LOGIC.Logic()
         self.logic.func_name = self.func_name
         # env: hardware wires — ref_toks env key string -> (wire_name, c_type_str)
         self.env = {}
@@ -2523,7 +2524,7 @@ class FuncElaborator:
         return written, read
 
     def elaborate(self):
-        self.logic.ast_meta = pypeline_ast.ASTMeta(
+        self.logic.ast_meta = LOGIC.ASTMeta(
             src_file=self.src_file,
             line=self.func_def.lineno,
             col=self.func_def.col_offset,
@@ -2558,7 +2559,7 @@ class FuncElaborator:
         if (
             self._return_type is not None
             and self.logic.vhdl_module_text is None
-            and C_TO_LOGIC.RETURN_WIRE_NAME not in self.logic.wire_driven_by
+            and LOGIC.RETURN_WIRE_NAME not in self.logic.wire_driven_by
         ):
             raise ElaborationError(
                 f"Function '{self.func_name}' has return type "
@@ -2625,10 +2626,10 @@ class FuncElaborator:
         ret_typ = self._port_ctype("return", self.func_def.returns, eval_ns)
         self._return_type = ret_typ
         if ret_typ is not None:
-            self.logic.outputs.append(C_TO_LOGIC.RETURN_WIRE_NAME)
-            _add_wire(self.logic, C_TO_LOGIC.RETURN_WIRE_NAME, ret_typ)
-            self.env[C_TO_LOGIC.RETURN_WIRE_NAME] = (
-                C_TO_LOGIC.RETURN_WIRE_NAME,
+            self.logic.outputs.append(LOGIC.RETURN_WIRE_NAME)
+            _add_wire(self.logic, LOGIC.RETURN_WIRE_NAME, ret_typ)
+            self.env[LOGIC.RETURN_WIRE_NAME] = (
+                LOGIC.RETURN_WIRE_NAME,
                 ret_typ,
             )
 
@@ -2722,8 +2723,8 @@ class FuncElaborator:
         Python print()-like usage — there is no C-style printf(fmt, *args) form exposed
         to the user. This method walks the argument's AST and reconstructs an internal
         %-style format string + typed argument list, then drives the *existing*,
-        unmodified C_TO_LOGIC/VHDL printf backend (Logic.printf_format_string /
-        submodule_instance_to_printf_format_string, see C_TO_LOGIC.py) exactly as C's
+        unmodified LOGIC/VHDL printf backend (Logic.printf_format_string /
+        submodule_instance_to_printf_format_string, see LOGIC.py) exactly as C's
         own printf(...) does.
 
         Bare {expr} interpolation is inferred for plain scalar ints (%d/%u) and for
@@ -2782,7 +2783,7 @@ class FuncElaborator:
             ast.copy_location(arg, call.args[0])
 
         fmt_c_quoted, input_ports = self._build_sim_fmt_string(arg, stmt, "sim_print")
-        # Type-signature suffix (mirrors C_TO_LOGIC.BUILD_FUNC_NAME's pattern) --
+        # Type-signature suffix (mirrors LOGIC.BUILD_FUNC_NAME's pattern) --
         # required because a sim_print(...) inside a Python for-loop is unrolled
         # into multiple elaboration passes over the SAME source line, each with
         # its own inst name (via loop_instance_prefix) but, without this suffix,
@@ -2794,7 +2795,7 @@ class FuncElaborator:
             for (_, _, ctype) in input_ports
         )
         func_base_name = (
-            f"{C_TO_LOGIC.PRINTF_FUNC_NAME}_{_loc_str(self.src_file, stmt)}{type_sig}"
+            f"{LOGIC.PRINTF_FUNC_NAME}_{_loc_str(self.src_file, stmt)}{type_sig}"
         )
         inst = self._inst(func_base_name, call)
         _add_submodule_instance(
@@ -2812,8 +2813,8 @@ class FuncElaborator:
         # never true for this built-in at its own call-site elaboration time. Kept as a
         # separate wire connect (not part of input_ports/submodule_instance_to_input_port_names)
         # to match C's own input_port_names, which also excludes CE.
-        ce_port_wire = _port_wire(inst, C_TO_LOGIC.CLOCK_ENABLE_NAME)
-        _add_wire(self.logic, ce_port_wire, C_TO_LOGIC.BOOL_C_TYPE)
+        ce_port_wire = _port_wire(inst, LOGIC.CLOCK_ENABLE_NAME)
+        _add_wire(self.logic, ce_port_wire, LOGIC.BOOL_C_TYPE)
         _connect(self.logic, self.logic.clock_enable_wires[-1], ce_port_wire)
 
     def _build_sim_fmt_string(self, arg, stmt, builtin_name):
@@ -2946,7 +2947,7 @@ class FuncElaborator:
         != 0 the same way `if cond:` does — see _elab_if). `msg` is optional, an
         f-string or plain string literal like sim_print's argument, reusing the same
         f-string walker (_build_sim_fmt_string). Elaborates to a printf-family submodule
-        instance (see C_TO_LOGIC.IS_SIM_CTRL_FUNC_NAME) whose VHDL body is a clocked
+        instance (see LOGIC.IS_SIM_CTRL_FUNC_NAME) whose VHDL body is a clocked
         `assert ... report ... severity failure;` (VHDL.GET_SIM_ASSERT_MODULE_TEXT).
         """
         call = stmt.value
@@ -2956,15 +2957,15 @@ class FuncElaborator:
                 f"(at {_loc_str(self.src_file, stmt)})"
             )
         cond_wire, cond_type = self._elab_expr(call.args[0])
-        if cond_type != C_TO_LOGIC.BOOL_C_TYPE:
+        if cond_type != LOGIC.BOOL_C_TYPE:
             zero_wire, zero_type = self._elab_python_value(0, stmt)
             if _ctype_is_int(cond_type) and _ctype_is_int(zero_type):
                 eff_l, eff_r, _ = _arith_promote(cond_type, zero_type)
             else:
                 eff_l, eff_r = cond_type, zero_type
-            neq_func = _bin_func_name(C_TO_LOGIC.BIN_OP_NEQ_NAME, eff_l, eff_r)
+            neq_func = _bin_func_name(LOGIC.BIN_OP_NEQ_NAME, eff_l, eff_r)
             neq_inst = self._inst(
-                f"{C_TO_LOGIC.BIN_OP_LOGIC_NAME_PREFIX}_{C_TO_LOGIC.BIN_OP_NEQ_NAME}_sim_assert_cond",
+                f"{LOGIC.BIN_OP_LOGIC_NAME_PREFIX}_{LOGIC.BIN_OP_NEQ_NAME}_sim_assert_cond",
                 stmt,
             )
             _add_submodule_instance(
@@ -2975,8 +2976,8 @@ class FuncElaborator:
                 ast_node=stmt,
                 src_file=self.src_file,
             )
-            cond_wire = _port_wire(neq_inst, C_TO_LOGIC.RETURN_WIRE_NAME)
-            cond_type = C_TO_LOGIC.BOOL_C_TYPE
+            cond_wire = _port_wire(neq_inst, LOGIC.RETURN_WIRE_NAME)
+            cond_type = LOGIC.BOOL_C_TYPE
 
         input_ports = [("cond", cond_wire, cond_type)]
         msg_c_quoted = None
@@ -2993,7 +2994,7 @@ class FuncElaborator:
             f"_{ctype.replace('[', '_').replace(']', '')}"
             for (_, _, ctype) in input_ports
         )
-        func_base_name = f"{C_TO_LOGIC.SIM_ASSERT_FUNC_NAME}_{_loc_str(self.src_file, stmt)}{type_sig}"
+        func_base_name = f"{LOGIC.SIM_ASSERT_FUNC_NAME}_{_loc_str(self.src_file, stmt)}{type_sig}"
         inst = self._inst(func_base_name, call)
         _add_submodule_instance(
             self.logic,
@@ -3005,8 +3006,8 @@ class FuncElaborator:
         )
         self.logic.submodule_instance_to_sim_assert_msg[inst] = msg_c_quoted
         # Manual CE wiring -- see _elab_sim_print_stmt for why this is needed.
-        ce_port_wire = _port_wire(inst, C_TO_LOGIC.CLOCK_ENABLE_NAME)
-        _add_wire(self.logic, ce_port_wire, C_TO_LOGIC.BOOL_C_TYPE)
+        ce_port_wire = _port_wire(inst, LOGIC.CLOCK_ENABLE_NAME)
+        _add_wire(self.logic, ce_port_wire, LOGIC.BOOL_C_TYPE)
         _connect(self.logic, self.logic.clock_enable_wires[-1], ce_port_wire)
 
     def _elab_sim_finish_stmt(self, stmt):
@@ -3020,7 +3021,7 @@ class FuncElaborator:
                 f"sim_finish() takes no arguments (at {_loc_str(self.src_file, stmt)})"
             )
         func_base_name = (
-            f"{C_TO_LOGIC.SIM_FINISH_FUNC_NAME}_{_loc_str(self.src_file, stmt)}"
+            f"{LOGIC.SIM_FINISH_FUNC_NAME}_{_loc_str(self.src_file, stmt)}"
         )
         inst = self._inst(func_base_name, call)
         _add_submodule_instance(
@@ -3032,8 +3033,8 @@ class FuncElaborator:
             src_file=self.src_file,
         )
         # Manual CE wiring -- see _elab_sim_print_stmt for why this is needed.
-        ce_port_wire = _port_wire(inst, C_TO_LOGIC.CLOCK_ENABLE_NAME)
-        _add_wire(self.logic, ce_port_wire, C_TO_LOGIC.BOOL_C_TYPE)
+        ce_port_wire = _port_wire(inst, LOGIC.CLOCK_ENABLE_NAME)
+        _add_wire(self.logic, ce_port_wire, LOGIC.BOOL_C_TYPE)
         _connect(self.logic, self.logic.clock_enable_wires[-1], ce_port_wire)
 
     def _elab_assign(self, stmt):
@@ -3660,12 +3661,12 @@ class FuncElaborator:
                 f"Function '{self.func_name}' has return type '{self._return_type}' "
                 f"but 'return' has no value"
             )
-        if C_TO_LOGIC.RETURN_WIRE_NAME in self.logic.wire_driven_by:
+        if LOGIC.RETURN_WIRE_NAME in self.logic.wire_driven_by:
             raise ElaborationError(
                 f"Function '{self.func_name}' has multiple return statements; "
                 f"hardware functions must have exactly one"
             )
-        RET = C_TO_LOGIC.RETURN_WIRE_NAME
+        RET = LOGIC.RETURN_WIRE_NAME
         if isinstance(stmt.value, (ast.Dict, ast.List)):
             self._elab_compound_init(RET, stmt.value, stmt.value)
             self._connect_compound_return(RET, stmt.value)
@@ -3906,26 +3907,26 @@ class FuncElaborator:
 
         # ── Runtime condition ──
         cond_wire, cond_type = self._elab_expr(stmt.test)
-        if cond_type != C_TO_LOGIC.BOOL_C_TYPE:
+        if cond_type != LOGIC.BOOL_C_TYPE:
             # if num: → if num != 0:  (matches _elab_bool_op convention)
             zero_wire, zero_type = self._elab_python_value(0, stmt)
             if _ctype_is_int(cond_type) and _ctype_is_int(zero_type):
                 eff_l, eff_r, _ = _arith_promote(cond_type, zero_type)
             else:
                 eff_l, eff_r = cond_type, zero_type
-            neq_func = _bin_func_name(C_TO_LOGIC.BIN_OP_NEQ_NAME, eff_l, eff_r)
+            neq_func = _bin_func_name(LOGIC.BIN_OP_NEQ_NAME, eff_l, eff_r)
             neq_inst = self._inst(
-                f"{C_TO_LOGIC.BIN_OP_LOGIC_NAME_PREFIX}_{C_TO_LOGIC.BIN_OP_NEQ_NAME}_if_cond",
+                f"{LOGIC.BIN_OP_LOGIC_NAME_PREFIX}_{LOGIC.BIN_OP_NEQ_NAME}_if_cond",
                 stmt,
             )
-            neq_out = _port_wire(neq_inst, C_TO_LOGIC.RETURN_WIRE_NAME)
+            neq_out = _port_wire(neq_inst, LOGIC.RETURN_WIRE_NAME)
             _add_submodule_instance(
                 self.logic,
                 neq_inst,
                 neq_func,
                 [("left", cond_wire, eff_l), ("right", zero_wire, eff_r)],
                 neq_out,
-                C_TO_LOGIC.BOOL_C_TYPE,
+                LOGIC.BOOL_C_TYPE,
                 stmt,
                 self.src_file,
             )
@@ -3937,12 +3938,12 @@ class FuncElaborator:
         # These are permanent additions to self.logic (wires/instances accumulate).
         parent_ce_wire = self.logic.clock_enable_wires[-1]
         zero_ce_wire, _ = self._elab_python_value(0, stmt)
-        mux_ce_func = f"{C_TO_LOGIC.MUX_LOGIC_NAME}_{C_TO_LOGIC.BOOL_C_TYPE}"
+        mux_ce_func = f"{LOGIC.MUX_LOGIC_NAME}_{LOGIC.BOOL_C_TYPE}"
 
-        true_ce_inst = self._inst(f"TRUE_{C_TO_LOGIC.CLOCK_ENABLE_NAME}_mux", stmt)
-        true_ce_mux_out = _port_wire(true_ce_inst, C_TO_LOGIC.RETURN_WIRE_NAME)
+        true_ce_inst = self._inst(f"TRUE_{LOGIC.CLOCK_ENABLE_NAME}_mux", stmt)
+        true_ce_mux_out = _port_wire(true_ce_inst, LOGIC.RETURN_WIRE_NAME)
         true_ce_wire = _alias(
-            f"{self.loop_instance_prefix}TRUE_{C_TO_LOGIC.CLOCK_ENABLE_NAME}",
+            f"{self.loop_instance_prefix}TRUE_{LOGIC.CLOCK_ENABLE_NAME}",
             self.src_file,
             stmt,
         )
@@ -3951,22 +3952,22 @@ class FuncElaborator:
             true_ce_inst,
             mux_ce_func,
             [
-                ("cond", cond_wire, C_TO_LOGIC.BOOL_C_TYPE),
-                ("iftrue", parent_ce_wire, C_TO_LOGIC.BOOL_C_TYPE),
-                ("iffalse", zero_ce_wire, C_TO_LOGIC.BOOL_C_TYPE),
+                ("cond", cond_wire, LOGIC.BOOL_C_TYPE),
+                ("iftrue", parent_ce_wire, LOGIC.BOOL_C_TYPE),
+                ("iffalse", zero_ce_wire, LOGIC.BOOL_C_TYPE),
             ],
             true_ce_mux_out,
-            C_TO_LOGIC.BOOL_C_TYPE,
+            LOGIC.BOOL_C_TYPE,
             stmt,
             self.src_file,
         )
-        _add_wire(self.logic, true_ce_wire, C_TO_LOGIC.BOOL_C_TYPE)
+        _add_wire(self.logic, true_ce_wire, LOGIC.BOOL_C_TYPE)
         _connect(self.logic, true_ce_mux_out, true_ce_wire)
 
-        false_ce_inst = self._inst(f"FALSE_{C_TO_LOGIC.CLOCK_ENABLE_NAME}_mux", stmt)
-        false_ce_mux_out = _port_wire(false_ce_inst, C_TO_LOGIC.RETURN_WIRE_NAME)
+        false_ce_inst = self._inst(f"FALSE_{LOGIC.CLOCK_ENABLE_NAME}_mux", stmt)
+        false_ce_mux_out = _port_wire(false_ce_inst, LOGIC.RETURN_WIRE_NAME)
         false_ce_wire = _alias(
-            f"{self.loop_instance_prefix}FALSE_{C_TO_LOGIC.CLOCK_ENABLE_NAME}",
+            f"{self.loop_instance_prefix}FALSE_{LOGIC.CLOCK_ENABLE_NAME}",
             self.src_file,
             stmt,
         )
@@ -3975,16 +3976,16 @@ class FuncElaborator:
             false_ce_inst,
             mux_ce_func,
             [
-                ("cond", cond_wire, C_TO_LOGIC.BOOL_C_TYPE),
-                ("iftrue", zero_ce_wire, C_TO_LOGIC.BOOL_C_TYPE),
-                ("iffalse", parent_ce_wire, C_TO_LOGIC.BOOL_C_TYPE),
+                ("cond", cond_wire, LOGIC.BOOL_C_TYPE),
+                ("iftrue", zero_ce_wire, LOGIC.BOOL_C_TYPE),
+                ("iffalse", parent_ce_wire, LOGIC.BOOL_C_TYPE),
             ],
             false_ce_mux_out,
-            C_TO_LOGIC.BOOL_C_TYPE,
+            LOGIC.BOOL_C_TYPE,
             stmt,
             self.src_file,
         )
-        _add_wire(self.logic, false_ce_wire, C_TO_LOGIC.BOOL_C_TYPE)
+        _add_wire(self.logic, false_ce_wire, LOGIC.BOOL_C_TYPE)
         _connect(self.logic, false_ce_mux_out, false_ce_wire)
 
         # Snapshot pre-if state (env and alias chains only; wires/instances accumulate)
@@ -4066,17 +4067,17 @@ class FuncElaborator:
 
             # Emit MUX(cond, iftrue, iffalse)
             mux_suffix = mux_type.replace("[", "_").replace("]", "")
-            mux_func = f"{C_TO_LOGIC.MUX_LOGIC_NAME}_{mux_suffix}"
+            mux_func = f"{LOGIC.MUX_LOGIC_NAME}_{mux_suffix}"
             # Include ref_toks key in tag so multiple MUXes from one if don't collide
             mux_tag = f"{mux_func}_if_{key}"
             mux_inst = self._inst(mux_tag, stmt)
-            mux_output = _port_wire(mux_inst, C_TO_LOGIC.RETURN_WIRE_NAME)
+            mux_output = _port_wire(mux_inst, LOGIC.RETURN_WIRE_NAME)
             _add_submodule_instance(
                 self.logic,
                 mux_inst,
                 mux_func,
                 [
-                    ("cond", cond_wire, C_TO_LOGIC.BOOL_C_TYPE),
+                    ("cond", cond_wire, LOGIC.BOOL_C_TYPE),
                     ("iftrue", true_wire, mux_type),
                     ("iffalse", false_wire, mux_type),
                 ],
@@ -4182,7 +4183,7 @@ class FuncElaborator:
         )
         asm_tag = f"{asm_func}_if_cov_{ref_prefix}_{branch_tag}"
         asm_inst = self._inst(asm_tag, ast_node)
-        asm_output = _port_wire(asm_inst, C_TO_LOGIC.RETURN_WIRE_NAME)
+        asm_output = _port_wire(asm_inst, LOGIC.RETURN_WIRE_NAME)
         _add_submodule_instance(
             self.logic,
             asm_inst,
@@ -4249,9 +4250,9 @@ class FuncElaborator:
                     if enum_info and member_name in enum_info.id_to_int_val:
                         coord_str = _loc_str(self.src_file, expr)
                         wire_name = (
-                            C_TO_LOGIC.CONST_PREFIX
+                            LOGIC.CONST_PREFIX
                             + member_name
-                            + C_TO_LOGIC.ENUM_CONST_MARKER
+                            + LOGIC.ENUM_CONST_MARKER
                             + coord_str
                         )
                         _add_wire(self.logic, wire_name, enum_ctype)
@@ -4330,7 +4331,7 @@ class FuncElaborator:
         else:
             typ = _infer_const_ctype(val)
         coord_str = _loc_str(self.src_file, ast_node)
-        const_wire = f"{C_TO_LOGIC.CONST_PREFIX}{val}_{coord_str}"
+        const_wire = f"{LOGIC.CONST_PREFIX}{val}_{coord_str}"
         _add_wire(self.logic, const_wire, typ)
         return const_wire, typ
 
@@ -4340,7 +4341,7 @@ class FuncElaborator:
             raise NotImplementedError(f"Unsupported constant value: {val!r}")
         typ = _infer_const_ctype(val)
         coord_str = _loc_str(self.src_file, expr)
-        const_wire = f"{C_TO_LOGIC.CONST_PREFIX}{val}_{coord_str}"
+        const_wire = f"{LOGIC.CONST_PREFIX}{val}_{coord_str}"
         _add_wire(self.logic, const_wire, typ)
         return const_wire, typ
 
@@ -4370,7 +4371,7 @@ class FuncElaborator:
         # string-constant wire encoding (c_ast string constants keep their quote chars
         # in .value) -- VHDL.C_CONST_STR_TO_VHDL_CONST_STR expects them already present,
         # it only does escape substitution, not quoting.
-        const_wire = f'{C_TO_LOGIC.CONST_PREFIX}"{py_str}"_{coord_str}'
+        const_wire = f'{LOGIC.CONST_PREFIX}"{py_str}"_{coord_str}'
         if (
             target_ctype is not None
             and _is_array(target_ctype)
@@ -4489,7 +4490,7 @@ class FuncElaborator:
         _record_bit_manip_render(self.parser_state, func_name, "__slice__", (high, low))
 
         inst = self._inst(func_name, expr)
-        port_return = _port_wire(inst, C_TO_LOGIC.RETURN_WIRE_NAME)
+        port_return = _port_wire(inst, LOGIC.RETURN_WIRE_NAME)
         _add_submodule_instance(
             self.logic,
             inst,
@@ -4533,7 +4534,7 @@ class FuncElaborator:
             )
             _record_bit_manip_render(self.parser_state, func_name, "concat", ())
             inst = self._inst(func_name, elt)
-            port_return = _port_wire(inst, C_TO_LOGIC.RETURN_WIRE_NAME)
+            port_return = _port_wire(inst, LOGIC.RETURN_WIRE_NAME)
             _add_submodule_instance(
                 self.logic,
                 inst,
@@ -4609,7 +4610,7 @@ class FuncElaborator:
         _record_bit_manip_render(self.parser_state, func_name, "bit_assign", (low,))
 
         inst = self._inst(func_name, target)
-        result_wire = _port_wire(inst, C_TO_LOGIC.RETURN_WIRE_NAME)
+        result_wire = _port_wire(inst, LOGIC.RETURN_WIRE_NAME)
         _add_submodule_instance(
             self.logic,
             inst,
@@ -4649,7 +4650,7 @@ class FuncElaborator:
 
         # Match _elab_if() semantics:
         # if x:   ==>   if x != 0:
-        if cond_type != C_TO_LOGIC.BOOL_C_TYPE:
+        if cond_type != LOGIC.BOOL_C_TYPE:
             zero_wire, zero_type = self._elab_python_value(0, expr)
 
             if _ctype_is_int(cond_type) and _ctype_is_int(zero_type):
@@ -4658,17 +4659,17 @@ class FuncElaborator:
                 eff_l, eff_r = cond_type, zero_type
 
             neq_func = _bin_func_name(
-                C_TO_LOGIC.BIN_OP_NEQ_NAME,
+                LOGIC.BIN_OP_NEQ_NAME,
                 eff_l,
                 eff_r,
             )
 
             neq_inst = self._inst(
-                f"{C_TO_LOGIC.BIN_OP_LOGIC_NAME_PREFIX}_{C_TO_LOGIC.BIN_OP_NEQ_NAME}_ifexpr_cond",
+                f"{LOGIC.BIN_OP_LOGIC_NAME_PREFIX}_{LOGIC.BIN_OP_NEQ_NAME}_ifexpr_cond",
                 expr,
             )
 
-            neq_out = _port_wire(neq_inst, C_TO_LOGIC.RETURN_WIRE_NAME)
+            neq_out = _port_wire(neq_inst, LOGIC.RETURN_WIRE_NAME)
 
             _add_submodule_instance(
                 self.logic,
@@ -4679,7 +4680,7 @@ class FuncElaborator:
                     ("right", zero_wire, eff_r),
                 ],
                 neq_out,
-                C_TO_LOGIC.BOOL_C_TYPE,
+                LOGIC.BOOL_C_TYPE,
                 expr,
                 self.src_file,
             )
@@ -4702,17 +4703,17 @@ class FuncElaborator:
         # Emit MUX
         # ------------------------------------------------------------
         mux_suffix = true_type.replace("[", "_").replace("]", "")
-        mux_func = f"{C_TO_LOGIC.MUX_LOGIC_NAME}_{mux_suffix}"
+        mux_func = f"{LOGIC.MUX_LOGIC_NAME}_{mux_suffix}"
 
         mux_inst = self._inst(f"{mux_func}_ifexpr", expr)
-        mux_output = _port_wire(mux_inst, C_TO_LOGIC.RETURN_WIRE_NAME)
+        mux_output = _port_wire(mux_inst, LOGIC.RETURN_WIRE_NAME)
 
         _add_submodule_instance(
             self.logic,
             mux_inst,
             mux_func,
             [
-                ("cond", cond_wire, C_TO_LOGIC.BOOL_C_TYPE),
+                ("cond", cond_wire, LOGIC.BOOL_C_TYPE),
                 ("iftrue", true_wire, true_type),
                 ("iffalse", false_wire, false_type),
             ],
@@ -4741,8 +4742,8 @@ class FuncElaborator:
             inst = self._inst(
                 impl_name if isinstance(impl_name, str) else impl_name.__name__, expr
             )
-            ret_type = callee_def.wire_to_c_type[C_TO_LOGIC.RETURN_WIRE_NAME]
-            port_return = _port_wire(inst, C_TO_LOGIC.RETURN_WIRE_NAME)
+            ret_type = callee_def.wire_to_c_type[LOGIC.RETURN_WIRE_NAME]
+            port_return = _port_wire(inst, LOGIC.RETURN_WIRE_NAME)
             _add_submodule_instance(
                 self.logic,
                 inst,
@@ -4756,14 +4757,14 @@ class FuncElaborator:
             return port_return, ret_type
 
         # Built-in path.
-        # NEGATE on integers widens by 1 bit and makes signed (matches C_TO_LOGIC:8243-8249).
+        # NEGATE on integers widens by 1 bit and makes signed (matches C_TO_LOGIC.C_AST_UNARY_OP_TO_LOGIC).
         ret_type = typ
-        if op_name == C_TO_LOGIC.UNARY_OP_NEGATE_NAME and _ctype_is_int(typ):
+        if op_name == LOGIC.UNARY_OP_NEGATE_NAME and _ctype_is_int(typ):
             _, width = _ctype_info(typ)
             ret_type = _int_ctype(True, width + 1)
         func_name = _unary_func_name(op_name, typ)
-        inst = self._inst(f"{C_TO_LOGIC.UNARY_OP_LOGIC_NAME_PREFIX}_{op_name}", expr)
-        port_return = _port_wire(inst, C_TO_LOGIC.RETURN_WIRE_NAME)
+        inst = self._inst(f"{LOGIC.UNARY_OP_LOGIC_NAME_PREFIX}_{op_name}", expr)
+        port_return = _port_wire(inst, LOGIC.RETURN_WIRE_NAME)
         _add_submodule_instance(
             self.logic,
             inst,
@@ -4835,15 +4836,15 @@ class FuncElaborator:
 
         # Shift ops: constant amount -> CONST_SL/SR_<n>_<type> built-in;
         # variable amount is not yet supported.
-        if op_name in (C_TO_LOGIC.BIN_OP_SL_NAME, C_TO_LOGIC.BIN_OP_SR_NAME):
+        if op_name in (LOGIC.BIN_OP_SL_NAME, LOGIC.BIN_OP_SR_NAME):
             amount = self._try_resolve_int_constant(expr.right)
             if amount is not None:
                 left_wire, l_type = self._elab_expr(expr.left)
                 amount_str = str(amount)
-                func_base_name = f"{C_TO_LOGIC.CONST_PREFIX}{op_name}_{amount_str}"
+                func_base_name = f"{LOGIC.CONST_PREFIX}{op_name}_{amount_str}"
                 func_name = f"{func_base_name}_{l_type}"
                 inst = self._inst(func_base_name, expr)
-                port_return = _port_wire(inst, C_TO_LOGIC.RETURN_WIRE_NAME)
+                port_return = _port_wire(inst, LOGIC.RETURN_WIRE_NAME)
                 _add_submodule_instance(
                     self.logic,
                     inst,
@@ -4885,8 +4886,8 @@ class FuncElaborator:
                     impl_name if isinstance(impl_name, str) else impl_name.__name__,
                     expr,
                 )
-                ret_type = callee_def.wire_to_c_type[C_TO_LOGIC.RETURN_WIRE_NAME]
-                port_return = _port_wire(inst, C_TO_LOGIC.RETURN_WIRE_NAME)
+                ret_type = callee_def.wire_to_c_type[LOGIC.RETURN_WIRE_NAME]
+                port_return = _port_wire(inst, LOGIC.RETURN_WIRE_NAME)
                 input_ports = list(
                     zip(callee_def.inputs, [left_wire, right_wire], [l_type, r_type])
                 )
@@ -4922,8 +4923,8 @@ class FuncElaborator:
             _inst = self._inst(
                 _gen_impl if isinstance(_gen_impl, str) else _gen_impl.__name__, expr
             )
-            _ret_type = _callee.wire_to_c_type[C_TO_LOGIC.RETURN_WIRE_NAME]
-            _port_ret = _port_wire(_inst, C_TO_LOGIC.RETURN_WIRE_NAME)
+            _ret_type = _callee.wire_to_c_type[LOGIC.RETURN_WIRE_NAME]
+            _port_ret = _port_wire(_inst, LOGIC.RETURN_WIRE_NAME)
             _add_submodule_instance(
                 self.logic,
                 _inst,
@@ -4954,8 +4955,8 @@ class FuncElaborator:
         func_name = _bin_func_name(
             op_name, eff_l_type, eff_r_type, self.parser_state
         )
-        inst = self._inst(f"{C_TO_LOGIC.BIN_OP_LOGIC_NAME_PREFIX}_{op_name}", expr)
-        port_return = _port_wire(inst, C_TO_LOGIC.RETURN_WIRE_NAME)
+        inst = self._inst(f"{LOGIC.BIN_OP_LOGIC_NAME_PREFIX}_{op_name}", expr)
+        port_return = _port_wire(inst, LOGIC.RETURN_WIRE_NAME)
         _add_submodule_instance(
             self.logic,
             inst,
@@ -4992,8 +4993,8 @@ class FuncElaborator:
             _inst = self._inst(
                 _gen_impl if isinstance(_gen_impl, str) else _gen_impl.__name__, expr
             )
-            _ret_type = _callee.wire_to_c_type[C_TO_LOGIC.RETURN_WIRE_NAME]
-            _port_ret = _port_wire(_inst, C_TO_LOGIC.RETURN_WIRE_NAME)
+            _ret_type = _callee.wire_to_c_type[LOGIC.RETURN_WIRE_NAME]
+            _port_ret = _port_wire(_inst, LOGIC.RETURN_WIRE_NAME)
             _add_submodule_instance(
                 self.logic,
                 _inst,
@@ -5014,19 +5015,19 @@ class FuncElaborator:
         func_name = _bin_func_name(
             op_name, eff_l_type, eff_r_type, self.parser_state
         )
-        inst = self._inst(f"{C_TO_LOGIC.BIN_OP_LOGIC_NAME_PREFIX}_{op_name}", expr)
-        port_return = _port_wire(inst, C_TO_LOGIC.RETURN_WIRE_NAME)
+        inst = self._inst(f"{LOGIC.BIN_OP_LOGIC_NAME_PREFIX}_{op_name}", expr)
+        port_return = _port_wire(inst, LOGIC.RETURN_WIRE_NAME)
         _add_submodule_instance(
             self.logic,
             inst,
             func_name,
             [("left", left_wire, eff_l_type), ("right", right_wire, eff_r_type)],
             port_return,
-            C_TO_LOGIC.BOOL_C_TYPE,
+            LOGIC.BOOL_C_TYPE,
             expr,
             self.src_file,
         )
-        return port_return, C_TO_LOGIC.BOOL_C_TYPE
+        return port_return, LOGIC.BOOL_C_TYPE
 
     def _elab_call(self, expr):
         # AUTO_PIPELINE(func) instance call: MY_AP(x) — elaborate func as the
@@ -5217,7 +5218,7 @@ class FuncElaborator:
                 # port argument.
                 port_typ = callee_def.wire_to_c_type.get(port_name)
                 # Deliberately NOT CONST_PREFIX-based: any wire name starting with
-                # C_TO_LOGIC.CONST_PREFIX is special-cased elsewhere as a literal
+                # LOGIC.CONST_PREFIX is special-cased elsewhere as a literal
                 # constant value wire (its suffix is parsed as the literal's text),
                 # which this synthetic variable name is not.
                 synth_name = f"INLINE_CTOR_{_loc_str(self.src_file, arg_expr)}"
@@ -5290,18 +5291,18 @@ class FuncElaborator:
         # A void callee (no -> annotation) has no RETURN_WIRE_NAME entry in wire_to_c_type --
         # tolerate that instead of KeyError, so a bare `foo()` statement call to a void
         # function can elaborate (see _elab_stmt's bare-call fallback below).
-        ret_typ = callee_def.wire_to_c_type.get(C_TO_LOGIC.RETURN_WIRE_NAME)
+        ret_typ = callee_def.wire_to_c_type.get(LOGIC.RETURN_WIRE_NAME)
         port_return = (
-            _port_wire(inst, C_TO_LOGIC.RETURN_WIRE_NAME)
+            _port_wire(inst, LOGIC.RETURN_WIRE_NAME)
             if ret_typ is not None
             else None
         )
-        if C_TO_LOGIC.LOGIC_NEEDS_CLOCK_ENABLE(callee_def, self.parser_state):
+        if LOGIC.LOGIC_NEEDS_CLOCK_ENABLE(callee_def, self.parser_state):
             input_ports = input_ports + [
                 (
-                    C_TO_LOGIC.CLOCK_ENABLE_NAME,
+                    LOGIC.CLOCK_ENABLE_NAME,
                     self.logic.clock_enable_wires[-1],
-                    C_TO_LOGIC.BOOL_C_TYPE,
+                    LOGIC.BOOL_C_TYPE,
                 )
             ]
         _add_submodule_instance(
@@ -5316,7 +5317,7 @@ class FuncElaborator:
         )
         if auto_pipeline_call is not None:
             self.logic.sub_inst_to_auto_pipeline_latency[inst] = (
-                C_TO_LOGIC.AutoPipelineLatency.from_tag(auto_pipeline_call)
+                LOGIC.AutoPipelineLatency.from_tag(auto_pipeline_call)
             )
             self.logic.sub_inst_to_auto_pipeline_key[inst] = (
                 auto_pipeline_call.canonical_key
@@ -5464,7 +5465,7 @@ class FuncElaborator:
         n = _array_first_dim(arg_type)
         out_type = _infer_const_ctype(n)
         coord_str = _loc_str(self.src_file, expr)
-        const_wire = f"{C_TO_LOGIC.CONST_PREFIX}{n}_{coord_str}"
+        const_wire = f"{LOGIC.CONST_PREFIX}{n}_{coord_str}"
         _add_wire(self.logic, const_wire, out_type)
         return const_wire, out_type
 
@@ -5512,7 +5513,7 @@ class FuncElaborator:
                 self.parser_state, func_name, callee_name, consts
             )
             inst = self._inst(func_name, expr)
-            port_return = _port_wire(inst, C_TO_LOGIC.RETURN_WIRE_NAME)
+            port_return = _port_wire(inst, LOGIC.RETURN_WIRE_NAME)
             input_ports = list(zip(port_names, port_wires, in_types))
             _add_submodule_instance(
                 self.logic,
@@ -5916,7 +5917,7 @@ class FuncElaborator:
                     _register_struct_recursive(val, self.parser_state)
 
         # Register a stub under the canonical key so recursive calls resolve
-        stub = C_TO_LOGIC.Logic()
+        stub = LOGIC.Logic()
         stub.func_name = key
         self.parser_state.FuncLogicLookupTable[key] = stub
 
@@ -6095,7 +6096,7 @@ class FuncElaborator:
         for i, (cov_ref_toks, (cov_wire, cov_typ)) in enumerate(covering_wires.items()):
             input_ports.append((f"ref_toks_{i}", cov_wire, cov_typ))
             input_port_driven_ref_toks.append(cov_ref_toks)
-        output_wire = _port_wire(inst_name, C_TO_LOGIC.RETURN_WIRE_NAME)
+        output_wire = _port_wire(inst_name, LOGIC.RETURN_WIRE_NAME)
         _add_submodule_instance(
             self.logic,
             inst_name,
@@ -6202,7 +6203,7 @@ class FuncElaborator:
 
         # ── Emit submodule instance ──
         inst_name = self._inst(func_name, ast_node)
-        output_wire = _port_wire(inst_name, C_TO_LOGIC.RETURN_WIRE_NAME)
+        output_wire = _port_wire(inst_name, LOGIC.RETURN_WIRE_NAME)
         _add_submodule_instance(
             self.logic,
             inst_name,
@@ -6294,7 +6295,7 @@ class FuncElaborator:
             input_ports.append((f"var_dim_{i}", index_wire, select_type))
 
         inst_name = self._inst(func_name, ast_node)
-        output_wire = _port_wire(inst_name, C_TO_LOGIC.RETURN_WIRE_NAME)
+        output_wire = _port_wire(inst_name, LOGIC.RETURN_WIRE_NAME)
         _add_submodule_instance(
             self.logic,
             inst_name,
@@ -6386,9 +6387,9 @@ class FuncElaborator:
         """First sight of a local variable: base wire driven by zeros, no alias."""
         _add_wire(self.logic, var_name, typ)
         self.logic.variable_names.add(var_name)
-        zeros_wire = C_TO_LOGIC.BUILD_CONST_WIRE(
-            C_TO_LOGIC.COMPOUND_NULL,
-            pypeline_ast.ASTMeta(
+        zeros_wire = LOGIC.BUILD_CONST_WIRE(
+            LOGIC.COMPOUND_NULL,
+            LOGIC.ASTMeta(
                 src_file=self.src_file,
                 line=node.lineno,
                 col=node.col_offset,
@@ -6412,7 +6413,7 @@ class FuncElaborator:
         init_py_val: Python value (int/list/dict/NamedTuple) for power-on reset, or
         None for zero init. Stored in VariableInfo.init for VHDL.STATE_REG_TO_VHDL_INIT_STR.
         """
-        var_info = C_TO_LOGIC.VariableInfo()
+        var_info = LOGIC.VariableInfo()
         var_info.name = var_name
         var_info.type_name = c_type
         var_info.init = init_py_val  # None → WIRE_TO_VHDL_NULL_STR; else Python value
@@ -6449,7 +6450,7 @@ class FuncElaborator:
                 # it later, keyed by the tag's constraint record.
                 ncycles = role.tag._ncycles_for_compiler()
                 self.logic.auto_multi_cycle_tuples[(pending[0], pending[1])] = (
-                    C_TO_LOGIC.AutoMultiCycleConstraint.from_tag(role.tag)
+                    LOGIC.AutoMultiCycleConstraint.from_tag(role.tag)
                 )
             else:
                 ncycles = role.tag.ncycles
@@ -6557,9 +6558,9 @@ class FuncElaborator:
             # exactly like any other scalar zero literal elaborated elsewhere.
             init_wire, _ = self._elab_python_value(0, ast_node)
         else:
-            init_wire = C_TO_LOGIC.BUILD_CONST_WIRE(
-                C_TO_LOGIC.COMPOUND_NULL,
-                pypeline_ast.ASTMeta(
+            init_wire = LOGIC.BUILD_CONST_WIRE(
+                LOGIC.COMPOUND_NULL,
+                LOGIC.ASTMeta(
                     src_file=self.src_file,
                     line=ast_node.lineno,
                     col=ast_node.col_offset,
@@ -6696,7 +6697,7 @@ def _register_enum(ctype_obj, parser_state):
     full_ctype_name = getattr(ctype_obj, "_pypeline_ctype_canonical", None)
     if full_ctype_name is not None and full_ctype_name != ctype_name:
         parser_state.pypeline_type_canonical[ctype_name] = full_ctype_name
-    info = C_TO_LOGIC.EnumInfo()
+    info = LOGIC.EnumInfo()
     info.name = ctype_name
     for m in ctype_obj:
         info.id_to_int_val[m.name] = m.value
@@ -6818,7 +6819,7 @@ def _discover_global_wires(tree, module_globals, parser_state, name_prefix=None)
                 )
         else:
             reg_name = f"{name_prefix}_{bare_name}" if name_prefix else bare_name
-        var_info = C_TO_LOGIC.VariableInfo()
+        var_info = LOGIC.VariableInfo()
         var_info.name = reg_name
         var_info.type_name = _inner_ctype_to_str(ann_val.inner_ctype, parser_state)
         # Inside a pipelined function a global is aligned with that function's
@@ -6867,11 +6868,11 @@ def _discover_global_wires(tree, module_globals, parser_state, name_prefix=None)
 
 def _walk_instances(prefix, logic, parser_state):
     for inst_name, inst_func_name in logic.submodule_instances.items():
-        inst_key = f"{prefix}{C_TO_LOGIC.SUBMODULE_MARKER}{inst_name}"
+        inst_key = f"{prefix}{LOGIC.SUBMODULE_MARKER}{inst_name}"
         if inst_func_name in parser_state.FuncLogicLookupTable:
             inst_logic = parser_state.FuncLogicLookupTable[inst_func_name]
         else:
-            inst_logic = C_TO_LOGIC.BUILD_C_BUILT_IN_SUBMODULE_FUNC_LOGIC(
+            inst_logic = LOGIC.BUILD_C_BUILT_IN_SUBMODULE_FUNC_LOGIC(
                 logic, inst_name, parser_state
             )
             parser_state.FuncLogicLookupTable[inst_logic.func_name] = inst_logic
@@ -7134,7 +7135,7 @@ def _validate_wires_funcs(parser_state):
     included. C #pragma FUNC_WIRES is not checked."""
     import SYN
 
-    marker = C_TO_LOGIC.SUBMODULE_MARKER
+    marker = LOGIC.SUBMODULE_MARKER
     lookup = parser_state.FuncLogicLookupTable
     wires_funcs = parser_state.func_marked_wires
     fixed_latency = getattr(parser_state, "func_fixed_latency", {})
@@ -7166,7 +7167,7 @@ def _validate_wires_funcs(parser_state):
                 if d_inst in logic.submodule_instances:
                     d_func = logic.submodule_instances[d_inst]
                     if not (
-                        C_TO_LOGIC.IS_SIM_CTRL_FUNC_NAME(d_func)
+                        LOGIC.IS_SIM_CTRL_FUNC_NAME(d_func)
                         or drives_only_sim(logic, d_inst)
                     ):
                         return False
@@ -7241,7 +7242,7 @@ def _validate_wires_funcs(parser_state):
 def _build_func_call_graph(parser_state):
     """Populate func_name_to_calls / func_names_to_called_from (by function name,
     not per-call-site instance path) from each function's already-elaborated
-    submodule_instances, so C_TO_LOGIC.INFER_CLOCK_DOMAINS's RECURSIVE_FIND_MAIN_FUNCS
+    submodule_instances, so LOGIC.INFER_CLOCK_DOMAINS's RECURSIVE_FIND_MAIN_FUNCS
     call-graph walk can trace a global Wire[T] access up through helper/factory
     functions to whichever MAIN(s) transitively call them -- not just wires touched
     directly in a MAIN's own top-level body. Mirrors what
@@ -7702,7 +7703,7 @@ def WRITE_SOURCE_PROVENANCE():
 
 
 def _new_parser_state(module_globals):
-    parser_state = C_TO_LOGIC.ParserState()
+    parser_state = LOGIC.ParserState()
     parser_state.module_alias_to_actual = {}  # local alias -> actual module name
     # The true, unpolluted top-level design-file globals -- distinct from any
     # FuncElaborator's own (possibly closure/annotation-recovery-augmented)
@@ -7775,7 +7776,7 @@ _default_operator_lowerings_scope = None
 def _push_default_operator_lowerings():
     """Give one ELABORATE_LIVE_ROOTS call what PARSE_FILE gives a build: the
     default soft-operator lowerings (operators.soft.register_sw_lib_replacements)
-    and an armed C_TO_LOGIC.PYPELINE_NO_SW_LIB_GUARD. Without them, an integer
+    and an armed LOGIC.PYPELINE_NO_SW_LIB_GUARD. Without them, an integer
     compare/NEGATE/DIV/MOD/variable shift in a live root falls through to
     BUILD_LOGIC_AS_C_CODE, which a standalone sim_call has no output directory
     for. Undo with _pop_default_operator_lowerings.
@@ -7797,9 +7798,9 @@ def _push_default_operator_lowerings():
         scope = object()
         _pypeline_default_soft_ops.register_sw_lib_replacements(scope=scope)
         _default_operator_lowerings_scope = scope
-    saved_guard = C_TO_LOGIC.PYPELINE_NO_SW_LIB_GUARD
+    saved_guard = LOGIC.PYPELINE_NO_SW_LIB_GUARD
     fallbacks = _pypeline._push_fallback_registrations(_default_operator_lowerings_scope)
-    C_TO_LOGIC.PYPELINE_NO_SW_LIB_GUARD = True
+    LOGIC.PYPELINE_NO_SW_LIB_GUARD = True
     return fallbacks, saved_guard
 
 
@@ -7807,7 +7808,7 @@ def _pop_default_operator_lowerings(saved):
     import pypeline as _pypeline
 
     fallbacks, saved_guard = saved
-    C_TO_LOGIC.PYPELINE_NO_SW_LIB_GUARD = saved_guard
+    LOGIC.PYPELINE_NO_SW_LIB_GUARD = saved_guard
     _pypeline._pop_fallback_registrations(fallbacks)
 
 
@@ -7862,7 +7863,7 @@ def _elaborate_live_roots(roots):
     # graph, not an earlier compilation in the same Python process.
     import SYN
 
-    C_TO_LOGIC.DEL_ALL_CACHES()
+    LOGIC.DEL_ALL_CACHES()
     SYN.DEL_ALL_CACHES()
     AUTO_PIPELINE._GET_ZERO_ADDED_CLKS_TIMING_PARAMS_LOOKUP_cache.clear()
     dummy = ast.parse("def sim_root(): pass").body[0]
@@ -7933,7 +7934,7 @@ def PARSE_FILE(py_file, run_syn_initial_hooks=False):
         # between parses.
         import SYN
 
-        C_TO_LOGIC.DEL_ALL_CACHES()
+        LOGIC.DEL_ALL_CACHES()
         SYN.DEL_ALL_CACHES()
         # Not part of SYN.DEL_ALL_CACHES: cached zero-clk TimingParams hold
         # references to the previous parse's Logic objects
@@ -7948,7 +7949,7 @@ def PARSE_FILE(py_file, run_syn_initial_hooks=False):
     # Register the default soft-operator replacements for the operator
     # families that have no inferred lowering (int NEGATE/compare/DIV/MOD,
     # variable-amount shift) -- this is what keeps BUILD_LOGIC_AS_C_CODE
-    # (SW_LIB/cpp/pycparser) unreachable from Pypeline below. Global and
+    # (C code generation/cpp/pycparser) unreachable from Pypeline below. Global and
     # registered once per process (operators.soft de-dupes internally), so
     # repeated PARSE_FILE calls (AUTO_PIPELINE's pin-and-confirm loop,
     # double_parse_file_test) don't grow the registry unboundedly. Any
@@ -7961,10 +7962,10 @@ def PARSE_FILE(py_file, run_syn_initial_hooks=False):
     import operators.soft as _pypeline_default_soft_ops
 
     _pypeline_default_soft_ops.register_sw_lib_replacements()
-    # Pypeline builds must never reach the SW_LIB/cpp/pycparser C-generation
-    # path (BUILD_LOGIC_AS_C_CODE) now that the replacements above are in
+    # Pypeline builds must never reach the C front end's C-code-generation
+    # path (C_TO_LOGIC.BUILD_LOGIC_AS_C_CODE) now that the replacements above are in
     # place. Arm the guard for the duration of this parse.
-    C_TO_LOGIC.PYPELINE_NO_SW_LIB_GUARD = True
+    LOGIC.PYPELINE_NO_SW_LIB_GUARD = True
 
     spec = importlib.util.spec_from_file_location("pypeline_design", py_file)
     module = importlib.util.module_from_spec(spec)
@@ -8029,7 +8030,7 @@ def PARSE_FILE(py_file, run_syn_initial_hooks=False):
     # make_stream_auto_pipeline / _auto_pipeline_with_io_regs) as Step 6/7 below use for that
     # same function reached directly. Pypeline-only, set dynamically here the
     # same way parser_state.module_alias_to_actual is (never declared in
-    # C_TO_LOGIC.py's shared ParserState.__init__).
+    # LOGIC.py's shared ParserState.__init__).
     parser_state.file_to_module_prefix = {
         os.path.abspath(fp): mod_prefix
         for fp, _tree, _fg, mod_prefix in files_to_elaborate
@@ -8102,7 +8103,7 @@ def PARSE_FILE(py_file, run_syn_initial_hooks=False):
                 f"'{existing_orig[1]}' (module {existing_orig[0]!r})"
             )
         if hw_name not in parser_state.FuncLogicLookupTable:
-            stub = C_TO_LOGIC.Logic()
+            stub = LOGIC.Logic()
             stub.func_name = hw_name
             parser_state.FuncLogicLookupTable[hw_name] = stub
         # Record the live callable behind this entity (see the matching
@@ -8166,17 +8167,17 @@ def PARSE_FILE(py_file, run_syn_initial_hooks=False):
         raise ElaborationError(f"No functions were decorated as @MAIN?")
 
     # Trim logic (currently PipelineC backend has bug that needs this)
-    if C_TO_LOGIC.TRIM_COLLAPSE_LOGIC:
+    if LOGIC.TRIM_COLLAPSE_LOGIC:
         print("Doing simple logic trimming/collapsing...", flush=True)
         for main_func in list(parser_state.main_mhz.keys()):
             main_func_logic = parser_state.FuncLogicLookupTable[main_func]
-            parser_state = C_TO_LOGIC.TRIM_COLLAPSE_FUNC_DEFS_RECURSIVE(
+            parser_state = LOGIC.TRIM_COLLAPSE_FUNC_DEFS_RECURSIVE(
                 main_func_logic, parser_state
             )
 
     # Check for dangling logic after trim
     for l in parser_state.FuncLogicLookupTable.values():
-        C_TO_LOGIC.FIND_DANGLING_LOGIC(logic)
+        LOGIC.FIND_DANGLING_LOGIC(l)
 
     # @wires promises zero delay; check it against the trimmed logic
     _validate_wires_funcs(parser_state)
@@ -8186,7 +8187,7 @@ def PARSE_FILE(py_file, run_syn_initial_hooks=False):
     _build_func_call_graph(parser_state)
 
     # ── Propagate MHz across MAINs sharing global wires ──
-    C_TO_LOGIC.INFER_CLOCK_DOMAINS({}, {}, {}, parser_state)
+    LOGIC.INFER_CLOCK_DOMAINS({}, {}, {}, parser_state)
 
     # ── Validate every make_clock()-tagged wire binds to some @MAIN's rate ──
     # Must run after INFER_CLOCK_DOMAINS above: that's what assigns a rate to a
@@ -8322,3 +8323,505 @@ def _check_no_overlapping_driven_paths(writer_paths):
             if _is_prefix(path_a, path_b) or _is_prefix(path_b, path_a):
                 return (writer_a, path_a), (writer_b, path_b)
     return None
+
+
+# ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+# Selective native execution of graphs containing user fixed-latency pipelines.
+# Reached only through the lazy `import PY_TO_LOGIC` in pypeline's and pypeline_sim's
+# live-dependency gates, after a nonzero pipeline_latency declaration is found. The stage
+# map and register lifetimes are the same objects used by VHDL emission; user pipeline
+# bodies remain ordinary register-aware Python calls.
+# ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+# live root func -> build timing it was last prepared with
+_sim_pipeline_prepared = weakref.WeakKeyDictionary()
+# Funcs whose _sim_model_cell currently holds an installed pipeline dispatch
+_sim_pipeline_installed = weakref.WeakSet()
+# Depth of atomic native bodies running; dispatch passes straight through while nonzero
+_sim_pipeline_native_body = 0
+# Sim register-state key for a graph's stage registers
+_SIM_PIPELINE_REG_KEY = "__sim_pipeline_wires__"
+# Sim register-state key for a delayed native leaf result
+_SIM_PIPELINE_DELAY_KEY = "__sim_pipeline_leaf__"
+
+
+def _sim_pipeline_native(func, args, kwargs=None, atomic=False):
+    global _sim_pipeline_native_body
+    cell = getattr(func, "_sim_model_cell", None)
+    saved = cell[0] if cell is not None else None
+    if saved is not None and getattr(saved[0], "_pipeline_dispatch", False):
+        cell[0] = saved[0]._original
+    _sim_pipeline_native_body += int(atomic)
+    try:
+        return func(*args, **(kwargs or {}))
+    finally:
+        _sim_pipeline_native_body -= int(atomic)
+        if cell is not None:
+            cell[0] = saved
+
+
+def _sim_pipeline_delay(value, cycles, typ, key):
+    if not cycles:
+        return value
+    path = _pypeline_mod._sim_current_inst_path()
+    old = _pypeline_mod._sim_reg_read(path, key, None)
+    if old is None:
+        old = [_pypeline_mod.sim_zero(typ) for _ in range(cycles)]
+    _pypeline_mod._sim_reg_write(path, key, old[1:] + [copy.deepcopy(value)])
+    return copy.deepcopy(old[0])
+
+
+class _SimPipelineGraph:
+    def __init__(self, inst, state, timing, types, contains):
+        import AUTO
+        import AUTO_PIPELINE
+
+        self.inst, self.state, self.timing, self.types = inst, state, timing, types
+        self.logic = state.LogicInstLookupTable[inst]
+        self.tp = timing[inst]
+        self.timing_signature = [
+            (
+                name[len(inst) :],
+                tuple(tp._slices),
+                tp._has_input_regs,
+                tp._has_output_regs,
+                tp._exact_bit_boundaries,
+            )
+            for name, tp in sorted(timing.items())
+            if name == inst or name.startswith(inst + LOGIC.SUBMODULE_MARKER)
+        ]
+        self.map = AUTO_PIPELINE.GET_PIPELINE_MAP(inst, self.logic, state, timing)
+        params = AUTO_PIPELINE.PiplineHDLParams(
+            inst, self.logic, state, timing, self.map
+        )
+        self.ranges = params.wire_to_reg_stage_start_end
+        # Global wires are aligned with this function's arguments/return
+        # (input/output regs included) unless VOLATILE, exactly like the VHDL
+        # (AUTO_PIPELINE.GLOBAL_WIRE_TIMING). Readback and multi-writer splits
+        # need per-region masking this evaluator does not do: refuse loudly.
+        self.aligned_reads = set(AUTO_PIPELINE.ALIGNED_GLOBAL_READS(self.logic, params))
+        self.aligned_writes = set(AUTO_PIPELINE.ALIGNED_GLOBAL_WRITES(self.logic, state))
+        for wire in self.logic.readback_global_wires:
+            raise RuntimeError(
+                f"pipeline_latency: native sim of '{self.logic.func_name}' cannot "
+                f"model it reading back global wire {wire!r}, which it also "
+                f"writes. Simulate the generated hardware instead (--cocotb --ghdl)."
+            )
+        for wire in self.logic.write_only_global_wires:
+            writers = [
+                name
+                for name, other in state.FuncLogicLookupTable.items()
+                if wire in other.write_only_global_wires
+            ]
+            if len(writers) > 1:
+                raise RuntimeError(
+                    f"pipeline_latency: native sim of '{self.logic.func_name}' "
+                    f"cannot model global wire {wire!r}, whose regions are "
+                    f"written by several functions ({', '.join(sorted(writers))}). "
+                    f"Simulate the generated hardware instead (--cocotb --ghdl)."
+                )
+        self.children = {}
+        self.ops = {}
+        self.callables = state.pypeline_entity_callables
+        for sub, entity in self.logic.submodule_instances.items():
+            child_inst = inst + LOGIC.SUBMODULE_MARKER + sub
+            child = state.LogicInstLookupTable[child_inst]
+            if (
+                contains(entity)
+                and entity not in state.func_fixed_latency
+                and child.CAN_HAVE_ADDED_LATENCY(state)
+            ) or entity.startswith(
+                (LOGIC.VAR_REF_RD_FUNC_NAME_PREFIX, LOGIC.VAR_REF_ASSIGN_FUNC_NAME_PREFIX)
+            ):
+                self.children[sub] = _SimPipelineGraph(child_inst, state, timing, types, contains)
+            elif entity not in self.callables:
+                self.ops[sub] = AUTO.DECODE_OP(self.logic, sub, entity, state)
+            elif (
+                entity not in state.func_fixed_latency
+                and not child.uses_nonvolatile_state_regs
+                and timing[child_inst].GET_TOTAL_LATENCY(state, timing) > 0
+            ):
+                # A sliced native leaf runs at its start stage and has its
+                # result delayed (_call). Its global wires would be sampled and
+                # written at the wrong stages: refuse instead of mis-simulating.
+                for _path, ent, kind, detail in AUTO.FIND_EFFECTS(state, entity):
+                    if kind == "global":
+                        raise RuntimeError(
+                            f"pipeline_latency: native sim of '{self.logic.func_name}' "
+                            f"cannot model pipelined '{entity}' using global wire(s) "
+                            f"{', '.join(detail)} (in '{ent}'). Simulate the "
+                            f"generated hardware instead (--cocotb --ghdl)."
+                        )
+        self.constants = {}
+        for wire in self.logic.wires:
+            if LOGIC.WIRE_IS_CONSTANT(wire):
+                text = LOGIC.GET_VAL_STR_FROM_CONST_WIRE(wire, self.logic, state)
+                typ = self.type(wire)
+                value = (
+                    _pypeline_mod.sim_zero(typ)
+                    if text == LOGIC.COMPOUND_NULL
+                    else ast.literal_eval(text)
+                )
+                self.constants[wire] = self.cast(wire, value)
+
+    def type(self, wire):
+        return self.types.resolve(self.logic.wire_to_c_type[wire])
+
+    def cast(self, wire, value):
+        return _pypeline_mod._sim_cast_deep(value, self.type(wire))
+
+    def _op(self, sub, values):
+        op = self.ops[sub]
+        kind = op["kind"]
+        if kind == "copy":
+            return values[0]
+        if kind == "ref":
+            result = values[0]
+            for tok in op["toks"]:
+                result = (
+                    result[int(tok)] if str(tok).isdigit() else getattr(result, tok)
+                )
+            return result
+        if kind == "assemble":
+            result = _pypeline_mod.sim_zero(
+                self.type(sub + LOGIC.SUBMODULE_MARKER + LOGIC.RETURN_WIRE_NAME)
+            )
+            for path, value in zip(op["paths"], values):
+                result = _pypeline_mod._sim_lens_set(result, path, value)
+            return result
+        if kind == "mux":
+            return values[1] if values[0] else values[2]
+        if kind == "bitmanip":
+            if op["builtin"] == "__slice__":
+                high, low = op["consts"]
+                return values[0][high] if high == low else values[0][high:low]
+            return getattr(_pypeline_mod, op["builtin"])(*values, *op["consts"])
+        if kind == "shift":
+            return eval("a " + op["op"] + " b", {}, {"a": values[0], "b": op["amount"]})
+        if kind == "unaryop":
+            return eval(op["op"] + "a", {}, {"a": values[0]})
+        if kind == "binop":
+            return eval("a " + op["op"] + " b", {}, {"a": values[0], "b": values[1]})
+        raise RuntimeError(f"pipeline_latency: unsupported operation {op}")
+
+    def _call(self, sub, args, enable):
+        entity = self.logic.submodule_instances[sub]
+        inst = self.inst + LOGIC.SUBMODULE_MARKER + sub
+        child = self.state.LogicInstLookupTable[inst]
+        meta = self.logic.submodule_instance_to_ast_meta.get(sub)
+        loc = (
+            getattr(meta, "src_file", ""),
+            getattr(meta, "line", 0),
+            getattr(meta, "col", None),
+            getattr(meta, "end_col", None),
+        )
+        _pypeline_mod._sim_inst_stack.append(("PIPELINE:" + inst, loc))
+        # Disabled hardware still has combinational outputs, but its registers
+        # must not advance. Discard only this evaluation's pending state writes.
+        buffer = _pypeline_mod._sim_reg_write_buffer
+        if not enable:
+            _pypeline_mod._sim_reg_write_buffer = {}
+        try:
+            if sub in self.children:
+                return self.children[sub](*args)
+            if entity in self.callables:
+                result = _sim_pipeline_native(
+                    self.callables[entity],
+                    args,
+                    atomic=entity in self.state.func_fixed_latency,
+                )
+            else:
+                result = self._op(sub, args)
+            if not child.outputs:
+                return result
+            typ = self.types.resolve(child.wire_to_c_type[LOGIC.RETURN_WIRE_NAME])
+            result = _pypeline_mod._sim_cast_deep(result, typ)
+            # Stateful/fixed bodies supply their own clocks; ordinary pure
+            # leaves can be emulated with the existing output-delay technique.
+            latency = self.timing[inst].GET_TOTAL_LATENCY(self.state, self.timing)
+            if (
+                entity in self.state.func_fixed_latency
+                or child.uses_nonvolatile_state_regs
+            ):
+                latency = 0
+            return _sim_pipeline_delay(result, latency, typ, _SIM_PIPELINE_DELAY_KEY)
+        finally:
+            if not enable:
+                _pypeline_mod._sim_reg_write_buffer = buffer
+            _pypeline_mod._sim_inst_stack.pop()
+
+    def __call__(self, *args, **kwargs):
+        logic = self.logic
+        path = _pypeline_mod._sim_current_inst_path()
+        old = _pypeline_mod._sim_reg_read(path, _SIM_PIPELINE_REG_KEY, {})
+        values = dict(self.constants)
+        for port, arg in zip(logic.inputs, args):
+            values[port] = self.cast(port, arg)
+        for port, arg in kwargs.items():
+            values[port] = self.cast(port, arg)
+        values[LOGIC.CLOCK_ENABLE_NAME] = _pypeline_mod.uint1_t(1)
+        if self.tp._has_input_regs:
+            current = {port: values[port] for port in logic.inputs}
+            for port in logic.inputs:
+                values[port] = copy.deepcopy(
+                    old.get(("input", port), _pypeline_mod.sim_zero(self.type(port)))
+                )
+        else:
+            current = {}
+        for wire in logic.read_only_global_wires:
+            values[wire] = _pypeline_mod._sim_wire_read(self.state.pypeline_global_wire_names[wire])
+            # Aligned reads are sampled with the arguments, input regs included
+            if self.tp._has_input_regs and wire in self.aligned_reads:
+                current[wire] = values[wire]
+                values[wire] = copy.deepcopy(
+                    old.get(("input", wire), _pypeline_mod.sim_zero(self.type(wire)))
+                )
+        pending = {}
+        outputs = {}
+
+        def read(wire, stage):
+            # VHDL expressions/functions have no physical input-port wire.
+            # Their driver is read at the operation's stage, even when the
+            # graph recorded the alias connection in an earlier stage.
+            if wire not in self.ranges and wire in logic.wire_driven_by:
+                return self.cast(wire, read(logic.wire_driven_by[wire], stage))
+            start, end = self.ranges.get(wire, (None, None))
+            if start is not None and start < stage and wire not in self.constants:
+                return copy.deepcopy(
+                    old.get((wire, stage - 1), _pypeline_mod.sim_zero(self.type(wire)))
+                )
+            if wire in values:
+                return values[wire]
+            driver = logic.wire_driven_by.get(wire)
+            if driver is not None:
+                return self.cast(wire, read(driver, stage))
+            raise RuntimeError(
+                f"pipeline_latency: undriven {logic.func_name}.{wire} at stage {stage}"
+            )
+
+        def level(info, stage):
+            for driver, driven in info.driver_driven_wire_pairs:
+                values[driven] = self.cast(driven, read(driver, stage))
+            for sub in info.submodule_insts:
+                entity = logic.submodule_instances[sub]
+                child = self.state.FuncLogicLookupTable[entity]
+                prefix = sub + LOGIC.SUBMODULE_MARKER
+                arguments = [read(prefix + port, stage) for port in child.inputs]
+                enable = (
+                    read(prefix + LOGIC.CLOCK_ENABLE_NAME, stage)
+                    if LOGIC.LOGIC_NEEDS_CLOCK_ENABLE(child, self.state)
+                    else True
+                )
+                result = self._call(sub, arguments, enable)
+                for port in child.outputs:
+                    outputs[prefix + port] = result
+                    values[prefix + port] = result
+
+        for network in (
+            self.map.const_network_stage_info,
+            self.map.read_only_global_network_stage_info,
+        ):
+            if network:
+                for info in network.submodule_level_infos:
+                    level(info, 0)
+        for stage, info in enumerate(self.map.stage_infos[: self.map.num_stages]):
+            for wire in info.submodule_output_ports:
+                values[wire] = outputs[wire]
+            for sublevel in info.submodule_level_infos:
+                level(sublevel, stage)
+            for wire, (start, end) in self.ranges.items():
+                if start is not None and end is not None and start <= stage <= end:
+                    pending[(wire, stage)] = copy.deepcopy(read(wire, stage))
+        for port, value in current.items():
+            pending[("input", port)] = copy.deepcopy(value)
+        _pypeline_mod._sim_reg_write(path, _SIM_PIPELINE_REG_KEY, pending)
+        for wire in logic.write_only_global_wires:
+            if wire in self.aligned_writes:
+                # Published with the return: last stage, output regs included
+                value = read(wire, self.map.num_stages - 1)
+                if self.tp._has_output_regs:
+                    value = _sim_pipeline_delay(
+                        value, 1, self.type(wire), "__sim_pipeline_output__" + wire
+                    )
+            else:
+                # VOLATILE: driven as soon as its final value is ready
+                start, _ = self.ranges.get(wire, (0, 0))
+                value = read(wire, start or 0)
+            _pypeline_mod._sim_wire_write(
+                self.state.pypeline_global_wire_names[wire], copy.deepcopy(value)
+            )
+        if LOGIC.RETURN_WIRE_NAME not in logic.outputs:
+            return None
+        result = read(LOGIC.RETURN_WIRE_NAME, self.map.num_stages - 1)
+        if self.tp._has_output_regs:
+            result = _sim_pipeline_delay(
+                result, 1, self.type(LOGIC.RETURN_WIRE_NAME), "__sim_pipeline_output__"
+            )
+        return copy.deepcopy(result)
+
+
+def PREPARE_PIPELINE_LATENCY_SIM(roots, build_timing=None):
+    """Prepare affected live roots, retaining native bodies wherever sufficient."""
+    import AUTO
+    import AUTO_PIPELINE
+
+    roots = [
+        fn
+        for fn in roots
+        if getattr(fn, "_pipeline_latency", None) is None
+        and _pypeline_mod._pipeline_latency_reachable(fn)
+    ]
+    if not roots:
+        return set()
+    if set(roots) == set(_sim_pipeline_prepared) and all(
+        _sim_pipeline_prepared[fn] == build_timing for fn in roots
+    ):
+        return set(_sim_pipeline_installed)
+    # A dispatch closure belongs to one prepared hierarchy. Switching live
+    # roots must also switch shared helper models; retaining an old per-root
+    # cache entry after another hierarchy replaced its cells loses state paths.
+    # The ordinary register store retains each root's state across switches.
+    for fn in _sim_pipeline_installed:
+        cell = fn._sim_model_cell
+        if cell[0] is not None and getattr(cell[0][0], "_pipeline_dispatch", False):
+            cell[0] = cell[0][0]._original
+    _sim_pipeline_installed.clear()
+    _sim_pipeline_prepared.clear()
+    _pypeline_mod._pipeline_latency_preparing = True
+    try:
+        state = ELABORATE_LIVE_ROOTS(roots)
+        timing = {
+            name: AUTO_PIPELINE.TimingParams(name, logic)
+            for name, logic in state.LogicInstLookupTable.items()
+        }
+        if build_timing:
+            for name, tp in timing.items():
+                if name in build_timing:
+                    slices, inputs, outputs, bits, delay = build_timing[name]
+                    tp._slices, tp._has_input_regs, tp._has_output_regs = (
+                        list(slices),
+                        inputs,
+                        outputs,
+                    )
+                    tp._exact_bit_boundaries = copy.copy(bits)
+                    tp.logic.delay = delay
+        types = AUTO._TypeResolver()
+        for fn in state.pypeline_entity_callables.values():
+            types.seed_callable(fn)
+            for value in inspect.unwrap(fn).__globals__.values():
+                if _is_real_hw_ctype(value):
+                    types.seed(value)
+        memo = {}
+
+        def contains(entity):
+            if entity not in memo:
+                memo[entity] = state.func_fixed_latency.get(entity, 0) > 0
+                if entity not in state.func_fixed_latency:
+                    memo[entity] = any(
+                        contains(sub)
+                        for sub in state.FuncLogicLookupTable[
+                            entity
+                        ].submodule_instances.values()
+                    )
+            return memo[entity]
+
+        models = {}
+        # Only outermost sliceable regions need dispatch. Their graph evaluator
+        # recursively handles inner instances with their exact timing variants.
+        def visit(inst):
+            logic = state.LogicInstLookupTable[inst]
+            entity = logic.func_name
+            if entity in state.func_fixed_latency:
+                return
+            if contains(entity) and logic.CAN_HAVE_ADDED_LATENCY(state):
+                fn = state.pypeline_entity_callables.get(entity)
+                if fn is not None:
+                    graph = _SimPipelineGraph(inst, state, timing, types, contains)
+                    needs = any(
+                        a is not None and b is not None and a <= b
+                        for a, b in graph.ranges.values()
+                    )
+                    needs |= graph.tp._has_input_regs or graph.tp._has_output_regs
+                    needs |= bool(build_timing)
+                    # The ordinary simulator can identify two stateful calls
+                    # on the same source line as one instance (Python 3.8 has
+                    # no instruction columns). The graph carries both exact
+                    # hardware paths, even if no balancing registers are needed.
+                    entities = list(logic.submodule_instances.values())
+                    needs |= any(
+                        contains(entity) and entities.count(entity) > 1
+                        for entity in set(entities)
+                    )
+                    if needs:
+                        models.setdefault(fn, []).append(graph)
+                        return
+            for sub in logic.submodule_instances:
+                visit(inst + LOGIC.SUBMODULE_MARKER + sub)
+
+        for root in state.main_mhz:
+            visit(root)
+        for fn, graphs in models.items():
+            cell = fn._sim_model_cell
+            signature = inspect.signature(fn)
+            original = cell[0]
+            if original is not None and getattr(
+                original[0], "_pipeline_dispatch", False
+            ):
+                original = original[0]._original
+
+            def dispatch(
+                *args,
+                _fn=fn,
+                _graphs=graphs,
+                _original=original,
+                _signature=signature,
+                **kwargs,
+            ):
+                if _sim_pipeline_native_body:
+                    cell = _fn._sim_model_cell
+                    saved, cell[0] = cell[0], _original
+                    try:
+                        return _fn(*args, **kwargs)
+                    finally:
+                        cell[0] = saved
+                graph = _graphs[0]
+                if len(_graphs) > 1:
+                    loc = _pypeline_mod._sim_inst_stack[-1][1]
+                    locations = [frame[1] for frame in _pypeline_mod._sim_inst_stack]
+                    matches = []
+                    for candidate in _graphs:
+                        parent, _, sub = candidate.inst.rpartition(LOGIC.SUBMODULE_MARKER)
+                        if parent:
+                            meta = state.LogicInstLookupTable[
+                                parent
+                            ].submodule_instance_to_ast_meta.get(sub)
+                            if meta and any(
+                                os.path.abspath(meta.src_file)
+                                == os.path.abspath(site[0])
+                                and meta.line == site[1]
+                                and (site[2] is None or meta.col == site[2])
+                                for site in locations
+                            ):
+                                matches.append(candidate)
+                    if len(matches) == 1:
+                        graph = matches[0]
+                    elif any(
+                        g.timing_signature != graph.timing_signature
+                        for g in _graphs[1:]
+                    ):
+                        raise RuntimeError(
+                            f"pipeline_latency: ambiguous timing variant for {_fn.__qualname__} at {loc}"
+                        )
+                bound = _signature.bind(*args, **kwargs)
+                bound.apply_defaults()
+                return graph(**bound.arguments)
+
+            dispatch._pipeline_dispatch = True
+            dispatch._original = original
+            cell[0] = (dispatch, "hw_func", True)
+            _sim_pipeline_installed.add(fn)
+        for fn in roots:
+            _sim_pipeline_prepared[fn] = build_timing
+        return set(models)
+    finally:
+        _pypeline_mod._pipeline_latency_preparing = False

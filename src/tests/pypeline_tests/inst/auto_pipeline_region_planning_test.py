@@ -18,12 +18,12 @@ import sys
 
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), "../../../"))
 
-import C_TO_LOGIC
+import LOGIC
 import SWEEP
 import AUTO_PIPELINE
 
-M = C_TO_LOGIC.SUBMODULE_MARKER
-AL = C_TO_LOGIC.AutoPipelineLatency
+M = LOGIC.SUBMODULE_MARKER
+AL = LOGIC.AutoPipelineLatency
 N_OPS = 6
 UNITS_PER_OP = 10
 

@@ -71,7 +71,7 @@ back-to-back in declaration order, and `endian` (default `"little"`) sets the by
 *within* each multi-byte leaf. `byte_length(t)` is the "sizeof". `@enum` leaves are
 supported; arrays *of* enums are not expressible in pypeline (wrap the enum in a struct).
 
-This is the same layout old PipelineC's `SW_LIB.py` generated C headers for, so a design
+This is the same layout old PipelineC's `C_TO_LOGIC.py` generated C headers for, so a design
 ported from there stays wire-compatible.
 
 ## Choosing options

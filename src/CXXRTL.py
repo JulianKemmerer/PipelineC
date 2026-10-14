@@ -1,10 +1,10 @@
 import os
 import sys
 
-import C_TO_LOGIC
 import OPEN_TOOLS
 import SIM
 import SYN
+from utilities import GET_SHELL_CMD_OUTPUT
 
 
 def DO_SIM(latency, parser_state):
@@ -86,9 +86,7 @@ int main()
         print(
             OPEN_TOOLS.GHDL_BIN_PATH
             + "\n"
-            + C_TO_LOGIC.GET_SHELL_CMD_OUTPUT(
-                f"{OPEN_TOOLS.GHDL_BIN_PATH}/ghdl --version"
-            ),
+            + GET_SHELL_CMD_OUTPUT(f"{OPEN_TOOLS.GHDL_BIN_PATH}/ghdl --version"),
             flush=True,
         )
     else:
@@ -97,9 +95,7 @@ int main()
         print(
             OPEN_TOOLS.YOSYS_BIN_PATH
             + "\n"
-            + C_TO_LOGIC.GET_SHELL_CMD_OUTPUT(
-                f"{OPEN_TOOLS.YOSYS_BIN_PATH}/yosys --version"
-            ),
+            + GET_SHELL_CMD_OUTPUT(f"{OPEN_TOOLS.YOSYS_BIN_PATH}/yosys --version"),
             flush=True,
         )
     else:
@@ -121,13 +117,13 @@ clang++ -g -O3 -std=c++14 -I `yosys-config --datdir`/include main.cpp -o ./{SYN.
     print("Compiling...", flush=True)
     bash_cmd = f"bash {sh_path}"
     # print(bash_cmd, flush=True)
-    log_text = C_TO_LOGIC.GET_SHELL_CMD_OUTPUT(bash_cmd, cwd=CXXRTL_OUT_DIR)
+    log_text = GET_SHELL_CMD_OUTPUT(bash_cmd, cwd=CXXRTL_OUT_DIR)
     # print(log_text, flush=True)
 
     # Run the simulation
     print("Starting simulation...", flush=True)
     bash_cmd = "./" + SYN.TOP_LEVEL_MODULE
     # print(bash_cmd, flush=True)
-    log_text = C_TO_LOGIC.GET_SHELL_CMD_OUTPUT(bash_cmd, cwd=CXXRTL_OUT_DIR)
+    log_text = GET_SHELL_CMD_OUTPUT(bash_cmd, cwd=CXXRTL_OUT_DIR)
     print(log_text, flush=True)
     sys.exit(0)

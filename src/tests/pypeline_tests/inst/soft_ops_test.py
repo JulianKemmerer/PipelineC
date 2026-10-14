@@ -294,7 +294,7 @@ def test_soft_div_mod():
 def test_soft_signed_div_mod():
     """make_soft_signed_div/make_soft_signed_mod: C-style truncating signed
     division (abs operands through the unsigned restoring divider, then fix
-    the sign -- same structure SW_LIB.GET_BIN_OP_DIV_INT_N_C_CODE /
+    the sign -- same structure C_TO_LOGIC.GET_BIN_OP_DIV_INT_N_C_CODE /
     GET_BIN_OP_MOD_INT_N_C_CODE used to generate as C). Regression test for
     a bug caught by manual audit: an earlier version of register_soft_div
     registered the *unsigned-only* divider for any_integer_t (matching signed

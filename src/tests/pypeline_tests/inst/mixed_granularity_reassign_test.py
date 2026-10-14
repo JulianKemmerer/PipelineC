@@ -61,7 +61,7 @@ def mixed_granularity_reassign_main(
 
 def test_mixed_granularity_reassign_uses_fresh_value():
     import tempfile
-    import C_TO_LOGIC
+    import LOGIC
     import PY_TO_LOGIC
     import SYN
 
@@ -105,7 +105,7 @@ def test_mixed_granularity_reassign_uses_fresh_value():
     ), f"expected exactly one MUX instance for p.dim[0]'s if-statement, found {mux_insts}"
     mux_inst = mux_insts[0]
 
-    iffalse_port_wire = f"{mux_inst}{C_TO_LOGIC.SUBMODULE_MARKER}iffalse"
+    iffalse_port_wire = f"{mux_inst}{LOGIC.SUBMODULE_MARKER}iffalse"
     false_wire = logic.wire_driven_by[iffalse_port_wire]
 
     assert false_wire != default_alias, (

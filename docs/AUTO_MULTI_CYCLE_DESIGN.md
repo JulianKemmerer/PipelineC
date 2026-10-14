@@ -38,7 +38,7 @@ block compiler-added latency under the [caller-context rule](SWEEP_DESIGN.md#cut
 `pypeline.AUTO_MULTI_CYCLE(latency= / start_latency= / max_latency=)` tags a multi-cycle path
 exactly like `MULTI_CYCLE[N]`, but lets the sweep choose N. The elaborator records the
 elaborated N in `Logic.mcp_tuples`, as for any MCP, and additionally records
-`Logic.auto_multi_cycle_tuples[(start_reg, end_reg)] = C_TO_LOGIC.AutoMultiCycleConstraint(key, ...)`.
+`Logic.auto_multi_cycle_tuples[(start_reg, end_reg)] = LOGIC.AutoMultiCycleConstraint(key, ...)`.
 
 ## 2. Constraints
 

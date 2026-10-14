@@ -552,7 +552,7 @@ char_t = _make_ctype("char")
 A plain predefined scalar, exactly parallel to `uint8_t` (single global instance, no
 factory function). `char_t[16]` rides the existing `_CTypeMeta.__getitem__` array
 machinery for free, producing C-type-string `"char[16]"` — the same convention
-PipelineC's C frontend already uses, so the shared backend (`C_TO_LOGIC.py`/`VHDL.py`)
+PipelineC's C frontend already uses, so the shared backend (`LOGIC.py`/`VHDL.py`)
 needs no changes to understand `char`/`char[N]` from Pypeline.
 
 `_CTypeMeta.width` special-cases `"char"` → 8 (mirroring `VHDL.py`'s
@@ -573,7 +573,7 @@ exact same code paths as `uint8_t[16]` today.
 
 `name: char_t[16] = "hello"` (and the equivalent struct-field, return, and call-argument
 forms) elaborate a Python `str` constant to a **single CONST wire**, mirroring PipelineC's
-C frontend exactly (`C_TO_LOGIC.NON_ENUM_CONST_VALUE_STR_TO_LOGIC`/`BUILD_CONST_WIRE`) —
+C frontend exactly (`C_TO_LOGIC.NON_ENUM_CONST_VALUE_STR_TO_LOGIC`/`LOGIC.BUILD_CONST_WIRE`) —
 not per-character wires. See
 [`PY_TO_LOGIC_DESIGN.md`](PY_TO_LOGIC_DESIGN.md#string-literal-initializers) for the full
 elaboration-side writeup, including the target-type-override trick that gives free
@@ -826,7 +826,7 @@ branch merge), and `_declare_global_write_wire` in `PY_TO_LOGIC.py` gives the ba
 implicit first alias using the exact same alias-chain mechanism `_declare_var` uses
 for an ordinary local variable (see
 [`PY_TO_LOGIC_DESIGN.md`](PY_TO_LOGIC_DESIGN.md#global-wires-wiret)). That first alias is
-driven by zeros (`0` / `C_TO_LOGIC.COMPOUND_NULL`) for a write-only function, or by
+driven by zeros (`0` / `LOGIC.COMPOUND_NULL`) for a write-only function, or by
 an internal **readback input wire** (below) for a function that also reads the wire.
 
 **Readback: a writer that also reads its wire.** When the pre-scan finds a function
@@ -852,7 +852,7 @@ writer, at any depth: nested struct leaves (`w.a.x = ...`), whole subtrees
 RHS records the interior path itself), and constant array indices (`w.arr[2] = ...`,
 including unrolled-loop indices, which elaboration resolves to precise int tokens).
 `_write_ref` records each driven path in
-`C_TO_LOGIC.Logic.global_wire_driven_paths[wire_name]` — a set of path tuples of
+`LOGIC.Logic.global_wire_driven_paths[wire_name]` — a set of path tuples of
 field-name strs / index ints, `()` meaning "whole wire" — skipping the implicit
 zero-init write itself (that's a fallback default, not a claimed leaf). A
 variable-index write instead marks the wire in
@@ -1066,7 +1066,7 @@ The removed `depth=` keyword raises a `TypeError` that names its replacements.
 3. Otherwise, in a synthesizing build, a starting latency from the latency memory or
    a `--latency_hints` file (`SET_LATENCY_SEEDS`, see
    [SWEEP_DESIGN.md](SWEEP_DESIGN.md#5-latency-memory)), clamped to `max_latency`. The
-   tag keeps it as `.seed`, which `C_TO_LOGIC.AutoPipelineLatency.from_tag` copies.
+   tag keeps it as `.seed`, which `LOGIC.AutoPipelineLatency.from_tag` copies.
    A `@pipeline_latency` callee is never seeded. A harvested value (step 2) clears the
    seed.
 4. Otherwise, `start_latency` in a synthesizing build.
@@ -1127,7 +1127,7 @@ The class-level `_is_auto_pipeline_pragma` flag is the only thing the elaborator
 duck-type probes (mirroring `@sim_output`'s `_is_sim_output` flag). See
 [`PY_TO_LOGIC_DESIGN.md`](PY_TO_LOGIC_DESIGN.md#auto_pipelinefunc-latency-start_latency-max_latency--forced-submodule-pipelining)
 for how `PY_TO_LOGIC.FuncElaborator._elab_call` elaborates the wrapped func and tags
-the resulting submodule instance with a `C_TO_LOGIC.AutoPipelineLatency` constraint in
+the resulting submodule instance with a `LOGIC.AutoPipelineLatency` constraint in
 `sub_inst_to_auto_pipeline_latency`. The C frontend's `#pragma AUTOPIPELINE [N]` fills
 the same field. The Pypeline frontend also records `sub_inst_to_auto_pipeline_key`
 (instance -> `AUTO_PIPELINE.canonical_key`), so the stage counts the sweep builds can be
@@ -2038,10 +2038,10 @@ Four operator families are QoR-selected, not arbitrary:
 The QoR investigations that established these live in
 [`SYN_DESIGN.md`](SYN_DESIGN.md#history)'s History section.
 
-### Default replacements for SW_LIB-only operators
+### Default replacements for C-generated operators
 
 Five operator families have no inferred/raw-VHDL lowering, so without an explicit soft
-registration they would reach `C_TO_LOGIC.BUILD_LOGIC_AS_C_CODE` — `SW_LIB.py`'s C
+registration they would reach `C_TO_LOGIC.BUILD_LOGIC_AS_C_CODE` — the C front end's C code
 generation, shelled out through `cpp` and pycparser: int unary `NEGATE`, int
 `GT`/`GTE`/`LT`/`LTE`, `DIV`, `MOD`, and
 variable-amount shift (`SL`/`SR` with a non-constant right operand). `PY_TO_LOGIC.PARSE_FILE`
@@ -2054,9 +2054,9 @@ module-level flag) so `PY_TO_LOGIC.PARSE_FILE`'s repeated-parse callers (AUTO_PI
 pin-and-confirm loop, `double_parse_file_test`) don't grow the generic registry lists
 unboundedly.
 
-`C_TO_LOGIC.PYPELINE_NO_SW_LIB_GUARD`, armed by `PY_TO_LOGIC.PARSE_FILE` right after that
-registration, makes `BUILD_LOGIC_AS_C_CODE` raise (naming the offending entity) if a
-Pypeline build ever reaches it anyway — the permanent enforcement that this path stays dead
+`LOGIC.PYPELINE_NO_SW_LIB_GUARD`, armed by `PY_TO_LOGIC.PARSE_FILE` right after that
+registration, makes `LOGIC.BUILD_C_BUILT_IN_SUBMODULE_FUNC_LOGIC` raise (naming the offending
+entity) instead of calling `BUILD_LOGIC_AS_C_CODE` if a Pypeline build ever reaches it anyway — the permanent enforcement that this path stays dead
 for Pypeline.
 
 `PY_TO_LOGIC.ELABORATE_LIVE_ROOTS`, the other elaboration entry point, is what a plain
@@ -2071,9 +2071,9 @@ exist by then, and the head keeps them winning, as registering first does under
 `PARSE_FILE`. Head entries record no sim gate name and are never memoized into the precise
 registries (`_fallback_generic_head`, the counterpart of `_scoped_generic_tail`), so
 popping them leaves the process exactly as it was. The guard is restored to its previous
-value on exit. `SW_LIB.py` itself is untouched: the C frontend still needs it, and `VHDL.py`
-/ `RAW_VHDL.py` / `SYN.py` still import it for cheap name predicates
-(`IS_BIT_MANIP`, `IS_MEM`, `IS_AUTO_GENERATED`, RAM helpers) that were never C generation.
+value on exit. The C code generation itself stays in `C_TO_LOGIC.py` for the C front end;
+the cheap name predicates `VHDL.py` / `RAW_VHDL.py` / `SYN.py` use (`IS_BIT_MANIP`, `IS_MEM`,
+`IS_AUTO_GENERATED`, RAM helpers), which were never C generation, live in `LOGIC.py`.
 
 Constant-amount shifts are unaffected — those already lower to a built-in `CONST_SL`/`CONST_SR`
 submodule directly in `_elab_binop` and never consult the operator registry at all.
@@ -2129,7 +2129,7 @@ directly (with `_ctype` preserved for shifts/DIV/MOD). What is in those sets is 
 
 Two built-in paths carry hardware type rules that are easy to get wrong, and were:
 
-- **Unary `-` on an integer widens by one bit and becomes signed.** `SW_LIB`'s
+- **Unary `-` on an integer widens by one bit and becomes signed.** `C_TO_LOGIC`'s
   `GET_UNARY_OP_NEGATE_INT_UINT_C_CODE` is the authority (`result_t = "int" +
   str(in_width + 1) + "_t"`); `PY_TO_LOGIC._elab_unary` applies the same rule, and the
   library's `make_soft_negate` is annotated to match. `SimVal.__neg__` used to mask back

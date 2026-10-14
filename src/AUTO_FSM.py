@@ -71,7 +71,7 @@ import json
 import math
 import os
 
-import C_TO_LOGIC
+import LOGIC
 import AUTO
 
 # Schedule dict format version, bumped if the shape changes incompatibly OR the
@@ -1838,7 +1838,7 @@ def BUILD_SCHEDULE(
         where = (
             "it"
             if not path
-            else f"its callee {ent!r} (instance {C_TO_LOGIC.SUBMODULE_MARKER.join(path)})"
+            else f"its callee {ent!r} (instance {LOGIC.SUBMODULE_MARKER.join(path)})"
         )
         raise AUTO.AutoError(
             f"AUTO_FSM: {func_entity!r} is not a pure function of its argument: "
@@ -2877,7 +2877,7 @@ def _AUTO_FSM_KEYS_UNDER_MAIN(parser_state, main_func_name):
     for inst_name, logic in parser_state.LogicInstLookupTable.items():
         if not logic.sub_inst_to_auto_fsm_key:
             continue
-        root = inst_name.split(C_TO_LOGIC.SUBMODULE_MARKER)[0]
+        root = inst_name.split(LOGIC.SUBMODULE_MARKER)[0]
         if root == main_func_name:
             keys.update(logic.sub_inst_to_auto_fsm_key.values())
     return keys
@@ -3190,7 +3190,7 @@ def DO_SCHEDULE_PASSES(parser_state, args, src_file):
 
         pypeline.SET_AUTO_FSM_SCHEDULE_CACHE(schedules)
         parser_state = PY_TO_LOGIC.PARSE_FILE(src_file)
-        C_TO_LOGIC.WRITE_0_ADDED_CLKS_INIT_FILES(parser_state)
+        AUTO_PIPELINE.WRITE_0_ADDED_CLKS_INIT_FILES(parser_state)
         DUMP_GENERATED_SOURCE(parser_state, SYN.SYN_OUTPUT_DIRECTORY)
         parser_state, multimain_timing_params = AUTO_PIPELINE.DO_SWEEP_AND_AUTO_PIPELINE(
             parser_state, args, src_file

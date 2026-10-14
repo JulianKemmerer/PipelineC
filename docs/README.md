@@ -336,7 +336,8 @@ operators on library types like `float32_t` become instances of the library's
 implementations (see
 [Python vs Hardware Execution](pypeline_guide.md#python-vs-hardware-execution)). Source
 the elaborator can't turn into hardware stops the build here, before any VHDL is written.
-How: [PY_TO_LOGIC_DESIGN.md](PY_TO_LOGIC_DESIGN.md).
+How: [PY_TO_LOGIC_DESIGN.md](PY_TO_LOGIC_DESIGN.md); the logic graph it builds, shared
+with the C front end: [LOGIC_DESIGN.md](LOGIC_DESIGN.md).
 
 ### Writes VHDL
 

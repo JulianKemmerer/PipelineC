@@ -5,7 +5,7 @@ own top-level body.
 
 Before the fix, `parser_state.func_name_to_calls` / `func_names_to_called_from`
 were never populated on the Python front-end, so
-`C_TO_LOGIC.RECURSIVE_FIND_MAIN_FUNCS` could only resolve a global var's owning
+`LOGIC.RECURSIVE_FIND_MAIN_FUNCS` could only resolve a global var's owning
 MAIN when the var was touched directly inside that MAIN's own body (its only
 working base case was "function is itself a MAIN"). `write_via_helper` here
 writes `shared_wire` from inside a plain `@hw_func`, one call deep from

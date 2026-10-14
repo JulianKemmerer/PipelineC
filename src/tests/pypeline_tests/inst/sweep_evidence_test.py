@@ -16,7 +16,7 @@ from typed_pipeline_placement_test import FakeLogic, FakeParserState
 
 
 def test_concrete_lock_replays_identical_descendants_after_model_refresh():
-    marker = SWEEP.C_TO_LOGIC.SUBMODULE_MARKER
+    marker = SWEEP.LOGIC.SUBMODULE_MARKER
     root = FakeLogic("helper")
     mul = FakeLogic("mul")
     add = FakeLogic("add")
@@ -214,7 +214,7 @@ def test_mcp_seed_uses_raw_endpoint_evidence_and_honors_caps():
     ps = FakeParserState({"a": logic, "b": logic})
     for name in ("a", "b"):
         group = mcp.AutoMultiCycleGroup(
-            name, SWEEP.C_TO_LOGIC.AutoMultiCycleConstraint(name)
+            name, SWEEP.LOGIC.AutoMultiCycleConstraint(name)
         )
         group.paths = [(name, "launch", "capture")]
         groups[name] = group
@@ -230,7 +230,7 @@ def test_mcp_seed_uses_raw_endpoint_evidence_and_honors_caps():
     ), patch.object(
         mcp, "ELABORATED_AUTO_MULTI_CYCLE_NCYCLES", return_value={"a": 2, "b": 1}
     ), patch.object(SWEEP.SYN, "GET_TARGET_MHZ", return_value=40), patch.object(
-        SWEEP.C_TO_LOGIC,
+        SWEEP.LOGIC,
         "RECURSIVE_FIND_MAIN_FUNC_FROM_INST",
         side_effect=lambda i, p: i,
     ):
@@ -280,7 +280,7 @@ def test_region_latency_changes_survive_renamed_wrappers():
     from unittest.mock import patch
     import SYN
 
-    M = SWEEP.C_TO_LOGIC.SUBMODULE_MARKER
+    M = SWEEP.LOGIC.SUBMODULE_MARKER
 
     def observe(wrapper, depth):
         ps = FakeParserState({"m": FakeLogic("m"), "m" + M + wrapper: FakeLogic(wrapper),
@@ -309,7 +309,7 @@ def test_scripted_shared_clock_freezes_unimplicated_and_skips_noops():
     from scripted_sweep_backend import ScriptedBackend, path
     import SYN
 
-    marker = SWEEP.C_TO_LOGIC.SUBMODULE_MARKER
+    marker = SWEEP.LOGIC.SUBMODULE_MARKER
 
     def run(order, multiple):
         # Each MAIN holds one helper; like the real mini-sweep, the lock is on
@@ -512,7 +512,7 @@ def test_mcp_only_confirmation_repairs_all_groups_in_one_feedback_round():
     )
     hashes = {m: t.GET_HASH_EXT(table, ps) for m, t in table.items()}
     groups = {
-        m: mcp.AutoMultiCycleGroup(m, SWEEP.C_TO_LOGIC.AutoMultiCycleConstraint(m))
+        m: mcp.AutoMultiCycleGroup(m, SWEEP.LOGIC.AutoMultiCycleConstraint(m))
         for m in ("a", "b")
     }
 
@@ -585,7 +585,7 @@ def test_locked_internal_endpoints_skip_boundary_policies():
     from unittest.mock import patch
     import VHDL
 
-    marker = SWEEP.C_TO_LOGIC.SUBMODULE_MARKER
+    marker = SWEEP.LOGIC.SUBMODULE_MARKER
     ps = FakeParserState(
         {"main": FakeLogic("main"), "main" + marker + "hot": FakeLogic("hot")}
     )
@@ -638,7 +638,7 @@ def test_mcp_provisional_confirm_down_once_restores_failed_trial():
     )
     ps = FakeParserState({"a": logic})
     ps.main_mhz = {"a": 100}
-    group = mcp.AutoMultiCycleGroup("a", SWEEP.C_TO_LOGIC.AutoMultiCycleConstraint("a"))
+    group = mcp.AutoMultiCycleGroup("a", SWEEP.LOGIC.AutoMultiCycleConstraint("a"))
     group.paths = [("a", "launch", "capture")]
     shape = mcp.MCP_SHAPE(group, ps)
     params = SimpleNamespace(auto_multi_cycle_ncycles={"a": 6})
@@ -805,7 +805,7 @@ def test_passing_optional_path_never_erases_a_capped_mcp_failure():
     def fresh(_):
         return {m: AUTO_PIPELINE.TimingParams(m, ps.LogicInstLookupTable[m]) for m in order}
 
-    group = mcp.AutoMultiCycleGroup("g", SWEEP.C_TO_LOGIC.AutoMultiCycleConstraint("g"))
+    group = mcp.AutoMultiCycleGroup("g", SWEEP.LOGIC.AutoMultiCycleConstraint("g"))
     group.constraint.max_latency = 1  # capped: the failure cannot be repaired
     params = SimpleNamespace(TimingParamsLookupTable=fresh(ps), auto_multi_cycle_ncycles={"g": 1})
 
@@ -836,7 +836,7 @@ def test_passing_optional_path_never_erases_a_capped_mcp_failure():
 def test_carried_locks_belong_to_their_main_and_obey_lock_rules():
     from unittest.mock import patch
 
-    m = SWEEP.C_TO_LOGIC.SUBMODULE_MARKER
+    m = SWEEP.LOGIC.SUBMODULE_MARKER
     helper = FakeLogic("helper")
     enc, dec = FakeLogic("enc"), FakeLogic("dec")
     enc.submodule_instances = dec.submodule_instances = {"h": "helper"}
@@ -888,7 +888,7 @@ def test_locked_interior_match_uses_marker_prefix_and_hotspot():
     from unittest.mock import patch
     import VHDL
 
-    marker = SWEEP.C_TO_LOGIC.SUBMODULE_MARKER
+    marker = SWEEP.LOGIC.SUBMODULE_MARKER
     ps = FakeParserState({"main": FakeLogic("main"), "main" + marker + "_hot_": FakeLogic("hot")})
     plan = SWEEP.MainSweepPlan("main", 80)
     plan.locked["main" + marker + "_hot_"] = SWEEP.MiniSweepLock([0.5])
@@ -914,7 +914,7 @@ def test_mcp_confirmation_repair_is_bounded():
     ps.part = "scripted"
     table = {"a": AUTO_PIPELINE.TimingParams("a", ps.LogicInstLookupTable["a"])}
     params = SimpleNamespace(TimingParamsLookupTable=table, auto_multi_cycle_ncycles={"a": 1})
-    groups = {"a": mcp.AutoMultiCycleGroup("a", SWEEP.C_TO_LOGIC.AutoMultiCycleConstraint("a"))}
+    groups = {"a": mcp.AutoMultiCycleGroup("a", SWEEP.LOGIC.AutoMultiCycleConstraint("a"))}
 
     def rule(ps, params):
         n = params.auto_multi_cycle_ncycles["a"]
@@ -985,7 +985,7 @@ def test_isolated_mcp_evidence_keeps_the_worst_replica():
     import VHDL, AUTO_MULTI_CYCLE as mcp
     from scripted_sweep_backend import path
 
-    group = mcp.AutoMultiCycleGroup("g", SWEEP.C_TO_LOGIC.AutoMultiCycleConstraint("g"))
+    group = mcp.AutoMultiCycleGroup("g", SWEEP.LOGIC.AutoMultiCycleConstraint("g"))
     group.paths = [("top", "launch", "capture")]
     ps = FakeParserState({"top": FakeLogic("top")})
 
@@ -1018,9 +1018,9 @@ def test_lock_survives_real_reelaboration_with_resized_lanes():
     design = Path(__file__).with_name("c_structs_pkg_relayout_design.py").resolve()
     code = r"""
 import sys, copy, tempfile
-import C_TO_LOGIC, PY_TO_LOGIC, SYN, AUTO_PIPELINE, SWEEP, pypeline
+import LOGIC, PY_TO_LOGIC, SYN, AUTO_PIPELINE, SWEEP, pypeline
 SYN.SYN_OUTPUT_DIRECTORY = tempfile.mkdtemp()
-m = C_TO_LOGIC.SUBMODULE_MARKER
+m = LOGIC.SUBMODULE_MARKER
 enc, dec = "c_structs_pkg_relayout_encrypt", "c_structs_pkg_relayout_decrypt"
 def parse(cache):
     pypeline.SET_AUTO_PIPELINE_LATENCY_CACHE(cache)
@@ -1075,13 +1075,13 @@ def test_seed_replays_entity_hash_after_real_reelaboration():
     code = r"""
 import sys, tempfile
 from pathlib import Path
-import PY_TO_LOGIC, SYN, AUTO_PIPELINE, pypeline, C_TO_LOGIC
+import PY_TO_LOGIC, SYN, AUTO_PIPELINE, pypeline, LOGIC
 SYN.SYN_OUTPUT_DIRECTORY = tempfile.mkdtemp()
 file = Path(sys.argv[1])
 pypeline.SET_AUTO_PIPELINE_LATENCY_CACHE({})
 a = PY_TO_LOGIC.PARSE_FILE(str(file))
 ta = AUTO_PIPELINE.GET_ZERO_ADDED_CLKS_TIMING_PARAMS_LOOKUP(a)
-m = C_TO_LOGIC.SUBMODULE_MARKER
+m = LOGIC.SUBMODULE_MARKER
 roots = [i + m + local for i,logic in a.LogicInstLookupTable.items()
          for local in logic.sub_inst_to_auto_pipeline_key]
 for root in roots:
@@ -1275,7 +1275,7 @@ def _run_trim_sweep(stage_delays_by_cuts, effort=2, uncut_delay=None):
     from scripted_sweep_backend import ScriptedBackend, path
     import SYN
 
-    marker = SWEEP.C_TO_LOGIC.SUBMODULE_MARKER
+    marker = SWEEP.LOGIC.SUBMODULE_MARKER
     pipe, side = "a" + marker + "pipe", "a" + marker + "side"
     main, pipe_logic, side_logic = FakeLogic("a"), FakeLogic("pipe_root"), FakeLogic("side_root")
     main.submodule_instances = {"pipe": "pipe_root", "side": "side_root"}
@@ -1434,7 +1434,7 @@ def test_fresh_concrete_candidate_is_tried_before_measured_fallback():
     from scripted_sweep_backend import ScriptedBackend, path
     import SYN
 
-    marker = SWEEP.C_TO_LOGIC.SUBMODULE_MARKER
+    marker = SWEEP.LOGIC.SUBMODULE_MARKER
     main, helper = FakeLogic("a"), FakeLogic("h_a")
     main.submodule_instances = {"h": "h_a"}
     child = "a" + marker + "h"

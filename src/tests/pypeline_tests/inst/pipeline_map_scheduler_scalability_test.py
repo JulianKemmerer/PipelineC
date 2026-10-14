@@ -22,7 +22,7 @@ from pathlib import Path
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), "../../../"))
 
 import AUTO_PIPELINE
-import C_TO_LOGIC
+import LOGIC
 import PY_TO_LOGIC
 
 COUNT = 64
@@ -71,7 +71,7 @@ def _parse_chain(directory: str, name: str, count: int, delay_every=None):
 def _counted_pipeline_map(root, logic, state, timing):
     """GET_PIPELINE_MAP plus (input driver lookups, elements sorted)."""
     counts = {"lookups": 0, "sorted": 0}
-    original_lookup = C_TO_LOGIC.GET_SUBMODULE_INPUT_PORT_DRIVING_WIRE
+    original_lookup = LOGIC.GET_SUBMODULE_INPUT_PORT_DRIVING_WIRE
 
     def counted_lookup(*args, **kwargs):
         counts["lookups"] += 1
@@ -82,12 +82,12 @@ def _counted_pipeline_map(root, logic, state, timing):
         counts["sorted"] += len(rv)
         return rv
 
-    C_TO_LOGIC.GET_SUBMODULE_INPUT_PORT_DRIVING_WIRE = counted_lookup
+    LOGIC.GET_SUBMODULE_INPUT_PORT_DRIVING_WIRE = counted_lookup
     AUTO_PIPELINE.sorted = counted_sorted
     try:
         pipeline_map = AUTO_PIPELINE.GET_PIPELINE_MAP(root, logic, state, timing)
     finally:
-        C_TO_LOGIC.GET_SUBMODULE_INPUT_PORT_DRIVING_WIRE = original_lookup
+        LOGIC.GET_SUBMODULE_INPUT_PORT_DRIVING_WIRE = original_lookup
         del AUTO_PIPELINE.sorted
     return pipeline_map, counts["lookups"], counts["sorted"]
 
@@ -141,7 +141,7 @@ def test_stuck_graph_reports_waiting_submodule():
     with tempfile.TemporaryDirectory() as directory:
         state, root, logic, timing = _parse_chain(directory, "stuck_chain", 8)
         stuck_submodule = sorted(logic.submodule_instances)[3]
-        stuck_input = stuck_submodule + C_TO_LOGIC.SUBMODULE_MARKER + "x"
+        stuck_input = stuck_submodule + LOGIC.SUBMODULE_MARKER + "x"
         assert stuck_input in logic.wire_driven_by, stuck_input
         logic.wire_driven_by[stuck_input] = "never_driven_wire"
         try:

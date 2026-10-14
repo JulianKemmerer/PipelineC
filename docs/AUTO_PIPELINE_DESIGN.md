@@ -32,6 +32,7 @@ Memory banks are never treated as zero-cycle combinational operators.
 | `TimingParams`, `MultiMainTimingParams` | the pipeline representation: each instance's leaf slices (`_slices`) and IO-register flags, its total latency, and the timing hash that names its VHDL entity; one lookup table per build (plus per-key AUTO_MULTI_CYCLE overrides) |
 | `GET_PIPELINE_MAP`, `PipelineMap` | assigns every wire and submodule of a hierarchical function to a stage from data dependencies and child latencies (§2, §3) |
 | `GET_ZERO_ADDED_CLKS_*`, `WRITE_ALL_ZERO_CLK_VHDL`, `WRITE_ALL_NON_ZERO_CLK_VHDL_FILES` | the zero-added-latency table every build starts from, and writing the VHDL for a table |
+| `WRITE_0_ADDED_CLKS_INIT_FILES` | the first output after either front end parses: the zero-added-latency VHDL for every function, the struct/enum and global-wire packages, the float/integer instance reports (`SYN.py`), and a copy of `src/vhdl` as `built_in/` |
 | `SLICE_DOWN_HIERARCHY_WRITE_VHDL_PACKAGES`, `ADD_SLICES_DOWN_HIERARCHY_...`, `BUILD_AND_WRITE_COARSE_SLICED_TIMING_PARAMS`, `GET_BEST_GUESS_IDEAL_SLICES` | fractional (coarse/compatibility) slicing down the hierarchy |
 | `PiplineHDLParams`, `GET_PIPELINE_ARCH_DECL_TEXT`, `GET_PIPELINE_LOGIC_COMB_PROCESS_TEXT`, `GET_STAGE_TEXT`, `GET_SUBMODULE_LEVEL_TEXT` | the pipelined VHDL architecture text (§3) |
 | `DO_PIPELINED_BUILD`, `DO_SWEEP_AND_AUTO_PIPELINE`, `DO_AUTO_PIPELINE_LATENCY_PASSES`, `HARVEST_AUTO_PIPELINE_LATENCIES`, `SEED_TIMING_PARAMS_FROM_PREVIOUS` | the build entry point and the `.latency` pin-and-confirm loop (§4, §5) |
@@ -589,7 +590,7 @@ see [`pypeline_sim_DESIGN.md`](pypeline_sim_DESIGN.md)'s "Pipelined native sim" 
 ## 6. Constrained AUTO_PIPELINE regions (`latency=` / `start_latency=` / `max_latency=`)
 
 `AUTO_PIPELINE(func, latency=N)`, `start_latency=S` and `max_latency=M` record a
-`C_TO_LOGIC.AutoPipelineLatency` for each tagged instance, in
+`LOGIC.AutoPipelineLatency` for each tagged instance, in
 `Logic.sub_inst_to_auto_pipeline_latency`. C's `#pragma AUTOPIPELINE N` records a fixed
 N the same way. Unconstrained tags, the default, take none of the paths below, so
 designs without constraints plan, name and build exactly as before.

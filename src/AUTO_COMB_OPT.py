@@ -104,10 +104,10 @@ def _literal(parser_state, entity, ref):
         return ref[1]
     if ref[0] != "const":
         return None
-    import C_TO_LOGIC
+    import LOGIC
 
     try:
-        return int(str(C_TO_LOGIC.GET_VAL_STR_FROM_CONST_WIRE(
+        return int(str(LOGIC.GET_VAL_STR_FROM_CONST_WIRE(
             ref[1], parser_state.FuncLogicLookupTable[entity], parser_state)), 0)
     except (ValueError, TypeError):
         return None

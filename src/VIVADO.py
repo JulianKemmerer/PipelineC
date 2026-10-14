@@ -14,12 +14,11 @@ import subprocess
 import sys
 import time
 
-import C_TO_LOGIC
+import LOGIC
 import MODELSIM
-import SW_LIB
 import SYN
 import VHDL
-from utilities import GET_TOOL_PATH
+from utilities import GET_SHELL_CMD_OUTPUT, GET_TOOL_PATH
 
 TOOL_EXE = "vivado"
 # Default to path if there
@@ -470,7 +469,7 @@ def GET_SYN_IMP_AND_REPORT_TIMING_TCL(
     # (currently the only reason why we need to know vivado version...)
     global VIVADO_VERSION, VIVADO_VERSION_ID
     if VIVADO_VERSION_ID is None and os.path.exists(VIVADO_PATH):
-        ver_output = C_TO_LOGIC.GET_SHELL_CMD_OUTPUT(VIVADO_PATH + " -version")
+        ver_output = GET_SHELL_CMD_OUTPUT(VIVADO_PATH + " -version")
         VIVADO_VERSION_ID = ver_output.strip()
         VIVADO_VERSION = PARSE_VIVADO_VERSION(ver_output)
     if VIVADO_VERSION:
@@ -1138,7 +1137,7 @@ proc pypeline_paths {scope paths limit} {
             text += f"set pypeline_cells [get_cells -quiet -hier -filter {{NAME =~ {entity}/* && IS_SEQUENTIAL}}]\n"
             text += f"if {{[llength $pypeline_cells]}} {{pypeline_paths {{main:{root}}} [get_timing_paths -quiet -to $pypeline_cells -max_paths 1] 1}}\n"
         for inst in sorted(parser_state.LogicInstLookupTable):
-            if inst != root and not inst.startswith(root + C_TO_LOGIC.SUBMODULE_MARKER):
+            if inst != root and not inst.startswith(root + LOGIC.SUBMODULE_MARKER):
                 continue
             for tup, start, end, auto in AUTO_MULTI_CYCLE.GET_MCP_CELL_PATHS(
                 inst, root, entity, parser_state

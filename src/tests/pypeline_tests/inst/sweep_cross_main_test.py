@@ -23,7 +23,7 @@ from unittest.mock import patch
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), "../../.."))
 import AUTO_MULTI_CYCLE
 import AUTO_PIPELINE
-import C_TO_LOGIC
+import LOGIC
 import SWEEP
 import SYN
 import VHDL
@@ -31,7 +31,7 @@ from scripted_sweep_backend import ScriptedBackend, path
 from sweep_evidence_test import _scripted_sweep_patches
 from typed_pipeline_placement_test import FakeLogic as _BaseLogic
 
-M = C_TO_LOGIC.SUBMODULE_MARKER
+M = LOGIC.SUBMODULE_MARKER
 
 
 class Logic(_BaseLogic):
@@ -48,7 +48,7 @@ class Logic(_BaseLogic):
         self.feedback_vars = []
         self.vhdl_module_text = None
         self.is_vhdl_func = self.is_vhdl_expr = self.is_clock_crossing = False
-        self.is_new_style_bit_manip = True  # SW_LIB.IS_MEM short-circuits
+        self.is_new_style_bit_manip = True  # LOGIC.IS_MEM short-circuits
         self.is_c_built_in = False
         self.ast_meta = None
         self.delay = 200
@@ -615,12 +615,12 @@ def _region_state(constraint, other_main_member=False):
 
 
 def test_lock_rules_for_regions():
-    start_only = C_TO_LOGIC.AutoPipelineLatency(start_latency=1)
+    start_only = LOGIC.AutoPipelineLatency(start_latency=1)
     for constraint, member, expected in [
         (start_only, False, None),
-        (C_TO_LOGIC.AutoPipelineLatency(latency=2), False, "constrained AUTO_PIPELINE region"),
-        (C_TO_LOGIC.AutoPipelineLatency(max_latency=3), False, "constrained AUTO_PIPELINE region"),
-        (C_TO_LOGIC.AutoPipelineLatency(start_latency=1, max_latency=3), False, "constrained AUTO_PIPELINE region"),
+        (LOGIC.AutoPipelineLatency(latency=2), False, "constrained AUTO_PIPELINE region"),
+        (LOGIC.AutoPipelineLatency(max_latency=3), False, "constrained AUTO_PIPELINE region"),
+        (LOGIC.AutoPipelineLatency(start_latency=1, max_latency=3), False, "constrained AUTO_PIPELINE region"),
         (start_only, True, "AUTO_PIPELINE region shared with another MAIN"),
     ]:
         ps = _region_state(constraint, member)
@@ -653,7 +653,7 @@ def test_try_minisweep_streak_and_budget():
 
 
 def test_region_bootstrap_and_calibration_after_lock():
-    region = AUTO_PIPELINE.AutoPipelineRegion("a" + M + "r", C_TO_LOGIC.AutoPipelineLatency(start_latency=4), "k", "region_func")
+    region = AUTO_PIPELINE.AutoPipelineRegion("a" + M + "r", LOGIC.AutoPipelineLatency(start_latency=4), "k", "region_func")
     landscape = SWEEP.SliceLandscape(region.inst, 20, 0.5)
     landscape.segments.append(SWEEP.Segment(region.inst + M + "h", "h", 0.0, 10.0, SWEEP.Segment.LOCKED))
     landscape.finalize({})
@@ -662,7 +662,7 @@ def test_region_bootstrap_and_calibration_after_lock():
     # The lock already holds part of the depth: no S=4 on top of it
     assert not region.start_pending and not calibrate and count != 4, (count, calibrate)
     plan = SWEEP.MainSweepPlan("a", 100)
-    other = AUTO_PIPELINE.AutoPipelineRegion("a" + M + "q", C_TO_LOGIC.AutoPipelineLatency(start_latency=2), "other", "q")
+    other = AUTO_PIPELINE.AutoPipelineRegion("a" + M + "q", LOGIC.AutoPipelineLatency(start_latency=2), "other", "q")
     plan.regions = [region, other]
     region.scale, other.scale, other.start_pending = 0.36, 0.5, True
     region.start_pending = True
@@ -730,7 +730,7 @@ def _region_sweep(constraint):
 
 
 def test_start_latency_region_hotspot_takes_the_minisweep():
-    result, minis, actions, region = _region_sweep(C_TO_LOGIC.AutoPipelineLatency(start_latency=1))
+    result, minis, actions, region = _region_sweep(LOGIC.AutoPipelineLatency(start_latency=1))
     assert minis == ["h"], (minis, actions)
     assert actions[0].startswith("grow_auto_pipeline"), actions
     assert actions[1] == "minisweep(h)", actions
@@ -740,7 +740,7 @@ def test_start_latency_region_hotspot_takes_the_minisweep():
 
 
 def test_capped_region_never_locks_inside():
-    result, minis, actions, _region = _region_sweep(C_TO_LOGIC.AutoPipelineLatency(max_latency=3))
+    result, minis, actions, _region = _region_sweep(LOGIC.AutoPipelineLatency(max_latency=3))
     assert minis == [], (minis, actions)
     assert all(a.startswith(("grow_auto_pipeline", "stop", "replan")) for a in actions), actions
     assert result.sweep_timing_failures, "the capped region cannot meet timing here"

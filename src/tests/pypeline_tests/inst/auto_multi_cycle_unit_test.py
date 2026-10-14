@@ -26,7 +26,7 @@ sys.path.insert(0, os.path.join(SRC_DIR, "..", "include", "pypeline"))
 
 import pypeline
 from pypeline import AUTO_MULTI_CYCLE, Reg, uint32_t
-import C_TO_LOGIC
+import LOGIC
 import PY_TO_LOGIC
 import AUTO_PIPELINE
 import AUTO_MULTI_CYCLE as AUTO_MULTI_CYCLE_MODULE  # aliased: the pypeline tag has the same name
@@ -151,7 +151,7 @@ def test_identity_follows_count_and_reg_tag():
 
 
 def _fake_parser_state(ncycles="3"):
-    constraint = C_TO_LOGIC.AutoMultiCycleConstraint("k", None, 3, None)
+    constraint = LOGIC.AutoMultiCycleConstraint("k", None, 3, None)
     logic = types.SimpleNamespace(
         mcp_tuples={(ncycles, "launch", "capture")},
         auto_multi_cycle_tuples={("launch", "capture"): constraint},
@@ -236,11 +236,11 @@ def test_report_matching_and_feedback():
         action, changed, blame = AUTO_MULTI_CYCLE_MODULE.AUTO_MULTI_CYCLE_FEEDBACK(group, report, 100.0, mtp)
         return mtp.auto_multi_cycle_ncycles["k"], action, changed, blame
 
-    n, action, changed, blame = run(C_TO_LOGIC.AutoMultiCycleConstraint("k", None, 3), 3)
+    n, action, changed, blame = run(LOGIC.AutoMultiCycleConstraint("k", None, 3), 3)
     assert changed and n == 4 and blame is None and "3->4" in action, action
-    n, action, changed, blame = run(C_TO_LOGIC.AutoMultiCycleConstraint("k", None, 3, 3), 3)
+    n, action, changed, blame = run(LOGIC.AutoMultiCycleConstraint("k", None, 3, 3), 3)
     assert not changed and n == 3 and "max_latency=3" in blame, blame
-    n, action, changed, blame = run(C_TO_LOGIC.AutoMultiCycleConstraint("k", 3), 3)
+    n, action, changed, blame = run(LOGIC.AutoMultiCycleConstraint("k", 3), 3)
     assert not changed and n == 3 and "latency=3" in blame, blame
     print("test_report_matching_and_feedback PASS")
 
@@ -320,7 +320,7 @@ def test_endpoint_selection_on_elaborated_wrapper():
     assert len(holders) == 2, sorted(holders)  # fixed latency=2 and start_latency=3
     period = 10.0
     for inst, logic in sorted(holders.items()):
-        main = C_TO_LOGIC.RECURSIVE_FIND_MAIN_FUNC_FROM_INST(inst, parser_state)
+        main = LOGIC.RECURSIVE_FIND_MAIN_FUNC_FROM_INST(inst, parser_state)
         top = VHDL.GET_ENTITY_NAME(main, parser_state.LogicInstLookupTable[main], tpl, parser_state)
         paths = AUTO_MULTI_CYCLE_MODULE.GET_MCP_CELL_PATHS(inst, main, top, parser_state)
         assert len(paths) == 1, paths
@@ -475,9 +475,9 @@ def test_seeds_are_provisional():
         )
         tag = make_tag(start_latency=2, max_latency=8, name="seeded")
         assert tag._ncycles_for_compiler() == 8 and tag.seed == 8  # clamped
-        constraint = C_TO_LOGIC.AutoMultiCycleConstraint.from_tag(tag)
+        constraint = LOGIC.AutoMultiCycleConstraint.from_tag(tag)
         assert constraint.seed == 8
-        assert constraint == C_TO_LOGIC.AutoMultiCycleConstraint(
+        assert constraint == LOGIC.AutoMultiCycleConstraint(
             "seeded_max_latency_8", None, 2, 8
         )
         fixed = make_tag(latency=3, name="fixed_tag")

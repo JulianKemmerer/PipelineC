@@ -88,9 +88,9 @@ def test_hard_floor_stop_needs_the_failing_path_to_reach_the_span():
     # evidence of that ceiling.
     from types import SimpleNamespace
 
-    import C_TO_LOGIC
+    import LOGIC
 
-    M = C_TO_LOGIC.SUBMODULE_MARKER
+    M = LOGIC.SUBMODULE_MARKER
     logic = lambda f: SimpleNamespace(func_name=f)
     ps = SimpleNamespace(LogicInstLookupTable={
         "main": logic("main"),

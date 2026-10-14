@@ -3,7 +3,7 @@ from pypeline import hw_func, uint1_t, bit_dup
 
 
 def make_soft_negate(t):
-    """-x == ~x + 1, matching SW_LIB.GET_UNARY_OP_NEGATE_INT_UINT_C_CODE's
+    """-x == ~x + 1, matching C_TO_LOGIC.GET_UNARY_OP_NEGATE_INT_UINT_C_CODE's
     structure exactly (int NEGATE widens by 1 bit and becomes signed -- the
     same typing rule PY_TO_LOGIC._elab_unary already applies to the built-in
     path -- so the caller must pass the same output type here).

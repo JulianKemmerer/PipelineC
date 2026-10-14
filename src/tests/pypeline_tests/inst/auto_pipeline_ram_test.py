@@ -276,7 +276,6 @@ def measured_joint_trim_and_restoration():
     import json
     import tempfile
     from contextlib import ExitStack
-    import C_TO_LOGIC
     import PY_TO_LOGIC
     import SYN
     import SWEEP
@@ -345,7 +344,7 @@ def measured_joint_trim_and_restoration():
                         "PARSE_FILE",
                         lambda path: state(py.AUTO_PIPELINE_RAM_PLAN_CACHE()),
                     ),
-                    (C_TO_LOGIC, "WRITE_0_ADDED_CLKS_INIT_FILES", lambda ps: None),
+                    (ap, "WRITE_0_ADDED_CLKS_INIT_FILES", lambda ps: None),
                     (SWEEP, "WRITE_SWEEP_HISTORY", lambda *a, **k: None),
                 ):
                     stack.enter_context(patch.object(obj, attr, value))

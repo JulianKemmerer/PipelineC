@@ -47,7 +47,7 @@ from multiprocessing.pool import ThreadPool
 
 import AUTO_MULTI_CYCLE
 import AUTO_PIPELINE
-import C_TO_LOGIC
+import LOGIC
 import OPEN_TOOLS
 import RAW_VHDL
 import SYN
@@ -125,7 +125,7 @@ def FAILING_PATH_REACHES_SPAN(path_report, blame, plan, parser_state):
     that can't discriminate (no names, no container, or the container is
     the MAIN or a subtree root, which prefix every name), answer True.
     """
-    marker = C_TO_LOGIC.SUBMODULE_MARKER
+    marker = LOGIC.SUBMODULE_MARKER
     inst = getattr(blame, "inst_path", None)
     if inst is None or marker not in inst:
         return True
@@ -215,8 +215,7 @@ def BEST_SNAPSHOT_MET_ALL_GOALS(best_score):
 
 
 def WHY_NOT_SLICEABLE(logic, parser_state):
-    # Mirror of C_TO_LOGIC.Logic.CAN_HAVE_ADDED_LATENCY clause by clause
-    import SW_LIB
+    # Mirror of LOGIC.Logic.CAN_HAVE_ADDED_LATENCY clause by clause
 
     if logic.func_name in parser_state.func_fixed_latency:
         return "fixed_latency"
@@ -230,7 +229,7 @@ def WHY_NOT_SLICEABLE(logic, parser_state):
         return "clock_crossing"
     if logic.uses_nonvolatile_state_regs:
         return "state_regs"
-    if SW_LIB.IS_MEM(logic):
+    if LOGIC.IS_MEM(logic):
         return "memory"
     if logic.func_name in parser_state.func_marked_blackbox:
         return "blackbox"
@@ -303,7 +302,7 @@ class Segment:
         self.registered_bits = None
 
     def __str__(self):
-        return f"[{self.start:.1f},{self.end:.1f}) {self.kind} {self.inst_path.split(C_TO_LOGIC.SUBMODULE_MARKER)[-1]}({self.reason})"
+        return f"[{self.start:.1f},{self.end:.1f}) {self.kind} {self.inst_path.split(LOGIC.SUBMODULE_MARKER)[-1]}({self.reason})"
 
 
 class PipelinePlacement:
@@ -780,8 +779,8 @@ class SliceLandscape:
     def _add_segment_candidates(self, seg, lo, hi, bits_cap_units):
         if hi <= lo or seg.kind in (Segment.ATOMIC, Segment.LOCKED):
             return
-        depth = seg.inst_path.count(C_TO_LOGIC.SUBMODULE_MARKER) - (
-            self.subtree_root_inst.count(C_TO_LOGIC.SUBMODULE_MARKER)
+        depth = seg.inst_path.count(LOGIC.SUBMODULE_MARKER) - (
+            self.subtree_root_inst.count(LOGIC.SUBMODULE_MARKER)
         )
         # Every sliceable operation has a deterministic output boundary.
         # For raw 1LL leaves this is the one useful side of the old two-edge
@@ -1118,7 +1117,7 @@ def COLLECT_CUT_SUBTREES(main_inst, parser_state):
                 sub_func = logic.submodule_instances[sub_inst_local]
                 sub_logic = parser_state.FuncLogicLookupTable[sub_func]
                 rec(
-                    inst + C_TO_LOGIC.SUBMODULE_MARKER + sub_inst_local,
+                    inst + LOGIC.SUBMODULE_MARKER + sub_inst_local,
                     sub_logic,
                     sub_inst_local in getattr(logic, "sub_inst_to_auto_pipeline_latency", {}),
                 )
@@ -1169,7 +1168,7 @@ def BUILD_SLICE_LANDSCAPE(
             sub_logic = parser_state.FuncLogicLookupTable[sub_func]
             if sub_logic.delay is None or sub_logic.delay <= 0:
                 continue
-            child_inst = inst + C_TO_LOGIC.SUBMODULE_MARKER + sub_inst_local
+            child_inst = inst + LOGIC.SUBMODULE_MARKER + sub_inst_local
             s = abs_start + unit_scale * start_off
             e = s + unit_scale * sub_logic.delay
             child_ancestors = ancestor_funcs | {sub_logic.func_name}
@@ -1205,8 +1204,8 @@ def BUILD_SLICE_LANDSCAPE(
                     landscape.total_units - 1,
                     max(0, int(math.ceil(e)) - 1),
                 )
-                depth = child_inst.count(C_TO_LOGIC.SUBMODULE_MARKER) - (
-                    subtree_root_inst.count(C_TO_LOGIC.SUBMODULE_MARKER)
+                depth = child_inst.count(LOGIC.SUBMODULE_MARKER) - (
+                    subtree_root_inst.count(LOGIC.SUBMODULE_MARKER)
                 )
                 landscape.add_candidate(
                     PipelinePlacement(
@@ -1404,7 +1403,7 @@ def _RUN_BOUNDARY_UNITS(landscape):
             for p in landscape.candidates
             if p.kind == PipelinePlacement.INSTANCE_OUTPUT
         ]
-        marker = C_TO_LOGIC.SUBMODULE_MARKER
+        marker = LOGIC.SUBMODULE_MARKER
 
         def parent_inst(placement):
             return placement.inst_path.rsplit(marker, 1)[0]
@@ -1644,7 +1643,7 @@ def _PLACEMENT_RANK_KEY(placement):
 
 def _IS_INST_ANCESTOR(ancestor, descendant):
     """True when ``ancestor`` is a strict instance-path ancestor."""
-    marker = C_TO_LOGIC.SUBMODULE_MARKER
+    marker = LOGIC.SUBMODULE_MARKER
     return descendant.startswith(ancestor + marker)
 
 
@@ -2851,7 +2850,7 @@ def SUMMARIZE_SUBTREE_PIPELINE(
                     main (== input-to-output depth when the regions sit in
                     series, as in a stream pipeline)
     Returns (monolithic, regions, total_stages)."""
-    marker = C_TO_LOGIC.SUBMODULE_MARKER
+    marker = LOGIC.SUBMODULE_MARKER
     # Cut subtrees are disjoint maximal sliceable subtrees, so summing their
     # own latencies never double counts. (A decoupled child inside a subtree
     # root reports 0 to it and is added separately below.)
@@ -3440,8 +3439,8 @@ def LATENCY_SUBTREE_DIGESTS(parser_state):
             text = VHDL.RENDER_TEXT(VHDL.GET_VHDL_FUNC_DECL(
                 inst, logic, parser_state, table[inst]), parser_state)
         elif logic.is_vhdl_expr:
-            parent = C_TO_LOGIC.GET_CONTAINER_INST(inst)
-            local = inst[len(parent + C_TO_LOGIC.SUBMODULE_MARKER):]
+            parent = LOGIC.GET_CONTAINER_INST(inst)
+            local = inst[len(parent + LOGIC.SUBMODULE_MARKER):]
             text = VHDL.RENDER_TEXT(VHDL.GET_VHDL_EXPR_ENTITY_CONNECTION_TEXT(
                 logic, local, parent, parser_state.LogicInstLookupTable[parent],
                 table, parser_state), parser_state)
@@ -3474,7 +3473,7 @@ def _latency_piece_identities(parser_state):
             "digest": AUTO_MULTI_CYCLE.MCP_SHAPE(group, parser_state,
                                                 function_digest=lambda n: digests[n]),
             "cap": group.constraint.upper_bound(),
-            "mains": {i.split(C_TO_LOGIC.SUBMODULE_MARKER)[0] for i, _s, _e in group.paths}}
+            "mains": {i.split(LOGIC.SUBMODULE_MARKER)[0] for i, _s, _e in group.paths}}
     for main in parser_state.main_mhz:
         name = parser_state.LogicInstLookupTable[main].func_name
         identities[("main", name)] = {"digest": digests[name], "mains": {main}}
@@ -3686,7 +3685,7 @@ def LOAD_LATENCY_MEMORY_LOCKS(parser_state):
         goal = SYN.GET_TARGET_MHZ(main, parser_state)
         for func in SUBTREE_FUNCTIONS(main, parser_state):
             instances = sorted(i for i in parser_state.FuncToInstances[func]
-                               if i.startswith(main + C_TO_LOGIC.SUBMODULE_MARKER))
+                               if i.startswith(main + LOGIC.SUBMODULE_MARKER))
             if not instances:
                 continue
             paths = [os.path.join(SYN.SYN_OUTPUT_DIRECTORY, LATENCY_MEMORY_FILE),
@@ -3785,7 +3784,7 @@ def _auto_pipeline_tag_instances(parser_state):
     """(key, main inst, constraint, callee func name) per AUTO_PIPELINE-tagged
     instance, except fixed ones (latency=, @pipeline_latency callees), whose
     latency is never a starting value."""
-    marker = C_TO_LOGIC.SUBMODULE_MARKER
+    marker = LOGIC.SUBMODULE_MARKER
     fixed_funcs = getattr(parser_state, "func_fixed_latency", {}) or {}
     for inst_name, logic in sorted(parser_state.LogicInstLookupTable.items()):
         for local_sub, key in sorted(logic.sub_inst_to_auto_pipeline_key.items()):
@@ -3823,7 +3822,7 @@ def _latency_owners(parser_state):
     ).items():
         if group.constraint.is_fixed():
             continue
-        mains = {main_func(inst.split(C_TO_LOGIC.SUBMODULE_MARKER)[0]) for inst, _s, _e in group.paths}
+        mains = {main_func(inst.split(LOGIC.SUBMODULE_MARKER)[0]) for inst, _s, _e in group.paths}
         owners[("AUTO_MULTI_CYCLE", key)] = (
             mains,
             group.constraint,
@@ -4440,7 +4439,7 @@ def DROP_NON_DEEPENING_PLACEMENTS(
     """
     if len(placements) == 0:
         return cuts, placements
-    marker = C_TO_LOGIC.SUBMODULE_MARKER
+    marker = LOGIC.SUBMODULE_MARKER
 
     def _invalidate_ancestors(inst_path):
         toks = inst_path.split(marker)
@@ -4831,7 +4830,7 @@ def CHECK_CUTS_VS_LATENCY(
     cuts, IO regs on locked insts, factory internal auto-pipelines)."""
     total_leaf_slices = 0
     sliced_leaves = []
-    prefix = subtree_root_inst + C_TO_LOGIC.SUBMODULE_MARKER
+    prefix = subtree_root_inst + LOGIC.SUBMODULE_MARKER
     for inst in TimingParamsLookupTable:
         if inst == subtree_root_inst or inst.startswith(prefix):
             timing_params = TimingParamsLookupTable[inst]
@@ -4857,7 +4856,7 @@ def CHECK_CUTS_VS_LATENCY(
         leaf_lines = []
         for inst, slices in sliced_leaves[0:5]:
             # Leaf name only - full instance paths are hundreds of chars
-            short = inst.split(C_TO_LOGIC.SUBMODULE_MARKER)[-1]
+            short = inst.split(LOGIC.SUBMODULE_MARKER)[-1]
             leaf_lines.append(f"  .../{short}: {slices}")
         if len(sliced_leaves) > 5:
             leaf_lines.append(f"  ... and {len(sliced_leaves) - 5} more")
@@ -5156,7 +5155,7 @@ def RESOLVE_PIPELINABLE_HOTSPOT(path_report, plan, parser_state):
 
 
 def _INSTS_CONFLICT(inst_a, inst_b):
-    m = C_TO_LOGIC.SUBMODULE_MARKER
+    m = LOGIC.SUBMODULE_MARKER
     return (
         inst_a == inst_b
         or inst_a.startswith(inst_b + m)
@@ -5179,7 +5178,7 @@ def _IO_REGISTER_BITS(logic, direction, parser_state):
 
 
 def _PARENT_INST_AND_LOCAL(inst_path):
-    marker = C_TO_LOGIC.SUBMODULE_MARKER
+    marker = LOGIC.SUBMODULE_MARKER
     if marker not in inst_path:
         return None, None
     return inst_path.rsplit(marker, 1)
@@ -5202,7 +5201,7 @@ def _LOCKED_SOURCE_INSTANCE(parent_logic, parent_inst, wire, parser_state):
     locked helpers are connected by parent-scope wire plumbing with no logic
     in between.
     """
-    marker = C_TO_LOGIC.SUBMODULE_MARKER
+    marker = LOGIC.SUBMODULE_MARKER
     if marker not in wire:
         return None
     local_inst, port_expr = wire.split(marker, 1)
@@ -5245,7 +5244,7 @@ def FIND_DIRECT_LOCKED_BOUNDARY_EDGES(plan, hotspot_func, parser_state):
         consumer_logic = parser_state.LogicInstLookupTable[consumer]
         for input_port in consumer_logic.inputs:
             try:
-                driver = C_TO_LOGIC.GET_SUBMODULE_INPUT_PORT_DRIVING_WIRE(
+                driver = LOGIC.GET_SUBMODULE_INPUT_PORT_DRIVING_WIRE(
                     parent_logic, local_consumer, input_port
                 )
             except KeyError:
@@ -5515,7 +5514,7 @@ def TRY_NEXT_MINISWEEP_BOUNDARY_STRATEGY(plan, hotspot_func, parser_state):
 def MINISWEEP_LOCK_TARGETS(hotspot_func, plan, parser_state):
     """Eligible instances in the blamed MAIN, plus in-MAIN context blockers."""
     targets, excluded = [], {}
-    marker = C_TO_LOGIC.SUBMODULE_MARKER
+    marker = LOGIC.SUBMODULE_MARKER
     for inst in sorted(getattr(parser_state, "FuncToInstances", {}).get(hotspot_func, ())):
         if inst != plan.main_inst and not inst.startswith(plan.main_inst + marker):
             continue
@@ -5549,7 +5548,7 @@ def REGION_INTERIOR_LOCK_BLOCKER(region, plan, parser_state):
     are per MAIN, and group members must realize one .latency."""
     if region.constraint.upper_bound() is not None:
         return "constrained AUTO_PIPELINE region"
-    marker = C_TO_LOGIC.SUBMODULE_MARKER
+    marker = LOGIC.SUBMODULE_MARKER
     for other in AUTO_PIPELINE.COLLECT_AUTO_PIPELINE_REGIONS(parser_state):
         if other.group == region.group and not other.inst.startswith(
             plan.main_inst + marker
@@ -5582,7 +5581,7 @@ def LOCK_BLOCKED_REASON(func, plan, targets, parser_state):
         for region in getattr(plan, "regions", ()):
             if not _INSTS_CONFLICT(func_inst, region.inst):
                 continue
-            if not func_inst.startswith(region.inst + C_TO_LOGIC.SUBMODULE_MARKER):
+            if not func_inst.startswith(region.inst + LOGIC.SUBMODULE_MARKER):
                 return "constrained AUTO_PIPELINE region"
             reason = REGION_INTERIOR_LOCK_BLOCKER(region, plan, parser_state)
             if reason is not None:
@@ -6290,7 +6289,7 @@ def PRINT_FLOOR_REPORT(plan, parser_state):
             is_hard = blame is not None and blame.hard
             blame_str = ""
             if blame is not None:
-                blame_str = f" due to {blame.inst_path.split(C_TO_LOGIC.SUBMODULE_MARKER)[-1]} ({blame.reason}, {landscape.floor_ns:.1f} ns unsliceable)"
+                blame_str = f" due to {blame.inst_path.split(LOGIC.SUBMODULE_MARKER)[-1]} ({blame.reason}, {landscape.floor_ns:.1f} ns unsliceable)"
             soft_str = "" if is_hard else " (soft)"
             msg += f", estimated frequency ceiling{soft_str} ~{floor:.1f} MHz{blame_str}"
             is_mux_bank = blame is not None and blame.reason == "mux_packed_bank"
@@ -6446,7 +6445,7 @@ def DO_PLANNED_THROUGHPUT_SWEEP(parser_state, multimain_timing_params):
             (
                 plan
                 for main_inst, plan in plans.items()
-                if region.inst.startswith(main_inst + C_TO_LOGIC.SUBMODULE_MARKER)
+                if region.inst.startswith(main_inst + LOGIC.SUBMODULE_MARKER)
             ),
             None,
         )
@@ -7246,7 +7245,7 @@ def DO_PLANNED_THROUGHPUT_SWEEP(parser_state, multimain_timing_params):
                         floor_blame = hard_blame if at_hard_floor else soft_blame
                         blame_str = ""
                         if floor_blame is not None:
-                            blame_str = f" due to {floor_blame.inst_path.split(C_TO_LOGIC.SUBMODULE_MARKER)[-1]} ({floor_blame.reason})"
+                            blame_str = f" due to {floor_blame.inst_path.split(LOGIC.SUBMODULE_MARKER)[-1]} ({floor_blame.reason})"
                         kind_str = "predicted" if at_hard_floor else "empirical (soft)"
                         print(
                             f"[sweep] WARNING: {main_logic.func_name} at {kind_str} frequency ceiling "
@@ -7266,7 +7265,7 @@ def DO_PLANNED_THROUGHPUT_SWEEP(parser_state, multimain_timing_params):
                             and soft_blame is not None
                         ):
                             blamed = soft_blame.inst_path.split(
-                                C_TO_LOGIC.SUBMODULE_MARKER
+                                LOGIC.SUBMODULE_MARKER
                             )[-1]
                             plan.plateau_blame = (
                                 f"likely limited by {blamed} ({soft_blame.reason}, "
@@ -8932,7 +8931,7 @@ def PATH_INSIDE_LOCK(path, plan, parser_state, tpl, hotspot_func=None):
     if not path.start_reg_name or not path.end_reg_name:
         return False
     root = plan.main_inst
-    marker = C_TO_LOGIC.SUBMODULE_MARKER
+    marker = LOGIC.SUBMODULE_MARKER
     entity = VHDL.GET_ENTITY_NAME(
         root, parser_state.LogicInstLookupTable[root], tpl, parser_state
     )
@@ -8947,7 +8946,7 @@ def PATH_INSIDE_LOCK(path, plan, parser_state, tpl, hotspot_func=None):
             local = local[len(marker) :]  # a prefix, not a character set
         names = [
             VHDL.WIRE_TO_VHDL_NAME(n, parser_state)
-            for n in local.split(C_TO_LOGIC.SUBMODULE_MARKER)
+            for n in local.split(LOGIC.SUBMODULE_MARKER)
             if n
         ]
         prefix = "/".join([entity] + names) + "/"
@@ -9026,9 +9025,9 @@ def RECORD_SYNTHESIS_OBSERVATION(parser_state, params, report, iteration):
         for local, key in sorted(
             getattr(logic, "sub_inst_to_auto_pipeline_key", {}).items()
         ):
-            child = inst + C_TO_LOGIC.SUBMODULE_MARKER + local
+            child = inst + LOGIC.SUBMODULE_MARKER + local
             if key is not None and child in tpl:
-                owner = child.split(C_TO_LOGIC.SUBMODULE_MARKER, 1)[0]
+                owner = child.split(LOGIC.SUBMODULE_MARKER, 1)[0]
                 regions.setdefault("AUTO_PIPELINE:" + owner + ":" + key, {})[child] = tpl[
                     child
                 ].GET_TOTAL_LATENCY(parser_state, tpl)

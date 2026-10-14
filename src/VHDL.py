@@ -8,11 +8,11 @@ import shutil
 import sys
 
 import C_TO_LOGIC
+import LOGIC
 import CXXRTL
 import QUARTUS
 import RAW_VHDL
 import SIM
-import SW_LIB
 import SYN
 import VERILATOR
 import VIVADO
@@ -127,9 +127,9 @@ def INIT_C_AST_NODE_TO_VHDL_INIT_STR(c_ast_init, c_type, logic, parser_state):
         # What is expected for this expression given type?
         ref_toks = None
         expr_node = None
-        if type(c_ast_init) == c_ast.InitList and C_TO_LOGIC.C_TYPE_IS_ARRAY(c_type):
+        if type(c_ast_init) == c_ast.InitList and LOGIC.C_TYPE_IS_ARRAY(c_type):
             # Array
-            elem_t, dims = C_TO_LOGIC.C_ARRAY_TYPE_TO_ELEM_TYPE_AND_DIMS(c_type)
+            elem_t, dims = LOGIC.C_ARRAY_TYPE_TO_ELEM_TYPE_AND_DIMS(c_type)
             expr_node = init_expr
             expr_type_dims = dims[1:]
             expr_type = elem_t
@@ -144,7 +144,7 @@ def INIT_C_AST_NODE_TO_VHDL_INIT_STR(c_ast_init, c_type, logic, parser_state):
                 expr_node, expr_type, logic, parser_state
             )
 
-        elif type(c_ast_init) == c_ast.InitList and C_TO_LOGIC.C_TYPE_IS_STRUCT(
+        elif type(c_ast_init) == c_ast.InitList and LOGIC.C_TYPE_IS_STRUCT(
             c_type, parser_state
         ):
             # Struct
@@ -172,13 +172,13 @@ def INIT_C_AST_NODE_TO_VHDL_INIT_STR(c_ast_init, c_type, logic, parser_state):
 
     # Assemble text
     text = "(\n"
-    if C_TO_LOGIC.C_TYPE_IS_ARRAY(c_type):
+    if LOGIC.C_TYPE_IS_ARRAY(c_type):
         for array_index in index_to_vhdl_str:
             text += str(array_index) + " => " + index_to_vhdl_str[array_index] + ",\n"
         text += (
             "others => " + C_TYPE_STR_TO_VHDL_NULL_STR(expr_type, parser_state) + ",\n"
         )
-    elif C_TO_LOGIC.C_TYPE_IS_STRUCT(c_type, parser_state):
+    elif LOGIC.C_TYPE_IS_STRUCT(c_type, parser_state):
         field_type_dict = parser_state.struct_to_field_type_dict[c_type]
         field_names_list = list(field_type_dict.keys())
         field_types_list = list(field_type_dict.values())
@@ -213,9 +213,9 @@ def INIT_PYTHON_VAL_TO_VHDL_INIT_STR(py_val, c_type, logic, parser_state):
     if (
         isinstance(py_val, (list, tuple))
         and not hasattr(py_val, "_fields")
-        and C_TO_LOGIC.C_TYPE_IS_ARRAY(c_type)
+        and LOGIC.C_TYPE_IS_ARRAY(c_type)
     ):
-        elem_t, dims = C_TO_LOGIC.C_ARRAY_TYPE_TO_ELEM_TYPE_AND_DIMS(c_type)
+        elem_t, dims = LOGIC.C_ARRAY_TYPE_TO_ELEM_TYPE_AND_DIMS(c_type)
         sub_elem_type = elem_t
         for d in dims[1:]:
             sub_elem_type += f"[{d}]"
@@ -240,7 +240,7 @@ def INIT_PYTHON_VAL_TO_VHDL_INIT_STR(py_val, c_type, logic, parser_state):
     if (
         isinstance(py_val, tuple)
         and hasattr(py_val, "_fields")
-        and C_TO_LOGIC.C_TYPE_IS_STRUCT(c_type, parser_state)
+        and LOGIC.C_TYPE_IS_STRUCT(c_type, parser_state)
     ):
         field_type_dict = parser_state.struct_to_field_type_dict[c_type]
         member_to_vhdl = {}
@@ -266,7 +266,7 @@ def INIT_PYTHON_VAL_TO_VHDL_INIT_STR(py_val, c_type, logic, parser_state):
         return text
 
     # Struct: dict style — {"field1": 0, "field2": 5}
-    if isinstance(py_val, dict) and C_TO_LOGIC.C_TYPE_IS_STRUCT(c_type, parser_state):
+    if isinstance(py_val, dict) and LOGIC.C_TYPE_IS_STRUCT(c_type, parser_state):
         field_type_dict = parser_state.struct_to_field_type_dict[c_type]
         member_to_vhdl = {}
         for field_name, field_val in py_val.items():
@@ -298,7 +298,7 @@ def INIT_PYTHON_VAL_TO_VHDL_INIT_STR(py_val, c_type, logic, parser_state):
 def STATE_REG_TO_VHDL_INIT_STR(wire, logic, parser_state):
     parser_state.existing_logic = logic
     # Does this wire have an init?
-    leaf = C_TO_LOGIC.LEAF_NAME(wire, True)
+    leaf = LOGIC.LEAF_NAME(wire, True)
     c_type = logic.wire_to_c_type[wire]
     init = None
     if leaf in logic.state_regs:
@@ -369,7 +369,7 @@ def GLOBAL_WIRE_SUB_C_TYPE(c_type, path_tok, parser_state):
     constant array index (int token) -> the sub-element's c type string."""
     if isinstance(path_tok, str):
         return parser_state.struct_to_field_type_dict[c_type][path_tok]
-    elem_t, dims = C_TO_LOGIC.C_ARRAY_TYPE_TO_ELEM_TYPE_AND_DIMS(c_type)
+    elem_t, dims = LOGIC.C_ARRAY_TYPE_TO_ELEM_TYPE_AND_DIMS(c_type)
     sub_t = elem_t
     for d in dims[1:]:
         sub_t += f"[{d}]"
@@ -408,13 +408,13 @@ def BUILD_MULTI_WRITER_REGIONS(base_c_type, writer_to_driven_paths, parser_state
         if not has_deeper:
             regions.append((suffix, c_type, None))
             return
-        if C_TO_LOGIC.C_TYPE_IS_STRUCT(c_type, parser_state):
+        if LOGIC.C_TYPE_IS_STRUCT(c_type, parser_state):
             for field, field_type in parser_state.struct_to_field_type_dict[
                 c_type
             ].items():
                 recurse(field_type, path + (field,), suffix + "." + field)
-        elif C_TO_LOGIC.C_TYPE_IS_ARRAY(c_type):
-            elem_t, dims = C_TO_LOGIC.C_ARRAY_TYPE_TO_ELEM_TYPE_AND_DIMS(c_type)
+        elif LOGIC.C_TYPE_IS_ARRAY(c_type):
+            elem_t, dims = LOGIC.C_ARRAY_TYPE_TO_ELEM_TYPE_AND_DIMS(c_type)
             sub_t = elem_t
             for d in dims[1:]:
                 sub_t += f"[{d}]"
@@ -739,10 +739,10 @@ begin
                 write_func_inst = list(write_insts)[0]
                 # Assemble driver write wire text
                 write_func_inst_toks = write_func_inst.split(
-                    C_TO_LOGIC.SUBMODULE_MARKER
+                    LOGIC.SUBMODULE_MARKER
                 )
                 # Start with main func then apply hier instances
-                write_text = C_TO_LOGIC.RECURSIVE_FIND_MAIN_FUNC_FROM_INST(
+                write_text = LOGIC.RECURSIVE_FIND_MAIN_FUNC_FROM_INST(
                     write_func_inst, parser_state
                 )
                 for write_func_inst_tok in write_func_inst_toks[
@@ -871,7 +871,7 @@ begin
             parser_state,
             multimain_timing_params.TimingParamsLookupTable,
         )
-        main_needs_clk_en = C_TO_LOGIC.LOGIC_NEEDS_CLOCK_ENABLE(
+        main_needs_clk_en = LOGIC.LOGIC_NEEDS_CLOCK_ENABLE(
             main_func_logic, parser_state
         )
         main_needs_global_to_module = LOGIC_NEEDS_GLOBAL_TO_MODULE(
@@ -1014,10 +1014,10 @@ begin
                 sorted(write_func_insts)
             ):
                 write_func_inst_toks = write_func_inst.split(
-                    C_TO_LOGIC.SUBMODULE_MARKER
+                    LOGIC.SUBMODULE_MARKER
                 )
                 # Start with main func then apply hier instances
-                write_text = C_TO_LOGIC.RECURSIVE_FIND_MAIN_FUNC_FROM_INST(
+                write_text = LOGIC.RECURSIVE_FIND_MAIN_FUNC_FROM_INST(
                     write_func_inst, parser_state
                 )
                 for write_func_inst_tok in write_func_inst_toks[
@@ -1026,7 +1026,7 @@ begin
                     write_func_inst_str = WIRE_TO_VHDL_NAME(write_func_inst_tok)
                     write_text += "." + write_func_inst_str
                 write_text += "." + write_func
-                if C_TO_LOGIC.LOGIC_NEEDS_CLOCK_ENABLE(write_func_logic, parser_state):
+                if LOGIC.LOGIC_NEEDS_CLOCK_ENABLE(write_func_logic, parser_state):
                     # Clk in enable
                     text += (
                         io_prefix
@@ -1035,7 +1035,7 @@ begin
                         + " => module_to_global."
                         + write_text
                         + "_"
-                        + C_TO_LOGIC.CLOCK_ENABLE_NAME
+                        + LOGIC.CLOCK_ENABLE_NAME
                         + ",\n"
                     )
                 # Clk cross in data from pipeline output
@@ -1068,9 +1068,9 @@ begin
                     )
             # Clk cross out data to pipeline input
             for read_func_inst_i, read_func_inst in enumerate(sorted(read_func_insts)):
-                read_func_inst_toks = read_func_inst.split(C_TO_LOGIC.SUBMODULE_MARKER)
+                read_func_inst_toks = read_func_inst.split(LOGIC.SUBMODULE_MARKER)
                 # Start with main func then apply hier instances
-                read_text = C_TO_LOGIC.RECURSIVE_FIND_MAIN_FUNC_FROM_INST(
+                read_text = LOGIC.RECURSIVE_FIND_MAIN_FUNC_FROM_INST(
                     read_func_inst, parser_state
                 )
                 for read_func_inst_tok in read_func_inst_toks[
@@ -1079,7 +1079,7 @@ begin
                     read_func_inst_str = WIRE_TO_VHDL_NAME(read_func_inst_tok)
                     read_text += "." + read_func_inst_str
                 read_text += "." + read_func
-                if C_TO_LOGIC.LOGIC_NEEDS_CLOCK_ENABLE(read_func_logic, parser_state):
+                if LOGIC.LOGIC_NEEDS_CLOCK_ENABLE(read_func_logic, parser_state):
                     # Clk out enable
                     text += (
                         io_prefix
@@ -1088,7 +1088,7 @@ begin
                         + " => module_to_global."
                         + read_text
                         + "_"
-                        + C_TO_LOGIC.CLOCK_ENABLE_NAME
+                        + LOGIC.CLOCK_ENABLE_NAME
                         + ",\n"
                     )
                 for input_port in read_func_logic.inputs:
@@ -1180,7 +1180,7 @@ begin
             # Try to resolve multiple matches
             if var_info.path_id is not None:
                 internal_path_id = var_info.path_id.replace(
-                    "/", C_TO_LOGIC.SUBMODULE_MARKER
+                    "/", LOGIC.SUBMODULE_MARKER
                 )
                 # Try to resolve to a specific instance
                 matching_insts = []
@@ -1222,10 +1222,10 @@ begin
                 text += "in_clk => clk_" + write_clk_ext_str + ",\n"
                 for write_func_inst in write_func_insts:
                     write_func_inst_toks = write_func_inst.split(
-                        C_TO_LOGIC.SUBMODULE_MARKER
+                        LOGIC.SUBMODULE_MARKER
                     )
                     # Start with main func then apply hier instances
-                    write_text = C_TO_LOGIC.RECURSIVE_FIND_MAIN_FUNC_FROM_INST(
+                    write_text = LOGIC.RECURSIVE_FIND_MAIN_FUNC_FROM_INST(
                         write_func_inst, parser_state
                     )
                     for write_func_inst_tok in write_func_inst_toks[
@@ -1234,7 +1234,7 @@ begin
                         write_func_inst_str = WIRE_TO_VHDL_NAME(write_func_inst_tok)
                         write_text += "." + write_func_inst_str
                     write_text += "." + write_func
-                    if C_TO_LOGIC.LOGIC_NEEDS_CLOCK_ENABLE(
+                    if LOGIC.LOGIC_NEEDS_CLOCK_ENABLE(
                         write_func_logic, parser_state
                     ):
                         # Clk in enable
@@ -1242,7 +1242,7 @@ begin
                             "in_clk_en => module_to_global."
                             + write_text
                             + "_"
-                            + C_TO_LOGIC.CLOCK_ENABLE_NAME
+                            + LOGIC.CLOCK_ENABLE_NAME
                             + ",\n"
                         )
                     # Clk cross in data from pipeline output
@@ -1272,10 +1272,10 @@ begin
                 # Clk cross out data to pipeline input
                 for read_func_inst in read_func_insts:
                     read_func_inst_toks = read_func_inst.split(
-                        C_TO_LOGIC.SUBMODULE_MARKER
+                        LOGIC.SUBMODULE_MARKER
                     )
                     # Start with main func then apply hier instances
-                    read_text = C_TO_LOGIC.RECURSIVE_FIND_MAIN_FUNC_FROM_INST(
+                    read_text = LOGIC.RECURSIVE_FIND_MAIN_FUNC_FROM_INST(
                         read_func_inst, parser_state
                     )
                     for read_func_inst_tok in read_func_inst_toks[
@@ -1284,7 +1284,7 @@ begin
                         read_func_inst_str = WIRE_TO_VHDL_NAME(read_func_inst_tok)
                         read_text += "." + read_func_inst_str
                     read_text += "." + read_func
-                    if C_TO_LOGIC.LOGIC_NEEDS_CLOCK_ENABLE(
+                    if LOGIC.LOGIC_NEEDS_CLOCK_ENABLE(
                         read_func_logic, parser_state
                     ):
                         # Clk out enable
@@ -1292,7 +1292,7 @@ begin
                             "out_clk_en => module_to_global."
                             + read_text
                             + "_"
-                            + C_TO_LOGIC.CLOCK_ENABLE_NAME
+                            + LOGIC.CLOCK_ENABLE_NAME
                             + ",\n"
                         )
                     for input_port in read_func_logic.inputs:
@@ -1324,10 +1324,10 @@ begin
                 # Can have multiple outputs/read funcs
                 for read_func_inst in read_func_insts:
                     read_func_inst_toks = read_func_inst.split(
-                        C_TO_LOGIC.SUBMODULE_MARKER
+                        LOGIC.SUBMODULE_MARKER
                     )
                     # Start with main func then apply hier instances
-                    read_text = C_TO_LOGIC.RECURSIVE_FIND_MAIN_FUNC_FROM_INST(
+                    read_text = LOGIC.RECURSIVE_FIND_MAIN_FUNC_FROM_INST(
                         read_func_inst, parser_state
                     )
                     for read_func_inst_tok in read_func_inst_toks[
@@ -1382,8 +1382,8 @@ begin
             # Start with main func then apply hier instances, ending at vname --
             # e.g. "main_a.some_sub_inst.main_ab_out" -- shared by write-,
             # read-, and readback-side text assembly below.
-            toks = func_inst.split(C_TO_LOGIC.SUBMODULE_MARKER)
-            t = C_TO_LOGIC.RECURSIVE_FIND_MAIN_FUNC_FROM_INST(func_inst, parser_state)
+            toks = func_inst.split(LOGIC.SUBMODULE_MARKER)
+            t = LOGIC.RECURSIVE_FIND_MAIN_FUNC_FROM_INST(func_inst, parser_state)
             for tok in toks[1:]:
                 t += "." + WIRE_TO_VHDL_NAME(tok)
             return t + "." + vname
@@ -1477,7 +1477,7 @@ begin
         rw_func_insts |= read_insts
         rw_clk_names = set()
         for rw_func_inst in rw_func_insts:
-            rw_main_func = C_TO_LOGIC.RECURSIVE_FIND_MAIN_FUNC_FROM_INST(
+            rw_main_func = LOGIC.RECURSIVE_FIND_MAIN_FUNC_FROM_INST(
                 rw_func_inst, parser_state
             )
             rw_clk_name = CLK_EXT_STR(rw_main_func, parser_state)
@@ -1543,8 +1543,8 @@ begin
             if func_name not in parser_state.FuncToInstances:
                 continue
             for func_inst in parser_state.FuncToInstances[func_name]:
-                toks = func_inst.split(C_TO_LOGIC.SUBMODULE_MARKER)
-                t = C_TO_LOGIC.RECURSIVE_FIND_MAIN_FUNC_FROM_INST(
+                toks = func_inst.split(LOGIC.SUBMODULE_MARKER)
+                t = LOGIC.RECURSIVE_FIND_MAIN_FUNC_FROM_INST(
                     func_inst, parser_state
                 )
                 for tok in toks[1:]:
@@ -1596,11 +1596,11 @@ begin
         # Find the many read funcs that read the special array version of variable
         rd_var_name = parser_state.inst_array_dict[wr_var_name]
         rd_var_info = parser_state.global_vars[rd_var_name]
-        if not C_TO_LOGIC.C_TYPE_IS_ARRAY(rd_var_info.type_name):
+        if not LOGIC.C_TYPE_IS_ARRAY(rd_var_info.type_name):
             raise Exception(
                 f"Instance array read variable {rd_var_name} is not an array!"
             )
-        elem_t, dims = C_TO_LOGIC.C_ARRAY_TYPE_TO_ELEM_TYPE_AND_DIMS(
+        elem_t, dims = LOGIC.C_ARRAY_TYPE_TO_ELEM_TYPE_AND_DIMS(
             rd_var_info.type_name
         )
         if len(dims) != 1:
@@ -1632,7 +1632,7 @@ begin
         rw_func_insts |= write_insts
         rw_clk_names = set()
         for rw_func_inst in rw_func_insts:
-            rw_main_func = C_TO_LOGIC.RECURSIVE_FIND_MAIN_FUNC_FROM_INST(
+            rw_main_func = LOGIC.RECURSIVE_FIND_MAIN_FUNC_FROM_INST(
                 rw_func_inst, parser_state
             )
             rw_clk_name = CLK_EXT_STR(rw_main_func, parser_state)
@@ -1647,9 +1647,9 @@ begin
         #    raise Exception(f"No instances of reader funcs {read_funcs} which is reading sides of INST_ARRAY var {wr_var_name}!?")
         for read_func_inst in read_insts:
             # Assemble driven read wire text
-            read_func_inst_toks = read_func_inst.split(C_TO_LOGIC.SUBMODULE_MARKER)
+            read_func_inst_toks = read_func_inst.split(LOGIC.SUBMODULE_MARKER)
             # Start with main func then apply hier instances
-            read_text = C_TO_LOGIC.RECURSIVE_FIND_MAIN_FUNC_FROM_INST(
+            read_text = LOGIC.RECURSIVE_FIND_MAIN_FUNC_FROM_INST(
                 read_func_inst, parser_state
             )
             for read_func_inst_tok in read_func_inst_toks[1 : len(read_func_inst_toks)]:
@@ -1662,10 +1662,10 @@ begin
             for write_inst_i in range(0, len(write_insts_list)):
                 write_func_inst = write_insts_list[write_inst_i]
                 write_func_inst_toks = write_func_inst.split(
-                    C_TO_LOGIC.SUBMODULE_MARKER
+                    LOGIC.SUBMODULE_MARKER
                 )
                 # Start with main func then apply hier instances
-                write_text = C_TO_LOGIC.RECURSIVE_FIND_MAIN_FUNC_FROM_INST(
+                write_text = LOGIC.RECURSIVE_FIND_MAIN_FUNC_FROM_INST(
                     write_func_inst, parser_state
                 )
                 for write_func_inst_tok in write_func_inst_toks[
@@ -1728,11 +1728,11 @@ begin
         wr_var_name = parser_state.inst_array_dict[rd_var_name]
         wr_var_info = parser_state.global_vars[wr_var_name]
 
-        if not C_TO_LOGIC.C_TYPE_IS_ARRAY(wr_var_info.type_name):
+        if not LOGIC.C_TYPE_IS_ARRAY(wr_var_info.type_name):
             raise Exception(
                 f"Instance array write variable {wr_var_name} is not an array!"
             )
-        elem_t, dims = C_TO_LOGIC.C_ARRAY_TYPE_TO_ELEM_TYPE_AND_DIMS(
+        elem_t, dims = LOGIC.C_ARRAY_TYPE_TO_ELEM_TYPE_AND_DIMS(
             wr_var_info.type_name
         )
         if len(dims) != 1:
@@ -1769,7 +1769,7 @@ begin
         rw_func_insts.add(write_func_inst)
         rw_clk_names = set()
         for rw_func_inst in rw_func_insts:
-            rw_main_func = C_TO_LOGIC.RECURSIVE_FIND_MAIN_FUNC_FROM_INST(
+            rw_main_func = LOGIC.RECURSIVE_FIND_MAIN_FUNC_FROM_INST(
                 rw_func_inst, parser_state
             )
             rw_clk_name = CLK_EXT_STR(rw_main_func, parser_state)
@@ -1780,9 +1780,9 @@ begin
                 )
 
         # Determine write side array element text
-        write_func_inst_toks = write_func_inst.split(C_TO_LOGIC.SUBMODULE_MARKER)
+        write_func_inst_toks = write_func_inst.split(LOGIC.SUBMODULE_MARKER)
         # Start with main func then apply hier instances
-        write_text = C_TO_LOGIC.RECURSIVE_FIND_MAIN_FUNC_FROM_INST(
+        write_text = LOGIC.RECURSIVE_FIND_MAIN_FUNC_FROM_INST(
             write_func_inst, parser_state
         )
         for write_func_inst_tok in write_func_inst_toks[1 : len(write_func_inst_toks)]:
@@ -1794,9 +1794,9 @@ begin
         for read_inst_i in range(0, len(read_insts_list)):
             read_func_inst = read_insts_list[read_inst_i]
             # Assemble driven read wire text
-            read_func_inst_toks = read_func_inst.split(C_TO_LOGIC.SUBMODULE_MARKER)
+            read_func_inst_toks = read_func_inst.split(LOGIC.SUBMODULE_MARKER)
             # Start with main func then apply hier instances
-            read_text = C_TO_LOGIC.RECURSIVE_FIND_MAIN_FUNC_FROM_INST(
+            read_text = LOGIC.RECURSIVE_FIND_MAIN_FUNC_FROM_INST(
                 read_func_inst, parser_state
             )
             for read_func_inst_tok in read_func_inst_toks[1 : len(read_func_inst_toks)]:
@@ -1914,7 +1914,7 @@ def GET_BLACKBOX_MODULE_TEXT(inst_name, Logic, parser_state, TimingParamsLookupT
         + " "
         + "if rising_edge(clk) then\n"
         + "   if "
-        + C_TO_LOGIC.CLOCK_ENABLE_NAME
+        + LOGIC.CLOCK_ENABLE_NAME
         + "(0)='1' then"
         + "\n"
     )
@@ -1976,7 +1976,7 @@ def WRITE_LOGIC_TOP(
     needs_clk = LOGIC_NEEDS_CLOCK(
         inst_name, Logic, parser_state, TimingParamsLookupTable
     )
-    needs_clk_en = C_TO_LOGIC.LOGIC_NEEDS_CLOCK_ENABLE(Logic, parser_state)
+    needs_clk_en = LOGIC.LOGIC_NEEDS_CLOCK_ENABLE(Logic, parser_state)
     needs_global_to_module = LOGIC_NEEDS_GLOBAL_TO_MODULE(
         Logic, parser_state
     )  # , TimingParamsLookupTable)
@@ -2318,10 +2318,10 @@ def GET_WIDTH_FROM_C_N_BITS_INT_TYPE_STR(c_type_str):
 def GET_WIDTH_FROM_C_TYPE_STR(parser_state, c_type_str, allow_fail=False):
     if C_TYPE_IS_INT_N(c_type_str) or C_TYPE_IS_UINT_N(c_type_str):
         return GET_WIDTH_FROM_C_N_BITS_INT_TYPE_STR(c_type_str)
-    elif C_TO_LOGIC.C_TYPE_IS_FLOAT_TYPE(c_type_str):
-        e, m = C_TO_LOGIC.C_FLOAT_E_M_TYPE_TO_E_M(c_type_str)
+    elif LOGIC.C_TYPE_IS_FLOAT_TYPE(c_type_str):
+        e, m = LOGIC.C_FLOAT_E_M_TYPE_TO_E_M(c_type_str)
         return 1 + e + m
-    elif C_TO_LOGIC.C_TYPE_IS_ENUM(c_type_str, parser_state):
+    elif LOGIC.C_TYPE_IS_ENUM(c_type_str, parser_state):
         # Enum type
         return GET_WIDTH_FROM_C_N_BITS_INT_TYPE_STR(
             parser_state.enum_info_dict[c_type_str].int_c_type
@@ -2359,8 +2359,8 @@ def C_TYPES_ARE_INTEGERS(c_types):
     for c_type in c_types:
         # No dummy, arrays are not ints? You hacky hoe
         """
-        if C_TO_LOGIC.C_TYPE_IS_ARRAY(c_type):
-          elem_type, dims = C_TO_LOGIC.C_ARRAY_TYPE_TO_ELEM_TYPE_AND_DIMS(c_type)
+        if LOGIC.C_TYPE_IS_ARRAY(c_type):
+          elem_type, dims = LOGIC.C_ARRAY_TYPE_TO_ELEM_TYPE_AND_DIMS(c_type)
           c_type = elem_type
           #print "c_type",c_type
         """
@@ -2395,206 +2395,206 @@ def C_BUILT_IN_FUNC_IS_RAW_HDL(
         FORCE_RAW_INT_CMP_FOR_QOR_BENCH
         and C_TYPES_ARE_INTEGERS(input_c_types)
         and any(
-            logic_func_name.startswith(C_TO_LOGIC.BIN_OP_LOGIC_NAME_PREFIX + "_" + op)
+            logic_func_name.startswith(LOGIC.BIN_OP_LOGIC_NAME_PREFIX + "_" + op)
             for op in (
-                C_TO_LOGIC.BIN_OP_GTE_NAME,
-                C_TO_LOGIC.BIN_OP_LTE_NAME,
-                C_TO_LOGIC.BIN_OP_LT_NAME,
-                C_TO_LOGIC.BIN_OP_GT_NAME,
+                LOGIC.BIN_OP_GTE_NAME,
+                LOGIC.BIN_OP_LTE_NAME,
+                LOGIC.BIN_OP_LT_NAME,
+                LOGIC.BIN_OP_GT_NAME,
             )
         )
     ):
         return True
     # IS RAW VHDL
     if (
-        logic_func_name == C_TO_LOGIC.VHDL_FUNC_NAME
-        or SW_LIB.IS_BIT_MANIP_NAME(logic_func_name)
-        or C_TO_LOGIC.IS_SIM_CTRL_FUNC_NAME(logic_func_name)
-        or logic_func_name.startswith(C_TO_LOGIC.ACCUM_FUNC_NAME)
-        or logic_func_name.startswith(C_TO_LOGIC.CONST_REF_RD_FUNC_NAME_PREFIX + "_")
+        logic_func_name == LOGIC.VHDL_FUNC_NAME
+        or LOGIC.IS_BIT_MANIP_NAME(logic_func_name)
+        or LOGIC.IS_SIM_CTRL_FUNC_NAME(logic_func_name)
+        or logic_func_name.startswith(LOGIC.ACCUM_FUNC_NAME)
+        or logic_func_name.startswith(LOGIC.CONST_REF_RD_FUNC_NAME_PREFIX + "_")
         or (
             logic_func_name.startswith(
-                C_TO_LOGIC.CONST_PREFIX + C_TO_LOGIC.BIN_OP_SL_NAME + "_"
+                LOGIC.CONST_PREFIX + LOGIC.BIN_OP_SL_NAME + "_"
             )
             and C_TYPES_ARE_INTEGERS(input_c_types)
         )
         or (
             logic_func_name.startswith(
-                C_TO_LOGIC.CONST_PREFIX + C_TO_LOGIC.BIN_OP_SR_NAME + "_"
+                LOGIC.CONST_PREFIX + LOGIC.BIN_OP_SR_NAME + "_"
             )
             and C_TYPES_ARE_INTEGERS(input_c_types)
         )
         or (
             logic_func_name.startswith(
-                C_TO_LOGIC.UNARY_OP_LOGIC_NAME_PREFIX
+                LOGIC.UNARY_OP_LOGIC_NAME_PREFIX
                 + "_"
-                + C_TO_LOGIC.UNARY_OP_NOT_NAME
+                + LOGIC.UNARY_OP_NOT_NAME
             )
             and C_TYPES_ARE_INTEGERS(input_c_types)
         )
         or (
             logic_func_name.startswith(
-                C_TO_LOGIC.UNARY_OP_LOGIC_NAME_PREFIX
+                LOGIC.UNARY_OP_LOGIC_NAME_PREFIX
                 + "_"
-                + C_TO_LOGIC.UNARY_OP_NEGATE_NAME
+                + LOGIC.UNARY_OP_NEGATE_NAME
             )
-            and C_TO_LOGIC.C_TYPES_ARE_FLOAT_TYPES(input_c_types)
+            and LOGIC.C_TYPES_ARE_FLOAT_TYPES(input_c_types)
         )
         or (
             logic_func_name.startswith(
-                C_TO_LOGIC.BIN_OP_LOGIC_NAME_PREFIX
+                LOGIC.BIN_OP_LOGIC_NAME_PREFIX
                 + "_"
-                + C_TO_LOGIC.BIN_OP_INFERRED_MULT_NAME
+                + LOGIC.BIN_OP_INFERRED_MULT_NAME
             )
             and C_TYPES_ARE_INTEGERS(input_c_types)
         )
         or (
             logic_func_name.startswith(
-                C_TO_LOGIC.BIN_OP_LOGIC_NAME_PREFIX + "_" + C_TO_LOGIC.BIN_OP_PLUS_NAME
+                LOGIC.BIN_OP_LOGIC_NAME_PREFIX + "_" + LOGIC.BIN_OP_PLUS_NAME
             )
             and C_TYPES_ARE_INTEGERS(input_c_types)
         )
         or (
             logic_func_name.startswith(
-                C_TO_LOGIC.BIN_OP_LOGIC_NAME_PREFIX + "_" + C_TO_LOGIC.BIN_OP_MINUS_NAME
+                LOGIC.BIN_OP_LOGIC_NAME_PREFIX + "_" + LOGIC.BIN_OP_MINUS_NAME
             )
             and C_TYPES_ARE_INTEGERS(input_c_types)
         )
         or (
             logic_func_name.startswith(
-                C_TO_LOGIC.BIN_OP_LOGIC_NAME_PREFIX + "_" + C_TO_LOGIC.BIN_OP_EQ_NAME
+                LOGIC.BIN_OP_LOGIC_NAME_PREFIX + "_" + LOGIC.BIN_OP_EQ_NAME
             )
         )
         or (  # and C_TYPES_ARE_INTEGERS(input_c_types)
             logic_func_name.startswith(
-                C_TO_LOGIC.BIN_OP_LOGIC_NAME_PREFIX + "_" + C_TO_LOGIC.BIN_OP_NEQ_NAME
+                LOGIC.BIN_OP_LOGIC_NAME_PREFIX + "_" + LOGIC.BIN_OP_NEQ_NAME
             )
         )
         or (  # and C_TYPES_ARE_INTEGERS(input_c_types)
             logic_func_name.startswith(
-                C_TO_LOGIC.BIN_OP_LOGIC_NAME_PREFIX + "_" + C_TO_LOGIC.BIN_OP_AND_NAME
+                LOGIC.BIN_OP_LOGIC_NAME_PREFIX + "_" + LOGIC.BIN_OP_AND_NAME
             )
             and C_TYPES_ARE_INTEGERS(input_c_types)
         )
         or (
             logic_func_name.startswith(
-                C_TO_LOGIC.BIN_OP_LOGIC_NAME_PREFIX + "_" + C_TO_LOGIC.BIN_OP_OR_NAME
+                LOGIC.BIN_OP_LOGIC_NAME_PREFIX + "_" + LOGIC.BIN_OP_OR_NAME
             )
             and C_TYPES_ARE_INTEGERS(input_c_types)
         )
         or (
             logic_func_name.startswith(
-                C_TO_LOGIC.BIN_OP_LOGIC_NAME_PREFIX + "_" + C_TO_LOGIC.BIN_OP_XOR_NAME
+                LOGIC.BIN_OP_LOGIC_NAME_PREFIX + "_" + LOGIC.BIN_OP_XOR_NAME
             )
             and C_TYPES_ARE_INTEGERS(input_c_types)
         )
         or (
-            logic_func_name.startswith(C_TO_LOGIC.CAST_FUNC_NAME_PREFIX)
+            logic_func_name.startswith(LOGIC.CAST_FUNC_NAME_PREFIX)
             and C_TYPES_ARE_INTEGERS(input_c_types)
             and C_TYPES_ARE_INTEGERS([output_c_type])
         )
-        or (logic_func_name.startswith(C_TO_LOGIC.MUX_LOGIC_NAME))
+        or (logic_func_name.startswith(LOGIC.MUX_LOGIC_NAME))
     ):  # or
         return True
 
     # IS NOT RAW VHDL
     elif (
-        logic_func_name.startswith(C_TO_LOGIC.VAR_REF_RD_FUNC_NAME_PREFIX + "_")
-        or logic_func_name.startswith(C_TO_LOGIC.VAR_REF_ASSIGN_FUNC_NAME_PREFIX + "_")
+        logic_func_name.startswith(LOGIC.VAR_REF_RD_FUNC_NAME_PREFIX + "_")
+        or logic_func_name.startswith(LOGIC.VAR_REF_ASSIGN_FUNC_NAME_PREFIX + "_")
         or (
             logic_func_name.startswith(
-                C_TO_LOGIC.UNARY_OP_LOGIC_NAME_PREFIX
+                LOGIC.UNARY_OP_LOGIC_NAME_PREFIX
                 + "_"
-                + C_TO_LOGIC.UNARY_OP_NEGATE_NAME
+                + LOGIC.UNARY_OP_NEGATE_NAME
             )
             and C_TYPES_ARE_INTEGERS(input_c_types)
         )
-        or logic_func_name.startswith(C_TO_LOGIC.CAST_FUNC_NAME_PREFIX + "_")
+        or logic_func_name.startswith(LOGIC.CAST_FUNC_NAME_PREFIX + "_")
         or logic_func_name.startswith(
-            C_TO_LOGIC.BIN_OP_LOGIC_NAME_PREFIX + "_" + C_TO_LOGIC.BIN_OP_DIV_NAME
+            LOGIC.BIN_OP_LOGIC_NAME_PREFIX + "_" + LOGIC.BIN_OP_DIV_NAME
         )
         or logic_func_name.startswith(
-            C_TO_LOGIC.BIN_OP_LOGIC_NAME_PREFIX + "_" + C_TO_LOGIC.BIN_OP_MULT_NAME
+            LOGIC.BIN_OP_LOGIC_NAME_PREFIX + "_" + LOGIC.BIN_OP_MULT_NAME
         )
         or logic_func_name.startswith(
-            C_TO_LOGIC.BIN_OP_LOGIC_NAME_PREFIX + "_" + C_TO_LOGIC.BIN_OP_MOD_NAME
+            LOGIC.BIN_OP_LOGIC_NAME_PREFIX + "_" + LOGIC.BIN_OP_MOD_NAME
         )
         or (
             logic_func_name.startswith(
-                C_TO_LOGIC.BIN_OP_LOGIC_NAME_PREFIX
+                LOGIC.BIN_OP_LOGIC_NAME_PREFIX
                 + "_"
-                + C_TO_LOGIC.BIN_OP_INFERRED_MULT_NAME
+                + LOGIC.BIN_OP_INFERRED_MULT_NAME
             )
-            and C_TO_LOGIC.C_TYPE_IS_FLOAT_TYPE(output_c_type)
+            and LOGIC.C_TYPE_IS_FLOAT_TYPE(output_c_type)
         )
         or (
             logic_func_name.startswith(
-                C_TO_LOGIC.BIN_OP_LOGIC_NAME_PREFIX + "_" + C_TO_LOGIC.BIN_OP_SL_NAME
-            )
-        )
-        or (
-            logic_func_name.startswith(
-                C_TO_LOGIC.BIN_OP_LOGIC_NAME_PREFIX + "_" + C_TO_LOGIC.BIN_OP_SR_NAME
+                LOGIC.BIN_OP_LOGIC_NAME_PREFIX + "_" + LOGIC.BIN_OP_SL_NAME
             )
         )
         or (
             logic_func_name.startswith(
-                C_TO_LOGIC.BIN_OP_LOGIC_NAME_PREFIX + "_" + C_TO_LOGIC.BIN_OP_GT_NAME
+                LOGIC.BIN_OP_LOGIC_NAME_PREFIX + "_" + LOGIC.BIN_OP_SR_NAME
             )
-            and C_TO_LOGIC.C_TYPES_ARE_FLOAT_TYPES(input_c_types)
         )
         or (
             logic_func_name.startswith(
-                C_TO_LOGIC.BIN_OP_LOGIC_NAME_PREFIX + "_" + C_TO_LOGIC.BIN_OP_GTE_NAME
+                LOGIC.BIN_OP_LOGIC_NAME_PREFIX + "_" + LOGIC.BIN_OP_GT_NAME
             )
-            and C_TO_LOGIC.C_TYPES_ARE_FLOAT_TYPES(input_c_types)
+            and LOGIC.C_TYPES_ARE_FLOAT_TYPES(input_c_types)
         )
         or (
             logic_func_name.startswith(
-                C_TO_LOGIC.BIN_OP_LOGIC_NAME_PREFIX + "_" + C_TO_LOGIC.BIN_OP_LT_NAME
+                LOGIC.BIN_OP_LOGIC_NAME_PREFIX + "_" + LOGIC.BIN_OP_GTE_NAME
             )
-            and C_TO_LOGIC.C_TYPES_ARE_FLOAT_TYPES(input_c_types)
+            and LOGIC.C_TYPES_ARE_FLOAT_TYPES(input_c_types)
         )
         or (
             logic_func_name.startswith(
-                C_TO_LOGIC.BIN_OP_LOGIC_NAME_PREFIX + "_" + C_TO_LOGIC.BIN_OP_LTE_NAME
+                LOGIC.BIN_OP_LOGIC_NAME_PREFIX + "_" + LOGIC.BIN_OP_LT_NAME
             )
-            and C_TO_LOGIC.C_TYPES_ARE_FLOAT_TYPES(input_c_types)
+            and LOGIC.C_TYPES_ARE_FLOAT_TYPES(input_c_types)
         )
         or (
             logic_func_name.startswith(
-                C_TO_LOGIC.BIN_OP_LOGIC_NAME_PREFIX + "_" + C_TO_LOGIC.BIN_OP_PLUS_NAME
+                LOGIC.BIN_OP_LOGIC_NAME_PREFIX + "_" + LOGIC.BIN_OP_LTE_NAME
             )
-            and C_TO_LOGIC.C_TYPES_ARE_FLOAT_TYPES(input_c_types)
+            and LOGIC.C_TYPES_ARE_FLOAT_TYPES(input_c_types)
         )
         or (
             logic_func_name.startswith(
-                C_TO_LOGIC.BIN_OP_LOGIC_NAME_PREFIX + "_" + C_TO_LOGIC.BIN_OP_MINUS_NAME
+                LOGIC.BIN_OP_LOGIC_NAME_PREFIX + "_" + LOGIC.BIN_OP_PLUS_NAME
             )
-            and C_TO_LOGIC.C_TYPES_ARE_FLOAT_TYPES(input_c_types)
-        )
-        or (logic_func_name.startswith(C_TO_LOGIC.ONE_HOT_EQ_LOGIC_NAME))
-        or (
-            logic_func_name.startswith(
-                C_TO_LOGIC.BIN_OP_LOGIC_NAME_PREFIX + "_" + C_TO_LOGIC.BIN_OP_GTE_NAME
-            )
-            and C_TYPES_ARE_INTEGERS(input_c_types)
+            and LOGIC.C_TYPES_ARE_FLOAT_TYPES(input_c_types)
         )
         or (
             logic_func_name.startswith(
-                C_TO_LOGIC.BIN_OP_LOGIC_NAME_PREFIX + "_" + C_TO_LOGIC.BIN_OP_LTE_NAME
+                LOGIC.BIN_OP_LOGIC_NAME_PREFIX + "_" + LOGIC.BIN_OP_MINUS_NAME
+            )
+            and LOGIC.C_TYPES_ARE_FLOAT_TYPES(input_c_types)
+        )
+        or (logic_func_name.startswith(LOGIC.ONE_HOT_EQ_LOGIC_NAME))
+        or (
+            logic_func_name.startswith(
+                LOGIC.BIN_OP_LOGIC_NAME_PREFIX + "_" + LOGIC.BIN_OP_GTE_NAME
             )
             and C_TYPES_ARE_INTEGERS(input_c_types)
         )
         or (
             logic_func_name.startswith(
-                C_TO_LOGIC.BIN_OP_LOGIC_NAME_PREFIX + "_" + C_TO_LOGIC.BIN_OP_LT_NAME
+                LOGIC.BIN_OP_LOGIC_NAME_PREFIX + "_" + LOGIC.BIN_OP_LTE_NAME
             )
             and C_TYPES_ARE_INTEGERS(input_c_types)
         )
         or (
             logic_func_name.startswith(
-                C_TO_LOGIC.BIN_OP_LOGIC_NAME_PREFIX + "_" + C_TO_LOGIC.BIN_OP_GT_NAME
+                LOGIC.BIN_OP_LOGIC_NAME_PREFIX + "_" + LOGIC.BIN_OP_LT_NAME
+            )
+            and C_TYPES_ARE_INTEGERS(input_c_types)
+        )
+        or (
+            logic_func_name.startswith(
+                LOGIC.BIN_OP_LOGIC_NAME_PREFIX + "_" + LOGIC.BIN_OP_GT_NAME
             )
             and C_TYPES_ARE_INTEGERS(input_c_types)
         )
@@ -2740,10 +2740,10 @@ use work.c_structs_pkg.all; -- User types
             read_func_insts = parser_state.FuncToInstances[read_func]
             for write_func_inst_i, write_func_inst in enumerate(write_func_insts):
                 write_func_inst_toks = write_func_inst.split(
-                    C_TO_LOGIC.SUBMODULE_MARKER
+                    LOGIC.SUBMODULE_MARKER
                 )
                 # Start with main func then apply hier instances
-                write_text = C_TO_LOGIC.RECURSIVE_FIND_MAIN_FUNC_FROM_INST(
+                write_text = LOGIC.RECURSIVE_FIND_MAIN_FUNC_FROM_INST(
                     write_func_inst, parser_state
                 )
                 for write_func_inst_tok in write_func_inst_toks[
@@ -2752,7 +2752,7 @@ use work.c_structs_pkg.all; -- User types
                     write_func_inst_str = WIRE_TO_VHDL_NAME(write_func_inst_tok)
                     write_text += "." + write_func_inst_str
                 write_text += "." + write_func
-                if C_TO_LOGIC.LOGIC_NEEDS_CLOCK_ENABLE(write_func_logic, parser_state):
+                if LOGIC.LOGIC_NEEDS_CLOCK_ENABLE(write_func_logic, parser_state):
                     # Clk in enable
                     text += (
                         io_prefix
@@ -2790,9 +2790,9 @@ use work.c_structs_pkg.all; -- User types
                     )
             # Clk cross out data to pipeline input
             for read_func_inst_i, read_func_inst in enumerate(read_func_insts):
-                read_func_inst_toks = read_func_inst.split(C_TO_LOGIC.SUBMODULE_MARKER)
+                read_func_inst_toks = read_func_inst.split(LOGIC.SUBMODULE_MARKER)
                 # Start with main func then apply hier instances
-                read_text = C_TO_LOGIC.RECURSIVE_FIND_MAIN_FUNC_FROM_INST(
+                read_text = LOGIC.RECURSIVE_FIND_MAIN_FUNC_FROM_INST(
                     read_func_inst, parser_state
                 )
                 for read_func_inst_tok in read_func_inst_toks[
@@ -2801,7 +2801,7 @@ use work.c_structs_pkg.all; -- User types
                     read_func_inst_str = WIRE_TO_VHDL_NAME(read_func_inst_tok)
                     read_text += "." + read_func_inst_str
                 read_text += "." + read_func
-                if C_TO_LOGIC.LOGIC_NEEDS_CLOCK_ENABLE(read_func_logic, parser_state):
+                if LOGIC.LOGIC_NEEDS_CLOCK_ENABLE(read_func_logic, parser_state):
                     # Clk out enable
                     text += (
                         io_prefix
@@ -3135,7 +3135,7 @@ end arch;
         else:
             # With flow control
             array_type = parser_state.global_vars[var_name].type_name
-            c_type, dims = C_TO_LOGIC.C_ARRAY_TYPE_TO_ELEM_TYPE_AND_DIMS(array_type)
+            c_type, dims = LOGIC.C_ARRAY_TYPE_TO_ELEM_TYPE_AND_DIMS(array_type)
             if len(dims) > 1:
                 print("More than 1 dim for async flow control!?", var_name)
                 sys.exit(-1)
@@ -3191,7 +3191,7 @@ use xpm.vcomponents.all;
       in_clk : in std_logic;
 """
         )
-        if C_TO_LOGIC.LOGIC_NEEDS_CLOCK_ENABLE(write_func_logic, parser_state):
+        if LOGIC.LOGIC_NEEDS_CLOCK_ENABLE(write_func_logic, parser_state):
             text += """
       in_clk_en : in unsigned(0 downto 0);
 """
@@ -3218,7 +3218,7 @@ use xpm.vcomponents.all;
         text += """
       out_clk : in std_logic;
 """
-        if read_func_logic is not None and C_TO_LOGIC.LOGIC_NEEDS_CLOCK_ENABLE(
+        if read_func_logic is not None and LOGIC.LOGIC_NEEDS_CLOCK_ENABLE(
             read_func_logic, parser_state
         ):
             text += """
@@ -3375,7 +3375,7 @@ fifo_wr_en <= write_enable(0) and in_clk_en(0) and not wr_rst_busy and not wr_po
 wr_return_output.ready(0) <= not full and not wr_rst_busy and not wr_power_on_reset;
 rd_power_on_reset <= '0' when rising_edge(out_clk);
 fifo_rd_enable <= read_enable(0) and not rd_rst_busy and not rd_power_on_reset"""
-            if read_func_logic is not None and C_TO_LOGIC.LOGIC_NEEDS_CLOCK_ENABLE(
+            if read_func_logic is not None and LOGIC.LOGIC_NEEDS_CLOCK_ENABLE(
                 read_func_logic, parser_state
             ):
                 text += """ and out_clk_en(0)"""
@@ -3793,7 +3793,7 @@ package global_wires_pkg is
                 if sub_logic.is_clock_crossing:
                     for output_port in sub_logic.outputs:
                         # submodule instance name == Func name for clk cross since single instance?
-                        # output_port_wire = sub_func + C_TO_LOGIC.SUBMODULE_MARKER + output_port
+                        # output_port_wire = sub_func + LOGIC.SUBMODULE_MARKER + output_port
                         c_type = sub_logic.wire_to_c_type[output_port]
                         text += (
                             "     "
@@ -3870,22 +3870,22 @@ package global_wires_pkg is
                 sub_func = func_logic.submodule_instances[sub_inst]
                 sub_logic = parser_state.FuncLogicLookupTable[sub_func]
                 if sub_logic.is_clock_crossing:
-                    if C_TO_LOGIC.LOGIC_NEEDS_CLOCK_ENABLE(sub_logic, parser_state):
-                        c_type = sub_logic.wire_to_c_type[C_TO_LOGIC.CLOCK_ENABLE_NAME]
+                    if LOGIC.LOGIC_NEEDS_CLOCK_ENABLE(sub_logic, parser_state):
+                        c_type = sub_logic.wire_to_c_type[LOGIC.CLOCK_ENABLE_NAME]
                         text += (
                             "     "
                             + sub_func
                             + "_"
-                            + C_TO_LOGIC.CLOCK_ENABLE_NAME
+                            + LOGIC.CLOCK_ENABLE_NAME
                             + " : "
                             + C_TYPE_STR_TO_VHDL_TYPE_STR(c_type, parser_state)
                             + ";\n"
                         )
-                    # var_name = C_TO_LOGIC.CLK_CROSS_FUNC_TO_VAR_NAME(sub_logic.func_name)
+                    # var_name = LOGIC.CLK_CROSS_FUNC_TO_VAR_NAME(sub_logic.func_name)
                     # clk_cross_info = parser_state.clk_cross_var_info[var_name]
                     for input_port in sub_logic.inputs:
                         # submodule instance name == Func name for clk cross since single instance?
-                        # input_port_wire = sub_func + C_TO_LOGIC.SUBMODULE_MARKER + input_port
+                        # input_port_wire = sub_func + LOGIC.SUBMODULE_MARKER + input_port
                         c_type = sub_logic.wire_to_c_type[input_port]
                         text += (
                             "     "
@@ -4333,10 +4333,10 @@ begin
                 c_type = logic.wire_to_c_type[wire]
                 if (
                     (c_type not in types_written)
-                    and C_TO_LOGIC.C_TYPE_IS_ARRAY(c_type)
+                    and LOGIC.C_TYPE_IS_ARRAY(c_type)
                     and (c_type not in array_types)
                 ):
-                    elem_type, dims = C_TO_LOGIC.C_ARRAY_TYPE_TO_ELEM_TYPE_AND_DIMS(
+                    elem_type, dims = LOGIC.C_ARRAY_TYPE_TO_ELEM_TYPE_AND_DIMS(
                         c_type
                     )
                     if elem_type in types_written:
@@ -4348,10 +4348,10 @@ begin
                 field_type = field_type_dict[field_name]
                 if (
                     (field_type not in types_written)
-                    and C_TO_LOGIC.C_TYPE_IS_ARRAY(field_type)
+                    and LOGIC.C_TYPE_IS_ARRAY(field_type)
                     and field_type not in array_types
                 ):
-                    elem_type, dims = C_TO_LOGIC.C_ARRAY_TYPE_TO_ELEM_TYPE_AND_DIMS(
+                    elem_type, dims = LOGIC.C_ARRAY_TYPE_TO_ELEM_TYPE_AND_DIMS(
                         field_type
                     )
                     if elem_type in types_written:
@@ -4360,7 +4360,7 @@ begin
         # Write VHDL type for each
         for array_type in array_types:
             vhdl_type = C_TYPE_STR_TO_VHDL_TYPE_STR(array_type, parser_state)
-            elem_type, dims = C_TO_LOGIC.C_ARRAY_TYPE_TO_ELEM_TYPE_AND_DIMS(array_type)
+            elem_type, dims = LOGIC.C_ARRAY_TYPE_TO_ELEM_TYPE_AND_DIMS(array_type)
             # type uint64_t_3_4 is array(0 to 2) of uint64_t_4;
             for i in range(len(dims) - 1, -1, -1):
                 # Build type
@@ -4948,7 +4948,7 @@ def LOGIC_NEEDS_GLOBAL_TO_MODULE(Logic, parser_state):
         if submodule_logic_name in parser_state.FuncLogicLookupTable:
             submodule_logic = parser_state.FuncLogicLookupTable[submodule_logic_name]
             if submodule_logic.is_clock_crossing:
-                var_name = C_TO_LOGIC.CLK_CROSS_FUNC_TO_VAR_NAME(submodule_logic_name)
+                var_name = LOGIC.CLK_CROSS_FUNC_TO_VAR_NAME(submodule_logic_name)
                 clk_cross_info = parser_state.clk_cross_var_info[var_name]
                 needs_global_to_module = (
                     needs_global_to_module
@@ -4980,7 +4980,7 @@ def LOGIC_NEEDS_MODULE_TO_GLOBAL(Logic, parser_state):
         if submodule_logic_name in parser_state.FuncLogicLookupTable:
             submodule_logic = parser_state.FuncLogicLookupTable[submodule_logic_name]
             if submodule_logic.is_clock_crossing:
-                var_name = C_TO_LOGIC.CLK_CROSS_FUNC_TO_VAR_NAME(submodule_logic_name)
+                var_name = LOGIC.CLK_CROSS_FUNC_TO_VAR_NAME(submodule_logic_name)
                 clk_cross_info = parser_state.clk_cross_var_info[var_name]
                 needs_module_to_global = (
                     needs_module_to_global
@@ -5016,7 +5016,7 @@ def LOGIC_NEEDS_CLOCK(inst_name, Logic, parser_state, TimingParamsLookupTable):
     i_need_clk = (
         LOGIC_NEEDS_REGS(inst_name, Logic, parser_state, TimingParamsLookupTable)
         or Logic.vhdl_module_text is not None
-        or (Logic.is_c_built_in and C_TO_LOGIC.IS_SIM_CTRL_FUNC_NAME(Logic.func_name))
+        or (Logic.is_c_built_in and LOGIC.IS_SIM_CTRL_FUNC_NAME(Logic.func_name))
     )
     needs_clk = i_need_clk
     # No need ot check subs if self needs already
@@ -5025,7 +5025,7 @@ def LOGIC_NEEDS_CLOCK(inst_name, Logic, parser_state, TimingParamsLookupTable):
 
     # Check submodules too
     for inst in Logic.submodule_instances:
-        instance_name = inst_name + C_TO_LOGIC.SUBMODULE_MARKER + inst
+        instance_name = inst_name + LOGIC.SUBMODULE_MARKER + inst
         submodule_logic_name = Logic.submodule_instances[inst]
         submodule_logic = parser_state.LogicInstLookupTable[instance_name]
         needs_clk = needs_clk or LOGIC_NEEDS_CLOCK(
@@ -5042,7 +5042,7 @@ def LOGIC_NEEDS_REGS(inst_name, Logic, parser_state, TimingParamsLookupTable):
     return (
         timing_params.GET_TOTAL_LATENCY(parser_state, TimingParamsLookupTable) > 0
         or len(Logic.state_regs) > 0
-        or Logic.func_name.startswith(C_TO_LOGIC.ACCUM_FUNC_NAME + "_")  # hacky temp?
+        or Logic.func_name.startswith(LOGIC.ACCUM_FUNC_NAME + "_")  # hacky temp?
     )
 
 
@@ -5055,7 +5055,7 @@ def C_CONST_STR_TO_VHDL_CONST_STR(c_str):
 
 def GET_PRINTF_MODULE_TEXT(inst_name, Logic, parser_state, TimingParamsLookupTable):
     format_string = Logic.printf_format_string
-    formats = C_TO_LOGIC.PRTINTF_STRING_TO_FORMATS(format_string)
+    formats = LOGIC.PRTINTF_STRING_TO_FORMATS(format_string)
 
     # Make a vhdl format string working left to right replacing as you go
     vhdl_format_string = C_CONST_STR_TO_VHDL_CONST_STR(format_string)
@@ -5094,7 +5094,7 @@ def GET_PRINTF_MODULE_TEXT(inst_name, Logic, parser_state, TimingParamsLookupTab
     text += (
         """
 if """
-        + C_TO_LOGIC.CLOCK_ENABLE_NAME
+        + LOGIC.CLOCK_ENABLE_NAME
         + """(0) = '1' then
   write(output, """
         + vhdl_format_string
@@ -5116,7 +5116,7 @@ def GET_SIM_ASSERT_MODULE_TEXT(inst_name, Logic, parser_state, TimingParamsLooku
 
     text = ""
     if msg_format_string is not None:
-        formats = C_TO_LOGIC.PRTINTF_STRING_TO_FORMATS(msg_format_string)
+        formats = LOGIC.PRTINTF_STRING_TO_FORMATS(msg_format_string)
         vhdl_msg_string = C_CONST_STR_TO_VHDL_CONST_STR(msg_format_string)
         for i, f in enumerate(formats):
             vhdl_arg_str = (
@@ -5157,7 +5157,7 @@ def GET_SIM_ASSERT_MODULE_TEXT(inst_name, Logic, parser_state, TimingParamsLooku
     text += (
         """
 if """
-        + C_TO_LOGIC.CLOCK_ENABLE_NAME
+        + LOGIC.CLOCK_ENABLE_NAME
         + """(0) = '1' then
   assert """
         + cond_port
@@ -5184,7 +5184,7 @@ def GET_SIM_FINISH_MODULE_TEXT(inst_name, Logic, parser_state, TimingParamsLooku
     text += (
         """
 if """
-        + C_TO_LOGIC.CLOCK_ENABLE_NAME
+        + LOGIC.CLOCK_ENABLE_NAME
         + """(0) = '1' then
   std.env.finish;
 end if;\n"""
@@ -5200,7 +5200,7 @@ def GET_ARCH_DECL_TEXT(
 ):
     import AUTO_PIPELINE
 
-    if SW_LIB.IS_MEM(Logic):
+    if LOGIC.IS_MEM(Logic):
         return RAW_VHDL.GET_MEM_ARCH_DECL_TEXT(
             Logic, parser_state, TimingParamsLookupTable
         )
@@ -5216,7 +5216,7 @@ def GET_VHDL_FUNC_SUBMODULE_DECLS(
     rv = ""
     vhdl_funcs = []
     for inst in Logic.submodule_instances:
-        instance_name = inst_name + C_TO_LOGIC.SUBMODULE_MARKER + inst
+        instance_name = inst_name + LOGIC.SUBMODULE_MARKER + inst
         submodule_logic_name = Logic.submodule_instances[inst]
         timing_params = TimingParamsLookupTable[instance_name]
         submodule_logic = parser_state.LogicInstLookupTable[instance_name]
@@ -5373,7 +5373,7 @@ def WRITE_LOGIC_ENTITY(
     needs_clk = LOGIC_NEEDS_CLOCK(
         inst_name, Logic, parser_state, TimingParamsLookupTable
     )
-    needs_clk_en = C_TO_LOGIC.LOGIC_NEEDS_CLOCK_ENABLE(Logic, parser_state)
+    needs_clk_en = LOGIC.LOGIC_NEEDS_CLOCK_ENABLE(Logic, parser_state)
     needs_global_to_module = LOGIC_NEEDS_GLOBAL_TO_MODULE(
         Logic, parser_state
     )  # , TimingParamsLookupTable)
@@ -5399,7 +5399,7 @@ def WRITE_LOGIC_ENTITY(
     # fixed/float), so "design library std does not contain primary unit env"
     # failed the very first leaf of any build, sim_finish or not.
     if Logic.is_c_built_in and Logic.func_name.startswith(
-        C_TO_LOGIC.SIM_FINISH_FUNC_NAME
+        LOGIC.SIM_FINISH_FUNC_NAME
     ):
         rv += "use std.env.all;\n"
     rv += "library ieee;" + "\n"
@@ -5420,7 +5420,7 @@ def WRITE_LOGIC_ENTITY(
             submodule_logic = parser_state.FuncLogicLookupTable[submodule_func_name]
             if (
                 not submodule_logic.is_vhdl_expr
-                and not submodule_logic.func_name == C_TO_LOGIC.VHDL_FUNC_NAME
+                and not submodule_logic.func_name == LOGIC.VHDL_FUNC_NAME
             ):
                 num_non_vhdl_expr_submodules = num_non_vhdl_expr_submodules + 1
         rv += "-- Submodules: " + str(num_non_vhdl_expr_submodules) + "\n"
@@ -5443,7 +5443,7 @@ def WRITE_LOGIC_ENTITY(
     # Clock enable
     if needs_clk_en:
         port_text += (
-            " " + C_TO_LOGIC.CLOCK_ENABLE_NAME + " : in unsigned(0 downto 0);" + "\n"
+            " " + LOGIC.CLOCK_ENABLE_NAME + " : in unsigned(0 downto 0);" + "\n"
         )
 
     # Clock cross inputs?
@@ -5510,7 +5510,7 @@ def WRITE_LOGIC_ENTITY(
             inst_name, Logic, parser_state, TimingParamsLookupTable
         )
     # Tool specific hard macros replace entire arch decl and body
-    elif C_TO_LOGIC.FUNC_IS_PRIMITIVE(Logic.func_name, parser_state):
+    elif SYN.FUNC_IS_PRIMITIVE(Logic.func_name, parser_state):
         rv += SYN.SYN_TOOL.GET_PRIMITIVE_MODULE_TEXT(
             inst_name, Logic, parser_state, TimingParamsLookupTable
         )
@@ -5527,19 +5527,19 @@ def WRITE_LOGIC_ENTITY(
     # generated printf submodule with `printf_format_string` set) and crashes with a
     # TypeError deep in PRTINTF_STRING_TO_FORMATS on `format_string=None`.
     elif Logic.is_c_built_in and Logic.func_name.startswith(
-        C_TO_LOGIC.PRINTF_FUNC_NAME
+        LOGIC.PRINTF_FUNC_NAME
     ):
         rv += GET_PRINTF_MODULE_TEXT(
             inst_name, Logic, parser_state, TimingParamsLookupTable
         )
     elif Logic.is_c_built_in and Logic.func_name.startswith(
-        C_TO_LOGIC.SIM_ASSERT_FUNC_NAME
+        LOGIC.SIM_ASSERT_FUNC_NAME
     ):
         rv += GET_SIM_ASSERT_MODULE_TEXT(
             inst_name, Logic, parser_state, TimingParamsLookupTable
         )
     elif Logic.is_c_built_in and Logic.func_name.startswith(
-        C_TO_LOGIC.SIM_FINISH_FUNC_NAME
+        LOGIC.SIM_FINISH_FUNC_NAME
     ):
         rv += GET_SIM_FINISH_MODULE_TEXT(
             inst_name, Logic, parser_state, TimingParamsLookupTable
@@ -5566,7 +5566,7 @@ def WRITE_LOGIC_ENTITY(
             # the growing rv copied it once per submodule (quadratic)
             submodule_instance_text = ["-- SUBMODULE INSTANCES \n"]
             for inst in Logic.submodule_instances:
-                instance_name = inst_name + C_TO_LOGIC.SUBMODULE_MARKER + inst
+                instance_name = inst_name + LOGIC.SUBMODULE_MARKER + inst
                 submodule_logic_name = Logic.submodule_instances[inst]
                 submodule_logic = parser_state.FuncLogicLookupTable[
                     submodule_logic_name
@@ -5594,7 +5594,7 @@ def WRITE_LOGIC_ENTITY(
                     parser_state,
                     TimingParamsLookupTable,
                 )
-                submodule_needs_clk_en = C_TO_LOGIC.LOGIC_NEEDS_CLOCK_ENABLE(
+                submodule_needs_clk_en = LOGIC.LOGIC_NEEDS_CLOCK_ENABLE(
                     submodule_logic, parser_state
                 )
                 submodule_needs_global_to_module = LOGIC_NEEDS_GLOBAL_TO_MODULE(
@@ -5620,8 +5620,8 @@ def WRITE_LOGIC_ENTITY(
                 if submodule_needs_clk_en:
                     ce_wire = (
                         inst
-                        + C_TO_LOGIC.SUBMODULE_MARKER
-                        + C_TO_LOGIC.CLOCK_ENABLE_NAME
+                        + LOGIC.SUBMODULE_MARKER
+                        + LOGIC.CLOCK_ENABLE_NAME
                     )
                     port_map_items.append(WIRE_TO_VHDL_NAME(ce_wire, Logic))
                 # Clock cross in
@@ -5636,11 +5636,11 @@ def WRITE_LOGIC_ENTITY(
                     )
                 # Inputs
                 for in_port in submodule_logic.inputs:
-                    in_wire = inst + C_TO_LOGIC.SUBMODULE_MARKER + in_port
+                    in_wire = inst + LOGIC.SUBMODULE_MARKER + in_port
                     port_map_items.append(WIRE_TO_VHDL_NAME(in_wire, Logic))
                 # Outputs
                 for out_port in submodule_logic.outputs:
-                    out_wire = inst + C_TO_LOGIC.SUBMODULE_MARKER + out_port
+                    out_wire = inst + LOGIC.SUBMODULE_MARKER + out_port
                     port_map_items.append(WIRE_TO_VHDL_NAME(out_wire, Logic))
                 submodule_instance_text.append(",\n".join(port_map_items))
                 submodule_instance_text.append(");\n\n")
@@ -5649,7 +5649,7 @@ def WRITE_LOGIC_ENTITY(
         # Get the text that is actually the pipeline logic in this entity
         rv += "\n"
         # Special case logic that does not do usage pipeline
-        if SW_LIB.IS_MEM(Logic):
+        if LOGIC.IS_MEM(Logic):
             rv += RAW_VHDL.GET_MEM_PIPELINE_LOGIC_TEXT(
                 Logic, parser_state, TimingParamsLookupTable
             )
@@ -5681,14 +5681,14 @@ def LOGIC_IS_RAW_HDL(Logic, parser_state):
         input_types = []
         for in_port in Logic.inputs:
             input_types.append(Logic.wire_to_c_type[in_port])
-        output_type = Logic.wire_to_c_type[C_TO_LOGIC.RETURN_WIRE_NAME]
+        output_type = Logic.wire_to_c_type[LOGIC.RETURN_WIRE_NAME]
         return C_BUILT_IN_FUNC_IS_RAW_HDL(
             Logic.func_name, input_types, output_type, parser_state
         )
     else:
-        if SW_LIB.IS_BIT_MANIP(Logic):
+        if LOGIC.IS_BIT_MANIP(Logic):
             return True
-        if SW_LIB.IS_MEM(Logic):
+        if LOGIC.IS_MEM(Logic):
             return True
     return False
 
@@ -5709,7 +5709,7 @@ def VHDL_TYPE_TO_SLV_TOKS(vhdl_type, parser_state):
         return ["", ""]
     elif vhdl_type.startswith("unsigned") or vhdl_type.startswith("signed"):
         return ["std_logic_vector(", ")"]
-    elif C_TO_LOGIC.C_TYPE_IS_ENUM(
+    elif LOGIC.C_TYPE_IS_ENUM(
         vhdl_type, parser_state
     ):  # same name as c type hacky
         width = GET_WIDTH_FROM_C_N_BITS_INT_TYPE_STR(
@@ -5727,7 +5727,7 @@ def VHDL_TYPE_FROM_SLV_TOKS(vhdl_type, parser_state):
         return ["unsigned(", ")"]
     elif vhdl_type.startswith("signed"):
         return ["signed(", ")"]
-    elif C_TO_LOGIC.C_TYPE_IS_ENUM(
+    elif LOGIC.C_TYPE_IS_ENUM(
         vhdl_type, parser_state
     ):  # Shouldnt be used anymore?
         raise Exception("VHDL enum types are no longer used!")
@@ -5743,7 +5743,7 @@ def TYPE_RESOLVE_ASSIGNMENT_RHS(RHS, logic, driving_wire, driven_wire, parser_st
     left_type = logic.wire_to_c_type[driven_wire]
     if left_type == right_type:
         return RHS
-    if C_TO_LOGIC.C_FLOAT_TYPES_ARE_EQUAL([right_type, left_type]):
+    if LOGIC.C_FLOAT_TYPES_ARE_EQUAL([right_type, left_type]):
         return RHS
 
     # DO VHDL CONVERSION FUNCTIONS
@@ -5752,13 +5752,13 @@ def TYPE_RESOLVE_ASSIGNMENT_RHS(RHS, logic, driving_wire, driven_wire, parser_st
     # Enums are encoded as u/int so include with logic for u/int stuff
     left_is_int = WIRES_ARE_INT_N([driven_wire], logic)
     left_is_uint = WIRES_ARE_UINT_N([driven_wire], logic)
-    if C_TO_LOGIC.C_TYPE_IS_ENUM(left_type, parser_state):
+    if LOGIC.C_TYPE_IS_ENUM(left_type, parser_state):
         enum_int_c_type = parser_state.enum_info_dict[left_type].int_c_type
         left_is_int = C_TYPE_IS_INT_N(enum_int_c_type)
         left_is_uint = C_TYPE_IS_UINT_N(enum_int_c_type)
     right_is_int = WIRES_ARE_INT_N([driving_wire], logic)
     right_is_uint = WIRES_ARE_UINT_N([driving_wire], logic)
-    if C_TO_LOGIC.C_TYPE_IS_ENUM(right_type, parser_state):
+    if LOGIC.C_TYPE_IS_ENUM(right_type, parser_state):
         enum_int_c_type = parser_state.enum_info_dict[right_type].int_c_type
         right_is_int = C_TYPE_IS_INT_N(enum_int_c_type)
         right_is_uint = C_TYPE_IS_UINT_N(enum_int_c_type)
@@ -5819,25 +5819,25 @@ def TYPE_RESOLVE_ASSIGNMENT_RHS(RHS, logic, driving_wire, driven_wire, parser_st
             ]
 
     # float_e_m_t types
-    elif C_TO_LOGIC.C_TYPES_ARE_FLOAT_TYPES([left_type, right_type]):
-        l_e, l_m = C_TO_LOGIC.C_FLOAT_E_M_TYPE_TO_E_M(left_type)
-        r_e, r_m = C_TO_LOGIC.C_FLOAT_E_M_TYPE_TO_E_M(right_type)
+    elif LOGIC.C_TYPES_ARE_FLOAT_TYPES([left_type, right_type]):
+        l_e, l_m = LOGIC.C_FLOAT_E_M_TYPE_TO_E_M(left_type)
+        r_e, r_m = LOGIC.C_FLOAT_E_M_TYPE_TO_E_M(right_type)
         resize_toks = ["resize_float_e_m_t(", f",{r_e},{r_m},{l_e},{l_m})"]
 
     # Making yourself sad to work around issues you didnt forsee is ok
-    elif SW_LIB.C_TYPE_IS_ARRAY_STRUCT(left_type, parser_state):
+    elif LOGIC.C_TYPE_IS_ARRAY_STRUCT(left_type, parser_state):
         # Assigning to dumb , dumb = (data => value);  -- no others in struct
         resize_toks = ["(data => ", ")"]
-    elif SW_LIB.C_TYPE_IS_ARRAY_STRUCT(right_type, parser_state):
+    elif LOGIC.C_TYPE_IS_ARRAY_STRUCT(right_type, parser_state):
         # Assigning to arry from dumb
         # array = dumb.data
         resize_toks = ["", ".data"]
 
-    elif C_TO_LOGIC.C_TYPE_IS_ARRAY(left_type) and C_TO_LOGIC.C_TYPE_IS_ARRAY(
+    elif LOGIC.C_TYPE_IS_ARRAY(left_type) and LOGIC.C_TYPE_IS_ARRAY(
         right_type
     ):
-        lhs_elem_t, lhs_dims = C_TO_LOGIC.C_ARRAY_TYPE_TO_ELEM_TYPE_AND_DIMS(left_type)
-        rhs_elem_t, rhs_dims = C_TO_LOGIC.C_ARRAY_TYPE_TO_ELEM_TYPE_AND_DIMS(right_type)
+        lhs_elem_t, lhs_dims = LOGIC.C_ARRAY_TYPE_TO_ELEM_TYPE_AND_DIMS(left_type)
+        rhs_elem_t, rhs_dims = LOGIC.C_ARRAY_TYPE_TO_ELEM_TYPE_AND_DIMS(right_type)
 
         # Only exact type elems for now, allow char uint8
         if (
@@ -5888,7 +5888,7 @@ def TYPE_RESOLVE_ASSIGNMENT_RHS(RHS, logic, driving_wire, driven_wire, parser_st
 def WIRES_ARE_ENUM(wires, logic, parser_state):
     for wire in wires:
         # print "wire",wire,"logic.wire_to_c_type[wire]",logic.wire_to_c_type[wire]
-        if not C_TO_LOGIC.WIRE_IS_ENUM(wire, logic, parser_state):
+        if not LOGIC.WIRE_IS_ENUM(wire, logic, parser_state):
             return False
     return True
 
@@ -5973,7 +5973,7 @@ def GET_RHS(
 def GET_LHS(driven_wire_to_handle, logic, parser_state):
     LHS = ""
     # SUBMODULE PORT?
-    if C_TO_LOGIC.WIRE_IS_SUBMODULE_PORT(driven_wire_to_handle, logic):
+    if LOGIC.WIRE_IS_SUBMODULE_PORT(driven_wire_to_handle, logic):
         LHS = GET_WRITE_PIPE_WIRE_VHDL(driven_wire_to_handle, logic, parser_state)
 
     # FEEDBACK WIRE?
@@ -6008,12 +6008,12 @@ def CONST_VAL_STR_TO_VHDL(val_str, c_type, parser_state, wire_name=None, ast_nod
     no_neg_val_str = val_str.strip("-")
 
     # Special null token = {0}
-    if val_str == C_TO_LOGIC.COMPOUND_NULL:
+    if val_str == LOGIC.COMPOUND_NULL:
         # Use VHDL null expression
         return C_TYPE_STR_TO_VHDL_NULL_STR(c_type, parser_state)
 
     # Enums need conversion to u/int
-    if C_TO_LOGIC.C_TYPE_IS_ENUM(c_type, parser_state):
+    if LOGIC.C_TYPE_IS_ENUM(c_type, parser_state):
         if is_negated:
             print("TODO negated enums?")
             sys.exit(-1)
@@ -6036,8 +6036,8 @@ def CONST_VAL_STR_TO_VHDL(val_str, c_type, parser_state, wire_name=None, ast_nod
         return "to_unsigned(character'pos(" + vhdl_char_str + "), 8)"
 
     # Strings
-    if C_TO_LOGIC.C_TYPE_IS_ARRAY(c_type):
-        elem_t, dims = C_TO_LOGIC.C_ARRAY_TYPE_TO_ELEM_TYPE_AND_DIMS(c_type)
+    if LOGIC.C_TYPE_IS_ARRAY(c_type):
+        elem_t, dims = LOGIC.C_ARRAY_TYPE_TO_ELEM_TYPE_AND_DIMS(c_type)
         if (elem_t != "char" and elem_t != "uint8_t") or len(dims) != 1:
             # Unhandled
             print("Unhandled array const:", val_str, elem_t, dims)
@@ -6088,8 +6088,8 @@ def CONST_VAL_STR_TO_VHDL(val_str, c_type, parser_state, wire_name=None, ast_nod
             bits = format(int(value_num) & ((1 << width) - 1), f"0{width}b")
             return f'signed\'("{bits}")'
         return "to_signed(" + str(value_num) + ", " + str(width) + ")"
-    elif C_TO_LOGIC.C_TYPE_IS_FLOAT_TYPE(c_type):
-        e, m = C_TO_LOGIC.C_FLOAT_E_M_TYPE_TO_E_M(c_type)
+    elif LOGIC.C_TYPE_IS_FLOAT_TYPE(c_type):
+        e, m = LOGIC.C_FLOAT_E_M_TYPE_TO_E_M(c_type)
         f_str = str(value_num)
         # VHDL needs dot for float literal
         if "." not in f_str:
@@ -6120,10 +6120,10 @@ def CONST_VAL_STR_TO_VHDL(val_str, c_type, parser_state, wire_name=None, ast_nod
 
 def GET_WRITE_PIPE_WIRE_VHDL(wire_name, Logic, parser_state):
     # If a constant
-    if C_TO_LOGIC.WIRE_IS_CONSTANT(wire_name):
+    if LOGIC.WIRE_IS_CONSTANT(wire_name):
         # Use type to cast value string to type
         c_type = Logic.wire_to_c_type[wire_name]
-        val_str = C_TO_LOGIC.GET_VAL_STR_FROM_CONST_WIRE(wire_name, Logic, parser_state)
+        val_str = LOGIC.GET_VAL_STR_FROM_CONST_WIRE(wire_name, Logic, parser_state)
         return CONST_VAL_STR_TO_VHDL(val_str, c_type, parser_state, wire_name=wire_name)
     else:
         # print wire_name, "IS NOT CONSTANT"
@@ -6133,7 +6133,7 @@ def GET_WRITE_PIPE_WIRE_VHDL(wire_name, Logic, parser_state):
 def WIRE_TO_VHDL_NAME(wire_name, Logic=None):
     """Render a wire using the optional Logic/parser-state naming registry."""
     rv = (
-        wire_name.replace(C_TO_LOGIC.SUBMODULE_MARKER, "_")
+        wire_name.replace(LOGIC.SUBMODULE_MARKER, "_")
         .replace("_*", "_STAR")
         .replace("[*]", "_STAR")
         .replace(".", "_")
@@ -6200,7 +6200,7 @@ def GET_VHDL_EXPR_ENTITY_CONNECTION_TEXT(
     TimingParamsLookupTable,
     parser_state,
 ):
-    if submodule_logic.func_name.startswith(C_TO_LOGIC.CONST_REF_RD_FUNC_NAME_PREFIX):
+    if submodule_logic.func_name.startswith(LOGIC.CONST_REF_RD_FUNC_NAME_PREFIX):
         return GET_CONST_REF_RD_VHDL_EXPR_ENTITY_CONNECTION_TEXT(
             submodule_logic,
             submodule_inst,
@@ -6223,11 +6223,11 @@ def GET_CONST_REF_RD_VHDL_EXPR_ENTITY_CONNECTION_TEXT(
     parser_state,
 ):
     input_port_wire = (
-        submodule_inst + C_TO_LOGIC.SUBMODULE_MARKER + submodule_logic.inputs[0]
+        submodule_inst + LOGIC.SUBMODULE_MARKER + submodule_logic.inputs[0]
     )
     driver_of_input = logic.wire_driven_by[input_port_wire]
     output_port_wire = (
-        submodule_inst + C_TO_LOGIC.SUBMODULE_MARKER + submodule_logic.outputs[0]
+        submodule_inst + LOGIC.SUBMODULE_MARKER + submodule_logic.outputs[0]
     )
 
     # What is the simple expression to append?
@@ -6265,23 +6265,23 @@ def VHDL_FUNC_INST_CAN_BE_EXPR(
 ):
     # But some const ref funcs can be replaced can also be VHDL expressions if the syntax feeling is right
     if not submodule_logic.func_name.startswith(
-        C_TO_LOGIC.CONST_REF_RD_FUNC_NAME_PREFIX
+        LOGIC.CONST_REF_RD_FUNC_NAME_PREFIX
     ):
         return False
     # The feeling is not right if trying to dereference a NULL array constant
     has_null_array_inputs = False
     for input_name in submodule_logic.inputs:
-        input_wire_name = submodule_inst + C_TO_LOGIC.SUBMODULE_MARKER + input_name
+        input_wire_name = submodule_inst + LOGIC.SUBMODULE_MARKER + input_name
         c_type = submodule_logic.wire_to_c_type[input_name]
-        if C_TO_LOGIC.C_TYPE_IS_ARRAY(c_type):
-            const_driver = C_TO_LOGIC.FIND_CONST_DRIVING_WIRE(
+        if LOGIC.C_TYPE_IS_ARRAY(c_type):
+            const_driver = LOGIC.FIND_CONST_DRIVING_WIRE(
                 input_wire_name, containing_func_logic
             )
             if const_driver is not None:
-                const_val_str = C_TO_LOGIC.GET_VAL_STR_FROM_CONST_WIRE(
+                const_val_str = LOGIC.GET_VAL_STR_FROM_CONST_WIRE(
                     const_driver, containing_func_logic, parser_state
                 )
-                if const_val_str == C_TO_LOGIC.COMPOUND_NULL:
+                if const_val_str == LOGIC.COMPOUND_NULL:
                     has_null_array_inputs = True
                     break
     if not has_null_array_inputs:
@@ -6319,7 +6319,7 @@ def GET_VHDL_FUNC_ENTITY_CONNECTION_TEXT(
         )
     rv = "     "
     # FUNC INSTANCE
-    out_wire = submodule_inst + C_TO_LOGIC.SUBMODULE_MARKER + submodule_logic.outputs[0]
+    out_wire = submodule_inst + LOGIC.SUBMODULE_MARKER + submodule_logic.outputs[0]
     rv += (
         GET_LHS(out_wire, logic, parser_state)
         + " := "
@@ -6327,7 +6327,7 @@ def GET_VHDL_FUNC_ENTITY_CONNECTION_TEXT(
         + "(\n"
     )
     for in_port in submodule_logic.inputs:
-        in_wire = submodule_inst + C_TO_LOGIC.SUBMODULE_MARKER + in_port
+        in_wire = submodule_inst + LOGIC.SUBMODULE_MARKER + in_port
         driver_of_input = logic.wire_driven_by[in_wire]
         RHS = GET_RHS(
             driver_of_input, inst_name, logic, parser_state, TimingParamsLookupTable
@@ -6355,19 +6355,19 @@ def GET_CLOCK_CROSS_ENTITY_CONNECTION_TEXT(
     timing_params = TimingParamsLookupTable[inst_name]
     text = ""
 
-    var_name = C_TO_LOGIC.CLK_CROSS_FUNC_TO_VAR_NAME(submodule_logic.func_name)
+    var_name = LOGIC.CLK_CROSS_FUNC_TO_VAR_NAME(submodule_logic.func_name)
     clk_cross_info = parser_state.clk_cross_var_info[var_name]
 
-    if C_TO_LOGIC.LOGIC_NEEDS_CLOCK_ENABLE(submodule_logic, parser_state):
+    if LOGIC.LOGIC_NEEDS_CLOCK_ENABLE(submodule_logic, parser_state):
         text += "     -- Clock enable" + "\n"
         ce_port_wire = (
-            submodule_inst + C_TO_LOGIC.SUBMODULE_MARKER + C_TO_LOGIC.CLOCK_ENABLE_NAME
+            submodule_inst + LOGIC.SUBMODULE_MARKER + LOGIC.CLOCK_ENABLE_NAME
         )
         text += (
             "     module_to_global."
             + submodule_logic.func_name
             + "_"
-            + C_TO_LOGIC.CLOCK_ENABLE_NAME
+            + LOGIC.CLOCK_ENABLE_NAME
             + " <= "
             + GET_WRITE_PIPE_WIRE_VHDL(ce_port_wire, logic, parser_state)
             + ";\n"
@@ -6376,7 +6376,7 @@ def GET_CLOCK_CROSS_ENTITY_CONNECTION_TEXT(
     if len(submodule_logic.inputs) > 0:
         text += "     -- Inputs" + "\n"
     for input_port in submodule_logic.inputs:
-        input_port_wire = submodule_inst + C_TO_LOGIC.SUBMODULE_MARKER + input_port
+        input_port_wire = submodule_inst + LOGIC.SUBMODULE_MARKER + input_port
         text += (
             "     module_to_global."
             + submodule_logic.func_name
@@ -6390,7 +6390,7 @@ def GET_CLOCK_CROSS_ENTITY_CONNECTION_TEXT(
     if len(submodule_logic.outputs) > 0:
         text += "     -- Outputs" + "\n"
     for output_port in submodule_logic.outputs:
-        output_port_wire = submodule_inst + C_TO_LOGIC.SUBMODULE_MARKER + output_port
+        output_port_wire = submodule_inst + LOGIC.SUBMODULE_MARKER + output_port
         text += (
             "     "
             + GET_WRITE_PIPE_WIRE_VHDL(output_port_wire, logic, parser_state)
@@ -6418,10 +6418,10 @@ def GET_NORMAL_ENTITY_CONNECTION_TEXT(
     text = ""
 
     # Maybe drive clock enable
-    if C_TO_LOGIC.LOGIC_NEEDS_CLOCK_ENABLE(submodule_logic, parser_state):
+    if LOGIC.LOGIC_NEEDS_CLOCK_ENABLE(submodule_logic, parser_state):
         text += "     -- Clock enable" + "\n"
         ce_port_wire = (
-            submodule_inst + C_TO_LOGIC.SUBMODULE_MARKER + C_TO_LOGIC.CLOCK_ENABLE_NAME
+            submodule_inst + LOGIC.SUBMODULE_MARKER + LOGIC.CLOCK_ENABLE_NAME
         )
         text += (
             "     "
@@ -6434,7 +6434,7 @@ def GET_NORMAL_ENTITY_CONNECTION_TEXT(
     # Drive input ports
     text += "     -- Inputs" + "\n"
     for input_port in submodule_logic.inputs:
-        input_port_wire = submodule_inst + C_TO_LOGIC.SUBMODULE_MARKER + input_port
+        input_port_wire = submodule_inst + LOGIC.SUBMODULE_MARKER + input_port
         text += (
             "     "
             + WIRE_TO_VHDL_NAME(input_port_wire, logic)
@@ -6448,7 +6448,7 @@ def GET_NORMAL_ENTITY_CONNECTION_TEXT(
         text += "     -- Outputs" + "\n"
         for output_port in submodule_logic.outputs:
             output_port_wire = (
-                submodule_inst + C_TO_LOGIC.SUBMODULE_MARKER + output_port
+                submodule_inst + LOGIC.SUBMODULE_MARKER + output_port
             )
             text += (
                 "     "
@@ -6528,19 +6528,19 @@ def C_TYPE_STR_TO_VHDL_TYPE_STR(c_type_str, parser_state):
         # Get bit width
         width = GET_WIDTH_FROM_C_TYPE_STR(parser_state, c_type_str)
         return "unsigned(" + str(width - 1) + " downto 0)"
-    elif c_type_str == C_TO_LOGIC.BOOL_C_TYPE:
+    elif c_type_str == LOGIC.BOOL_C_TYPE:
         return "unsigned(0 downto 0)"
-    elif C_TO_LOGIC.C_TYPE_IS_FLOAT_TYPE(c_type_str):
-        e, m = C_TO_LOGIC.C_FLOAT_E_M_TYPE_TO_E_M(c_type_str)
+    elif LOGIC.C_TYPE_IS_FLOAT_TYPE(c_type_str):
+        e, m = LOGIC.C_FLOAT_E_M_TYPE_TO_E_M(c_type_str)
         return "std_logic_vector(" + str((1 + e + m) - 1) + " downto 0)"
-    elif C_TO_LOGIC.C_TYPE_IS_STRUCT(c_type_str, parser_state):
+    elif LOGIC.C_TYPE_IS_STRUCT(c_type_str, parser_state):
         # Use same type from C
         return c_type_str
-    elif C_TO_LOGIC.C_TYPE_IS_ENUM(c_type_str, parser_state):
+    elif LOGIC.C_TYPE_IS_ENUM(c_type_str, parser_state):
         # Manually use integer encoding type for enum
         enum_info = parser_state.enum_info_dict[c_type_str]
         return C_TYPE_STR_TO_VHDL_TYPE_STR(enum_info.int_c_type, parser_state)
-    elif C_TO_LOGIC.C_TYPE_IS_ARRAY(c_type_str):
+    elif LOGIC.C_TYPE_IS_ARRAY(c_type_str):
         return C_ARRAY_TYPE_STR_TO_VHDL_TYPE_STR(c_type_str)
     else:
         print("Unknown VHDL type for C type: '" + c_type_str + "'")
@@ -6552,9 +6552,9 @@ def C_TYPE_STR_TO_VHDL_SLV_LEN_STR(c_type_str, parser_state):
     width = GET_WIDTH_FROM_C_TYPE_STR(parser_state, c_type_str, allow_fail=True)
     if width is not None:
         return str(width)
-    if C_TO_LOGIC.C_TYPE_IS_STRUCT(c_type_str, parser_state):
+    if LOGIC.C_TYPE_IS_STRUCT(c_type_str, parser_state):
         return c_type_str + "_SLV_LEN"
-    elif C_TO_LOGIC.C_TYPE_IS_ARRAY(c_type_str):
+    elif LOGIC.C_TYPE_IS_ARRAY(c_type_str):
         vhdl_type = C_TYPE_STR_TO_VHDL_TYPE_STR(c_type_str, parser_state)
         return vhdl_type + "_SLV_LEN"
     else:
@@ -6569,7 +6569,7 @@ def C_TYPE_STR_TO_VHDL_SLV_LEN_NUM(c_type_str, parser_state):
     width = GET_WIDTH_FROM_C_TYPE_STR(parser_state, c_type_str, allow_fail=True)
     if width is not None:
         return width
-    if C_TO_LOGIC.C_TYPE_IS_STRUCT(c_type_str, parser_state):
+    if LOGIC.C_TYPE_IS_STRUCT(c_type_str, parser_state):
         width = 0
         field_type_dict = parser_state.struct_to_field_type_dict[c_type_str]
         for field in field_type_dict:
@@ -6577,8 +6577,8 @@ def C_TYPE_STR_TO_VHDL_SLV_LEN_NUM(c_type_str, parser_state):
             field_width = C_TYPE_STR_TO_VHDL_SLV_LEN_NUM(field_c_type, parser_state)
             width = width + field_width
         return width
-    elif C_TO_LOGIC.C_TYPE_IS_ARRAY(c_type_str):
-        elem_type, dims = C_TO_LOGIC.C_ARRAY_TYPE_TO_ELEM_TYPE_AND_DIMS(c_type_str)
+    elif LOGIC.C_TYPE_IS_ARRAY(c_type_str):
+        elem_type, dims = LOGIC.C_ARRAY_TYPE_TO_ELEM_TYPE_AND_DIMS(c_type_str)
         elem_slv_width = C_TYPE_STR_TO_VHDL_SLV_LEN_NUM(elem_type, parser_state)
         width = elem_slv_width
         for dim in dims:
@@ -6597,22 +6597,22 @@ def C_TYPE_STR_TO_VHDL_NULL_STR(c_type_str, parser_state):
     elif C_TYPE_IS_UINT_N(c_type_str):
         width = GET_WIDTH_FROM_C_N_BITS_INT_TYPE_STR(c_type_str)
         return f"to_unsigned(0, {width})"
-    elif C_TO_LOGIC.C_TYPE_IS_FLOAT_TYPE(c_type_str):
-        e, m = C_TO_LOGIC.C_FLOAT_E_M_TYPE_TO_E_M(c_type_str)
+    elif LOGIC.C_TYPE_IS_FLOAT_TYPE(c_type_str):
+        e, m = LOGIC.C_FLOAT_E_M_TYPE_TO_E_M(c_type_str)
         width = 1 + e + m
         return f"std_logic_vector(to_unsigned(0, {width}))"
-    elif C_TO_LOGIC.C_TYPE_IS_STRUCT(c_type_str, parser_state):
+    elif LOGIC.C_TYPE_IS_STRUCT(c_type_str, parser_state):
         # Use same type from C
         return c_type_str + "_NULL"
-    elif C_TO_LOGIC.C_TYPE_IS_ENUM(c_type_str, parser_state):
+    elif LOGIC.C_TYPE_IS_ENUM(c_type_str, parser_state):
         # Null is always first,left value, converted to u/int
         int_type = parser_state.enum_info_dict[c_type_str].int_c_type
         if C_TYPE_IS_INT_N(int_type):
             return "signed(" + c_type_str + "_to_slv(" + c_type_str + "'left))"
         else:
             return "unsigned(" + c_type_str + "_to_slv(" + c_type_str + "'left))"
-    elif C_TO_LOGIC.C_TYPE_IS_ARRAY(c_type_str):
-        elem_type, dims = C_TO_LOGIC.C_ARRAY_TYPE_TO_ELEM_TYPE_AND_DIMS(c_type_str)
+    elif LOGIC.C_TYPE_IS_ARRAY(c_type_str):
+        elem_type, dims = LOGIC.C_ARRAY_TYPE_TO_ELEM_TYPE_AND_DIMS(c_type_str)
         text = ""
         for dim in dims:
             text += "(others => "

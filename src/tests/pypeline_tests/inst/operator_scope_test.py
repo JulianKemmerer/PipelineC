@@ -195,7 +195,7 @@ def test_array_equality_operator_names_are_bracket_free():
     import tempfile
     import PY_TO_LOGIC
     import SYN
-    import C_TO_LOGIC
+    import LOGIC
 
     SYN.SYN_OUTPUT_DIRECTORY = tempfile.mkdtemp(
         prefix="operator_scope_array_cmp_test_"
@@ -214,8 +214,8 @@ def test_array_equality_operator_names_are_bracket_free():
     bracketed = {n for n in all_instantiated if "[" in n or "]" in n}
     assert not bracketed, f"illegal VHDL identifier(s) with brackets: {sorted(bracketed)}"
 
-    eq_prefix = f"{C_TO_LOGIC.BIN_OP_LOGIC_NAME_PREFIX}_{C_TO_LOGIC.BIN_OP_EQ_NAME}_"
-    neq_prefix = f"{C_TO_LOGIC.BIN_OP_LOGIC_NAME_PREFIX}_{C_TO_LOGIC.BIN_OP_NEQ_NAME}_"
+    eq_prefix = f"{LOGIC.BIN_OP_LOGIC_NAME_PREFIX}_{LOGIC.BIN_OP_EQ_NAME}_"
+    neq_prefix = f"{LOGIC.BIN_OP_LOGIC_NAME_PREFIX}_{LOGIC.BIN_OP_NEQ_NAME}_"
     eq_names = {n for n in all_instantiated if n.startswith(eq_prefix)}
     neq_names = {n for n in all_instantiated if n.startswith(neq_prefix)}
     assert eq_names, f"expected a {eq_prefix}* entity; instantiated={sorted(all_instantiated)}"

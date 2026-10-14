@@ -208,11 +208,13 @@ def test_dynamic_array_alignment():
 
 
 def test_unaffected_gate():
-    import pypeline_sim_pipeline as model
+    import PY_TO_LOGIC
     from unittest.mock import patch
 
     with patch.object(
-        model, "prepare", side_effect=AssertionError("unexpected pipeline model")
+        PY_TO_LOGIC,
+        "PREPARE_PIPELINE_LATENCY_SIM",
+        side_effect=AssertionError("unexpected pipeline model"),
     ):
         sim_reset()
         assert int(sim_call(unaffected, 4)) == 5
@@ -220,7 +222,7 @@ def test_unaffected_gate():
         assert int(sim_call(delay_one, 4)) == 0
 
 
-def test_untagged_cli_does_not_import_model():
+def test_untagged_sim_skips_pipeline_model():
     import subprocess
 
     code = """
@@ -230,11 +232,16 @@ import pypeline
 import pypeline_sim
 class Forbidden:
     def find_spec(self, fullname, path=None, target=None):
-        if fullname == 'pypeline_sim_pipeline' or (
-            sys.argv[-1] == 'direct' and fullname == 'PY_TO_LOGIC'
-        ):
+        if sys.argv[-1] == 'direct' and fullname == 'PY_TO_LOGIC':
             raise AssertionError('ordinary native sim imported ' + fullname)
-sys.meta_path.insert(0, Forbidden())
+if sys.argv[-1] == 'direct':
+    sys.meta_path.insert(0, Forbidden())
+else:
+    # The driver imports PY_TO_LOGIC anyway: forbid building the pipeline model instead
+    import PY_TO_LOGIC
+    def _forbidden_prepare(*args, **kwargs):
+        raise AssertionError('ordinary native sim prepared a pipeline model')
+    PY_TO_LOGIC.PREPARE_PIPELINE_LATENCY_SIM = _forbidden_prepare
 # Also exercise the cheap reachability gate after a prior declaration existed.
 pypeline._pipeline_latency_declared = True
 if sys.argv[-1] == 'direct':

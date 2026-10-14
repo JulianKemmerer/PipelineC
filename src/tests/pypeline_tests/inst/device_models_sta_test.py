@@ -18,7 +18,7 @@ sys.path.insert(
 )
 
 import DEVICE_MODELS
-import C_TO_LOGIC
+import LOGIC
 import SYN
 
 
@@ -37,7 +37,7 @@ class _MuxCacheParserState:
 
 
 def _mux_logic(func_name, c_type):
-    logic = C_TO_LOGIC.Logic()
+    logic = LOGIC.Logic()
     logic.func_name = func_name
     logic.is_c_built_in = True
     logic.inputs = ["cond", "iftrue", "iffalse"]
@@ -349,7 +349,7 @@ def test_mux_cache_keys_canonicalize_packed_types_by_width():
             assert (key, owner) == (first_key, first_owner)
         assert owners == {"MUX_uint32_t": same_width[0].func_name}
 
-        user_logic = C_TO_LOGIC.Logic()
+        user_logic = LOGIC.Logic()
         user_logic.func_name = "user_struct_func"
         user_logic.is_c_built_in = False
         user_logic.inputs = ["i"]
@@ -410,7 +410,7 @@ def test_planner_component_weight_is_optional_and_deepcopied():
         "combinational_delay_ns": 0.9,
         "setup_ns": 0.2,
     }
-    logic = C_TO_LOGIC.Logic()
+    logic = LOGIC.Logic()
     logic.delay = 15
     SYN._SET_LOGIC_DELAY_COMPONENTS(logic, components)
     assert logic.planner_delay == 9
@@ -431,7 +431,7 @@ def test_planner_component_weight_is_optional_and_deepcopied():
 
 
 def test_component_cache_sidecar_round_trip_and_validation():
-    logic = C_TO_LOGIC.Logic()
+    logic = LOGIC.Logic()
     logic.func_name = "cache_test"
     logic.is_c_built_in = True
 

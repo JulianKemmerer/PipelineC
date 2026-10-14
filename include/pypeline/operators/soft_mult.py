@@ -35,7 +35,7 @@ def make_soft_add_tree_shifted(n_leaves, leaf_t, out_t, level=0, max_width=None)
     every leaf to full out_t width immediately), each *level* shifts its pairs'
     odd-indexed operand left by 2**level, so node width grows only by what that
     level actually needs. Same staged width bookkeeping as
-    SW_LIB.GET_BIN_OP_MULT_UINT_N_C_CODE's p_i/p_i_shifted/sum_layerN stages,
+    C_TO_LOGIC.GET_BIN_OP_MULT_UINT_N_C_CODE's p_i/p_i_shifted/sum_layerN stages,
     as native Pypeline HDL.
 
     Correctness invariant: entering level L with step = 2**L, node k carries
@@ -111,7 +111,7 @@ def make_soft_mult_shift_add(l_t, r_t):
     UNSHIFTED partial product (a masked by that bit, or 0), then combine them
     with make_soft_add_tree_shifted, a balanced binary adder tree (log2(n) deep) that
     folds each partial's positional shift into its tree level. Same
-    partial-product structure as SW_LIB.GET_BIN_OP_MULT_UINT_N_C_CODE, as
+    partial-product structure as C_TO_LOGIC.GET_BIN_OP_MULT_UINT_N_C_CODE, as
     Pypeline HDL, with per-level width growth instead of one uniform
     out_t-wide node array.
 

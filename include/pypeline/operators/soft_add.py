@@ -117,7 +117,7 @@ def make_soft_add_carry_select(l_t, r_t, block_bits=4):
 
 def make_soft_sub(l_t, r_t):
     """a - b == a + (~b) + 1 (two's-complement subtract-via-add), the same
-    structure the SW_LIB C negate/compare lowerings already used. Uses the
+    structure the C front end's generated C negate/compare lowerings already used. Uses the
     built-in inferred adder -- MINUS stays inferred by default; this is what
     a caller opts into via register_soft_sub()."""
     eff_l_t, eff_r_t, out_t = arith_result_type("MINUS", l_t, r_t)

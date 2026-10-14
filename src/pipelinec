@@ -29,7 +29,7 @@ import AUTO_FSM
 import AUTO
 
 # Defaults
-default_src_file = C_TO_LOGIC.REPO_ABS_DIR() + "/main.py"
+default_src_file = utilities.REPO_ABS_DIR() + "/main.py"
 default_top_module = "top"
 
 # Parse args
@@ -582,7 +582,7 @@ elif src_file.endswith(".py"):
     # make_type_to_bytes/make_type_from_bytes). Write the standalone Python
     # module a host program copies to a machine with no Pypeline checkout.
     # Nothing is written if the design puts no struct on a wire. C designs keep
-    # the older SW_LIB.py generated-header path instead.
+    # the C front end's generated-header path instead.
     # Non-fatal on purpose: the host module is an additional artifact, not part
     # of the hardware, so a design that cannot express one (a struct field named
     # like a generated attribute, say) must still finish its build and get its
@@ -635,7 +635,7 @@ print(
     flush=True,
 )
 print("Writing output files before adding pipelining...", flush=True)
-C_TO_LOGIC.WRITE_0_ADDED_CLKS_INIT_FILES(parser_state)
+AUTO_PIPELINE.WRITE_0_ADDED_CLKS_INIT_FILES(parser_state)
 
 # Resolve independent memory pieces now: part/tool/goals and fresh zero-clock
 # VHDL are available, and no synthesis has run.
@@ -645,7 +645,7 @@ if src_file.endswith(".py") and pypeline.AUTO_PIPELINE_BUILD_MODE() == "sweep" a
         state = PY_TO_LOGIC.PARSE_FILE(src_file)
         state.part = parser_state.part
         state.syn_tool_name = parser_state.syn_tool_name
-        C_TO_LOGIC.WRITE_0_ADDED_CLKS_INIT_FILES(state)
+        AUTO_PIPELINE.WRITE_0_ADDED_CLKS_INIT_FILES(state)
         return state
 
     parser_state = SWEEP.RESOLVE_LATENCY_MEMORY(parser_state, _latency_seeds, _reparse_latency_memory)
@@ -680,7 +680,7 @@ if SYN.SYN_TOOL is None:
             flush=True,
         )
         parser_state = PY_TO_LOGIC.PARSE_FILE(src_file)
-        C_TO_LOGIC.WRITE_0_ADDED_CLKS_INIT_FILES(parser_state)
+        AUTO_PIPELINE.WRITE_0_ADDED_CLKS_INIT_FILES(parser_state)
 
 _syn_final_hooks_ran = False
 

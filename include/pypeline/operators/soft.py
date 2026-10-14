@@ -335,7 +335,7 @@ _sw_lib_replacements_registered = False
 
 def register_sw_lib_replacements(scope=None):
     """The default-flip set: exactly the operator families that had no
-    inferred lowering and used to reach SW_LIB/cpp/pycparser C generation --
+    inferred lowering and used to reach the C front end's C code generation (cpp/pycparser) --
     int NEGATE, int compares (GT/GTE/LT/LTE), DIV, MOD, and variable-amount
     shift. Called automatically, once per process, by PY_TO_LOGIC.PARSE_FILE
     so that path stays unreachable from any Pypeline build. Still overridable
@@ -351,7 +351,7 @@ def register_sw_lib_replacements(scope=None):
     docstring in soft_div.py). This is the only automatic, zero-registration
     DIV/MOD path in Pypeline -- there is no inferred HDL '/' equivalent to
     the built-in '*' that register_soft_mult's callers can fall back to;
-    an unregistered DIV/MOD hits C_TO_LOGIC.PYPELINE_NO_SW_LIB_GUARD and
+    an unregistered DIV/MOD hits LOGIC.PYPELINE_NO_SW_LIB_GUARD and
     raises loudly instead. register_soft_ops (the separate, explicitly-
     opt-in "register everything soft" call below) still defaults DIV/MOD to
     the plain divider, unchanged -- this function is specifically the

@@ -28,8 +28,7 @@ See [auto-pipelined RAM compilation](AUTO_PIPELINE_DESIGN.md#ram-compiler-sweep-
 - [End-to-End Flow Summary](#end-to-end-flow-summary)
 
 **Core Data Structures**
-- [`ParserState` — the Global Compiler Context](#parserstate--the-global-compiler-context)
-- [The `Logic()` Object](#the-logic-object)
+- [`ParserState` and the `Logic()` Object](#parserstate-and-the-logic-object)
   - [C Type Strings](#c-type-strings)
   - [Bit-Accurate Constant Inference](#bit-accurate-constant-inference)
 - [`FuncElaborator` — per-Function Elaboration State](#funcelaborator--per-function-elaboration-state)
@@ -165,47 +164,13 @@ Design file (.py)
 
 ---
 
-## `ParserState` — the Global Compiler Context
+## `ParserState` and the `Logic()` Object
 
-```python
-parser_state.FuncLogicLookupTable       # func_name -> Logic()  (function definitions)
-parser_state.LogicInstLookupTable       # inst_key  -> Logic()  (instantiated call sites)
-parser_state.FuncToInstances            # func_name -> {inst_keys}
-parser_state.struct_to_field_type_dict  # struct_name -> {field: c_type_str}
-parser_state.enum_info_dict             # enum_ctype_name -> C_TO_LOGIC.EnumInfo (member map + int_c_type)
-parser_state.part                       # FPGA part string or None (set by PART(...) pragma)
-parser_state.main_mhz                   # main_name -> float MHz or None (set by @MAIN(mhz=...) + inference)
-```
-
-`FuncLogicLookupTable` holds one `Logic()` per unique function definition.
-`LogicInstLookupTable` holds one entry per call-site instance (populated by `_build_inst_lookup`
-after all functions are elaborated).
-
----
-
-## The `Logic()` Object
-
-Every hardware function is represented as a `Logic()` object — a directed graph of wires
-and submodule instances.
-
-```python
-logic.func_name                      # string name
-logic.inputs                         # ordered list of input port names
-logic.outputs                        # ordered list of output port names
-logic.variable_names                 # set of user-introduced hardware variable base names
-logic.wires                          # set of all wire names (becomes VHDL signals)
-logic.wire_to_c_type                 # wire_name -> C type string
-logic.wire_driven_by                 # wire_name -> driver_wire_name
-logic.wire_drives                    # driver_wire_name -> {wire_name, …}
-logic.submodule_instances            # inst_name -> func_name
-logic.submodule_instance_to_input_port_names  # inst_name -> [port_name, …]
-# Reference-token metadata (used by ref-read/assign submodules):
-logic.ref_submodule_instance_to_ref_toks
-logic.ref_submodule_instance_to_input_port_driven_ref_toks
-logic.wire_aliases_over_time         # base_var -> [alias_wire, …]  (oldest first)
-logic.alias_to_driven_ref_toks       # alias_wire -> ref_toks tuple
-logic.alias_to_orig_var_name         # alias_wire -> base_var name
-```
+The elaborator fills a `ParserState` with one `Logic()` per hardware function: a directed
+graph of wires and submodule instances. Both are shared with the C front end and defined in
+`LOGIC.py`; their fields are described in
+[LOGIC_DESIGN.md](LOGIC_DESIGN.md#2-the-logic-object). `LogicInstLookupTable` is populated
+by `_build_inst_lookup` after all functions are elaborated.
 
 ### C Type Strings
 
@@ -231,7 +196,7 @@ _is_scalar("uint32_t", ps)       # True (not array, not struct)
 
 `"char"` / `"char[N]"` follow this exact same convention (`char_t[16]` → `"char[16]"`)
 and need no elaborator-side special-casing beyond it — the shared backend
-(`C_TO_LOGIC.py`/`VHDL.py`) already understands `char`/`char[N]` natively. See
+(`LOGIC.py`/`VHDL.py`) already understands `char`/`char[N]` natively. See
 [Char Array Support](#char-array-support) below.
 
 ### Bit-Accurate Constant Inference
@@ -475,8 +440,8 @@ called purely for its side effects — ordinary, legal Python either way. `_elab
 handles a void callee's return type correctly:
 
 ```python
-ret_typ = callee_def.wire_to_c_type.get(C_TO_LOGIC.RETURN_WIRE_NAME)
-port_return = _port_wire(inst, C_TO_LOGIC.RETURN_WIRE_NAME) if ret_typ is not None else None
+ret_typ = callee_def.wire_to_c_type.get(LOGIC.RETURN_WIRE_NAME)
+port_return = _port_wire(inst, LOGIC.RETURN_WIRE_NAME) if ret_typ is not None else None
 ```
 
 `callee_def.wire_to_c_type` never gains a `RETURN_WIRE_NAME` entry for a void callee
@@ -561,7 +526,7 @@ else:
 
 This does **not** mean the rendered VHDL variable for `x` has more than one type — VHDL
 signals/variables are always monomorphic, exactly one subtype, for their entire scope.
-What actually happens: `_write_ref` (`PY_TO_LOGIC.py:5798`) never mutates an existing wire
+What actually happens: `_write_ref` (`PY_TO_LOGIC.py:5799`) never mutates an existing wire
 in place. Every write — including this one — allocates a **fresh alias wire**, named from
 the write's own source location (e.g. `x_myfile_py_l15_c12_...`), and declares that alias
 at the **target's own declared type** (`lhs_type = _ref_toks_to_ctype(ref_toks, base_type,
@@ -573,7 +538,7 @@ _add_wire(self.logic, alias, lhs_type)               # declared at x's type, uin
 _connect(self.logic, rhs_wire, alias)                 # rhs_wire (uint1_t) -> alias (uint2_t)
 ```
 
-`_connect` (`PY_TO_LOGIC.py:1371`) is pure graph bookkeeping — `wire_driven_by`/
+`_connect` (`PY_TO_LOGIC.py:1372`) is pure graph bookkeeping — `wire_driven_by`/
 `wire_drives` dict entries, nothing else. **No type-compatibility check or width
 reconciliation happens at elaboration time at all.** That happens exactly once, uniformly,
 for *every* driver→driven pair in the finished wire graph (a plain assignment, a mux
@@ -625,7 +590,7 @@ guarantee.
 
 `self.env` is a flat, string-keyed cache (`env_key -> (wire, type)`) of the *last* wire
 written at each exact path, used by `_read_ref`'s scalar fast path
-(`if env_key in self.env: return self.env[env_key]`, `PY_TO_LOGIC.py:3948-3949`) to skip
+(`if env_key in self.env: return self.env[env_key]`, `PY_TO_LOGIC.py:3949-3950`) to skip
 the alias-chain search in the common case. Because a write can happen at *any* granularity
 — a single leaf (`o.axis.valid = 1`), an intermediate compound field (`o.axis.data = ...`),
 or the whole variable (`o.axis = axis_in`) — a coarser write does not automatically make
@@ -646,8 +611,8 @@ bytes that should have been passed through unchanged.
 
 The fix: `_invalidate_descendant_env(env_key)` is called immediately after every place that
 sets an `self.env` entry for a write (not a declaration) — `_write_ref`
-(`PY_TO_LOGIC.py:4196-4215`) and the `if`-merge's post-MUX env update
-(`PY_TO_LOGIC.py:2664-2668`, see below). It removes any existing `self.env` key that is a
+(`PY_TO_LOGIC.py:4197-4216`) and the `if`-merge's post-MUX env update
+(`PY_TO_LOGIC.py:2665-2669`, see below). It removes any existing `self.env` key that is a
 strict descendant of the one just written (i.e. starts with `env_key + "."` or
 `env_key + "["`), forcing any later scalar read of that finer path to fall through to
 `_find_covering_wire`'s correct, temporally-ordered alias-chain search instead of returning
@@ -1053,7 +1018,7 @@ wildcard matching.
 
 **`self.env` update after the MUX:** for concrete (non-variable) `ref_toks`, `_elab_if`
 also sets `self.env[env_key] = (mux_alias, mux_type)` and immediately calls
-`self._invalidate_descendant_env(env_key)` (`PY_TO_LOGIC.py:2664-2668`) — the same
+`self._invalidate_descendant_env(env_key)` (`PY_TO_LOGIC.py:2665-2669`) — the same
 staleness-purge described in **[`self.env` Staleness](#alias-tracking--assignments-over-time)**
 above, needed here for the same reason: the reduced `ref_toks` this MUX was built for may be
 coarser than pre-existing finer `self.env` keys left over from before the `if` (e.g. an
@@ -1561,7 +1526,7 @@ entry points and a different backend dict (`enum_info_dict` instead of
 `struct_to_field_type_dict`):
 
 **`_register_enum(ctype_obj, parser_state)`** — populates `parser_state.enum_info_dict`
-with a `C_TO_LOGIC.EnumInfo` built from the `IntEnum` members:
+with a `LOGIC.EnumInfo` built from the `IntEnum` members:
 
 ```python
 info.id_to_int_val = {m.name: m.value for m in ctype_obj}   # e.g. {"IDLE": 0, "RUNNING": 1}
@@ -1598,10 +1563,10 @@ the redundant values are dropped entirely: `state_t_IDLE_RUNNING_DONE` rather th
 values (e.g. `sparse_t_A_0_B_5`), so two differently-valued enums still can never collide
 on one name.
 
-`C_TO_LOGIC.ENUM_CONST_MARKER = "$"` distinguishes enum constants from plain integer
+`LOGIC.ENUM_CONST_MARKER = "$"` distinguishes enum constants from plain integer
 constants in the backend. The rest of VHDL generation (comparison operators,
 `wire_to_c_type` propagation, `enum_info_dict` lookup) is already handled by the existing
-C_TO_LOGIC backend — no changes to VHDL generation are needed.
+shared LOGIC/VHDL backend — no changes to VHDL generation are needed.
 
 ## `@interface` — Generated Reverse Wiring
 
@@ -1909,7 +1874,7 @@ call site — not a downstream `KeyError`.
   (`zip(expr.args, callee_def.inputs)`, ignoring `expr.keywords` entirely) would leave a
   keyword-argument call's matching input ports with no driver, surfacing much later and
   unrelatably as a `KeyError` in `TRIM_COLLAPSE_FUNC_DEFS_RECURSIVE`'s `wire_driven_by` lookup
-  (duplicate-submodule detection, `C_TO_LOGIC.py:9758`) — a Layer-2-only failure, invisible to
+  (duplicate-submodule detection, `LOGIC.TRIM_COLLAPSE_FUNC_DEFS_RECURSIVE`) — a Layer-2-only failure, invisible to
   native sim (Layer 1, plain Python, which always handles keywords) and only reachable once
   auto-pipelining/VHDL generation actually walks the wiring. A purely positional `zip` produces
   exactly this failure on wireguard's `chacha20_pipeline_shared.py`'s
@@ -1977,16 +1942,16 @@ arrays. The only new elaboration code is string-literal-initializer support and 
 `name: char_t[16] = "hello"` (a bare Python `str` constant used where a char/uint8_t array
 is expected) is handled by `FuncElaborator._elab_str_literal(py_str, target_ctype,
 ast_node)`, which builds a **single CONST wire**, mirroring PipelineC's C frontend exactly
-(`C_TO_LOGIC.NON_ENUM_CONST_VALUE_STR_TO_LOGIC` / `BUILD_CONST_WIRE`) rather than
+(`C_TO_LOGIC.NON_ENUM_CONST_VALUE_STR_TO_LOGIC` / `LOGIC.BUILD_CONST_WIRE`) rather than
 per-character wires:
 
 ```python
-const_wire = f'{C_TO_LOGIC.CONST_PREFIX}"{py_str}"_{coord_str}'
+const_wire = f'{LOGIC.CONST_PREFIX}"{py_str}"_{coord_str}'
 ```
 
 The literal's text — with its surrounding quote characters preserved, matching how a C-AST
 string constant's `.value` already includes them — lives directly in the wire name. The
-shared backend's `GET_VAL_STR_FROM_CONST_WIRE` (`C_TO_LOGIC.py`) recovers it later by
+shared backend's `GET_VAL_STR_FROM_CONST_WIRE` (`LOGIC.py`) recovers it later by
 splitting on `"_"` and taking the first token, so **no new value-decoding code is needed
 on the Pypeline side at all**. Known bug ([#356](https://github.com/JulianKemmerer/PipelineC/issues/356)), shared by both front ends (same recovery
 function): a literal containing `"_"` is cut at the first `_` on readback, which also drops
@@ -2025,7 +1990,7 @@ unguarded: `static char c = 65;` emits `character'pos('65')`, which GHDL rejects
 
 `FuncElaborator._elab_strlen_call(expr)` handles calls to a function literally named
 `strlen`, dispatched from `_elab_call` before the `_BIT_MANIP_FUNC_NAMES` check (`strlen`
-is Pypeline-local, not inserted into that C_TO_LOGIC-owned frozenset). Unlike bit-manip
+is Pypeline-local, not inserted into that `pypeline.py`-owned frozenset). Unlike bit-manip
 builtins, it builds no submodule instance — it's a **pure elaboration-time constant**,
 exactly like an integer literal:
 
@@ -2168,7 +2133,7 @@ be emitted at 5000 pipeline stages for any function with an unwritten register.
 ### Clock Enable and Function Calls
 
 Any function whose `Logic()` contains registers — or calls functions that do, transitively
-— requires a `CLOCK_ENABLE` input port. `C_TO_LOGIC.LOGIC_NEEDS_CLOCK_ENABLE` determines
+— requires a `CLOCK_ENABLE` input port. `LOGIC.LOGIC_NEEDS_CLOCK_ENABLE` determines
 this recursively (with caching) by checking `logic.state_regs` and walking
 `submodule_instances`.
 
@@ -2280,7 +2245,7 @@ def a_b_connect():
 
 `_discover_global_wires(tree, module_globals, parser_state, name_prefix=None)` scans
 `tree.body` for top-level `ast.AnnAssign` nodes whose annotation evaluates to
-`_WireType`. For each one a `C_TO_LOGIC.VariableInfo()` is created (with `name` and
+`_WireType`. For each one a `LOGIC.VariableInfo()` is created (with `name` and
 `type_name` set) and stored in `parser_state.global_vars[reg_name]`, where
 `reg_name = f"{name_prefix}_{bare_name}"` if a prefix is given, else `bare_name`.
 An initializer on the declaration is an `ElaborationError`.
@@ -2392,8 +2357,8 @@ covering wire found" at `_connect_final_state_wires`. (The lazy call sites in
   `_write_ref((name,), init_wire, c_type, node)` call any real write uses. What drives
   it depends on whether the pre-scan's *read* set also contains this wire:
   - **Write-only function**: zeros — a normal typed `0` constant for scalar wires
-    (`C_TO_LOGIC.COMPOUND_NULL` is not a legal RHS for a plain integer signal in the
-    VHDL backend), `C_TO_LOGIC.BUILD_CONST_WIRE(C_TO_LOGIC.COMPOUND_NULL, ...)` for
+    (`LOGIC.COMPOUND_NULL` is not a legal RHS for a plain integer signal in the
+    VHDL backend), `LOGIC.BUILD_CONST_WIRE(LOGIC.COMPOUND_NULL, ...)` for
     struct/array wires — exactly mirroring `_declare_var`'s treatment of a local
     variable's first declaration.
   - **Function that also reads the wire**: a fresh internal input wire
@@ -2535,7 +2500,7 @@ design I/O ports. They follow the same elaboration path as `Wire[T]` with two
 extra effects:
 
 - `Input` names are added to `parser_state.input_wires` (a set already defined on
-  `C_TO_LOGIC.ParserState`)
+  `LOGIC.ParserState`)
 - `Output` names are added to `parser_state.output_wires`
 
 ```python
@@ -3923,7 +3888,7 @@ def main(x: uint64_t, y: uint64_t) -> uint64_t:
 callee is `ast.Name(id="vhdl")` — checked structurally by name
 (`_VHDL_TEXT_FUNC_NAME = "vhdl"`), not by evaluating/calling anything — is routed to
 `_elab_vhdl_text_stmt` instead of raising `NotImplementedError` like other unrecognised
-call statements. `vhdl` is distinct from `C_TO_LOGIC.VHDL_FUNC_NAME` (`"__vhdl__"`):
+call statements. `vhdl` is distinct from `LOGIC.VHDL_FUNC_NAME` (`"__vhdl__"`):
 Pypeline's user-facing surface avoids dunder-style names.
 
 **`_elab_vhdl_text_stmt(stmt)`:**
@@ -3950,7 +3915,7 @@ downstream synthesis: ports are generated from the function signature exactly as
 other hardware function, and all `SYN.py`/`AUTO_PIPELINE.py`/`VHDL.py` exemptions for raw-VHDL modules
 (pipeline-map skip, undriven-output skip, timing-unknown, single-submodule-delay-unknown)
 key off `Logic.vhdl_module_text` directly, so they apply automatically regardless of
-frontend. `C_TO_LOGIC.LOGIC_NEEDS_CLOCK_ENABLE` is likewise frontend-agnostic.
+frontend. `LOGIC.LOGIC_NEEDS_CLOCK_ENABLE` is likewise frontend-agnostic.
 
 **Has no built-in simulation behavior.** The real `vhdl(...)` Python function
 (`pypeline.py`) is never invoked during elaboration — the elaborator recognizes it
@@ -3970,7 +3935,7 @@ routing lives entirely inside the `@hw_func` sim wrapper). See `pypeline_DESIGN.
 
 `sim_print(...)` is pypeline's equivalent of PipelineC C's `printf(fmt, ...)`: it elaborates
 to a genuine `printf`-prefixed submodule instance, reusing the C frontend's printf backend
-(`C_TO_LOGIC.py`/`VHDL.py`) **completely unmodified**. Unlike `vhdl(...)`, it *does* have a
+(`LOGIC.py`/`VHDL.py`) **completely unmodified**. Unlike `vhdl(...)`, it *does* have a
 real simulation model — see `pypeline_sim_DESIGN.md`'s "`sim_print`" section for the runtime
 side.
 
@@ -4025,7 +3990,7 @@ trap.
    `ast.JoinedStr` (f-string) — anything else is an `ElaborationError`.
 3. Walks the argument's pieces. Each `ast.Constant` text segment is appended to an internal
    format-string buffer with literal `%` escaped to `%%` (the buffer is later fed through
-   `C_TO_LOGIC.PRTINTF_STRING_TO_FORMATS`, which scans for `%`-specifiers — any `%` the user
+   `LOGIC.PRTINTF_STRING_TO_FORMATS`, which scans for `%`-specifiers — any `%` the user
    actually typed must not be misread as one). Each `ast.FormattedValue` (an `{expr}`
    interpolation) is elaborated and mapped to a specifier:
    - `{expr:x}` / `{expr:X}` (format-spec) or `hex(expr)` (structurally recognized by bare
@@ -4041,7 +4006,7 @@ trap.
    submodule port's type directly — there is no format-implied placeholder type to
    reconcile, unlike the C frontend's historical `%s` handling (see the `%s` real-size fix
    below).
-5. Builds the func/instance name (`f"{C_TO_LOGIC.PRINTF_FUNC_NAME}_{coord}{type_sig}"`,
+5. Builds the func/instance name (`f"{LOGIC.PRINTF_FUNC_NAME}_{coord}{type_sig}"`,
    mirroring `C_TO_LOGIC.py`'s own `PRINTF_FUNC_NAME + "_" + coord` construction, plus a
    type-signature suffix — see "Entity naming: why source coordinates alone aren't enough"
    below) and calls `_add_submodule_instance(...)` with `output_wire=None, output_type=None` —
@@ -4088,7 +4053,7 @@ type_sig = "".join(
 )
 ```
 
-— mirroring `C_TO_LOGIC.BUILD_FUNC_NAME`'s existing type-suffix pattern for ordinary submodule
+— mirroring `LOGIC.BUILD_FUNC_NAME`'s existing type-suffix pattern for ordinary submodule
 entities (same bracket-sanitization, same `"_" + ctype` per-argument join) rather than inventing
 a new mechanism. Call sites that share identical argument types (the overwhelming common case —
 most `sim_print`/`sim_assert` calls aren't inside a literal-varying unrolled loop) still
@@ -4177,7 +4142,7 @@ self.submodule_instance_to_printf_format_string = {}     # Logic.__init__
   its existing `ast_meta` extraction — the same relay mechanism already used for instance
   source-location metadata.
 - **Read**: `GET_PRINTF_MODULE_TEXT` reads `Logic.printf_format_string` directly and calls
-  `C_TO_LOGIC.PRTINTF_STRING_TO_FORMATS(format_string)`, which is already frontend-agnostic —
+  `LOGIC.PRTINTF_STRING_TO_FORMATS(format_string)`, which is already frontend-agnostic —
   it always takes a plain string.
 
 `Logic.__init__`/`DEEPCOPY`/`MERGE_COMB_LOGIC` follow the exact
@@ -4237,8 +4202,8 @@ real register clocking every enabled cycle, not just on value change).
 
 Printf submodules have no timing latency or state regs of their own, so `LOGIC_NEEDS_CLOCK`
 (`VHDL.py`) needs a special case to declare a `clk` port for them at all —
-`or (Logic.is_c_built_in and C_TO_LOGIC.IS_SIM_CTRL_FUNC_NAME(Logic.func_name))`, matching the
-existing `C_TO_LOGIC.LOGIC_NEEDS_CLOCK_ENABLE`'s `func_name.startswith(PRINTF_FUNC_NAME)` special
+`or (Logic.is_c_built_in and LOGIC.IS_SIM_CTRL_FUNC_NAME(Logic.func_name))`, matching the
+existing `LOGIC.LOGIC_NEEDS_CLOCK_ENABLE`'s `func_name.startswith(PRINTF_FUNC_NAME)` special
 case that already makes `CLOCK_ENABLE` available independently. `IS_SIM_CTRL_FUNC_NAME` covers
 `sim_assert`/`sim_finish` as well as printf, so all three get a `clk` port declared and wired via
 the same generic port-declaration/instantiation machinery every other clocked module uses.
@@ -4289,7 +4254,7 @@ Two more simulation-only builtins, modeled directly on `sim_print` above: `sim_a
 msg=None)` checks a condition every enabled cycle, and `sim_finish()` signals "stop simulating
 now." Both are Pypeline-only (no C-frontend support) and reuse `sim_print`'s printf-family
 plumbing — naming convention, manual `CLOCK_ENABLE` wiring, `LOGIC_NEEDS_CLOCK` clock-port
-forcing, and the raw-HDL/void-output special cases in `C_TO_LOGIC.py`/`VHDL.py`.
+forcing, and the raw-HDL/void-output special cases in `LOGIC.py`/`VHDL.py`.
 
 ```python
 from pypeline import sim_assert, sim_finish
@@ -4302,14 +4267,14 @@ if n >= 3:
 
 ### Shared printf-family naming: `IS_SIM_CTRL_FUNC_NAME`
 
-`C_TO_LOGIC.py` defines `SIM_ASSERT_FUNC_NAME = "sim_assert"` and `SIM_FINISH_FUNC_NAME =
+`LOGIC.py` defines `SIM_ASSERT_FUNC_NAME = "sim_assert"` and `SIM_FINISH_FUNC_NAME =
 "sim_finish"` alongside the existing `PRINTF_FUNC_NAME = "printf"`, plus a helper —
 `IS_SIM_CTRL_FUNC_NAME(func_name)` — that's `True` for any of the three prefixes. Every place
 that needs to recognize "this is a void, simulation-console-facing builtin that needs
 `CLOCK_ENABLE`/`clk` and whose output never drives anything" calls `IS_SIM_CTRL_FUNC_NAME`
 rather than special-casing `func_name.startswith(PRINTF_FUNC_NAME)` alone —
 `LOGIC_NEEDS_CLOCK` and `C_BUILT_IN_FUNC_IS_RAW_HDL` in `VHDL.py`, `LOGIC_NEEDS_CLOCK_ENABLE`
-and the various void-output/no-ripup checks in `C_TO_LOGIC.py`. C-frontend-specific printf
+and the various void-output/no-ripup checks in `LOGIC.py`. C-frontend-specific printf
 parsing (`C_AST_PRINTF_FUNC_CALL_TO_LOGIC` and friends) has no matching `sim_assert`/
 `sim_finish` counterpart, since neither has a C-callable form.
 
@@ -4355,7 +4320,7 @@ end process;
 ```
 
 `sim_assert`'s message re-derives the same VHDL string-concatenation expression
-`GET_PRINTF_MODULE_TEXT` builds (via `C_TO_LOGIC.PRTINTF_STRING_TO_FORMATS` +
+`GET_PRINTF_MODULE_TEXT` builds (via `LOGIC.PRTINTF_STRING_TO_FORMATS` +
 `C_CONST_STR_TO_VHDL_CONST_STR`), then strips the auto-appended trailing-newline concatenation
 (`&LF&""`) that `_build_sim_fmt_string` always adds — `assert ... report` messages shouldn't end
 with a literal newline the way a `sim_print` line does. No message given (`msg=None`) falls back
@@ -4391,7 +4356,7 @@ an early-stop message instead of propagating the exception as an error.
 > Two elaboration rules here are the authority that simulation mirrors, and both were
 > once mismatched:
 > - **Unary `-` on an integer** widens by one bit and becomes signed (`_elab_unary`,
->   following `SW_LIB.GET_UNARY_OP_NEGATE_INT_UINT_C_CODE`).
+>   following `C_TO_LOGIC.GET_UNARY_OP_NEGATE_INT_UINT_C_CODE`).
 > - **A constant shift amount** goes to the `CONST_SL`/`CONST_SR_<n>_<type>` built-in and
 >   never reaches the registry; only a variable amount looks up an implementation
 >   (`_elab_binop`).
@@ -4592,7 +4557,7 @@ Most designs import a board support file whose functions are also `@MAIN` entry 
 annotates their own top-level MAIN. The inference step propagates the user's MHz to all
 other MAINs that share a global wire with a known-MHz MAIN.
 
-The logic lives in `C_TO_LOGIC.INFER_CLOCK_DOMAINS(var_to_rw_main_funcs, var_to_read_func, var_to_write_func, parser_state)`:
+The logic lives in `LOGIC.INFER_CLOCK_DOMAINS(var_to_rw_main_funcs, var_to_read_func, var_to_write_func, parser_state)`:
 
 - Iterates `parser_state.global_vars`; for each shared global, finds all MAINs that use
   it via `global_var_state_reg_info.used_in_funcs` → `RECURSIVE_FIND_MAIN_FUNCS`.
@@ -4608,7 +4573,7 @@ the loop.
 `PARSE_FILE` calls it with empty dicts after registering all MAINs:
 
 ```python
-C_TO_LOGIC.INFER_CLOCK_DOMAINS({}, {}, {}, parser_state)
+LOGIC.INFER_CLOCK_DOMAINS({}, {}, {}, parser_state)
 ```
 
 `GET_CLK_CROSSING_INFO` (C path only) calls it with the populated dicts from its regex
@@ -4656,7 +4621,7 @@ first would let it embed call edges that no longer exist in the final logic:
 
 ```python
 _build_func_call_graph(parser_state)
-C_TO_LOGIC.INFER_CLOCK_DOMAINS({}, {}, {}, parser_state)
+LOGIC.INFER_CLOCK_DOMAINS({}, {}, {}, parser_state)
 ```
 
 ### `make_clock(mhz)` — Python Equivalent of `CLK_MHZ`
@@ -4726,12 +4691,12 @@ doesn't have. It forces the synthesizer to slice (insert pipeline registers) thr
 calls made through the tag object, even when the call sits inside a register/feedback
 context that would otherwise forbid added latency (`CAN_HAVE_ADDED_LATENCY` false
 there). An optional constraint fixes, seeds or caps how many registers that call gets.
-The tagging mechanism lives in `C_TO_LOGIC.Logic()`, `AUTO_PIPELINE.py` and `SWEEP.py` and is shared
+The tagging mechanism lives in `LOGIC.Logic()`, `AUTO_PIPELINE.py` and `SWEEP.py` and is shared
 with the C frontend. The Pypeline frontend adds one field of its own:
 
 ```python
-# C_TO_LOGIC.py — present on every Logic(), C and Python frontends alike
-# inst_name -> C_TO_LOGIC.AutoPipelineLatency(latency, start_latency,
+# LOGIC.py — present on every Logic(), C and Python frontends alike
+# inst_name -> LOGIC.AutoPipelineLatency(latency, start_latency,
 # max_latency); all None = unconstrained. Persists per Logic().
 self.sub_inst_to_auto_pipeline_latency = {}
 # Pypeline frontend only: inst_name -> AUTO_PIPELINE.canonical_key, so the
@@ -4882,7 +4847,7 @@ exactly the instance this call created:
         _add_submodule_instance(...)
         if auto_pipeline_call is not None:
             self.logic.sub_inst_to_auto_pipeline_latency[inst] = (
-                C_TO_LOGIC.AutoPipelineLatency.from_tag(auto_pipeline_call)
+                LOGIC.AutoPipelineLatency.from_tag(auto_pipeline_call)
             )
             self.logic.sub_inst_to_auto_pipeline_key[inst] = (
                 auto_pipeline_call.canonical_key
@@ -5076,8 +5041,8 @@ being called more than once per process:
   build did not use. It is evidence only, never part of a synthesis cache key.
   Library callers of `PARSE_FILE` don't freeze anything.
 - **Per-parse compiler cache cleanup**: the re-parse branch runs
-  `C_TO_LOGIC.DEL_ALL_CACHES()` + `SYN.DEL_ALL_CACHES()` (the same cleanup the C
-  frontend runs at the end of its own `PARSE_FILE`) plus the zero-clk TimingParams
+  `LOGIC.DEL_ALL_CACHES()` + `SYN.DEL_ALL_CACHES()` (the shared part of the cleanup the C
+  frontend's `C_TO_LOGIC.DEL_ALL_CACHES()` runs at the end of its own `PARSE_FILE`) plus the zero-clk TimingParams
   cache. Two concrete staleness bugs this prevents: the func-name-keyed trim/collapse
   memo would skip trimming freshly rebuilt Logic (leaking normally-pruned dead logic —
   e.g. built-in ops' unused clock-enable branch muxes, whose generated names GHDL
@@ -5137,11 +5102,11 @@ Python equivalent of PipelineC's `#pragma MULTI_CYCLE <ncycles> <start_reg> <end
 (see `examples/mcp/mcp_test.c`). It relaxes Vivado setup timing between two named
 registers by `<ncycles>` clock cycles, letting slow combinational logic (e.g. integer
 division) spread across multiple cycles without forcing the synthesizer to pipeline it.
-The underlying mechanism is entirely in `C_TO_LOGIC.Logic.mcp_tuples` and `AUTO_MULTI_CYCLE.py` and is
+The underlying mechanism is entirely in `LOGIC.Logic.mcp_tuples` and `AUTO_MULTI_CYCLE.py` and is
 shared, unmodified, with the C frontend:
 
 ```python
-# C_TO_LOGIC.py — already present on every Logic(), C and Python frontends alike
+# LOGIC.py — already present on every Logic(), C and Python frontends alike
 self.mcp_tuples = set()  # Tuples of (ncycles, start_reg, end_reg) — strings
 ```
 
@@ -5255,7 +5220,7 @@ def _tag_multi_cycle_reg(self, var_name, role):
         if getattr(role.tag, "_is_auto_multi_cycle_tag", False) is True:
             ncycles = role.tag._ncycles_for_compiler()   # not a design read
             self.logic.auto_multi_cycle_tuples[(pending[0], pending[1])] = (
-                C_TO_LOGIC.AutoMultiCycleConstraint.from_tag(role.tag)
+                LOGIC.AutoMultiCycleConstraint.from_tag(role.tag)
             )
         else:
             ncycles = role.tag.ncycles
@@ -5316,7 +5281,7 @@ native sim and in synth `--comb`.
 ## Fixed User Pipelines
 
 `@pipeline_latency(N)` populates the shared
-`C_TO_LOGIC.ParserState.func_fixed_latency` table. `_register_pipeline_latency`
+`LOGIC.ParserState.func_fixed_latency` table. `_register_pipeline_latency`
 reads the live callable's `_pipeline_latency` metadata and keys it by the final
 hardware name. Top-level registration occurs during the stub pass; closure/live
 registration occurs before completed-entity reuse, so neither declaration order
@@ -5344,6 +5309,16 @@ native module-qualified wire keys. The simulation architecture and activation
 rules are documented in
 [pypeline_sim_DESIGN.md](pypeline_sim_DESIGN.md#fixed-user-pipelines).
 
+The native-sim side of that design is the last section of `PY_TO_LOGIC.py`.
+`PREPARE_PIPELINE_LATENCY_SIM(roots, build_timing=None)` runs `ELABORATE_LIVE_ROOTS`,
+builds zero-added-clock (or the build's) `AUTO_PIPELINE.TimingParams`, and installs a
+dispatch closure in each outermost sliceable function's `_sim_model_cell`. The dispatch
+evaluates a `_SimPipelineGraph` stage by stage. `pypeline.py` and `pypeline_sim.py` import
+`PY_TO_LOGIC` lazily, only once their declaration gate finds a reachable nonzero
+`@pipeline_latency`, so plain native sim never loads the compiler. The section imports
+`AUTO_PIPELINE` and `AUTO` inside its functions, leaving `PY_TO_LOGIC`'s own module
+imports unchanged.
+
 ## `@wires` — Just-Wires Synthesis Hint
 
 Python equivalent of PipelineC's `#pragma FUNC_WIRES <func_name>` (see
@@ -5358,12 +5333,12 @@ zero-delay rather than timed/estimated:
 byte_array_t my_struct_to_bytes(my_struct_t x) { ... }
 ```
 
-The underlying mechanism is entirely in `C_TO_LOGIC.ParserState.func_marked_wires` (a
+The underlying mechanism is entirely in `LOGIC.ParserState.func_marked_wires` (a
 `set()` of func names) and `SYN.py`'s `LOGIC_IS_ZERO_DELAY`, and is shared, unmodified,
 with the C frontend — the same way `AUTO_PIPELINE`/`MULTI_CYCLE` are:
 
 ```python
-# C_TO_LOGIC.py — already present on every ParserState, C and Python frontends alike
+# LOGIC.py — already present on every ParserState, C and Python frontends alike
 self.func_marked_wires = set()   # func_name -> tagged "just wires" by #pragma FUNC_WIRES
 ```
 
@@ -5375,7 +5350,7 @@ def LOGIC_IS_ZERO_DELAY(logic, parser_state, allow_none_delay=False):
     ...
 ```
 
-Porting the feature to Pypeline therefore required **no changes to `C_TO_LOGIC.py` or
+Porting the feature to Pypeline therefore required **no changes to `LOGIC.py` or
 `SYN.py`** — only teaching `PY_TO_LOGIC.py` to populate the same set, keyed by the
 final hardware name.
 
@@ -5837,7 +5812,7 @@ call-site locations), identical to an unnamed tag. A group name never changes
 emitted hierarchy or path attribution. Duplicate-call collapse preserves distinct
 groups, even when both instantiate the same function's entity.
 
-**Duplicate calls.** `C_TO_LOGIC.TRIM_COLLAPSE_FUNC_DEFS_RECURSIVE` collapses identical
+**Duplicate calls.** `LOGIC.TRIM_COLLAPSE_FUNC_DEFS_RECURSIVE` collapses identical
 calls (same function, same input drivers) into one `_DUPLICATE_<hash>` instance. The
 calls' AUTO_PIPELINE key and constraint and AUTO_FSM key are part of what must match.
 Two latency groups, or a tagged and an untagged call, are never merged. A collapsed
@@ -5946,7 +5921,7 @@ in `FuncLogicLookupTable` and as VHDL component entity names:
 Array-typed operands sanitize the same way as `CONST_REF_RD`/`VAR_REF_RD`/`VAR_REF_ASSIGN`
 below: array brackets in `<lhs_type>`/`<rhs_type>`/`<type>` are replaced with `_` before
 interpolation (`_bin_func_name`/`_unary_func_name` in `PY_TO_LOGIC.py`, mirroring
-`C_TO_LOGIC.BUILD_FUNC_NAME`'s identical `.replace("[", "_").replace("]", "")` for the
+`LOGIC.BUILD_FUNC_NAME`'s identical `.replace("[", "_").replace("]", "")` for the
 classic C-dialect frontend) — e.g. comparing two `uint1_t[16]` arrays with `==` builds
 `BIN_OP_EQ_uint1_t_16_uint1_t_16`, not the illegal `BIN_OP_EQ_uint1_t[16]_uint1_t[16]`.
 
@@ -6027,7 +6002,7 @@ VHDL basic identifiers are more restrictive than Python identifiers:
   Names](#built-in-primitive-function-names)), and an array type's `[`/`]` are replaced
   with `_` first (e.g. `uint1_t[16]` -> `uint1_t_16`) so an array-typed comparison like
   `uint1_t[16] == uint1_t[16]` doesn't leave `[`/`]` in the generated VHDL entity name --
-  mirrors `C_TO_LOGIC.BUILD_FUNC_NAME`'s identical `.replace("[", "_").replace("]", "")`
+  mirrors `LOGIC.BUILD_FUNC_NAME`'s identical `.replace("[", "_").replace("]", "")`
   for the classic C-dialect frontend's built-in/library function names.
 - **Struct field names**: sanitized at every point a field identifier becomes a
   `struct_to_field_type_dict` key or a ref_toks token — `_register_struct_recursive`,

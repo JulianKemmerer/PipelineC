@@ -168,7 +168,7 @@ has a definition in the final file list.
 
 Pipeline-map graph frontiers and shared-global emission are sorted before
 rendering. Source-coordinate fragments in generated `_DUPLICATE_<hash>` names
-(from `C_TO_LOGIC.py`'s duplicate-submodule-collapsing pass) are sorted the
+(from `LOGIC.py`'s duplicate-submodule-collapsing pass) are sorted the
 same way: the pass collects one `ASTMeta` per collapsed source location into a
 set, and `ASTMeta.__hash__` is a `PYTHONHASHSEED`-salted string hash, so
 iterating that set directly would make the same design spell the fragment

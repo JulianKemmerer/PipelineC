@@ -27,7 +27,7 @@ sys.path.insert(
     0, os.path.join(os.path.dirname(os.path.abspath(__file__)), "../../../")
 )
 
-import C_TO_LOGIC  # (also first: VHDL's import chain)
+import AUTO_PIPELINE
 import PY_TO_LOGIC
 import SYN
 import VHDL
@@ -213,7 +213,7 @@ def test_resize_through_discovered_depths_in_one_out_dir():
                     decrypt_declaration = current
                 assert current == decrypt_declaration, (depth, current, decrypt_declaration)
                 _ghdl_analyze(f"depth {depth}")
-                C_TO_LOGIC.WRITE_0_ADDED_CLKS_INIT_FILES(ps)
+                AUTO_PIPELINE.WRITE_0_ADDED_CLKS_INIT_FILES(ps)
                 pick = _isolated_files(ps, "pick")
                 _ghdl_analyze_files(pick, f"depth {depth} pick")
         finally:
@@ -273,7 +273,7 @@ def test_isolated_synthesis_reads_only_its_types():
         SYN.TOP_LEVEL_MODULE = top or "top"  # set by the driver
         try:
             ps1, _ = _parse_and_write_package({})
-            C_TO_LOGIC.WRITE_0_ADDED_CLKS_INIT_FILES(ps1)  # every entity, as the driver does
+            AUTO_PIPELINE.WRITE_0_ADDED_CLKS_INIT_FILES(ps1)  # every entity, as the driver does
             names = _powers_types(ps1)
             body1, mac1 = _isolated_files(ps1, "body_v"), _isolated_files(ps1, "mac")
             body_pkg1, body_text = _scoped_package(body1)
@@ -291,7 +291,7 @@ def test_isolated_synthesis_reads_only_its_types():
                     for k in logic.sub_inst_to_auto_pipeline_key.values()}
             cache = {k: PASS2_LATENCY["encrypt" if "direction_encrypt" in k else "decrypt"] for k in keys}
             ps2, _ = _parse_and_write_package(cache)
-            C_TO_LOGIC.WRITE_0_ADDED_CLKS_INIT_FILES(ps2)
+            AUTO_PIPELINE.WRITE_0_ADDED_CLKS_INIT_FILES(ps2)
             body2, mac2 = _isolated_files(ps2, "body_v"), _isolated_files(ps2, "mac")
             assert _scoped_package(body2)[0] == body_pkg1, "unrelated type change moved body's package"
             assert _scoped_package(mac2)[0] != mac_pkg1, "mac's powers_t change was not seen"

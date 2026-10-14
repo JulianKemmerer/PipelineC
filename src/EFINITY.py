@@ -1,10 +1,9 @@
 import os
 import sys
 
-import C_TO_LOGIC
 import SYN
 import VHDL
-from utilities import GET_TOOL_PATH
+from utilities import GET_SHELL_CMD_OUTPUT, GET_TOOL_PATH
 
 TOOL_EXE = "efx_run.py"
 # Default to env if there
@@ -426,7 +425,7 @@ efx_run.py """
     syn_imp_bash_cmd = (
         "bash " + sh_file
     )  # + ''' &> ''' + log_path  #"chmod +x " + "./" + sh_file + " && " + "./"
-    C_TO_LOGIC.GET_SHELL_CMD_OUTPUT(syn_imp_bash_cmd, cwd=output_directory)
+    GET_SHELL_CMD_OUTPUT(syn_imp_bash_cmd, cwd=output_directory)
     f = open(log_path, "r")
     log_text = f.read()
     f.close()

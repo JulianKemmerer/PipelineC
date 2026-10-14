@@ -43,7 +43,7 @@ def test_native_without_optimizer():
 import importlib.abc, runpy, sys
 class NoCompiler(importlib.abc.MetaPathFinder):
     def find_spec(self, fullname, path=None, target=None):
-        if fullname in {'AUTO_COMB_OPT', 'AUTO', 'AUTO_FSM', 'PY_TO_LOGIC', 'C_TO_LOGIC', 'SYN'}:
+        if fullname in {'AUTO_COMB_OPT', 'AUTO', 'AUTO_FSM', 'PY_TO_LOGIC', 'C_TO_LOGIC', 'LOGIC', 'SYN'}:
             raise AssertionError('native DELAY_OPT imported ' + fullname)
 sys.meta_path.insert(0, NoCompiler())
 ns = runpy.run_path(sys.argv[1], run_name='native_gate')

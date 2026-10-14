@@ -6,13 +6,13 @@ Reaching a @pipeline_latency callee (here a make_ram ROM) makes sim_call
 elaborate the caller with PY_TO_LOGIC.ELABORATE_LIVE_ROOTS, to align its paths.
 That elaboration used to lack the default soft-operator lowerings PARSE_FILE
 registers (operators.soft.register_sw_lib_replacements), so `s > lim` fell
-through to the SW_LIB C-generation path and crashed on the unset
+through to the C front end's C-code-generation path and crashed on the unset
 SYN.SYN_OUTPUT_DIRECTORY (`TypeError: ... 'NoneType' and 'str'`). pypelinec
 and pypeline_sim.py register the lowerings before the design loads, so only a
 plain Python process like this one hit it.
 
 ELABORATE_LIVE_ROOTS now installs the lowerings, and arms
-C_TO_LOGIC.PYPELINE_NO_SW_LIB_GUARD, for its own duration only. The
+LOGIC.PYPELINE_NO_SW_LIB_GUARD, for its own duration only. The
 lowerings go in as lowest-priority fallbacks, so the process is left exactly
 as before: a global registration would also switch native sim to the soft
 implementations (pypeline.SIM_SOFT_OPS) for every later sim_call.
@@ -39,7 +39,7 @@ sys.path.insert(
 )
 import copy
 
-import C_TO_LOGIC
+import LOGIC
 import PY_TO_LOGIC
 import pypeline as PL
 from pypeline import (
@@ -158,7 +158,7 @@ def test_process_state_unchanged():
     # First, so no earlier elaboration can already have changed the state it
     # checks.
     before = _snapshot()
-    guard = C_TO_LOGIC.PYPELINE_NO_SW_LIB_GUARD
+    guard = LOGIC.PYPELINE_NO_SW_LIB_GUARD
     sim_reset()
     got = [
         int(sim_call(unsigned_rom_caller, x, s))
@@ -168,7 +168,7 @@ def test_process_state_unchanged():
     after = _snapshot()
     changed = [name for name in _LIVE_REGISTRY_NAMES if after[name] != before[name]]
     assert not changed, f"registry state changed: {changed}"
-    assert C_TO_LOGIC.PYPELINE_NO_SW_LIB_GUARD == guard
+    assert LOGIC.PYPELINE_NO_SW_LIB_GUARD == guard
     # Nothing resolves to a default lowering outside the elaboration.
     assert PL._resolve_generic_operator("GT", "int8_t", "int8_t") is None
     assert PL._resolve_generic_unary_operator("NEGATE", "int8_t") is None
@@ -226,12 +226,12 @@ def test_guard_armed_during_elaboration():
         try:
             PY_TO_LOGIC.ELABORATE_LIVE_ROOTS([signed_rom_caller])
         except Exception as e:  # the guard raises a plain Exception
-            assert "SW_LIB/cpp/pycparser" in str(e), repr(e)
+            assert "C-code-generation/cpp/pycparser" in str(e), repr(e)
         else:
             raise AssertionError("GT pinned to INFERRED elaborated without the guard")
     finally:
         _restore(saved)
-    assert C_TO_LOGIC.PYPELINE_NO_SW_LIB_GUARD is False
+    assert LOGIC.PYPELINE_NO_SW_LIB_GUARD is False
 
 
 if __name__ == "__main__":

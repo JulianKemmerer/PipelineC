@@ -889,7 +889,7 @@ _negate_ctype_cache: dict = {}
 def _negate_ctype(ctype):
     """Result ctype OBJECT of unary `-` applied to *ctype*.
 
-    Integer NEGATE widens by one bit and becomes signed. SW_LIB's
+    Integer NEGATE widens by one bit and becomes signed. C_TO_LOGIC's
     GET_UNARY_OP_NEGATE_INT_UINT_C_CODE is the authority -- it builds the
     generated function's return type as `"int" + str(in_width + 1) + "_t"` --
     and PY_TO_LOGIC._elab_unary applies the same rule on the built-in path.
@@ -3173,7 +3173,7 @@ def _latency_read_site():
 def _auto_pipeline_latency_suffix(latency, start_latency, max_latency) -> str:
     """Canonical-key / entity-name suffix for an AUTO_PIPELINE latency
     constraint; "" when unconstrained. Must match
-    C_TO_LOGIC.AutoPipelineLatency.key_suffix (a unit test checks)."""
+    LOGIC.AutoPipelineLatency.key_suffix (a unit test checks)."""
     if latency is not None:
         return f"_latency_{latency}"
     suffix = ""
@@ -5185,7 +5185,7 @@ def AUTO_MULTI_CYCLE_UNREAD_KEYS() -> list:
 
 def _auto_multi_cycle_latency_suffix(latency, start_latency, max_latency) -> str:
     """Canonical-key suffix for an AUTO_MULTI_CYCLE constraint ("" when unconstrained).
-    Must match C_TO_LOGIC.AutoMultiCycleConstraint.key_suffix."""
+    Must match LOGIC.AutoMultiCycleConstraint.key_suffix."""
     return _auto_pipeline_latency_suffix(latency, start_latency, max_latency)
 
 
@@ -9866,9 +9866,9 @@ def _prepare_pipeline_latency_sim(func):
         return
     if not _pipeline_latency_reachable(func):
         return
-    import pypeline_sim_pipeline
+    import PY_TO_LOGIC
 
-    pypeline_sim_pipeline.prepare([func])
+    PY_TO_LOGIC.PREPARE_PIPELINE_LATENCY_SIM([func])
 
 
 def pipeline_latency(cycles):

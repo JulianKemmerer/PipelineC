@@ -2,10 +2,9 @@ import os
 import sys
 import xml.etree.ElementTree as ET
 
-import C_TO_LOGIC
 import SYN
 import VHDL
-from utilities import GET_TOOL_PATH
+from utilities import GET_SHELL_CMD_OUTPUT, GET_TOOL_PATH
 
 TOOL_EXE = "gw_sh"
 # Default to env if there
@@ -594,7 +593,7 @@ run {"all" if is_final_top else "syn"}
         )
     syn_imp_bash_cmd = f"{GOWIN_PATH} {tcl_path}"
     print("Running:", log_path, flush=True)
-    C_TO_LOGIC.GET_SHELL_CMD_OUTPUT(syn_imp_bash_cmd, cwd=output_directory)
+    GET_SHELL_CMD_OUTPUT(syn_imp_bash_cmd, cwd=output_directory)
 
     # Read and parse log
     with open(log_path, "r", errors="replace") as f:

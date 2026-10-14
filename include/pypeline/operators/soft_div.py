@@ -4,12 +4,12 @@ make_soft_div/make_soft_mod are unsigned-only (the restoring-division loop
 below only ever produces a non-negative quotient/remainder). Signed division
 (make_soft_signed_div/make_soft_signed_mod) wraps the unsigned divider with
 the same abs-operands-then-fix-sign structure
-SW_LIB.GET_BIN_OP_DIV_INT_N_C_CODE / GET_BIN_OP_MOD_INT_N_C_CODE used to
+C_TO_LOGIC.GET_BIN_OP_DIV_INT_N_C_CODE / GET_BIN_OP_MOD_INT_N_C_CODE used to
 generate as C: divide magnitudes unsigned, then negate the result if the
 operand signs differed (quotient) or, matching that same (already a bit
 unusual -- see the C version's own "TODO is the sign fixing here right for
 signed modulo?" comment) sign rule, for the remainder too. Kept bit-for-bit
-behaviorally identical to the old SW_LIB lowering rather than "fixed" to a
+behaviorally identical to the old C-code lowering rather than "fixed" to a
 different convention, since nothing depended on this being C-style
 truncating modulo and changing it now would be a silent behavior change of
 its own.

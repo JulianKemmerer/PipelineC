@@ -15,12 +15,12 @@ import AUTO_PIPELINE as AP
 import AUTO_MULTI_CYCLE as MCP
 import VHDL
 import VIVADO
-import C_TO_LOGIC
+import LOGIC
 import PY_TO_LOGIC
 import SWEEP
 import SYN
 
-M = C_TO_LOGIC.SUBMODULE_MARKER
+M = LOGIC.SUBMODULE_MARKER
 
 
 @functools.lru_cache(None)
@@ -450,7 +450,7 @@ def test_only_stateful_callers_and_self_timed_do_not_decouple():
     for holder, logic in _holders(ps).items():
         local = next(k for k, f in logic.submodule_instances.items() if f in {_func(ps, "prologue"), _func(ps, "epilogue")})
         tags = dict(logic.sub_inst_to_auto_pipeline_latency)
-        tags[local] = C_TO_LOGIC.AutoPipelineLatency()
+        tags[local] = LOGIC.AutoPipelineLatency()
         with patch.object(logic, "sub_inst_to_auto_pipeline_latency", tags):
             interior = next(i for i in _insts(ps, "helper") if _under(i, holder))
             assert AP.ADDED_LATENCY_BLOCKER(interior, ps) is None
@@ -504,7 +504,7 @@ def test_mcp_constraints_and_lost_coverage_diagnostics():
     mtp.TimingParamsLookupTable = tpl
     mtp.auto_multi_cycle_ncycles = MCP.ELABORATED_AUTO_MULTI_CYCLE_NCYCLES(ps)
     for holder, logic in _holders(ps).items():
-        main = C_TO_LOGIC.RECURSIVE_FIND_MAIN_FUNC_FROM_INST(holder, ps)
+        main = LOGIC.RECURSIVE_FIND_MAIN_FUNC_FROM_INST(holder, ps)
         top = VHDL.GET_ENTITY_NAME(main, ps.LogicInstLookupTable[main], tpl, ps)
         tup, start, end, auto = MCP.GET_MCP_CELL_PATHS(holder, main, top, ps)[0]
         for count in (1, 4):
@@ -561,7 +561,7 @@ def test_mcp_constraints_and_lost_coverage_diagnostics():
                 report.start_reg_name = dsp
                 local = suffix[0]
                 tags = dict(logic.sub_inst_to_auto_pipeline_latency)
-                tags[local] = C_TO_LOGIC.AutoPipelineLatency()
+                tags[local] = LOGIC.AutoPipelineLatency()
                 with patch.object(logic, "sub_inst_to_auto_pipeline_latency", tags):
                     MCP.CHECK_MCP_TIMING_REPORT(timing, ps, mtp)
 

@@ -12,7 +12,7 @@ for an overlapping matcher wins.
     available via soft.py:register_soft_cmp_sub_swapped): widen, subtract,
     take the sign bit, with the operand order swapped per op so a single
     sign-bit read is always enough (see below). Matches the structure
-    SW_LIB.GET_BIN_OP_GT_GTE_LT_LTE_UINT_C_CODE used to generate as C; here
+    C_TO_LOGIC.GET_BIN_OP_GT_GTE_LT_LTE_UINT_C_CODE used to generate as C; here
     it is ordinary Pypeline HDL, built on the inferred subtractor (or the
     soft one, if the caller also registered soft sub). Vivado-confirmed
     faster than make_soft_cmp_prefix specifically for GTE/LTE at 8/16-bit
@@ -148,7 +148,7 @@ def make_soft_cmp_sub_swapped(op):
     soft.py:register_soft_cmp_sub_swapped; superseded as the unconditional
     default by make_soft_cmp_prefix, see its docstring): operand-swap
     instead of a fixed diff + separate is_zero test, matching the structure
-    SW_LIB.GET_BIN_OP_GT_GTE_LT_LTE_UINT_C_CODE actually used (see
+    C_TO_LOGIC.GET_BIN_OP_GT_GTE_LT_LTE_UINT_C_CODE actually used (see
     docs/SYN_DESIGN.md) -- one subtract, one sign-bit read, no EQ submodule
     and no MUX. `a>b` == neg(b-a); `a>=b` == !neg(a-b); `a<b` == neg(a-b);
     `a<=b` == !neg(b-a). Still Vivado-confirmed faster than

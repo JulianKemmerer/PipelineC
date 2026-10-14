@@ -63,8 +63,8 @@ def _const_values(logic):
     """Integer values of the func's CONST wires (CONST_PREFIX + value + '_' + loc)."""
     vals = set()
     for wire in logic.wires:
-        if wire.startswith(py.C_TO_LOGIC.CONST_PREFIX):
-            tok = wire[len(py.C_TO_LOGIC.CONST_PREFIX) :].split("_")[0]
+        if wire.startswith(py.LOGIC.CONST_PREFIX):
+            tok = wire[len(py.LOGIC.CONST_PREFIX) :].split("_")[0]
             if tok.lstrip("-").isdigit():
                 vals.add(int(tok))
     return vals

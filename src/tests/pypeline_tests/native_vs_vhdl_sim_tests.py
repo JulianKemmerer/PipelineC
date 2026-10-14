@@ -30,7 +30,6 @@ Run standalone: python3 native_vs_vhdl_sim_tests.py [-j N]
 import sys
 
 from common import (
-    EXAMPLES_PYPELINE_DIR,
     INST_DIR,
     PYPELINE_SIM_DEBUG,
     SYN_TOOL_ARGS,
@@ -47,7 +46,6 @@ COMB_TEST_FILES = [
     ("self_check_auto_pipeline_ram_target_test.py", INST_DIR, []),
     ("self_check_dsp_rom_test.py", INST_DIR, []),
     ("valid_join_test.py", INST_DIR, []),
-    ("pulse_gen_tb.py", EXAMPLES_PYPELINE_DIR / "dsp" / "pdw", ["--run", "600"]),
     ("lut_atan2_test.py", INST_DIR, []),
     ("self_check_auto_pipeline_ram_test.py", INST_DIR, []),
     ("self_check_auto_comb_area_opt_composition_test.py", INST_DIR, []),

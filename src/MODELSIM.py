@@ -3,11 +3,10 @@
 import os
 import sys
 
-import C_TO_LOGIC
 import SIM
 import SYN
 import VIVADO
-from utilities import GET_TOOL_PATH, REPO_ABS_DIR
+from utilities import GET_SHELL_CMD_OUTPUT, GET_TOOL_PATH, REPO_ABS_DIR
 
 # Default to env if there
 TOOL_EXE = "vsim"
@@ -117,6 +116,6 @@ def DO_OPTIONAL_DEBUG(do_debug=False, latency=0):
     )
     print(bash_cmd, flush=True)
 
-    log_text = C_TO_LOGIC.GET_SHELL_CMD_OUTPUT(bash_cmd)
+    log_text = GET_SHELL_CMD_OUTPUT(bash_cmd)
     print(log_text, flush=True)
     sys.exit(-1)

@@ -1,4 +1,5 @@
 import os
+import re
 import shlex
 import subprocess
 import sys
@@ -88,3 +89,47 @@ def GET_VERSION_STR() -> str:
 
 def GET_COMMAND_LINE_STR() -> str:
     return shlex.join(sys.argv)
+
+
+def GET_SHELL_CMD_OUTPUT(cmd_str, cwd="."):
+    # Kill pid after
+    process = subprocess.Popen(
+        cmd_str, shell=True, stderr=subprocess.PIPE, stdout=subprocess.PIPE, cwd=cwd
+    )
+    # print("Reading from ",cmd_str, flush=True)
+    outs, errs = process.communicate()
+    output_text = str(outs.decode(encoding="utf-8", errors="replace"))
+    err_text = str(errs.decode(encoding="utf-8", errors="replace"))
+    # output_text = str(process.stdout.read().decode(encoding="utf-8",errors="replace"))
+    # err_text = str(process.stderr.read().decode(encoding="utf-8",errors="replace"))
+    # For some reason vivado likes to stay alive? Be sure to kill?
+    # os.kill(process.pid, signal.SIGTERM)
+    # process.wait()
+    if process.returncode != 0:
+        e_text = ""
+        e_text += "Command failed:" + "\n"
+        e_text += cmd_str + "\n"
+        e_text += err_text + "\n"
+        e_text += output_text + "\n"
+        raise Exception(e_text)
+    # print("Reading DONE ",cmd_str, flush=True)
+    return output_text
+
+
+# Cached absolute path of the src/ directory holding the compiler modules
+_EXE_ABS_DIR = None
+
+
+def EXE_ABS_DIR():
+    global _EXE_ABS_DIR
+    if _EXE_ABS_DIR:
+        return _EXE_ABS_DIR
+    _EXE_ABS_DIR = os.path.dirname(os.path.realpath(__file__))
+    return _EXE_ABS_DIR
+
+
+def FIND_REGEX_MATCHES(regex, text):
+    p = re.compile(regex)
+    matches = p.findall(text)
+    matches = list(set(matches))
+    return matches

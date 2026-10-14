@@ -460,7 +460,7 @@ def get_tests() -> list:
     )
     # Regression guard for a third process-nondeterminism bug in the same
     # family as var_ref_naming_test above, this time in
-    # C_TO_LOGIC.TRIM_COLLAPSE_FUNC_DEFS_RECURSIVE's duplicate-submodule
+    # LOGIC.TRIM_COLLAPSE_FUNC_DEFS_RECURSIVE's duplicate-submodule
     # collapsing pass: the "_lNN_lMM" source-coordinate fragment of a
     # collapsed instance's name was built by iterating a set of ASTMeta
     # directly, and ASTMeta.__hash__ is a PYTHONHASHSEED-salted str hash.

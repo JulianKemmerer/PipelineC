@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 # Regression guard for a process-nondeterminism bug in generated VHDL for
-# designs that hit C_TO_LOGIC.TRIM_COLLAPSE_FUNC_DEFS_RECURSIVE's
+# designs that hit LOGIC.TRIM_COLLAPSE_FUNC_DEFS_RECURSIVE's
 # duplicate-submodule-collapsing "multi-coordinate" branch
 # (duplicate_collapse_naming_design.py: one bit-select read twice on two
 # different source lines with the same driver wire, so two "uint34_33_33"

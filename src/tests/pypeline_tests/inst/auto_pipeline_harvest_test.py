@@ -17,13 +17,13 @@ sys.path.insert(
 
 import pickle
 
-import C_TO_LOGIC
+import LOGIC
 import PY_TO_LOGIC
 import AUTO_PIPELINE as AUTO_PIPELINE_MODULE  # aliased: the pypeline tag has the same name
 import pypeline
 from pypeline import AUTO_PIPELINE, hw_func, uint8_t
 
-M = C_TO_LOGIC.SUBMODULE_MARKER
+M = LOGIC.SUBMODULE_MARKER
 
 
 class FakeParserState:
@@ -68,12 +68,12 @@ class FakeTimingParams:
 
 
 def make_logic(func_name, auto_pipeline_subs=None):
-    logic = C_TO_LOGIC.Logic()
+    logic = LOGIC.Logic()
     logic.func_name = func_name
     for local_sub, key in (auto_pipeline_subs or {}).items():
         logic.sub_inst_to_auto_pipeline_key[local_sub] = key
         logic.sub_inst_to_auto_pipeline_latency[local_sub] = (
-            C_TO_LOGIC.AutoPipelineLatency()
+            LOGIC.AutoPipelineLatency()
         )
     return logic
 
@@ -287,7 +287,7 @@ def test_mcp_seed_only_passes_do_not_use_the_pass_budget():
                 (pypeline, "SET_AUTO_PIPELINE_LATENCY_CACHE", noop),
                 (pypeline, "SET_AUTO_MULTI_CYCLE_LATENCY_CACHE", noop),
                 (PY_TO_LOGIC, "PARSE_FILE", lambda f: SimpleNamespace()),
-                (C_TO_LOGIC, "WRITE_0_ADDED_CLKS_INIT_FILES", noop),
+                (AUTO_PIPELINE_MODULE, "WRITE_0_ADDED_CLKS_INIT_FILES", noop),
                 (SYN, "ADD_PATH_DELAY_TO_LOOKUP", lambda ps: ps),
                 (SWEEP, "DO_SEEDED_CONFIRM_OR_SWEEP", confirm),
             ]:
@@ -438,8 +438,8 @@ def test_auto_pipeline_latency_suffixes_and_identity():
     for kwargs, suffix in cases:
         ap = AUTO_PIPELINE(constrained_core, **kwargs)
         assert ap.latency_suffix() == suffix, (kwargs, ap.latency_suffix())
-        constraint = C_TO_LOGIC.AutoPipelineLatency.from_tag(ap)
-        # C_TO_LOGIC's copy of the suffix rule must agree with pypeline's
+        constraint = LOGIC.AutoPipelineLatency.from_tag(ap)
+        # LOGIC's copy of the suffix rule must agree with pypeline's
         assert constraint.key_suffix() == suffix, (kwargs, constraint)
         assert constraint.is_unconstrained() == (not kwargs)
         assert pickle.loads(pickle.dumps(constraint)) == constraint
@@ -456,8 +456,8 @@ def test_auto_pipeline_latency_suffixes_and_identity():
             assert pypeline._stable_key(ap)[2] == ()
         identities.add(pypeline._name_identity(ap))
     assert len(identities) == len(cases), "constraints must be identity"
-    assert C_TO_LOGIC.AutoPipelineLatency(latency=2).conflict_with_fixed(2) is None
-    assert C_TO_LOGIC.AutoPipelineLatency(max_latency=1).conflict_with_fixed(2)
+    assert LOGIC.AutoPipelineLatency(latency=2).conflict_with_fixed(2) is None
+    assert LOGIC.AutoPipelineLatency(max_latency=1).conflict_with_fixed(2)
 
 
 def test_auto_pipeline_build_modes_and_served_values():
@@ -514,7 +514,7 @@ def test_auto_pipeline_build_modes_and_served_values():
 
 
 def test_check_auto_pipeline_constraints_realized():
-    AL = C_TO_LOGIC.AutoPipelineLatency
+    AL = LOGIC.AutoPipelineLatency
     ps = FakeParserState()
     parent = make_logic("parent_func")
     parent.sub_inst_to_auto_pipeline_latency = {
@@ -558,7 +558,7 @@ def test_named_auto_pipeline_keys_and_groups():
         assert PY_TO_LOGIC._callable_canonical_name(ap, {}) == "AUTO_PIPELINE_" + key
         assert pypeline.encode_param_value(ap) == "AUTO_PIPELINE_" + key
         # The source constraint still drives the region (start_latency too)
-        constraint = C_TO_LOGIC.AutoPipelineLatency.from_tag(ap)
+        constraint = LOGIC.AutoPipelineLatency.from_tag(ap)
         assert constraint.start_latency == kwargs.get("start_latency")
     # start_latency is not identity for a named tag; the name and fixed/max are
     pypeline.RESET_AUTO_MULTI_CYCLE_TRACKING()
@@ -621,16 +621,16 @@ def test_latency_seeds_start_without_identity():
         )
         seeded = AUTO_PIPELINE(constrained_core, name="seeded", start_latency=1)
         assert seeded.latency == 4 and seeded.seed == 4
-        constraint = C_TO_LOGIC.AutoPipelineLatency.from_tag(seeded)
+        constraint = LOGIC.AutoPipelineLatency.from_tag(seeded)
         assert constraint.seed == 4 and constraint.start() == 4
         # Seeds are never identity: keys, suffixes, equality, hashing
-        assert constraint == C_TO_LOGIC.AutoPipelineLatency(start_latency=1)
-        assert hash(constraint) == hash(C_TO_LOGIC.AutoPipelineLatency(start_latency=1))
+        assert constraint == LOGIC.AutoPipelineLatency(start_latency=1)
+        assert hash(constraint) == hash(LOGIC.AutoPipelineLatency(start_latency=1))
         assert constraint.key_suffix() == "_start_latency_1"
         assert seeded.canonical_key == "seeded"
         roundtrip = pickle.loads(pickle.dumps(constraint))
         assert roundtrip.seed == 4 and roundtrip == constraint
-        old = C_TO_LOGIC.AutoPipelineLatency.__new__(C_TO_LOGIC.AutoPipelineLatency)
+        old = LOGIC.AutoPipelineLatency.__new__(LOGIC.AutoPipelineLatency)
         old.__setstate__((None, 2, None))  # a 3-tuple pickled before seeds
         assert old.seed is None and old.start() == 2
         # Clamped to max_latency
@@ -641,11 +641,11 @@ def test_latency_seeds_start_without_identity():
         # constraint (keys, validation) stays unconstrained
         plain = AUTO_PIPELINE(constrained_core)
         assert plain.latency == 3 and plain.seed == 3
-        plain_constraint = C_TO_LOGIC.AutoPipelineLatency.from_tag(plain)
+        plain_constraint = LOGIC.AutoPipelineLatency.from_tag(plain)
         assert plain_constraint.is_unconstrained() and plain_constraint.is_region()
         assert plain_constraint.start() == 3
-        assert not C_TO_LOGIC.AutoPipelineLatency().is_region()
-        assert C_TO_LOGIC.AutoPipelineLatency(max_latency=2).is_region()
+        assert not LOGIC.AutoPipelineLatency().is_region()
+        assert LOGIC.AutoPipelineLatency(max_latency=2).is_region()
         # A fixed latency is never seeded
         fixed = AUTO_PIPELINE(constrained_core, name="fixed", latency=1)
         assert fixed.latency == 1 and fixed.seed is None

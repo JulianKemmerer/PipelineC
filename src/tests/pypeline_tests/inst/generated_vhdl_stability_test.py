@@ -39,7 +39,7 @@ sys.path.insert(
     0, os.path.join(os.path.dirname(os.path.abspath(__file__)), "../../../")
 )
 
-import C_TO_LOGIC  # noqa: F401  (import order: VHDL's import chain)
+import LOGIC
 import PY_TO_LOGIC
 import pypeline
 import SYN
@@ -332,13 +332,12 @@ def test_identical_rerender_does_not_rewrite_the_file():
 
 
 def test_builtin_operator_entities_have_no_call_site_comment():
-    import AST as pypeline_ast
 
     def logic(func_name, is_c_built_in, line):
-        l = C_TO_LOGIC.Logic()
+        l = LOGIC.Logic()
         l.func_name = func_name
         l.is_c_built_in = is_c_built_in
-        l.ast_meta = pypeline_ast.ASTMeta(
+        l.ast_meta = LOGIC.ASTMeta(
             src_file="/nowhere/design.py", line=line, col=0, end_col=None, raw=None
         )
         return l

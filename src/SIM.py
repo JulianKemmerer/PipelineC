@@ -8,7 +8,7 @@ import MODELSIM
 import pypeline_sim
 import SYN
 import AUTO_PIPELINE
-import C_TO_LOGIC
+import LOGIC
 import AUTO_MULTI_CYCLE
 import VERILATOR
 import VHDL
@@ -323,7 +323,7 @@ def CHECK_PIPELINED_NATIVE_SIM_SUPPORTED(parser_state, main_latencies, ap_latenc
         ):
             if kind == "global":
                 problems.append(
-                    f"'{ent}' (instance {C_TO_LOGIC.SUBMODULE_MARKER.join(path)} "
+                    f"'{ent}' (instance {LOGIC.SUBMODULE_MARKER.join(path)} "
                     f"inside pipelined '{root}') uses global wire(s) {', '.join(detail)}"
                 )
     if problems:

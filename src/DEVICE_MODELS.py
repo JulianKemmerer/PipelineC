@@ -14,6 +14,8 @@ import os, re, math
 import shlex
 import time
 
+from utilities import GET_SHELL_CMD_OUTPUT
+
 
 ops = {}
 
@@ -1364,14 +1366,6 @@ def _find_raw_liberty_lib(library=None, corner=None):
 
 
 def IS_INSTALLED():
-    # C_TO_LOGIC must be imported before OPEN_TOOLS -- OPEN_TOOLS's own
-    # import chain (OPEN_TOOLS -> C_TO_LOGIC -> SW_LIB -> SYN -> CC_TOOLS ->
-    # VHDL -> CXXRTL -> SIM -> VERILATOR) circles back to read
-    # OPEN_TOOLS.OSS_CAD_SUITE_PATH before OPEN_TOOLS itself has finished
-    # defining it, if OPEN_TOOLS is the very first of these modules loaded
-    # in the process (pre-existing repo-wide import-order fragility, not
-    # specific to this file -- PYRTL.py avoids it the same way).
-    import C_TO_LOGIC  # noqa: F401
     import OPEN_TOOLS
 
     if OPEN_TOOLS.YOSYS_BIN_PATH is None or OPEN_TOOLS.GHDL_PREFIX is None:
@@ -1603,7 +1597,6 @@ def _run_synth_and_sta(
     synthesis_inputs=None,
 ):
     """Run one fixed synthesis recipe, map to liberty, and run local STA."""
-    import C_TO_LOGIC
     import OPEN_TOOLS
 
     recipe_name = _get_synthesis_recipe_name(recipe_name)
@@ -1695,7 +1688,7 @@ def _run_synth_and_sta(
         )
     mapping_error = None
     try:
-        C_TO_LOGIC.GET_SHELL_CMD_OUTPUT(
+        GET_SHELL_CMD_OUTPUT(
             "bash " + shlex.quote(os.path.basename(sh_path)), cwd=work_dir
         )
         if not os.path.isfile(temp_json_path) or os.path.getsize(temp_json_path) == 0:

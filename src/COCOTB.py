@@ -260,7 +260,7 @@ async def my_first_test(dut):
         f.close()
 
     # Run make in directory with makefile to do simulation. Use subprocess
-    # directly (not C_TO_LOGIC.GET_SHELL_CMD_OUTPUT, which raises a raw
+    # directly (not utilities.GET_SHELL_CMD_OUTPUT, which raises a raw
     # Exception on any nonzero exit and only returns stdout) -- a firing
     # sim_assert makes GHDL itself exit nonzero, and DO_SIM needs to turn
     # that into the same kind of verdict as every other failure mode, not an

@@ -24,15 +24,17 @@ import hashlib
 import math
 import os
 import sys
+from distutils.dir_util import copy_tree
 from pathlib import Path
 
 import AUTO_MULTI_CYCLE
-import C_TO_LOGIC
+import LOGIC
 import OPEN_TOOLS
 import PYRTL
 import RAW_VHDL
 import SYN
 import VHDL
+from utilities import REPO_ABS_DIR
 
 
 # Max total elaborate+synthesize passes of the AUTO_PIPELINE .latency
@@ -251,7 +253,7 @@ class TimingParams:
             for submodule in sorted(
                 Logic.submodule_instances
             ):  # MUST BE SORTED FOR CONSISTENT ORDER!
-                sub_inst = inst_name + C_TO_LOGIC.SUBMODULE_MARKER + submodule
+                sub_inst = inst_name + LOGIC.SUBMODULE_MARKER + submodule
                 if sub_inst not in parser_state.LogicInstLookupTable:
                     print("Missing inst_name:", sub_inst)
                     print("has instances:")
@@ -406,7 +408,7 @@ class TimingParams:
         self, submodule_inst_name, parser_state, TimingParamsLookupTable
     ):
         # Auto-pipelined submodules report themselves as zero latency like regular comb logic funcs
-        sub_inst = C_TO_LOGIC.LEAF_NAME(submodule_inst_name)
+        sub_inst = LOGIC.LEAF_NAME(submodule_inst_name)
         if sub_inst in self.logic.sub_inst_to_auto_pipeline_latency or sub_inst in getattr(
             self.logic, "submodule_latencies_are_self_timed", ()
         ):
@@ -702,9 +704,9 @@ class PipelineMap:
         )
         for wire in self.logic.wires:
             # Constants(Node)
-            if C_TO_LOGIC.WIRE_IS_CONSTANT(wire):
+            if LOGIC.WIRE_IS_CONSTANT(wire):
                 # TODO resolve to const str and manually add location on next line
-                val_str = C_TO_LOGIC.GET_VAL_STR_FROM_CONST_WIRE(
+                val_str = LOGIC.GET_VAL_STR_FROM_CONST_WIRE(
                     wire, self.logic, parser_state
                 )
                 s.node(wire, r"{ " + val_str + " | {<const> CONST}}")
@@ -718,10 +720,10 @@ class PipelineMap:
                 )
 
             # Clock enable(Node)
-            if C_TO_LOGIC.LOGIC_NEEDS_CLOCK_ENABLE(self.logic, parser_state):
+            if LOGIC.LOGIC_NEEDS_CLOCK_ENABLE(self.logic, parser_state):
                 s.node(
-                    C_TO_LOGIC.CLOCK_ENABLE_NAME,
-                    r"{ " + C_TO_LOGIC.CLOCK_ENABLE_NAME + " | {<in> IN}}",
+                    LOGIC.CLOCK_ENABLE_NAME,
+                    r"{ " + LOGIC.CLOCK_ENABLE_NAME + " | {<in> IN}}",
                     **{"fontsize": str(max_font_pt)},
                 )
 
@@ -757,9 +759,9 @@ class PipelineMap:
             inputs_text = ""
             for input_port in sub_logic.inputs:
                 inputs_text += f"<{input_port}> {input_port}" + " |"
-            if C_TO_LOGIC.LOGIC_NEEDS_CLOCK_ENABLE(sub_logic, parser_state):
+            if LOGIC.LOGIC_NEEDS_CLOCK_ENABLE(sub_logic, parser_state):
                 inputs_text += (
-                    f"<{C_TO_LOGIC.CLOCK_ENABLE_NAME}> {C_TO_LOGIC.CLOCK_ENABLE_NAME}"
+                    f"<{LOGIC.CLOCK_ENABLE_NAME}> {LOGIC.CLOCK_ENABLE_NAME}"
                     + " |"
                 )
             inputs_text = inputs_text.strip("|")
@@ -818,7 +820,7 @@ class PipelineMap:
 
             def wire_to_gv_text(wire, dir):
                 # Constants(Node)
-                if C_TO_LOGIC.WIRE_IS_CONSTANT(wire):
+                if LOGIC.WIRE_IS_CONSTANT(wire):
                     return wire + ":" + "const"
 
                 # Inputs(Node)
@@ -826,7 +828,7 @@ class PipelineMap:
                     return wire + ":" + "in"
 
                 # Clock enable(Node)
-                if wire == C_TO_LOGIC.CLOCK_ENABLE_NAME:
+                if wire == LOGIC.CLOCK_ENABLE_NAME:
                     return wire
 
                 # Outputs(Node)
@@ -838,8 +840,8 @@ class PipelineMap:
                     return wire + "_" + dir + ":" + dir
 
                 # Submodule
-                if C_TO_LOGIC.SUBMODULE_MARKER in wire:
-                    return wire.replace(C_TO_LOGIC.SUBMODULE_MARKER, ":")
+                if LOGIC.SUBMODULE_MARKER in wire:
+                    return wire.replace(LOGIC.SUBMODULE_MARKER, ":")
 
                 return None
                 # raise Exception(f"GV text for wire? {wire}")
@@ -907,7 +909,7 @@ def GET_PIPELINE_MAP(inst_name, logic, parser_state, TimingParamsLookupTable):
         or logic.is_vhdl_expr
         or logic.vhdl_module_text is not None
         or logic.func_name in parser_state.func_marked_blackbox
-        or C_TO_LOGIC.FUNC_IS_PRIMITIVE(logic.func_name, parser_state)
+        or SYN.FUNC_IS_PRIMITIVE(logic.func_name, parser_state)
     ):
         return rv
 
@@ -994,7 +996,7 @@ def GET_PIPELINE_MAP(inst_name, logic, parser_state, TimingParamsLookupTable):
 
     # Some wires are driven to start with
     RECORD_DRIVEN_BY(None, logic.inputs)
-    RECORD_DRIVEN_BY(None, C_TO_LOGIC.CLOCK_ENABLE_NAME)
+    RECORD_DRIVEN_BY(None, LOGIC.CLOCK_ENABLE_NAME)
     RECORD_DRIVEN_BY(None, set(logic.state_regs.keys()))
     RECORD_DRIVEN_BY(None, sorted(logic.feedback_vars))
 
@@ -1028,8 +1030,8 @@ def GET_PIPELINE_MAP(inst_name, logic, parser_state, TimingParamsLookupTable):
         submodules_reached = set()
         # Submodule input port finishes level
         is_submodule_input = False
-        if C_TO_LOGIC.WIRE_IS_SUBMODULE_PORT(wire_to_follow, logic):
-            sub_toks = wire_to_follow.split(C_TO_LOGIC.SUBMODULE_MARKER)
+        if LOGIC.WIRE_IS_SUBMODULE_PORT(wire_to_follow, logic):
+            sub_toks = wire_to_follow.split(LOGIC.SUBMODULE_MARKER)
             submodule_inst = sub_toks[0]
             sub_func_name = logic.submodule_instances[submodule_inst]
             sub_logic = parser_state.FuncLogicLookupTable[sub_func_name]
@@ -1039,7 +1041,7 @@ def GET_PIPELINE_MAP(inst_name, logic, parser_state, TimingParamsLookupTable):
             if sub_port_name in sub_logic.outputs:
                 RECORD_DRIVEN_BY(None, wire_to_follow)
         if is_submodule_input:
-            sub_toks = wire_to_follow.split(C_TO_LOGIC.SUBMODULE_MARKER)
+            sub_toks = wire_to_follow.split(LOGIC.SUBMODULE_MARKER)
             submodule_inst = sub_toks[0]
             submodules_reached.add(submodule_inst)
         else:
@@ -1095,22 +1097,22 @@ def GET_PIPELINE_MAP(inst_name, logic, parser_state, TimingParamsLookupTable):
                 # Set upstream vars for this output wire to be
                 # everything that occurs across inputs
                 input_upstream_vars = set()
-                if C_TO_LOGIC.LOGIC_NEEDS_CLOCK_ENABLE(sub_logic, parser_state):
+                if LOGIC.LOGIC_NEEDS_CLOCK_ENABLE(sub_logic, parser_state):
                     input_wire = (
                         sub_inst_reached
-                        + C_TO_LOGIC.SUBMODULE_MARKER
-                        + C_TO_LOGIC.CLOCK_ENABLE_NAME
+                        + LOGIC.SUBMODULE_MARKER
+                        + LOGIC.CLOCK_ENABLE_NAME
                     )
                     if input_wire in network_wire_to_upstream_vars:
                         input_upstream_vars |= network_wire_to_upstream_vars[input_wire]
                 for input_port in sub_logic.inputs:
                     input_wire = (
-                        sub_inst_reached + C_TO_LOGIC.SUBMODULE_MARKER + input_port
+                        sub_inst_reached + LOGIC.SUBMODULE_MARKER + input_port
                     )
                     input_upstream_vars |= network_wire_to_upstream_vars[input_wire]
                 for output_port in sub_logic.outputs:
                     output_wire = (
-                        sub_inst_reached + C_TO_LOGIC.SUBMODULE_MARKER + output_port
+                        sub_inst_reached + LOGIC.SUBMODULE_MARKER + output_port
                     )
                     wires_to_follow.add(output_wire)
                     wire_to_upstream_vars[output_wire] = input_upstream_vars
@@ -1133,16 +1135,16 @@ def GET_PIPELINE_MAP(inst_name, logic, parser_state, TimingParamsLookupTable):
                 all_inputs_in_network = True
                 for input_port in sub_logic.inputs:
                     input_wire = (
-                        sub_inst_reached + C_TO_LOGIC.SUBMODULE_MARKER + input_port
+                        sub_inst_reached + LOGIC.SUBMODULE_MARKER + input_port
                     )
                     if input_wire not in network_wire_to_upstream_vars.keys():
                         all_inputs_in_network = False
                         break
-                if C_TO_LOGIC.LOGIC_NEEDS_CLOCK_ENABLE(sub_logic, parser_state):
+                if LOGIC.LOGIC_NEEDS_CLOCK_ENABLE(sub_logic, parser_state):
                     input_wire = (
                         sub_inst_reached
-                        + C_TO_LOGIC.SUBMODULE_MARKER
-                        + C_TO_LOGIC.CLOCK_ENABLE_NAME
+                        + LOGIC.SUBMODULE_MARKER
+                        + LOGIC.CLOCK_ENABLE_NAME
                     )
                     if input_wire not in network_wire_to_upstream_vars.keys():
                         all_inputs_in_network = False
@@ -1155,7 +1157,7 @@ def GET_PIPELINE_MAP(inst_name, logic, parser_state, TimingParamsLookupTable):
     # Constant network propagation starts at user constant literals like '2'
     things_to_follow = set()
     for wire in sorted(logic.wires):
-        if C_TO_LOGIC.WIRE_IS_CONSTANT(wire):
+        if LOGIC.WIRE_IS_CONSTANT(wire):
             RECORD_DRIVEN_BY(None, wire)
             things_to_follow.add(wire)
     if len(things_to_follow) > 0:
@@ -1179,7 +1181,7 @@ def GET_PIPELINE_MAP(inst_name, logic, parser_state, TimingParamsLookupTable):
             # Is this logic something constants propagate over?
             # Any pure function without state should work
             # Use clock/enable? check?
-            if C_TO_LOGIC.LOGIC_NEEDS_CLOCK_ENABLE(sub_logic, parser_state):
+            if LOGIC.LOGIC_NEEDS_CLOCK_ENABLE(sub_logic, parser_state):
                 continue
             things_to_follow.add(sub_inst_reached)
 
@@ -1223,17 +1225,17 @@ def GET_PIPELINE_MAP(inst_name, logic, parser_state, TimingParamsLookupTable):
     # CLOCK ENABLE (if needed) + INPUTS. The one readiness definition shared by
     # the worklist and the per level check below.
     def SUBMODULE_PREREQUISITE_WIRES(submodule_inst):
-        submodule_inst_name = inst_name + C_TO_LOGIC.SUBMODULE_MARKER + submodule_inst
+        submodule_inst_name = inst_name + LOGIC.SUBMODULE_MARKER + submodule_inst
         submodule_logic = parser_state.LogicInstLookupTable[submodule_inst_name]
         prerequisite_wires = []
-        if C_TO_LOGIC.LOGIC_NEEDS_CLOCK_ENABLE(submodule_logic, parser_state):
+        if LOGIC.LOGIC_NEEDS_CLOCK_ENABLE(submodule_logic, parser_state):
             ce_wire = (
-                submodule_inst + C_TO_LOGIC.SUBMODULE_MARKER + C_TO_LOGIC.CLOCK_ENABLE_NAME
+                submodule_inst + LOGIC.SUBMODULE_MARKER + LOGIC.CLOCK_ENABLE_NAME
             )
             prerequisite_wires.append(logic.wire_driven_by[ce_wire])
         for input_port_name in submodule_logic.inputs:
             prerequisite_wires.append(
-                C_TO_LOGIC.GET_SUBMODULE_INPUT_PORT_DRIVING_WIRE(
+                LOGIC.GET_SUBMODULE_INPUT_PORT_DRIVING_WIRE(
                     logic, submodule_inst, input_port_name
                 )
             )
@@ -1434,14 +1436,14 @@ def GET_PIPELINE_MAP(inst_name, logic, parser_state, TimingParamsLookupTable):
 
                     # If driving wire is submodule output
                     # Then connect module wire to write pipe
-                    if C_TO_LOGIC.WIRE_IS_SUBMODULE_PORT(
+                    if LOGIC.WIRE_IS_SUBMODULE_PORT(
                         driving_wire, logic
                     ):  # is output checked next
-                        sub_out_toks = driving_wire.split(C_TO_LOGIC.SUBMODULE_MARKER)
+                        sub_out_toks = driving_wire.split(LOGIC.SUBMODULE_MARKER)
                         submodule_inst = sub_out_toks[0]
                         output_port = sub_out_toks[1]
                         submodule_inst_name = (
-                            inst_name + C_TO_LOGIC.SUBMODULE_MARKER + submodule_inst
+                            inst_name + LOGIC.SUBMODULE_MARKER + submodule_inst
                         )
                         submodule_logic = parser_state.LogicInstLookupTable[
                             submodule_inst_name
@@ -1499,7 +1501,7 @@ def GET_PIPELINE_MAP(inst_name, logic, parser_state, TimingParamsLookupTable):
 
                             # Follow the driven wire unless its a submodule input port
                             # Submodules input ports is handled at hierarchy cross later - do nothing later
-                            if not C_TO_LOGIC.WIRE_IS_SUBMODULE_PORT(
+                            if not LOGIC.WIRE_IS_SUBMODULE_PORT(
                                 driven_wire, logic
                             ):
                                 # Record reaching another wire
@@ -1536,7 +1538,7 @@ def GET_PIPELINE_MAP(inst_name, logic, parser_state, TimingParamsLookupTable):
             submodules_ready.clear()
             for submodule_inst in not_fully_driven_submodules_iter:
                 submodule_inst_name = (
-                    inst_name + C_TO_LOGIC.SUBMODULE_MARKER + submodule_inst
+                    inst_name + LOGIC.SUBMODULE_MARKER + submodule_inst
                 )
                 submodule_logic = parser_state.LogicInstLookupTable[submodule_inst_name]
                 # Check submodule signals that need to be driven before submodule can be used
@@ -1683,7 +1685,7 @@ def GET_PIPELINE_MAP(inst_name, logic, parser_state, TimingParamsLookupTable):
             # by writing submodule connections / entity connections
             for submodule_inst in fully_driven_submodule_inst_this_level_2_logic:
                 submodule_inst_name = (
-                    inst_name + C_TO_LOGIC.SUBMODULE_MARKER + submodule_inst
+                    inst_name + LOGIC.SUBMODULE_MARKER + submodule_inst
                 )
                 submodule_logic = parser_state.LogicInstLookupTable[submodule_inst_name]
 
@@ -1700,7 +1702,7 @@ def GET_PIPELINE_MAP(inst_name, logic, parser_state, TimingParamsLookupTable):
                 for output_port in submodule_logic.outputs:
                     # Construct the name of this wire in the original logic
                     submodule_output_wire = (
-                        submodule_inst + C_TO_LOGIC.SUBMODULE_MARKER + output_port
+                        submodule_inst + LOGIC.SUBMODULE_MARKER + output_port
                     )
                     if bad_inf_loop:
                         print("following output", submodule_output_wire)
@@ -1936,11 +1938,11 @@ def ADDED_LATENCY_BLOCKER(inst_name, parser_state):
         logic = parser_state.LogicInstLookupTable[current]
         if not logic.CAN_HAVE_ADDED_LATENCY(parser_state):
             return current
-        parent = C_TO_LOGIC.GET_CONTAINER_INST(current)
+        parent = LOGIC.GET_CONTAINER_INST(current)
         if parent is None:
             return None
         parent_logic = parser_state.LogicInstLookupTable[parent]
-        if C_TO_LOGIC.LEAF_NAME(current) in getattr(
+        if LOGIC.LEAF_NAME(current) in getattr(
             parent_logic, "sub_inst_to_auto_pipeline_latency", {}
         ):
             return None
@@ -2021,7 +2023,7 @@ def CHECK_FIXED_LATENCY_BOUNDARY(inst_name, parser_state):
                 f"Cannot add pipeline registers to {inst_name}: "
                 f"{current} has fixed latency {fixed[logic.func_name]}"
             )
-        current, _, _ = current.rpartition(C_TO_LOGIC.SUBMODULE_MARKER)
+        current, _, _ = current.rpartition(LOGIC.SUBMODULE_MARKER)
 
 
 # Returns updated TimingParamsLookupTable
@@ -2098,7 +2100,7 @@ def SLICE_DOWN_HIERARCHY_WRITE_VHDL_PACKAGES(
         for submodule_inst in submodule_insts:
             # Slice through submodule
             submodule_inst_name = (
-                inst_name + C_TO_LOGIC.SUBMODULE_MARKER + submodule_inst
+                inst_name + LOGIC.SUBMODULE_MARKER + submodule_inst
             )
             submodule_timing_params = TimingParamsLookupTable[submodule_inst_name]
             # Only continue slicing down if not fixed slices already (trying to slice deeper and make fixed slices)
@@ -2312,7 +2314,7 @@ def HARVEST_AUTO_PIPELINE_LATENCIES(parser_state, TimingParamsLookupTable):
         for local_sub, canonical_key in logic.sub_inst_to_auto_pipeline_key.items():
             if canonical_key is None:
                 continue
-            sub_inst = inst_name + C_TO_LOGIC.SUBMODULE_MARKER + local_sub
+            sub_inst = inst_name + LOGIC.SUBMODULE_MARKER + local_sub
             sub_timing_params = TimingParamsLookupTable.get(sub_inst)
             if sub_timing_params is None:
                 continue
@@ -2338,7 +2340,7 @@ def HARVEST_AUTO_PIPELINE_LATENCIES(parser_state, TimingParamsLookupTable):
 
 def CAPTURE_CONCRETE_PIPELINE(root, table, parser_state):
     """Portable descendant parameters: no references to a prior parse's Logic."""
-    marker = C_TO_LOGIC.SUBMODULE_MARKER
+    marker = LOGIC.SUBMODULE_MARKER
     result = {}
     for inst in sorted(table):
         if inst != root and not inst.startswith(root + marker):
@@ -2361,7 +2363,7 @@ def CONCRETE_PIPELINE_COMPATIBLE(root, snapshot, table, parser_state):
     """Same relative instances, functions and wire types under root."""
     if not snapshot:
         return False
-    marker = C_TO_LOGIC.SUBMODULE_MARKER
+    marker = LOGIC.SUBMODULE_MARKER
     current = {
         i[len(root) :] for i in table if i == root or i.startswith(root + marker)
     }
@@ -2442,7 +2444,7 @@ def SEED_TIMING_PARAMS_FROM_PREVIOUS(
     """
     import bisect
 
-    marker = C_TO_LOGIC.SUBMODULE_MARKER
+    marker = LOGIC.SUBMODULE_MARKER
 
     def owner(inst):
         return inst.split(marker, 1)[0]
@@ -2627,7 +2629,7 @@ def AUTO_PIPELINE_CONSTRAINTS_REALIZED_PROBLEMS(
 
     if not TimingParamsLookupTable:
         return []
-    marker = C_TO_LOGIC.SUBMODULE_MARKER
+    marker = LOGIC.SUBMODULE_MARKER
     checks = []
     for inst_name, logic in parser_state.LogicInstLookupTable.items():
         for local_sub, constraint in logic.sub_inst_to_auto_pipeline_latency.items():
@@ -2864,7 +2866,7 @@ def DO_AUTO_PIPELINE_LATENCY_PASSES(parser_state, multimain_timing_params, src_f
             parser_state.part = part
         if tool is not None:
             parser_state.syn_tool_name = tool
-        C_TO_LOGIC.WRITE_0_ADDED_CLKS_INIT_FILES(parser_state)
+        WRITE_0_ADDED_CLKS_INIT_FILES(parser_state)
         parser_state = SYN.ADD_PATH_DELAY_TO_LOOKUP(parser_state)
         try:
             seeded_tpl, unseeded_ap_insts = SEED_TIMING_PARAMS_FROM_PREVIOUS(
@@ -3263,7 +3265,6 @@ def RAM_SEARCH(parser_state, args, src_file, build):
     Every probe uses the ordinary logic sweep, so RAM/operator timing is checked
     together. No fractional pipeline cut ever enters a memory.
     """
-    import C_TO_LOGIC
     import PY_TO_LOGIC
     import SYN
     import SWEEP
@@ -3290,7 +3291,7 @@ def RAM_SEARCH(parser_state, args, src_file, build):
                 raise ValueError(
                     "auto-pipelined RAM call sites changed during plan re-elaboration"
                 )
-            C_TO_LOGIC.WRITE_0_ADDED_CLKS_INIT_FILES(state)
+            WRITE_0_ADDED_CLKS_INIT_FILES(state)
         print(
             "AUTO_PIPELINE_RAM candidate: "
             + ", ".join(f"{k[:12]} {p.record()}" for k, p in sorted(plans.items())),
@@ -3511,7 +3512,7 @@ def WRITE_ALL_NON_ZERO_CLK_VHDL_FILES(
             if (
                 wr_logic.is_vhdl_func
                 or wr_logic.is_vhdl_expr
-                or wr_logic.func_name == C_TO_LOGIC.VHDL_FUNC_NAME
+                or wr_logic.func_name == LOGIC.VHDL_FUNC_NAME
                 or wr_logic.is_clock_crossing
             ):
                 continue
@@ -3543,7 +3544,7 @@ def INVALIDATE_MODIFIED_INST_ANCESTOR_CACHES(TimingParamsLookupTable, parser_sta
     # names and rendered contents (names of instantiated children) must change
     # too. Invalidate all ancestors of any modified instance and return the
     # ancestor set so callers can (re)write their entity files.
-    marker = C_TO_LOGIC.SUBMODULE_MARKER
+    marker = LOGIC.SUBMODULE_MARKER
     ancestors = set()
     for inst_name, timing_params in TimingParamsLookupTable.items():
         if timing_params.IS_EMPTY():
@@ -3840,7 +3841,7 @@ def UPDATE_PIPELINE_MIN_PERIOD_CACHE(
             0
         ].path_delay_ns
     elif inst_name:
-        the_main_inst = C_TO_LOGIC.RECURSIVE_FIND_MAIN_FUNC_FROM_INST(
+        the_main_inst = LOGIC.RECURSIVE_FIND_MAIN_FUNC_FROM_INST(
             inst_name, parser_state
         )
         if len(timing_report.path_reports) > 1:
@@ -3862,7 +3863,7 @@ def UPDATE_PIPELINE_MIN_PERIOD_CACHE(
     for func_inst in cacheable_pipelined_instances:
         timing_params = TimingParamsLookupTable[func_inst]
         func_logic = parser_state.LogicInstLookupTable[func_inst]
-        main_inst = C_TO_LOGIC.RECURSIVE_FIND_MAIN_FUNC_FROM_INST(
+        main_inst = LOGIC.RECURSIVE_FIND_MAIN_FUNC_FROM_INST(
             func_inst, parser_state
         )
         # Sometimes, especally when finally meeting timing,
@@ -3924,7 +3925,7 @@ def WRITE_ALL_ZERO_CLK_VHDL(parser_state, ZeroClkTimingParamsLookupTable):
             if (
                 logic.is_vhdl_func
                 or logic.is_vhdl_expr
-                or (logic.func_name == C_TO_LOGIC.VHDL_FUNC_NAME)
+                or (logic.func_name == LOGIC.VHDL_FUNC_NAME)
             ):
                 continue
             # Dont write clock cross funcs
@@ -3953,6 +3954,43 @@ def WRITE_ALL_ZERO_CLK_VHDL(parser_state, ZeroClkTimingParamsLookupTable):
     VHDL.WRITE_MULTIMAIN_TOP(parser_state, multimain_timing_params, is_final_top)
     # And clock cross entities
     VHDL.WRITE_CLK_CROSS_ENTITIES(parser_state, multimain_timing_params)
+
+
+def WRITE_0_ADDED_CLKS_INIT_FILES(parser_state):
+    # print("Building map of logic to be pipelined...", flush=True)
+    SYN.PART_SET_TOOL(
+        parser_state.part, allow_fail=True
+    )  # Comb logic only might not have tool set
+    ZeroAddedClocksTimingParamsLookupTable = (
+        GET_ZERO_ADDED_CLKS_TIMING_PARAMS_LOOKUP(parser_state)
+    )
+    multimain_timing_params = MultiMainTimingParams()
+    multimain_timing_params.TimingParamsLookupTable = (
+        ZeroAddedClocksTimingParamsLookupTable
+    )
+    # Write dir first if needed
+    output_directory = SYN.SYN_OUTPUT_DIRECTORY
+    if not os.path.exists(output_directory):
+        os.makedirs(output_directory)
+    # Write report of floating point module use - hi Victor!
+    SYN.WRITE_FLOAT_MODULE_INSTANCES_REPORT(multimain_timing_params, parser_state)
+    # Integers too..
+    SYN.WRITE_INTEGER_MODULE_INSTANCES_REPORT(multimain_timing_params, parser_state)
+    print(
+        "Writing VHDL files for all functions (before any added pipelining)...",
+        flush=True,
+    )
+    WRITE_ALL_ZERO_CLK_VHDL(parser_state, ZeroAddedClocksTimingParamsLookupTable)
+    print(
+        "Writing the constant struct+enum definitions as defined from C code...",
+        flush=True,
+    )
+    VHDL.WRITE_C_DEFINED_VHDL_STRUCTS_PACKAGE(parser_state)
+    print("Writing global wire definitions as parsed from C code...", flush=True)
+    VHDL.WRITE_GLOBAL_WIRES_VHDL_PACKAGE(parser_state)
+
+    # Copy pipelinec vhdl directory to output so users can export output directory alone
+    copy_tree(f"{REPO_ABS_DIR()}/src/vhdl", SYN.SYN_OUTPUT_DIRECTORY + "/built_in")
 
 
 # ─────────────────────────────────────────────
@@ -4028,7 +4066,7 @@ def COLLECT_AUTO_PIPELINE_REGIONS(parser_state, scope_inst=None, fixed_only=Fals
     with a starting latency from a hint or the latency memory is a start-only
     region too (AutoPipelineLatency.is_region). Empty for designs with neither,
     which keeps every region code path off."""
-    marker = C_TO_LOGIC.SUBMODULE_MARKER
+    marker = LOGIC.SUBMODULE_MARKER
     regions = []
     for inst_name in sorted(parser_state.LogicInstLookupTable):
         logic = parser_state.LogicInstLookupTable[inst_name]
@@ -4166,7 +4204,7 @@ def COUNT_TARGETED_PLACEMENTS(landscape, count, strict=True, prefer_fewer=False)
 
 
 def _INVALIDATE_REGION_CACHES(inst, TimingParamsLookupTable):
-    marker = C_TO_LOGIC.SUBMODULE_MARKER
+    marker = LOGIC.SUBMODULE_MARKER
     for name, timing_params in TimingParamsLookupTable.items():
         if (
             name == inst
@@ -4236,7 +4274,7 @@ def _ENFORCE_ONE_AUTO_PIPELINE_REGION(
 ):
     import SWEEP
 
-    marker = C_TO_LOGIC.SUBMODULE_MARKER
+    marker = LOGIC.SUBMODULE_MARKER
     constraint = region.constraint
     goal = constraint.latency if constraint.is_fixed() else None
     cap = constraint.max_latency
@@ -4437,7 +4475,7 @@ def REENFORCE_AUTO_PIPELINE_REGIONS(parser_state, tpl, scope_inst=None):
         return tpl
     for timing_params in tpl.values():
         timing_params.INVALIDATE_CACHE()
-    marker = C_TO_LOGIC.SUBMODULE_MARKER
+    marker = LOGIC.SUBMODULE_MARKER
     zero_tpl = None
     for region in regions:
         realized = tpl[region.inst].GET_TOTAL_LATENCY(parser_state, tpl)
@@ -4474,7 +4512,7 @@ def REGION_FOR_HOTSPOT(hotspot_func, plan, parser_state):
     lies inside, else None."""
     if not plan.regions:
         return None
-    marker = C_TO_LOGIC.SUBMODULE_MARKER
+    marker = LOGIC.SUBMODULE_MARKER
     insts = sorted(
         inst
         for inst in parser_state.FuncToInstances.get(hotspot_func, ())
@@ -4606,7 +4644,7 @@ def RESTORE_AUTO_PIPELINE_REGIONS(plans, snapshot):
 # Post processed version of pipeline map with info specific to how auto-pipelined HDL is rendered
 def GLOBAL_WIRE_TIMING(var_info):
     """Timing of a global wire inside the pipelined function that uses it: "legacy",
-    "aligned" or "volatile" (C_TO_LOGIC.VariableInfo.pipeline_timing). See
+    "aligned" or "volatile" (LOGIC.VariableInfo.pipeline_timing). See
     docs/AUTO_PIPELINE_DESIGN.md "Global wires in pipelines"."""
     return getattr(var_info, "pipeline_timing", "legacy")
 
@@ -4640,7 +4678,7 @@ def IO_REG_BANKS(timing_params, Logic, parser_state, pipeline_hdl_params):
     """(input bank exists, output bank exists): a bank exists only when the sweep
     placed it and it holds something (args/clock enable/aligned global reads, or
     return/aligned global writes). One definition for declarations and logic."""
-    needs_clk_en = C_TO_LOGIC.LOGIC_NEEDS_CLOCK_ENABLE(Logic, parser_state)
+    needs_clk_en = LOGIC.LOGIC_NEEDS_CLOCK_ENABLE(Logic, parser_state)
     has_in = timing_params._has_input_regs and (
         len(Logic.inputs) > 0
         or needs_clk_en
@@ -4676,7 +4714,7 @@ class PiplineHDLParams:
         # Not all netlist wires are vhdl wires
         for wire_name in Logic.wire_to_c_type:
             # Skip constants here
-            if C_TO_LOGIC.WIRE_IS_CONSTANT(wire_name):
+            if LOGIC.WIRE_IS_CONSTANT(wire_name):
                 continue
             # Skip globals too
             # Dont skip volatile globals, they are like regular wires
@@ -4686,11 +4724,11 @@ class PiplineHDLParams:
             ):
                 continue
             # Skip VHDL input wires
-            if C_TO_LOGIC.WIRE_IS_VHDL_EXPR_SUBMODULE_INPUT_PORT(
+            if LOGIC.WIRE_IS_VHDL_EXPR_SUBMODULE_INPUT_PORT(
                 wire_name, Logic, parser_state
             ):
                 continue
-            if C_TO_LOGIC.WIRE_IS_VHDL_FUNC_SUBMODULE_INPUT_PORT(
+            if LOGIC.WIRE_IS_VHDL_FUNC_SUBMODULE_INPUT_PORT(
                 wire_name, Logic, parser_state
             ):
                 continue
@@ -4703,8 +4741,8 @@ class PiplineHDLParams:
         #   clockenable
         #   outputs
         #   volatiles being input in first state, output in final
-        if C_TO_LOGIC.LOGIC_NEEDS_CLOCK_ENABLE(Logic, parser_state):
-            input_wires = [C_TO_LOGIC.CLOCK_ENABLE_NAME]
+        if LOGIC.LOGIC_NEEDS_CLOCK_ENABLE(Logic, parser_state):
+            input_wires = [LOGIC.CLOCK_ENABLE_NAME]
         else:
             input_wires = []
         for input_port in Logic.inputs:
@@ -4775,21 +4813,21 @@ class PiplineHDLParams:
                 # Submodule instances
                 for sub_inst in submodule_level_info.submodule_insts:
                     submodule_inst_name = (
-                        inst_name + C_TO_LOGIC.SUBMODULE_MARKER + sub_inst
+                        inst_name + LOGIC.SUBMODULE_MARKER + sub_inst
                     )
                     sub_logic = parser_state.LogicInstLookupTable[submodule_inst_name]
                     # CE, inputs are read at instantiation
                     # In wires include ce
-                    if C_TO_LOGIC.LOGIC_NEEDS_CLOCK_ENABLE(sub_logic, parser_state):
+                    if LOGIC.LOGIC_NEEDS_CLOCK_ENABLE(sub_logic, parser_state):
                         sub_in_wires = [
                             sub_inst
-                            + C_TO_LOGIC.SUBMODULE_MARKER
-                            + C_TO_LOGIC.CLOCK_ENABLE_NAME
+                            + LOGIC.SUBMODULE_MARKER
+                            + LOGIC.CLOCK_ENABLE_NAME
                         ]
                     else:
                         sub_in_wires = []
                     for input_port in sub_logic.inputs:
-                        in_wire = sub_inst + C_TO_LOGIC.SUBMODULE_MARKER + input_port
+                        in_wire = sub_inst + LOGIC.SUBMODULE_MARKER + input_port
                         sub_in_wires.append(in_wire)
                     for in_wire in sub_in_wires:
                         if in_wire in self.wires_to_decl:
@@ -4810,7 +4848,7 @@ class PiplineHDLParams:
                     )
                     if sub_latency == 0:
                         for out_port in sub_logic.outputs:
-                            out_wire = sub_inst + C_TO_LOGIC.SUBMODULE_MARKER + out_port
+                            out_wire = sub_inst + LOGIC.SUBMODULE_MARKER + out_port
                             if out_wire in self.wires_to_decl:
                                 self.stage_to_driven_wires[stage].append(out_wire)
 
@@ -4947,7 +4985,7 @@ def GET_PIPELINE_ARCH_DECL_TEXT(
     needs_clk = VHDL.LOGIC_NEEDS_CLOCK(
         inst_name, Logic, parser_state, TimingParamsLookupTable
     )
-    needs_clk_en = C_TO_LOGIC.LOGIC_NEEDS_CLOCK_ENABLE(Logic, parser_state)
+    needs_clk_en = LOGIC.LOGIC_NEEDS_CLOCK_ENABLE(Logic, parser_state)
     needs_regs = VHDL.LOGIC_NEEDS_REGS(
         inst_name, Logic, parser_state, TimingParamsLookupTable
     )
@@ -5050,7 +5088,7 @@ type raw_hdl_register_pipeline_t is array(0 to ADDED_PIPELINE_LATENCY) of raw_hd
             in_regs_rec += " " + vhdl_name + " : " + vhdl_type_str + ";\n"
         if needs_clk_en:
             in_regs_rec += (
-                " " + C_TO_LOGIC.CLOCK_ENABLE_NAME + " : unsigned(0 downto 0);\n"
+                " " + LOGIC.CLOCK_ENABLE_NAME + " : unsigned(0 downto 0);\n"
             )
         # Aligned global reads are sampled with the args
         for global_wire in ALIGNED_GLOBAL_READS(Logic, pipeline_hdl_params):
@@ -5190,10 +5228,10 @@ type feedback_vars_t is record"""
             if needs_clk_en:
                 func_text += (
                     " rv.input_regs."
-                    + C_TO_LOGIC.CLOCK_ENABLE_NAME
+                    + LOGIC.CLOCK_ENABLE_NAME
                     + " := "
                     + VHDL.WIRE_TO_VHDL_NULL_STR(
-                        C_TO_LOGIC.CLOCK_ENABLE_NAME, Logic, parser_state
+                        LOGIC.CLOCK_ENABLE_NAME, Logic, parser_state
                     )
                     + ";\n"
                 )
@@ -5291,10 +5329,10 @@ end function;\n
     if len(Logic.submodule_instances) > 0:
         rv += """-- Each function instance gets signals\n"""
     for inst in Logic.submodule_instances:
-        instance_name = inst_name + C_TO_LOGIC.SUBMODULE_MARKER + inst
+        instance_name = inst_name + LOGIC.SUBMODULE_MARKER + inst
         submodule_logic_name = Logic.submodule_instances[inst]
         submodule_logic = parser_state.LogicInstLookupTable[instance_name]
-        submodule_logic_needs_clk_en = C_TO_LOGIC.LOGIC_NEEDS_CLOCK_ENABLE(
+        submodule_logic_needs_clk_en = LOGIC.LOGIC_NEEDS_CLOCK_ENABLE(
             submodule_logic, parser_state
         )
 
@@ -5308,7 +5346,7 @@ end function;\n
         rv += "-- " + inst + "\n"
         # Clock enable
         if submodule_logic_needs_clk_en:
-            ce_wire = inst + C_TO_LOGIC.SUBMODULE_MARKER + C_TO_LOGIC.CLOCK_ENABLE_NAME
+            ce_wire = inst + LOGIC.SUBMODULE_MARKER + LOGIC.CLOCK_ENABLE_NAME
             vhdl_type_str = VHDL.WIRE_TO_VHDL_TYPE_STR(ce_wire, Logic, parser_state)
             rv += (
                 "signal "
@@ -5319,7 +5357,7 @@ end function;\n
             )
         # Inputs
         for in_port in submodule_logic.inputs:
-            in_wire = inst + C_TO_LOGIC.SUBMODULE_MARKER + in_port
+            in_wire = inst + LOGIC.SUBMODULE_MARKER + in_port
             vhdl_type_str = VHDL.WIRE_TO_VHDL_TYPE_STR(in_wire, Logic, parser_state)
             rv += (
                 "signal "
@@ -5330,7 +5368,7 @@ end function;\n
             )
         # Outputs
         for out_port in submodule_logic.outputs:
-            out_wire = inst + C_TO_LOGIC.SUBMODULE_MARKER + out_port
+            out_wire = inst + LOGIC.SUBMODULE_MARKER + out_port
             vhdl_type_str = VHDL.WIRE_TO_VHDL_TYPE_STR(out_wire, Logic, parser_state)
             rv += (
                 "signal "
@@ -5367,7 +5405,7 @@ def GET_PIPELINE_LOGIC_COMB_PROCESS_TEXT(
     needs_clk = VHDL.LOGIC_NEEDS_CLOCK(
         inst_name, Logic, parser_state, TimingParamsLookupTable
     )
-    needs_clk_en = C_TO_LOGIC.LOGIC_NEEDS_CLOCK_ENABLE(Logic, parser_state)
+    needs_clk_en = LOGIC.LOGIC_NEEDS_CLOCK_ENABLE(Logic, parser_state)
     needs_regs = VHDL.LOGIC_NEEDS_REGS(
         inst_name, Logic, parser_state, TimingParamsLookupTable
     )
@@ -5395,11 +5433,11 @@ def GET_PIPELINE_LOGIC_COMB_PROCESS_TEXT(
         if timing_params._has_input_regs:
             rv += (
                 "clk_en_internal <= io_registers_r.input_regs."
-                + C_TO_LOGIC.CLOCK_ENABLE_NAME
+                + LOGIC.CLOCK_ENABLE_NAME
                 + "(0);\n"
             )
         else:
-            rv += "clk_en_internal <= " + C_TO_LOGIC.CLOCK_ENABLE_NAME + "(0);\n"
+            rv += "clk_en_internal <= " + LOGIC.CLOCK_ENABLE_NAME + "(0);\n"
 
     rv += "-- Combinatorial process for pipeline stages\n"
     rv += "process "
@@ -5458,7 +5496,7 @@ def GET_PIPELINE_LOGIC_COMB_PROCESS_TEXT(
         submodule_text += " -- All submodule outputs\n"
         # All submodules
         for inst in Logic.submodule_instances:
-            instance_name = inst_name + C_TO_LOGIC.SUBMODULE_MARKER + inst
+            instance_name = inst_name + LOGIC.SUBMODULE_MARKER + inst
             submodule_logic_name = Logic.submodule_instances[inst]
             submodule_logic = parser_state.FuncLogicLookupTable[submodule_logic_name]
 
@@ -5469,13 +5507,13 @@ def GET_PIPELINE_LOGIC_COMB_PROCESS_TEXT(
             if submodule_logic.is_clock_crossing:
                 continue
 
-            new_inst_name = C_TO_LOGIC.LEAF_NAME(instance_name, do_submodule_split=True)
+            new_inst_name = LOGIC.LEAF_NAME(instance_name, do_submodule_split=True)
             if len(submodule_logic.outputs) > 0:
                 has_submodules_to_print = True
                 # submodule_text += " -- " + new_inst_name + "\n"
                 # Outputs
                 for out_port in submodule_logic.outputs:
-                    out_wire = inst + C_TO_LOGIC.SUBMODULE_MARKER + out_port
+                    out_wire = inst + LOGIC.SUBMODULE_MARKER + out_port
                     submodule_text += " " + VHDL.WIRE_TO_VHDL_NAME(out_wire, Logic) + ",\n"
 
     if has_submodules_to_print:
@@ -5550,9 +5588,9 @@ def GET_PIPELINE_LOGIC_COMB_PROCESS_TEXT(
         if needs_clk_en:
             rv += (
                 """ io_registers.input_regs."""
-                + C_TO_LOGIC.CLOCK_ENABLE_NAME
+                + LOGIC.CLOCK_ENABLE_NAME
                 + """ <= """
-                + C_TO_LOGIC.CLOCK_ENABLE_NAME
+                + LOGIC.CLOCK_ENABLE_NAME
                 + """;\n"""
             )
         for global_wire in aligned_global_reads:
@@ -5655,7 +5693,7 @@ def GET_PIPELINE_LOGIC_COMB_PROCESS_TEXT(
                 + " "
                 + " "
                 + "read_pipe."
-                + VHDL.WIRE_TO_VHDL_NAME(C_TO_LOGIC.CLOCK_ENABLE_NAME, Logic)
+                + VHDL.WIRE_TO_VHDL_NAME(LOGIC.CLOCK_ENABLE_NAME, Logic)
                 + "(0) := clk_en_internal;\n"
             )
 
@@ -5969,7 +6007,7 @@ def GET_STAGE_TEXT(
     is_last_stage,
 ):
     timing_params = TimingParamsLookupTable[inst_name]
-    needs_clk_en = C_TO_LOGIC.LOGIC_NEEDS_CLOCK_ENABLE(logic, parser_state)
+    needs_clk_en = LOGIC.LOGIC_NEEDS_CLOCK_ENABLE(logic, parser_state)
     text = ""
     vol_state_regs = []
     for state_reg in logic.state_regs:
@@ -5982,7 +6020,7 @@ def GET_STAGE_TEXT(
             text += (
                 "     "
                 + "VAR_"
-                + VHDL.WIRE_TO_VHDL_NAME(C_TO_LOGIC.CLOCK_ENABLE_NAME, logic)
+                + VHDL.WIRE_TO_VHDL_NAME(LOGIC.CLOCK_ENABLE_NAME, logic)
                 + "(0) := clk_en_internal;\n"
             )
 
@@ -6153,11 +6191,11 @@ def RENDER_TEXT_FROM_DRIVER_DRIVEN_PAIR(
 ):
     # Dont write text connecting VHDL input ports
     # (connected directly in func call params)
-    if C_TO_LOGIC.WIRE_IS_VHDL_EXPR_SUBMODULE_INPUT_PORT(
+    if LOGIC.WIRE_IS_VHDL_EXPR_SUBMODULE_INPUT_PORT(
         driven_wire, logic, parser_state
     ):
         return None
-    if C_TO_LOGIC.WIRE_IS_VHDL_FUNC_SUBMODULE_INPUT_PORT(
+    if LOGIC.WIRE_IS_VHDL_FUNC_SUBMODULE_INPUT_PORT(
         driven_wire, logic, parser_state
     ):
         return None
@@ -6209,7 +6247,7 @@ def GET_SUBMODULE_LEVEL_TEXT(
 
     # Ends with submodule logic connections
     for submodule_inst in submodule_level_info.submodule_insts:
-        submodule_inst_name = inst_name + C_TO_LOGIC.SUBMODULE_MARKER + submodule_inst
+        submodule_inst_name = inst_name + LOGIC.SUBMODULE_MARKER + submodule_inst
         submodule_logic = parser_state.LogicInstLookupTable[submodule_inst_name]
         submodule_latency_from_container_logic = timing_params.GET_SUBMODULE_LATENCY(
             submodule_inst_name, parser_state, TimingParamsLookupTable
@@ -6218,7 +6256,7 @@ def GET_SUBMODULE_LEVEL_TEXT(
             " "
             + " "
             + "   -- "
-            + C_TO_LOGIC.LEAF_NAME(submodule_inst, True)
+            + LOGIC.LEAF_NAME(submodule_inst, True)
             + " LATENCY="
             + str(submodule_latency_from_container_logic)
             + "\n"

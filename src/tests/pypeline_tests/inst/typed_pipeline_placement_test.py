@@ -137,7 +137,7 @@ def test_setup_op_and_repeated_helpers_do_not_merge_or_leave_empty_tail():
     setup_units = 3
     step_units = 10
     total = setup_units + n_steps * step_units
-    marker = SWEEP.C_TO_LOGIC.SUBMODULE_MARKER
+    marker = SWEEP.LOGIC.SUBMODULE_MARKER
     algorithm_inst = f"main{marker}algorithm"
     landscape = SWEEP.SliceLandscape("main", total, 1.0)
     # Put the setup and helpers one level below an outer coherent wrapper.
@@ -253,7 +253,7 @@ def test_input_boundary_is_a_typed_local_placement():
 
 
 def _minisweep_chain_fixture(n=10):
-    marker = SWEEP.C_TO_LOGIC.SUBMODULE_MARKER
+    marker = SWEEP.LOGIC.SUBMODULE_MARKER
     root = FakeLogic("main")
     step = FakeLogic(
         "step", ["x"], ["out"], {"x": "uint8_t", "out": "uint8_t"}
@@ -301,7 +301,7 @@ def test_minisweep_serial_topology_shares_one_boundary_per_edge():
 def test_minisweep_topology_does_not_cross_an_operation():
     plan, ps, insts = _minisweep_chain_fixture(2)
     root = ps.LogicInstLookupTable["main"]
-    marker = SWEEP.C_TO_LOGIC.SUBMODULE_MARKER
+    marker = SWEEP.LOGIC.SUBMODULE_MARKER
     op = FakeLogic("op", ["x"], ["out"], {"x": "uint8_t", "out": "uint8_t"})
     ps.FuncLogicLookupTable["op"] = op
     root.submodule_instances["op"] = "op"
@@ -350,7 +350,7 @@ def test_minisweep_zero_cut_pass_never_locks_io_only_latency():
     root = FakeLogic("main")
     step = FakeLogic("step")
     step.delay_is_estimated = False
-    marker = SWEEP.C_TO_LOGIC.SUBMODULE_MARKER
+    marker = SWEEP.LOGIC.SUBMODULE_MARKER
     insts = [f"main{marker}step_{i}" for i in range(2)]
     ps = FakeParserState({"main": root, **{inst: step for inst in insts}})
     ps.FuncToInstances = {"step": insts}
@@ -742,7 +742,7 @@ def test_chunked_mux_skips_partially_qualifying_group():
 
 def _output_frontier_landscape(serial=False, common_boundary=False):
     landscape = SWEEP.SliceLandscape("main", 12, 0.1)
-    marker = SWEEP.C_TO_LOGIC.SUBMODULE_MARKER
+    marker = SWEEP.LOGIC.SUBMODULE_MARKER
     parent = f"main{marker}pair" if common_boundary else "main"
     intervals = ((0.0, 5.2), (5.2, 5.8)) if serial else ((0.0, 6.0),) * 2
     for side, (start, end) in zip(("left", "right"), intervals):
@@ -796,7 +796,7 @@ def test_parallel_output_frontier_grouping_and_serial_rejection():
     )
     assert len(grouped) == 1
     assert grouped[0].inst_path == (
-        f"main{SWEEP.C_TO_LOGIC.SUBMODULE_MARKER}pair"
+        f"main{SWEEP.LOGIC.SUBMODULE_MARKER}pair"
     )
     assert grouped[0].placement_group_id is None
 
@@ -867,7 +867,7 @@ def test_component_stage_budget_and_legacy_fallback():
 
 def _parallel_frontier_landscape(common_boundary):
     landscape = SWEEP.SliceLandscape("main", 12, 0.1)
-    marker = SWEEP.C_TO_LOGIC.SUBMODULE_MARKER
+    marker = SWEEP.LOGIC.SUBMODULE_MARKER
     parent = f"main{marker}pair" if common_boundary else "main"
     for side in ("left", "right"):
         inst = f"{parent}{marker}{side}"
@@ -911,8 +911,8 @@ def test_parallel_bit_frontier_is_one_logical_cut():
     assert cuts == [5], cuts
     assert len(placements) == 2, placements
     assert {placement.inst_path for placement in placements} == {
-        f"main{SWEEP.C_TO_LOGIC.SUBMODULE_MARKER}left",
-        f"main{SWEEP.C_TO_LOGIC.SUBMODULE_MARKER}right",
+        f"main{SWEEP.LOGIC.SUBMODULE_MARKER}left",
+        f"main{SWEEP.LOGIC.SUBMODULE_MARKER}right",
     }
     group_ids = {placement.placement_group_id for placement in placements}
     assert len(group_ids) == 1 and None not in group_ids
@@ -933,7 +933,7 @@ def test_parallel_bit_frontier_can_move_as_one_physical_group():
     # Rejecting that coherent movement used to select just one arbitrary peer
     # and left the other parallel path unsliced.
     requests = []
-    marker = SWEEP.C_TO_LOGIC.SUBMODULE_MARKER
+    marker = SWEEP.LOGIC.SUBMODULE_MARKER
     for side in ("left", "right"):
         requests.append(
             SWEEP.BitPlacementRequest(
@@ -966,7 +966,7 @@ def test_common_coherent_boundary_beats_parallel_leaf_group():
     assert len(placements) == 1, placements
     assert placements[0].kind == SWEEP.PipelinePlacement.INSTANCE_OUTPUT
     assert placements[0].inst_path == (
-        f"main{SWEEP.C_TO_LOGIC.SUBMODULE_MARKER}pair"
+        f"main{SWEEP.LOGIC.SUBMODULE_MARKER}pair"
     )
     assert placements[0].placement_group_id is None
 
@@ -979,7 +979,7 @@ def test_two_cuts_per_leaf_move_the_whole_bit_frontier():
     # real per-leaf count of 2, it lowers to GET_EQUAL_WIDTH_BIT_BOUNDARIES
     # (16, 2) == [5, 11] -- not the one-cut boundary (8, unit 5) either
     # frontier's own group predicted when formed in isolation.
-    marker = SWEEP.C_TO_LOGIC.SUBMODULE_MARKER
+    marker = SWEEP.LOGIC.SUBMODULE_MARKER
     landscape = SWEEP.SliceLandscape("main", 12, 0.1)
     for side in ("left", "right"):
         seg = SWEEP.Segment(

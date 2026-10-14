@@ -67,7 +67,7 @@ digraph PypelineC {
   C_TO_LOGIC  [label="C_TO_LOGIC" fillcolor="#fdc086"]
   PY_TO_LOGIC [label="PY_TO_LOGIC" fillcolor="#fdc086"]
 
-  LogicGraph [label="Logic graph IR\npure functions + stateful logic,\ninstance hierarchy, global wires" shape=ellipse]
+  LogicGraph [label="Logic graph IR (LOGIC.py)\npure functions + stateful logic,\ninstance hierarchy, global wires" shape=ellipse]
 
   // ======================= Auto-pipelining loop =======================
   AutoPipeline [label="Auto-pipelining\ncut the logic graph into N pipeline stages,\nsynthesize, read fmax, re-cut -- iterate until\nthe @MAIN target frequency is met"

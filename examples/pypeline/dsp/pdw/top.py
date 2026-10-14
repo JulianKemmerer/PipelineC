@@ -39,8 +39,8 @@ accumulators feed the measurement CORDIC, and now the two masters' tready pins
 feed the store-and-forward FSM through the broadcast interlock -- all in the
 same clock domain, all across a module boundary. Blocks that each met 125 MHz
 alone have composed to well under it here; see README.md's synthesis section.
-That is why `top.py` is registered as its own synthesis test rather than
-treated as covered by the block-level ones.
+That is why `top.py` gets its own synthesis check (README.md's synthesis
+section) rather than being treated as covered by the block-level ones.
 """
 
 import pdw_paths  # noqa: F401  (puts include/pypeline on sys.path)

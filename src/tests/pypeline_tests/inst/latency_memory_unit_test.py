@@ -13,7 +13,7 @@ sys.path.insert(0, os.path.join(THIS_DIR, "..", "..", ".."))
 
 import AUTO_MULTI_CYCLE
 import AUTO_PIPELINE
-import C_TO_LOGIC
+import LOGIC
 import SWEEP
 import SYN
 import VHDL
@@ -94,11 +94,11 @@ def test_read_latency_table_formats(tmp):
 def test_build_latency_profile_verdicts_and_seeds():
     parser_state = SimpleNamespace(part="xc7a200t")
     owners = {
-        (AP, "both_met"): ({"main_a", "main_b"}, C_TO_LOGIC.AutoPipelineLatency(), "shape1"),
-        (AP, "one_failed"): ({"main_a", "main_c"}, C_TO_LOGIC.AutoPipelineLatency(start_latency=2), "shape2"),
+        (AP, "both_met"): ({"main_a", "main_b"}, LOGIC.AutoPipelineLatency(), "shape1"),
+        (AP, "one_failed"): ({"main_a", "main_c"}, LOGIC.AutoPipelineLatency(start_latency=2), "shape2"),
         (AP, "lower_bound"): ({"main_d"}, None, "shape3"),
         (AP, "not_built"): ({"main_a"}, None, "shape4"),
-        (MC, "mcp"): ({"main_a"}, C_TO_LOGIC.AutoMultiCycleConstraint("mcp", None, 3), "shape5"),
+        (MC, "mcp"): ({"main_a"}, LOGIC.AutoMultiCycleConstraint("mcp", None, 3), "shape5"),
     }
     history = {
         "mains": {
@@ -248,7 +248,7 @@ def test_digest_changes_only_ancestors(tmp):
             with open(design, "w") as f:
                 f.write(text)
             ps = PY_TO_LOGIC.PARSE_FILE(design)
-            C_TO_LOGIC.WRITE_0_ADDED_CLKS_INIT_FILES(ps)
+            AUTO_PIPELINE.WRITE_0_ADDED_CLKS_INIT_FILES(ps)
             return ps, SWEEP.LATENCY_SUBTREE_DIGESTS(ps)
         ps, first = parse(src)
         ps._latency_subtree_digests = None
@@ -342,7 +342,7 @@ def test_replay_bounds_and_lower_goal_floor(tmp):
         pypeline.SET_LATENCY_SEEDS(seeds or {})
         ps = PY_TO_LOGIC.PARSE_FILE(design)
         ps.part = "xc7a35ticsg324-1l"
-        C_TO_LOGIC.WRITE_0_ADDED_CLKS_INIT_FILES(ps)
+        AUTO_PIPELINE.WRITE_0_ADDED_CLKS_INIT_FILES(ps)
         return ps
 
     try:
@@ -439,7 +439,7 @@ def test_lower_goal_floor_only_for_regions(tmp):
         pypeline.SET_LATENCY_SEEDS(seeds)
         state = PY_TO_LOGIC.PARSE_FILE(design)
         state.part = "xc7a35ticsg324-1l"
-        C_TO_LOGIC.WRITE_0_ADDED_CLKS_INIT_FILES(state)
+        AUTO_PIPELINE.WRITE_0_ADDED_CLKS_INIT_FILES(state)
         return state
 
     try:
@@ -484,7 +484,7 @@ def test_dependent_piece_resolution(tmp):
         pypeline.SET_LATENCY_SEEDS(seeds)
         state = PY_TO_LOGIC.PARSE_FILE(design)
         state.part = "xc7a35ticsg324-1l"
-        C_TO_LOGIC.WRITE_0_ADDED_CLKS_INIT_FILES(state)
+        AUTO_PIPELINE.WRITE_0_ADDED_CLKS_INIT_FILES(state)
         return state
     try:
         pypeline.SET_AUTO_PIPELINE_BUILD_MODE("sweep")

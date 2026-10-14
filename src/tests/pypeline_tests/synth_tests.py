@@ -6,8 +6,8 @@
 synthesis tool, which picks its run_all category (synth_device_models,
 synth_vivado or synth_pyrtl -- see common.SYN_TOOLS). DEVICE_MODELS (sky130)
 is the default: measured several times faster than PyRTL. Vivado is only for
-designs that need it (multi-cycle path constraints, the PDW tops' real-part
-Block RAM and 125 MHz checks). See build_report_tests.py
+designs that need it (multi-cycle path constraints, Xilinx board parts,
+automatic RAM inference). See build_report_tests.py
 for wrapper scripts that run pypelinec themselves and assert on its log
 output/artifacts, and native_vs_vhdl_sim_tests.py for the AUTO_FSM/AUTO_PIPELINE
 cycle-accuracy compares that used to live here (auto_fsm_native_sim_test +
@@ -82,15 +82,14 @@ SYNTH_TEST_FILES = [
     ("fixed_point_test.py", INST_DIR, ["--comb"], DM),
     # DSP primitives added for the PDW measurement engine. Native sim never
     # emits VHDL, so a synthesis run is the only thing that can catch e.g. a
-    # local variable whose name is a VHDL reserved word (this file's PDW
-    # entries below were bitten by exactly that, three times).
+    # local variable whose name is a VHDL reserved word (the PDW blocks were
+    # bitten by exactly that, three times).
     #
-    # dsp/cordic.py is deliberately NOT listed here. Its own --comb build took
+    # dsp/cordic.py is deliberately NOT listed here: its own --comb build took
     # ~21 minutes under the PyRTL timing model -- an unrolled 14-iteration
-    # pipeline, twice -- and it buys nothing: both of its modes are already
-    # synthesized on AIR7310's xc7a200t in the PDW measurement/extraction
-    # entries below. The generator uses a sine ROM. Keep the portable manual
-    # log ROM API covered on device_models as well as the automatic Vivado ROMs.
+    # pipeline, twice. The PDW example's synth tops build it by hand (see
+    # examples/pypeline/dsp/pdw/README.md). Keep the portable manual log ROM
+    # API covered on device_models.
     ("log2_db_test.py", INST_DIR, ["--comb", "-D", "LOG2_DB_AUTO_RAM=0"], DM),
     ("pypeline_test.py", INST_DIR, ["--comb"], DM),
     ("reg_init_test.py", INST_DIR, ["--comb"], DM),
@@ -147,16 +146,6 @@ SYNTH_TEST_FILES = [
     ("interface_array_port_test.py", INST_DIR, ["--comb"], DM),
     ("interface_mixing_rules_test.py", INST_DIR, ["--comb"], DM),
     ("fm_radio_decim.py", EXAMPLES_PYPELINE_DIR / "dsp", ["--comb"], VIVADO),
-    # PDW synth tops stay on their real Artix-7 part: each proves its block
-    # closes 125 MHz on real hardware ports (and pulse_extract that its data
-    # FIFO infers Block RAM).
-    ("pulse_detect_synth_top.py", EXAMPLES_PYPELINE_DIR / "dsp" / "pdw", ["--comb"], VIVADO),
-    ("pulse_extract_synth_top.py", EXAMPLES_PYPELINE_DIR / "dsp" / "pdw", ["-D", "PDW_ATAN2_METHOD=cordic"], VIVADO),
-    ("pulse_gen_synth_top.py", EXAMPLES_PYPELINE_DIR / "dsp" / "pdw", [], VIVADO),
-    ("pulse_measure_synth_top.py", EXAMPLES_PYPELINE_DIR / "dsp" / "pdw", ["-D", "PDW_ATAN2_METHOD=cordic"], VIVADO),
-    # (The composed PDW design, examples/pypeline/dsp/pdw/top.py, is registered
-    # in get_tests() below rather than here -- this list names each test after
-    # its file, and a bare "top" is too generic for a suite-wide registry.)
     # Structurally richest multi-writer global wire design: 3 writers splitting
     # nested struct leaves + a mixed-depth whole-subtree claim + readback.
     ("global_wire_nested_split_test.py", INST_DIR, ["--comb"], DM),
@@ -218,39 +207,6 @@ def get_tests() -> list:
         _synth_test(filename[: -len(".py")], [source_dir / filename] + extra_args, tool)
         for filename, source_dir, extra_args, tool in SYNTH_TEST_FILES
     ]
-    # The composed PDW design (pulse_gen + pulse_detect + pulse_extract). The
-    # pulse_detect/pulse_extract entries above check their blocks in isolation;
-    # only this one proves the whole thing builds together, and that the
-    # README-sized 16,384-deep packet FIFO plus the Path B delay line really do
-    # infer Block RAM rather than a wall of flops. Named explicitly because the
-    # source file is just "top.py".
-    tests.append(
-        _synth_test(
-            "pdw_top",
-            [
-                EXAMPLES_PYPELINE_DIR / "dsp" / "pdw" / "top.py",
-                "-D",
-                "PDW_ATAN2_METHOD=cordic",
-            ],
-            VIVADO,
-        )
-    )
-    for name, filename in (
-        ("pdw_top_rom", "top.py"),
-        ("pulse_measure_rom", "pulse_measure_synth_top.py"),
-        ("pulse_extract_rom", "pulse_extract_synth_top.py"),
-    ):
-        tests.append(
-            _synth_test(
-                name,
-                [
-                    EXAMPLES_PYPELINE_DIR / "dsp" / "pdw" / filename,
-                    "-D",
-                    "PDW_ATAN2_METHOD=rom",
-                ],
-                VIVADO,
-            )
-        )
     # docs/README.md's getting-started examples. Native simulation never emits
     # VHDL, so these are what catch a documented example whose hardware stops
     # building (pipeline.py's bare `float` once did, unnoticed). The board

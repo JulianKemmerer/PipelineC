@@ -39,20 +39,19 @@ from multiprocessing.pool import ThreadPool
 from timeit import default_timer as timer
 
 import CC_TOOLS
-import C_TO_LOGIC
 import DEVICE_MODELS
 import DIAMOND
 import EFINITY
 import GOWIN
+import LOGIC
 import OPEN_TOOLS
 import PYRTL
 import QUARTUS
 import RAW_VHDL
-import SW_LIB
 import VHDL
 import VIVADO
 import pypeline
-from utilities import REPO_ABS_DIR
+from utilities import EXE_ABS_DIR, REPO_ABS_DIR
 
 START_TIME = timer()
 # When the design finished parsing/elaborating (set by the driver), and every
@@ -195,7 +194,7 @@ def GET_NUM_PROCESSES():
     if _NUM_PROCESSES_CFG is None:
         try:
             with open(
-                C_TO_LOGIC.EXE_ABS_DIR() + "/../config/num_processes.cfg", "r"
+                EXE_ABS_DIR() + "/../config/num_processes.cfg", "r"
             ) as f:
                 _NUM_PROCESSES_CFG = max(1, int(f.readline()))
         except (OSError, ValueError):
@@ -688,13 +687,13 @@ def WRITE_CLK_CONSTRAINTS_FILE(multimain_timing_params, parser_state, inst_name=
                 if (
                     (inst_name is None)
                     or (inst_name == func_inst)
-                    or func_inst.startswith(inst_name + C_TO_LOGIC.SUBMODULE_MARKER)
+                    or func_inst.startswith(inst_name + LOGIC.SUBMODULE_MARKER)
                 ):
                     insts.append(func_inst)
     for inst in insts:
         # Top level has different name if individual module with inst_name or multi main top
         if inst_name is None:
-            main_func = C_TO_LOGIC.RECURSIVE_FIND_MAIN_FUNC_FROM_INST(
+            main_func = LOGIC.RECURSIVE_FIND_MAIN_FUNC_FROM_INST(
                 inst, parser_state
             )
             main_logic = parser_state.LogicInstLookupTable[main_func]
@@ -1058,7 +1057,7 @@ def _VHDL_INSTANCE_TRIE(parser_state):
     cached = getattr(parser_state, "_vhdl_instance_trie", None)
     if cached is not None and cached[0] == key:
         return cached[1]
-    marker = C_TO_LOGIC.SUBMODULE_MARKER
+    marker = LOGIC.SUBMODULE_MARKER
     tries = {}
     for inst in table:
         parts = inst.split(marker)
@@ -1224,7 +1223,7 @@ def GET_REGISTERS_ESTIMATE_TEXT_AND_FFS(
         return cache_text, cache_ffs
 
     total_ffs = 0
-    text = f"Function: {C_TO_LOGIC.LEAF_NAME(inst_name)} ({logic.func_name})\n"
+    text = f"Function: {LOGIC.LEAF_NAME(inst_name)} ({logic.func_name})\n"
 
     input_ffs = 0
     inputs_text = ""
@@ -1267,7 +1266,7 @@ def GET_REGISTERS_ESTIMATE_TEXT_AND_FFS(
 
     latency = timing_params.GET_TOTAL_LATENCY(parser_state, TimingParamsLookupTable)
     if latency > 0:
-        if VHDL.LOGIC_IS_RAW_HDL(logic, parser_state) or C_TO_LOGIC.FUNC_IS_PRIMITIVE(
+        if VHDL.LOGIC_IS_RAW_HDL(logic, parser_state) or FUNC_IS_PRIMITIVE(
             logic.func_name, parser_state
         ):
             # Raw vhdl estimate func of N bits input -> M bits output as using
@@ -1323,7 +1322,7 @@ def GET_REGISTERS_ESTIMATE_TEXT_AND_FFS(
     for sub_inst in logic.submodule_instances:
         sub_func_name = logic.submodule_instances[sub_inst]
         sub_logic = parser_state.FuncLogicLookupTable[sub_func_name]
-        sub_full_inst = inst_name + C_TO_LOGIC.SUBMODULE_MARKER + sub_inst
+        sub_full_inst = inst_name + LOGIC.SUBMODULE_MARKER + sub_inst
         sub_inst_text, sub_inst_ffs = GET_REGISTERS_ESTIMATE_TEXT_AND_FFS(
             sub_logic,
             sub_full_inst,
@@ -1364,7 +1363,7 @@ def WRITE_REGISTERS_ESTIMATE_FILE(
         TimingParamsLookupTable = multimain_timing_params_or_TimingParamsLookupTable
         logic = parser_state.LogicInstLookupTable[inst_name]
         # Prim pipelines dont have reg estimates
-        if C_TO_LOGIC.FUNC_IS_PRIMITIVE(logic.func_name, parser_state):
+        if FUNC_IS_PRIMITIVE(logic.func_name, parser_state):
             return
         output_dir = GET_OUTPUT_DIRECTORY(logic)
         timing_params = TimingParamsLookupTable[inst_name]
@@ -1538,7 +1537,7 @@ def WRITE_AREA_ESTIMATE_FILE(
     else:
         TimingParamsLookupTable = multimain_timing_params_or_TimingParamsLookupTable
         logic = parser_state.LogicInstLookupTable[inst_name]
-        if C_TO_LOGIC.FUNC_IS_PRIMITIVE(logic.func_name, parser_state):
+        if FUNC_IS_PRIMITIVE(logic.func_name, parser_state):
             return
         output_dir = GET_OUTPUT_DIRECTORY(logic)
         timing_params = TimingParamsLookupTable[inst_name]
@@ -1662,23 +1661,23 @@ def GET_OUTPUT_DIRECTORY(Logic):
         output_directory = (
             SYN_OUTPUT_DIRECTORY + "/" + "built_in" + "/" + Logic.func_name
         )
-    elif SW_LIB.IS_BIT_MANIP(Logic):
+    elif LOGIC.IS_BIT_MANIP(Logic):
         output_directory = (
             SYN_OUTPUT_DIRECTORY
             + "/"
-            + SW_LIB.BIT_MANIP_HEADER_FILE
+            + LOGIC.BIT_MANIP_HEADER_FILE
             + "/"
             + Logic.func_name
         )
-    elif SW_LIB.IS_MEM(Logic):
+    elif LOGIC.IS_MEM(Logic):
         output_directory = (
-            SYN_OUTPUT_DIRECTORY + "/" + SW_LIB.MEM_HEADER_FILE + "/" + Logic.func_name
+            SYN_OUTPUT_DIRECTORY + "/" + LOGIC.MEM_HEADER_FILE + "/" + Logic.func_name
         )
-    elif SW_LIB.IS_BIT_MATH(Logic):
+    elif LOGIC.IS_BIT_MATH(Logic):
         output_directory = (
             SYN_OUTPUT_DIRECTORY
             + "/"
-            + SW_LIB.BIT_MATH_HEADER_FILE
+            + LOGIC.BIT_MATH_HEADER_FILE
             + "/"
             + Logic.func_name
         )
@@ -1719,16 +1718,16 @@ def LOGIC_IS_ZERO_DELAY(logic, parser_state, allow_none_delay=False):
     # Black boxes have no known delay to the tool
     elif logic.func_name in parser_state.func_marked_blackbox:
         return True
-    elif SW_LIB.IS_BIT_MANIP(logic):
+    elif LOGIC.IS_BIT_MANIP(logic):
         return True
     elif logic.is_clock_crossing:
         return True  # For now? How to handle paths through clock cross logic?
-    elif logic.func_name.startswith(C_TO_LOGIC.CONST_REF_RD_FUNC_NAME_PREFIX):
+    elif logic.func_name.startswith(LOGIC.CONST_REF_RD_FUNC_NAME_PREFIX):
         return True
     elif logic.func_name.startswith(
-        C_TO_LOGIC.CONST_PREFIX + C_TO_LOGIC.BIN_OP_SL_NAME
+        LOGIC.CONST_PREFIX + LOGIC.BIN_OP_SL_NAME
     ) or logic.func_name.startswith(
-        C_TO_LOGIC.CONST_PREFIX + C_TO_LOGIC.BIN_OP_SR_NAME
+        LOGIC.CONST_PREFIX + LOGIC.BIN_OP_SR_NAME
     ):
         return True
     elif logic.vhdl_module_text is not None:
@@ -1744,7 +1743,7 @@ def LOGIC_IS_ZERO_DELAY(logic, parser_state, allow_none_delay=False):
         # has no combinational operators to time. In particular PYRTL's
         # zero-FF-overhead timing model cannot divide by this zero path delay.
         return True
-    elif logic.is_c_built_in and C_TO_LOGIC.IS_SIM_CTRL_FUNC_NAME(logic.func_name):
+    elif logic.is_c_built_in and LOGIC.IS_SIM_CTRL_FUNC_NAME(logic.func_name):
         # printf/sim_print, sim_assert, and sim_finish submodules are all void,
         # simulation-console-facing builtins with no real output to measure a delay
         # to -- without this, sim_assert_.../sim_finish_... fall through to the
@@ -1754,7 +1753,7 @@ def LOGIC_IS_ZERO_DELAY(logic, parser_state, allow_none_delay=False):
         # synthesis log?" instead of the zero-delay short-circuit sim_print already got.
         return True
     elif (SYN_TOOL is GOWIN) and logic.func_name.startswith(
-        f"{C_TO_LOGIC.UNARY_OP_LOGIC_NAME_PREFIX}_{C_TO_LOGIC.UNARY_OP_NOT_NAME}_"
+        f"{LOGIC.UNARY_OP_LOGIC_NAME_PREFIX}_{LOGIC.UNARY_OP_NOT_NAME}_"
     ):
         # for some reason, GowinSynthesis (GOWIN EDA version 1.9.9.01)
         # fails to generate timing reports for this particular setup, so we skip it
@@ -1803,7 +1802,7 @@ def IS_USER_CODE(logic, parser_state):
     # Check logic.is_built_in
     # or autogenerated code
 
-    user_code = not logic.is_c_built_in and not SW_LIB.IS_AUTO_GENERATED(logic)
+    user_code = not logic.is_c_built_in and not LOGIC.IS_AUTO_GENERATED(logic)
 
     # GAH NEED TO CHECK input and output TYPES
     # AND ALL INNNER WIRES TOO!
@@ -1819,7 +1818,7 @@ def IS_USER_CODE(logic, parser_state):
     # Becomes user code if using struct or array of structs
     # For now???? fuck me
     for c_type in all_types:
-        is_user = C_TO_LOGIC.C_TYPE_IS_USER_TYPE(c_type, parser_state)
+        is_user = LOGIC.C_TYPE_IS_USER_TYPE(c_type, parser_state)
         if is_user:
             user_code = True
             break
@@ -1837,7 +1836,7 @@ def GET_CACHE_ROOT_DIR():
     another.
     """
     return os.environ.get(
-        "PYPELINEC_CACHE_DIR", C_TO_LOGIC.EXE_ABS_DIR() + "/../cache/"
+        "PYPELINEC_CACHE_DIR", EXE_ABS_DIR() + "/../cache/"
     )
 
 
@@ -1927,7 +1926,7 @@ def GET_AREA_CACHE_DIR(parser_state, dir_name="area"):
 
 def LOGIC_IS_BUILT_IN_MUX(logic):
     return logic.is_c_built_in and logic.func_name.startswith(
-        C_TO_LOGIC.MUX_LOGIC_NAME
+        LOGIC.MUX_LOGIC_NAME
     )
 
 
@@ -1987,7 +1986,7 @@ def GET_MUX_CACHE_KEY(width):
     onto the bare "mux" key."""
     if _mux_cache_key_is_width_collapsed():
         return "mux"
-    return f"{C_TO_LOGIC.MUX_LOGIC_NAME}_uint{width}_t"
+    return f"{LOGIC.MUX_LOGIC_NAME}_uint{width}_t"
 
 
 def GET_CACHED_LOGIC_FILE_KEY(logic, parser_state):
@@ -2006,10 +2005,10 @@ def GET_CACHED_LOGIC_FILE_KEY(logic, parser_state):
             key = GET_MUX_CACHE_KEY(width)
     else:
         # MEM has var name - weird yo
-        if SW_LIB.IS_MEM(logic):
-            key = SW_LIB.GET_MEM_NAME(logic)
+        if LOGIC.IS_MEM(logic):
+            key = LOGIC.GET_MEM_NAME(logic)
 
-        func_name_includes_types = SW_LIB.FUNC_NAME_INCLUDES_TYPES(logic)
+        func_name_includes_types = LOGIC.FUNC_NAME_INCLUDES_TYPES(logic)
         if not func_name_includes_types:
             for input_port in logic.inputs:
                 c_type = logic.wire_to_c_type[input_port]
@@ -2035,7 +2034,7 @@ def GET_CACHED_PATH_DELAY_COMPONENTS_FILE_PATH(logic, parser_state):
 
 
 def GET_CACHED_PATH_DELAY(logic, parser_state):
-    if not logic.is_c_built_in and C_TO_LOGIC.FUNC_IS_OP_OVERLOAD(logic.func_name):
+    if not logic.is_c_built_in and LOGIC.FUNC_IS_OP_OVERLOAD(logic.func_name):
         return None
 
     # Look in cache dir
@@ -2056,7 +2055,7 @@ def GET_CACHED_PATH_DELAY_COMPONENTS(logic, parser_state, expected_delay_ns=None
     rather than silently mixing total-delay and combinational geometries.
     """
 
-    if not logic.is_c_built_in and C_TO_LOGIC.FUNC_IS_OP_OVERLOAD(logic.func_name):
+    if not logic.is_c_built_in and LOGIC.FUNC_IS_OP_OVERLOAD(logic.func_name):
         return None
     path = GET_CACHED_PATH_DELAY_COMPONENTS_FILE_PATH(logic, parser_state)
     if not os.path.exists(path):
@@ -2186,7 +2185,7 @@ def GET_CACHED_LEAF_AREA(logic, parser_state):
     """Read one leaf's cached area as (value, unit), or None on a cache
     miss: no area source, no file on disk, or malformed contents. See
     _READ_CACHED_AREA_FILE for the unit-mismatch handling."""
-    if not logic.is_c_built_in and C_TO_LOGIC.FUNC_IS_OP_OVERLOAD(logic.func_name):
+    if not logic.is_c_built_in and LOGIC.FUNC_IS_OP_OVERLOAD(logic.func_name):
         return None
     return _READ_CACHED_AREA_FILE(
         GET_CACHED_LEAF_AREA_FILE_PATH(logic, parser_state)
@@ -3364,7 +3363,7 @@ def ADD_PATH_DELAY_TO_LOOKUP(parser_state, root_func_names=None):
             # Record worst non slicable logic
             insts = list(parser_state.FuncToInstances[logic_func_name])
             for inst in insts:
-                main_inst = C_TO_LOGIC.RECURSIVE_FIND_MAIN_FUNC_FROM_INST(
+                main_inst = LOGIC.RECURSIVE_FIND_MAIN_FUNC_FROM_INST(
                     inst, parser_state
                 )
                 if main_inst not in main_to_min_mhz:
@@ -3467,7 +3466,7 @@ def WRITE_MODULE_INSTANCES_REPORT_BY_DELAY_USAGE(parser_state):
                 func_to_delay_usage.pop(func_name, None)
                 text += f"{func_name} {n_instances} instances:\n"
                 for instance in instances:
-                    text += instance.replace(C_TO_LOGIC.SUBMODULE_MARKER, "/") + "\n"
+                    text += instance.replace(LOGIC.SUBMODULE_MARKER, "/") + "\n"
                 text += "\n"
 
     out_file = SYN_OUTPUT_DIRECTORY + "/module_instances.log"
@@ -3476,6 +3475,148 @@ def WRITE_MODULE_INSTANCES_REPORT_BY_DELAY_USAGE(parser_state):
     f.close()
 
     WRITE_NAME_INDEX_LOG(parser_state)
+
+
+def INSTANCE_IS_INSIDE_BUILT_IN_OP(parser_state, inst_name):
+    container_inst = LOGIC.GET_CONTAINER_INST(inst_name)
+    if container_inst:
+        container_func_logic = parser_state.LogicInstLookupTable[container_inst]
+        if container_func_logic.is_c_built_in:
+            return True
+        else:
+            return INSTANCE_IS_INSIDE_BUILT_IN_OP(parser_state, container_inst)
+    return False
+
+
+def WRITE_INTEGER_MODULE_INSTANCES_REPORT(
+    multimain_timing_params, parser_state, exclude_built_in_op_insides=True
+):
+    # Easier to just exclude non integer ops
+    # Even FPGA wires like "shift by constant" are considered integer ops, like in a CPU
+
+    # Keep just integer ops that are built in
+    int_funcs = []
+    int_func_to_max_in_width = {}
+    for func_name in parser_state.FuncToInstances:
+        func_logic = parser_state.FuncLogicLookupTable[func_name]
+        func_types = []
+        # INputs types
+        for input_port in func_logic.inputs:
+            input_c_type = func_logic.wire_to_c_type[input_port]
+            func_types.append(input_c_type)
+        max_in_width = 0
+        if VHDL.C_TYPES_ARE_INTEGERS(func_types):
+            for func_type in func_types:
+                width = VHDL.GET_WIDTH_FROM_C_N_BITS_INT_TYPE_STR(func_type)
+                if width > max_in_width:
+                    max_in_width = width
+        # Outputs types
+        for output_port in func_logic.outputs:
+            output_c_type = func_logic.wire_to_c_type[output_port]
+            func_types.append(output_c_type)
+        # Skip casts
+        if func_name.startswith(LOGIC.CAST_FUNC_NAME_PREFIX + "_"):
+            continue
+        if func_logic.is_c_built_in and VHDL.C_TYPES_ARE_INTEGERS(func_types):
+            int_funcs.append(func_name)
+            int_func_to_max_in_width[func_name] = max_in_width
+
+    if len(int_funcs) <= 0:
+        return
+
+    # Write instance of each func
+    text = ""
+    for func_name in sorted(int_funcs):
+        instances = parser_state.FuncToInstances[func_name]
+        max_in_width = int_func_to_max_in_width[func_name]
+
+        # Filter instances to ones that dont occur inside another built in operation
+        if exclude_built_in_op_insides:
+            instances_to_keep = []
+            for instance in instances:
+                if not INSTANCE_IS_INSIDE_BUILT_IN_OP(parser_state, instance):
+                    instances_to_keep.append(instance)
+            instances = instances_to_keep
+        if len(instances) <= 0:
+            continue
+
+        # Sort by main func
+        main_to_insts = {}
+        for instance in instances:
+            main_func = instance.split(LOGIC.SUBMODULE_MARKER)[0]
+            if main_func not in main_to_insts:
+                main_to_insts[main_func] = []
+            main_to_insts[main_func].append(instance)
+
+        # Print total and then by main func
+        text += f"{func_name} MaxInputWidth= {max_in_width} num_instances= {len(instances)} :\n"
+        for main_func in sorted(main_to_insts):
+            this_main_insts = main_to_insts[main_func]
+            text += f"{func_name} main: {main_func} MaxInputWidth= {max_in_width} num_instances= {len(this_main_insts)} :\n"
+            for instance in sorted(this_main_insts):
+                text += instance.replace(LOGIC.SUBMODULE_MARKER, "/") + "\n"
+        text += "\n"
+
+    out_file = SYN_OUTPUT_DIRECTORY + "/integer_module_instances.log"
+    print(f"Writing log of integer module instances: {out_file}")
+    f = open(out_file, "w")
+    f.write(text)
+    f.close()
+
+
+def WRITE_FLOAT_MODULE_INSTANCES_REPORT(multimain_timing_params, parser_state):
+    # Collect float func names dumb way
+    # looking for any built in funcs with 'float' in the name
+
+    float_funcs = set()
+    for func_name in parser_state.FuncToInstances:
+        func_logic = parser_state.FuncLogicLookupTable[func_name]
+        # Also ignore 'CONST_' things like CONST_REF, and muxes
+        if (
+            "float" in func_name
+            and func_logic.is_c_built_in
+            and "CONST_" not in func_name
+            and "MUX_" not in func_name
+        ):
+            float_funcs.add(func_name)
+
+    if len(float_funcs) <= 0:
+        return
+
+    text = ""
+    for func_name in sorted(float_funcs):
+        instances = sorted(parser_state.FuncToInstances[func_name])
+        # Sort by main func
+        main_to_insts = {}
+        for instance in instances:
+            main_func = instance.split(LOGIC.SUBMODULE_MARKER)[0]
+            if main_func not in main_to_insts:
+                main_to_insts[main_func] = []
+            main_to_insts[main_func].append(instance)
+
+        # Print total and then by main func
+        text += f"{func_name} num_instances= {len(instances)} :\n"
+        for main_func in sorted(main_to_insts):
+            this_main_insts = main_to_insts[main_func]
+            text += f"{func_name} main: {main_func} num_instances= {len(this_main_insts)} :\n"
+            for instance in sorted(this_main_insts):
+                text += instance.replace(LOGIC.SUBMODULE_MARKER, "/") + "\n"
+        text += "\n"
+
+    out_file = SYN_OUTPUT_DIRECTORY + "/float_module_instances.log"
+    print(f"Writing log of floating point module instances: {out_file}")
+    f = open(out_file, "w")
+    f.write(text)
+    f.close()
+
+
+def FUNC_IS_PRIMITIVE(func_name, parser_state):
+    # Try to use the tool assume false otherwise
+    PART_SET_TOOL(parser_state.part, allow_fail=True)
+    try:
+        return SYN_TOOL.FUNC_IS_PRIMITIVE(func_name)
+    except:
+        return False
 
 
 def WRITE_NAME_INDEX_LOG(parser_state):
@@ -3572,7 +3713,7 @@ def WRITE_NAME_INDEX_LOG(parser_state):
             for inst in sorted(parser_state.FuncToInstances[func_name]):
                 path = "/".join(
                     VHDL.WIRE_TO_VHDL_NAME(t, parser_state)
-                    for t in inst.split(C_TO_LOGIC.SUBMODULE_MARKER)
+                    for t in inst.split(LOGIC.SUBMODULE_MARKER)
                 )
                 lines.append(f"    hierarchy: {path}")
             for inst, child in sorted(logic.submodule_instances.items()):
@@ -3704,7 +3845,7 @@ def GET_VHDL_FILES_TCL_TEXT_AND_TOP(
             if (
                 logic_i.is_vhdl_func
                 or logic_i.is_vhdl_expr
-                or logic_i.func_name == C_TO_LOGIC.VHDL_FUNC_NAME
+                or logic_i.func_name == LOGIC.VHDL_FUNC_NAME
             ):
                 continue
             # Dont write clock cross
@@ -3728,7 +3869,7 @@ def GET_VHDL_FILES_TCL_TEXT_AND_TOP(
             # Add submodules as next inst_names
             for submodule_inst in sorted(logic_i.submodule_instances):
                 full_submodule_inst_name = (
-                    inst_name_i + C_TO_LOGIC.SUBMODULE_MARKER + submodule_inst
+                    inst_name_i + LOGIC.SUBMODULE_MARKER + submodule_inst
                 )
                 next_inst_names.add(full_submodule_inst_name)
 

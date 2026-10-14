@@ -1,7 +1,7 @@
 from pypeline import *
 
 # ONE bit-select (d[33]) read twice at two DIFFERENT source lines with the
-# SAME driver wire (d). C_TO_LOGIC.TRIM_COLLAPSE_FUNC_DEFS_RECURSIVE's
+# SAME driver wire (d). LOGIC.TRIM_COLLAPSE_FUNC_DEFS_RECURSIVE's
 # duplicate-submodule-collapsing pass merges the two "uint34_33_33"
 # bit-select instances (same func, same input driver) into one, and since
 # they come from two distinct ASTMeta (different source lines), the merge

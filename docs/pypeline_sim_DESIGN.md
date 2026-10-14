@@ -1454,8 +1454,8 @@ their own `pending` and never touch it:
   stage evaluator.
 
 `sim_reset()` discards instances, and `__init__` copies the normalized `init` template. The
-scheme relies on nothing copying `_sim_reg_state` wholesale; `pypeline_sim_pipeline` copies
-only values. `ram_sim_model_convergence_test` checks it, and is mutation-checked: a model
+scheme relies on nothing copying `_sim_reg_state` wholesale; the fixed-pipeline stage evaluator
+copies only values. `ram_sim_model_convergence_test` checks it, and is mutation-checked: a model
 that writes from re-run evaluations never converges.
 
 **Fixed latency.** `make_ram`'s function is `@pipeline_latency(latency)`. The model supplies
@@ -1684,7 +1684,7 @@ returns the first call's cached result regardless of the later call's own argume
 `sim_print(...)` looks like `@sim_output` (same once-per-cycle/final-pass firing) but is
 **dual-mode**, not sim-only: it also elaborates to a real VHDL `write(output, ...)`
 statement in hardware, reusing PipelineC's C-frontend printf backend
-(`C_TO_LOGIC.py`/`VHDL.py`) unmodified. Where `@sim_output`-decorated calls are invisible to
+(`LOGIC.py`/`VHDL.py`) unmodified. Where `@sim_output`-decorated calls are invisible to
 the hardware compiler (skipped entirely by the elaborator), `sim_print(...)` calls produce a
 real submodule instance — see `PY_TO_LOGIC_DESIGN.md`'s "`sim_print` — printf-style Console
 Output" section for the elaboration side.
@@ -2123,8 +2123,10 @@ Python result would instead combine samples from different cycles.
 `pypeline.py` keeps a cheap declaration gate. When it is open,
 `_pipeline_latency_reachable` follows referenced live callables, closures, module
 attributes and callable containers; it does not elaborate unrelated roots.
-`_prepare_pipeline_latency_sim` imports `pypeline_sim_pipeline` only for a reachable
-nonzero pipeline in an untagged caller. AUTO_PIPELINE and AUTO_FSM alone do not enable
+`_prepare_pipeline_latency_sim` imports `PY_TO_LOGIC` and calls
+`PREPARE_PIPELINE_LATENCY_SIM` only for a reachable nonzero pipeline in an untagged caller
+(`pypeline_sim.py` gates its MAINs the same way), so ordinary native sim never loads the
+compiler. AUTO_PIPELINE and AUTO_FSM alone do not enable
 this path. A fixed `AUTO_PIPELINE(func, latency=N)` whose `func` reaches a
 `@pipeline_latency` function cannot be emulated by plain native sim, because where the
 tool places its N registers relative to the fixed pipeline is only known after a build.
@@ -2144,7 +2146,7 @@ elaborates here exactly as in a build (see **Port types** under
 Integer compares, NEGATE, DIV, MOD and variable shifts get the default soft lowerings a
 build gets, installed for the elaboration only, so native-sim operator dispatch is the same
 afterwards as before (see
-[Default replacements for SW_LIB-only operators](pypeline_DESIGN.md#default-replacements-for-sw_lib-only-operators)).
+[Default replacements for C-generated operators](pypeline_DESIGN.md#default-replacements-for-c-generated-operators)).
 Standalone `sim_call()` and CLI simulations construct zero-added-clock timing
 parameters: those still include user latency and the caller's alignment registers.
 No synthesis executable is needed for this preparation.
@@ -2161,7 +2163,8 @@ register store and is cleared by `sim_reset()`.
 
 ### Stage execution
 
-The selective evaluator consumes `AUTO_PIPELINE.GET_PIPELINE_MAP` and
+The selective evaluator, `_SimPipelineGraph` in `PY_TO_LOGIC.py`'s pipeline-latency
+native-sim section, consumes `AUTO_PIPELINE.GET_PIPELINE_MAP` and
 `AUTO_PIPELINE.PiplineHDLParams.wire_to_reg_stage_start_end`, the execution order and
 register lifetimes used by VHDL emission. It evaluates constant/global networks,
 wire assignments and submodule calls at their assigned stages, reading earlier
@@ -2184,7 +2187,7 @@ Global wires follow the emitter's timing (`AUTO_PIPELINE.GLOBAL_WIRE_TIMING`):
 - **`VOLATILE` writes** are taken at their drive stage.
 
 A readback input, or a wire whose regions several functions write, would need the
-top level's per-region masking. `_Graph` refuses those with a `RuntimeError` instead of
+top level's per-region masking. `_SimPipelineGraph` refuses those with a `RuntimeError` instead of
 writing the whole base.
 
 All state changes use `_sim_reg_write` and the existing per-cycle buffer. Repeated
@@ -2244,7 +2247,7 @@ refused rather than silently mis-simulated); the rest are constraints on how you
 
   Use cocotb/GHDL for such designs, or move the wire access into the pipelined function.
   Modeling them natively would need a stage-by-stage evaluator: future work. The fixed
-  user pipelines' `_Graph` already evaluates stage by stage, but it is not activated for these
+  user pipelines' `_SimPipelineGraph` already evaluates stage by stage, but it is not activated for these
   regions.
 
   (This replaced a refusal of any pipelined MAIN writing more than one wire. Hardware used to

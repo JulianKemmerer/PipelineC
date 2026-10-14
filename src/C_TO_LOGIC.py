@@ -6,21 +6,23 @@ import os
 import pickle
 import re
 import shlex
-import subprocess
 import sys
 import re
 from collections import OrderedDict
-from distutils.dir_util import copy_tree
 from subprocess import PIPE, Popen
 
-import AST
 import C_TO_FSM
-import SW_LIB
+import LOGIC
 import SYN
-import AUTO_PIPELINE
 import VHDL
 from pycparser import c_ast, c_parser
-from utilities import REPO_ABS_DIR, GET_TOOL_PATH, INDEX_BIT_WIDTH
+from utilities import (
+    FIND_REGEX_MATCHES,
+    GET_SHELL_CMD_OUTPUT,
+    GET_TOOL_PATH,
+    INDEX_BIT_WIDTH,
+    REPO_ABS_DIR,
+)
 
 # Detect cpp install
 if GET_TOOL_PATH("cpp") is None:
@@ -31,71 +33,7 @@ if GET_TOOL_PATH("cpp") is None:
 MULT_STYLE_INFERRED = "infer"
 MULT_STYLE_FABRIC = "fabric"
 MULT_STYLE = None
-
-# Debug
-TRIM_COLLAPSE_LOGIC = (
-    True  # Flag to reduce duplicate wires, unused modules, False for debug
-)
-
-# Internal names/keywords
-RETURN_WIRE_NAME = "return_output"
-SUBMODULE_MARKER = "____"  # Hacky, need to be something unlikely as wire name
-CONST_PREFIX = "CONST_"
-ENUM_CONST_MARKER = "$"  # Hackety hack hack
-CLOCK_ENABLE_NAME = "CLOCK_ENABLE"
-MUX_LOGIC_NAME = "MUX"
-UNARY_OP_LOGIC_NAME_PREFIX = "UNARY_OP"
-BIN_OP_LOGIC_NAME_PREFIX = "BIN_OP"
-CONST_REF_RD_FUNC_NAME_PREFIX = "CONST_REF_RD"
-VAR_REF_ASSIGN_FUNC_NAME_PREFIX = "VAR_REF_ASSIGN"
-VAR_REF_RD_FUNC_NAME_PREFIX = "VAR_REF_RD"
-CAST_FUNC_NAME_PREFIX = "CAST_TO"
-ONE_HOT_EQ_LOGIC_NAME = "ONE_HOT_EQ"
-BOOL_C_TYPE = "uint1_t"
-VHDL_FUNC_NAME = "__vhdl__"
-PRINTF_FUNC_NAME = "printf"
-SIM_ASSERT_FUNC_NAME = "sim_assert"
-SIM_FINISH_FUNC_NAME = "sim_finish"
 STRLEN_FUNC_NAME = "strlen"
-
-
-def IS_SIM_CTRL_FUNC_NAME(func_name):
-    """True for printf/sim_print, sim_assert, and sim_finish submodule instances: all are
-    void, simulation-console-facing builtins that need CLOCK_ENABLE and a clk-gated process
-    to fire once per enabled cycle, and whose outputs never drive anything."""
-    return (
-        func_name.startswith(PRINTF_FUNC_NAME)
-        or func_name.startswith(SIM_ASSERT_FUNC_NAME)
-        or func_name.startswith(SIM_FINISH_FUNC_NAME)
-    )
-
-
-ACCUM_FUNC_NAME = "accum"
-COMPOUND_NULL = "COMPOUND_NULL"
-# Unary Operators
-UNARY_OP_NOT_NAME = "NOT"
-UNARY_OP_NEGATE_NAME = "NEGATE"
-# Binary operators
-BIN_OP_GT_NAME = "GT"
-BIN_OP_GTE_NAME = "GTE"
-BIN_OP_LT_NAME = "LT"
-BIN_OP_LTE_NAME = "LTE"
-BIN_OP_PLUS_NAME = "PLUS"
-BIN_OP_MINUS_NAME = "MINUS"
-BIN_OP_NEQ_NAME = "NEQ"
-BIN_OP_EQ_NAME = "EQ"
-BIN_OP_AND_NAME = "AND"  # Ampersand? Nah, look like we got pointers round here?
-BIN_OP_OR_NAME = "OR"
-BIN_OP_XOR_NAME = "XOR"
-BIN_OP_SL_NAME = "SL"
-BIN_OP_SR_NAME = "SR"
-BIN_OP_MOD_NAME = "MOD"
-BIN_OP_MULT_NAME = "MULT"
-BIN_OP_INFERRED_MULT_NAME = "INFERRED_MULT"
-BIN_OP_DIV_NAME = "DIV"
-
-# Hacky internal names hash large strings into short hex codes, dont need them to be too large
-C_AST_NODE_HASH_LEN = 4
 TEMP_HACKY_C_AST_NODE_ID = True
 
 
@@ -104,7 +42,7 @@ def GET_CPP_INCLUDES_LIST():  # -> list[str]: needs typing library?
     # Include output directory, and other generated output dir
     if os.path.isdir(SYN.SYN_OUTPUT_DIRECTORY):
         path_list += ["-I" + SYN.SYN_OUTPUT_DIRECTORY]
-    for header_dir in SW_LIB.GENERATED_HEADER_DIRS:
+    for header_dir in GENERATED_HEADER_DIRS:
         # Include the header dir - maybe future wanted idk?
         path_str = SYN.SYN_OUTPUT_DIRECTORY + "/" + header_dir
         path_list += ["-I" + path_str]
@@ -248,32 +186,6 @@ main.o: main.c examples/aws-fpga-dma/aws_fpga_dma.c \
     return set(files)
 
 
-# TODO move to utilities
-def GET_SHELL_CMD_OUTPUT(cmd_str, cwd="."):
-    # Kill pid after
-    process = subprocess.Popen(
-        cmd_str, shell=True, stderr=subprocess.PIPE, stdout=subprocess.PIPE, cwd=cwd
-    )
-    # print("Reading from ",cmd_str, flush=True)
-    outs, errs = process.communicate()
-    output_text = str(outs.decode(encoding="utf-8", errors="replace"))
-    err_text = str(errs.decode(encoding="utf-8", errors="replace"))
-    # output_text = str(process.stdout.read().decode(encoding="utf-8",errors="replace"))
-    # err_text = str(process.stderr.read().decode(encoding="utf-8",errors="replace"))
-    # For some reason vivado likes to stay alive? Be sure to kill?
-    # os.kill(process.pid, signal.SIGTERM)
-    # process.wait()
-    if process.returncode != 0:
-        e_text = ""
-        e_text += "Command failed:" + "\n"
-        e_text += cmd_str + "\n"
-        e_text += err_text + "\n"
-        e_text += output_text + "\n"
-        raise Exception(e_text)
-    # print("Reading DONE ",cmd_str, flush=True)
-    return output_text
-
-
 # gcc -fpreprocessed -dD -E main.c
 def READ_FILE_REMOVE_COMMENTS(c_filename):
     cmd = "gcc -E -fpreprocessed -dD " + c_filename
@@ -300,1845 +212,7 @@ def casthelp(arg):
         pass
 
 
-def LIST_UNION(self_a, b):
-    # Ummm?
-    if self_a == b:
-        return self_a
-
-    # return list( set().union(*[a,b]) )
-    # uhh faster?
-    self_a.extend(b)
-    return list(set(self_a))
-
-
-def C_AST_VAL_UNIQUE_KEY_DICT_MERGE(self_d1, d2):
-    # uh?
-    if self_d1 == d2:
-        return self_d1
-
-    for key in d2:
-        if key in self_d1:
-            v1 = self_d1[key]
-            v2 = d2[key]
-            if not C_AST_NODES_EQUAL(v1, v2):
-                # EW WTF SLOW? if C_AST_NODE_COORD_STR(v1) != C_AST_NODE_COORD_STR(v2):
-                print(
-                    "C_AST_VAL_UNIQUE_KEY_DICT_MERGE Dicts aren't unique:", self_d1, d2
-                )
-                print("key", key)
-                print("v1", v1, C_AST_NODE_COORD_STR(v1))
-                print("v2", v2, C_AST_NODE_COORD_STR(v2))
-                print(0 / 0)
-                sys.exit(-1)
-
-    # Do merge with dict methods
-    rv = self_d1
-    rv.update(d2)
-
-    return rv
-
-
-def LIST_VAL_UNIQUE_KEY_DICT_MERGE(self_d1, d2):
-    # Uhhh?
-    if self_d1 == d2:
-        return self_d1
-
-    for key in d2:
-        if key in self_d1:
-            v1 = self_d1[key]
-            v2 = d2[key]
-            if str(v1) != str(v2):
-                print("List val dicts aren't unique:", self_d1, d2)
-                print("key", key)
-                print("v1", v1)
-                print("v2", v2)
-                print(0 / 0)
-                sys.exit(-1)
-
-    # Do merge with dict methods
-    rv = self_d1
-
-    rv.update(d2)
-
-    return rv
-
-
-def UNIQUE_KEY_DICT_MERGE(self_d1, d2):
-    # Uhh?
-    if self_d1 == d2:
-        return self_d1
-
-    # Check that are unique
-    for key in d2:
-        if key in self_d1:
-            v1 = self_d1[key]
-            v2 = d2[key]
-            if v1 != v2:
-                print("Dicts aren't unique:", self_d1, d2)
-                print("key", key)
-                print("v1", v1)
-                print("v2", v2)
-                print(0 / 0)
-                sys.exit(-1)
-        # except:
-        # pass
-
-    # Do merge with dict methods
-    rv = self_d1
-
-    rv.update(d2)
-
-    return rv
-
-
-def DICT_SET_VALUE_MERGE(d1, d2):
-    rv = d1
-    for key in d2:
-        if key in d1:
-            # Result is union of two sets
-            rv[key] = d1[key] | d2[key]
-        else:
-            rv[key] = d2[key]
-
-    return rv
-
-
-class AutoMultiCycleConstraint:
-    """Cycle-count constraint of one AUTO_MULTI_CYCLE multi-cycle path, recorded in
-    Logic.auto_multi_cycle_tuples[(start_reg, end_reg)] by the Pypeline elaborator.
-      key            pypeline.AUTO_MULTI_CYCLE.canonical_key (cross-pass cache key)
-      latency=N      fixed: the sweep never changes the count
-      start_latency  the count the first sweep iteration uses (else 1)
-      max_latency    the sweep never raises the count above this
-    The elaborated count itself lives in the matching Logic.mcp_tuples entry.
-    """
-
-    __slots__ = ("key", "latency", "start_latency", "max_latency", "seed")
-
-    def __init__(
-        self, key, latency=None, start_latency=None, max_latency=None, seed=None
-    ):
-        self.key = key
-        self.latency = latency
-        self.start_latency = start_latency
-        self.max_latency = max_latency
-        # The starting count a latency hint or the latency memory gave the tag
-        # (pypeline.SET_LATENCY_SEEDS), else None. Not identity: equality,
-        # hashing and keys use the source constraint only.
-        self.seed = seed
-
-    @staticmethod
-    def from_tag(tag):
-        return AutoMultiCycleConstraint(
-            tag.canonical_key,
-            tag.fixed_latency,
-            tag.start_latency,
-            tag.max_latency,
-            getattr(tag, "seed", None),
-        )
-
-    def _source_state(self):
-        return (self.key, self.latency, self.start_latency, self.max_latency)
-
-    def __getstate__(self):
-        return self._source_state() + (self.seed,)
-
-    def __setstate__(self, state):
-        self.key, self.latency, self.start_latency, self.max_latency = state[:4]
-        self.seed = state[4] if len(state) > 4 else None
-
-    def __eq__(self, other):
-        return (
-            isinstance(other, AutoMultiCycleConstraint)
-            and self._source_state() == other._source_state()
-        )
-
-    def __hash__(self):
-        return hash(self._source_state())
-
-    def is_fixed(self):
-        return self.latency is not None
-
-    def upper_bound(self):
-        """Most cycles the path may be given (None = no cap)."""
-        return self.latency if self.latency is not None else self.max_latency
-
-    def describe(self):
-        if self.latency is not None:
-            return f"latency={self.latency}"
-        parts = []
-        if self.start_latency is not None:
-            parts.append(f"start_latency={self.start_latency}")
-        if self.max_latency is not None:
-            parts.append(f"max_latency={self.max_latency}")
-        return ", ".join(parts) if parts else "unconstrained"
-
-
-class AutoPipelineLatency:
-    """Latency constraint on one AUTO_PIPELINE call site, recorded per local
-    submodule instance in Logic.sub_inst_to_auto_pipeline_latency.
-
-    Built from pypeline.AUTO_PIPELINE(func, latency=/start_latency=/max_latency=)
-    via from_tag, or from C `#pragma AUTOPIPELINE N` (fixed N). All three None
-    means unconstrained: the sweep treats that region exactly as it always has.
-      latency=N        fixed: exactly N inserted registers, in every build
-      start_latency=S  the planned sweep's first iteration builds S registers
-      max_latency=M    the sweep never builds more than M registers
-    key_suffix() must stay identical to pypeline._auto_pipeline_latency_suffix
-    (AUTO_PIPELINE canonical key / entity-name identity); a unit test checks it.
-    """
-
-    __slots__ = ("latency", "start_latency", "max_latency", "seed")
-
-    def __init__(self, latency=None, start_latency=None, max_latency=None, seed=None):
-        self.latency = latency
-        self.start_latency = start_latency
-        self.max_latency = max_latency
-        # The starting count a latency hint or the latency memory gave the tag
-        # (pypeline.SET_LATENCY_SEEDS), else None. Like start_latency=, it is
-        # where the tag's planned sweep starts (start(), is_region()).
-        # Equality, hashing, keys, key_suffix() and is_unconstrained() use the
-        # source constraint only.
-        self.seed = seed
-
-    @staticmethod
-    def from_tag(tag):
-        return AutoPipelineLatency(
-            getattr(tag, "fixed_latency", None),
-            getattr(tag, "start_latency", None),
-            getattr(tag, "max_latency", None),
-            getattr(tag, "seed", None),
-        )
-
-    def _source_state(self):
-        return (self.latency, self.start_latency, self.max_latency)
-
-    def __getstate__(self):
-        return self._source_state() + (self.seed,)
-
-    def __setstate__(self, state):
-        self.latency, self.start_latency, self.max_latency = state[:3]
-        self.seed = state[3] if len(state) > 3 else None
-
-    def start(self):
-        """Where a region's planned sweep starts: the seed, else start_latency
-        (None when neither is set)."""
-        return self.seed if self.seed is not None else self.start_latency
-
-    def is_region(self):
-        """Planned as its own region: a source constraint, or a starting count
-        from a hint or the latency memory (a start-only region, like
-        start_latency=; see AUTO_PIPELINE.COLLECT_AUTO_PIPELINE_REGIONS for the
-        callees a seed never makes a region)."""
-        return not self.is_unconstrained() or self.seed is not None
-
-    def is_unconstrained(self):
-        return (
-            self.latency is None
-            and self.start_latency is None
-            and self.max_latency is None
-        )
-
-    def is_fixed(self):
-        return self.latency is not None
-
-    def upper_bound(self):
-        """Most registers the region may hold (None = no cap)."""
-        return self.latency if self.latency is not None else self.max_latency
-
-    def key_suffix(self):
-        if self.latency is not None:
-            return f"_latency_{self.latency}"
-        suffix = ""
-        if self.start_latency is not None:
-            suffix += f"_start_latency_{self.start_latency}"
-        if self.max_latency is not None:
-            suffix += f"_max_latency_{self.max_latency}"
-        return suffix
-
-    def describe(self):
-        if self.latency is not None:
-            return f"latency={self.latency}"
-        parts = []
-        if self.start_latency is not None:
-            parts.append(f"start_latency={self.start_latency}")
-        if self.max_latency is not None:
-            parts.append(f"max_latency={self.max_latency}")
-        return ", ".join(parts) if parts else "unconstrained"
-
-    def conflict_with_fixed(self, fixed):
-        """The offending setting if this constraint can't hold on a function
-        whose pipeline_latency is `fixed`, else None."""
-        if self.latency is not None and self.latency != fixed:
-            return f"latency={self.latency}"
-        if self.start_latency is not None and self.start_latency != fixed:
-            return f"start_latency={self.start_latency}"
-        if self.max_latency is not None and self.max_latency < fixed:
-            return f"max_latency={self.max_latency}"
-        return None
-
-    def __eq__(self, other):
-        return isinstance(other, AutoPipelineLatency) and (
-            self._source_state() == other._source_state()
-        )
-
-    def __hash__(self):
-        return hash(self._source_state())
-
-    def __repr__(self):
-        return f"AutoPipelineLatency({self.describe()})"
-
-
-class Logic:
-    def __init__(self):
-        ####### MODIFY DEEP COPY + MERGES TOO
-        #
-        # ~
-        #     ~~~~~
-        # ~~~~~~~~~~~~~
-        # ~~~~  Zero plus zero is the lord's work ^^^^^^
-        # ``            `````````
-        # of Montreal - St. Sebastian
-
-        # FOR LOGIC IMPLEMENTED IN C THE STRINGS MUST BE C SAFE
-        # (inst name adjust is after all the parsing so dont count SUBMODULE_MARKER)
-        self.func_name = None  # Function name
-        # My containing func names (could be used in multiple places
-        self.containing_funcs = set()
-        self.variable_names = set()  # Unordered set original variable names
-        self.wires = set()  # Unordered set ["a","b","return"] wire names (renamed variable regs), includes inputs+outputs
-        self.clock_enable_wires = []  # Over time, nesting ifs create more entries in list
-        # Vars pragmad to be combinatorial feedback wires: name -> None, an
-        # insertion-ordered set so emitted VHDL follows declaration order
-        self.feedback_vars = {}
-        self.inputs = []  # Ordered list of inputs ["a","b"]
-        self.outputs = []  # Ordered list of outputs ["return"]
-        self.state_regs = {}  # name -> variable info
-        self.write_only_global_wires = {}  # name -> variable info (from list of global vars)
-        self.read_only_global_wires = {}  # name -> variable info (from list of global vars)
-        # global_wire_driven_paths: write_only_global_wires name -> set of driven
-        # struct-field path tuples (e.g. {(), } for a whole-wire write, {("x",)} for
-        # a `.x` field write). Populated by Pypeline's PY_TO_LOGIC.py elaborator only
-        # (empty/absent for C-frontend Logic objects) -- lets multiple @MAIN functions
-        # split non-overlapping fields of one compound global Wire[T]/Output[T]. See
-        # VHDL.py's "Directly connected global wires" top-level wiring and
-        # docs/PY_TO_LOGIC_DESIGN.md's Global Wires section.
-        self.global_wire_driven_paths = {}
-        # global_wire_dynamic_index_writes: set of write_only_global_wires names this
-        # function writes via a variable (non-constant) array index -- such writes
-        # aren't tracked leaf-by-leaf in global_wire_driven_paths, so combining one
-        # with a second writer function of the same wire can't be safely validated;
-        # see global_wire_driven_paths above.
-        self.global_wire_dynamic_index_writes = set()
-        # readback_global_wires: write_only_global_wires name -> name of the extra
-        # internal input wire (<name>_PYPELINE_READBACK) created when this function
-        # both writes AND reads the same global wire. The readback wire is registered in
-        # read_only_global_wires (so the normal global_to_module record/port/read-
-        # stage machinery feeds it) and drives the implicit whole-wire first alias:
-        # the top level (VHDL.py "Directly connected global wires") feeds it with
-        # zeros in the regions this function itself drives (read-before-own-write
-        # = 0) and with the OTHER writers' live values everywhere else, giving
-        # flattened-leaf semantics for a writer reading foreign leaves. Pypeline
-        # frontend only; empty for C-frontend Logic objects.
-        self.readback_global_wires = {}
-        self.uses_nonvolatile_state_regs = False
-        self.submodule_instances = {}  # instance name -> logic func_name
-        self.next_user_inst_name = None  # User name for func
-        self.debug_names = set()  # Names MARK_DEBUG
-        self.mcp_tuples = set()  # Tuples of MCP params
-        # Pypeline frontend only: (start_reg, end_reg) of an mcp_tuples entry
-        # -> AutoMultiCycleConstraint when that multi-cycle path came from an AUTO_MULTI_CYCLE
-        # tag (the sweep may raise its cycle count). Empty for C designs.
-        self.auto_multi_cycle_tuples = {}
-        self.next_func_call_auto_pipeline_latency = (
-            None  # Pending #pragma AUTOPIPELINE constraint for next func call
-        )
-        # Which instances are tagged auto-pipeline: local inst name ->
-        # AutoPipelineLatency (unconstrained unless latency/start/max given)
-        self.sub_inst_to_auto_pipeline_latency = {}
-        # Pypeline frontend only: local inst name -> AUTO_PIPELINE canonical
-        # latency-cache key (pypeline.AUTO_PIPELINE.canonical_key). Empty for
-        # .c-originated logic (#pragma AUTOPIPELINE has no Python object to
-        # round-trip a discovered latency into).
-        self.sub_inst_to_auto_pipeline_key = {}
-        # Pypeline frontend only: local inst name -> AUTO_FSM canonical schedule-cache
-        # key (pypeline.AUTO_FSM.canonical_key). Marks the call site whose submodule
-        # is the generated resource-shared FSM entity (or, before a schedule exists,
-        # the combinational passthrough placeholder). Empty for .c-originated logic.
-        # Unlike sub_inst_to_auto_pipeline_key this never changes how SYN/SWEEP treat
-        # the instance -- the generated FSM entity is stateful, hence already atomic
-        # and zero-added-latency -- it exists so the driver can find AUTO_FSM call
-        # sites to schedule. See docs/AUTO_FSM_DESIGN.md.
-        self.sub_inst_to_auto_fsm_key = {}
-        self.ast_meta = None
-        self.pypeline_emission_names = None
-        # Python clock-by-clock bodies consume these pipeline outputs in the
-        # current cycle; only surrounding sliceable callers align transactions.
-        self.submodule_latencies_are_self_timed = set()
-        self.submodule_instance_to_source_origins = {}
-        # Is this logic a c built in C function?
-        self.is_c_built_in = False
-        # Is this logic implemented as a VHDL function (non-pipelineable 0 clk logic, probably 0LLs)
-        self.is_vhdl_func = False
-        # Is this logic implemented as a VHDL expression (also 0 clk)
-        self.is_vhdl_expr = False
-        # Is this logic completely replaced with raw vhdl module text?
-        # (non-pipelineable global func like) None if not, else the literal text.
-        self.vhdl_module_text = None
-        # Quoted printf format string for a printf-builtin instance's own standalone Logic()
-        # (set by BUILD_C_BUILT_IN_SUBMODULE_FUNC_LOGIC from the containing func's
-        # submodule_instance_to_printf_format_string below). Frontend-agnostic: both the C
-        # and Pypeline frontends populate the per-instance dict; VHDL.GET_PRINTF_MODULE_TEXT
-        # reads this instead of Logic.c_ast_node.
-        self.printf_format_string = None
-        # Quoted sim_assert message string for a sim_assert-builtin instance's own standalone
-        # Logic(), mirroring printf_format_string above. None if no message was given.
-        self.sim_assert_msg = None
-        # Is this logic the input or output of a clock crossing?
-        self.is_clock_crossing = False
-        # TODO 'new style' is_? checks like below replacing SW_LIB stuff eventually
-        self.is_new_style_bit_manip = False
-        # self.is_new_style_mem_func = False
-        # self.is_new_style_bit_math = False
-
-        # Mostly for c built in C functions
-        self.submodule_instance_to_ast_meta = {}
-        # inst_name -> quoted printf format string, for printf-builtin submodule instances
-        # (relay from call-site elaboration to BUILD_C_BUILT_IN_SUBMODULE_FUNC_LOGIC, which
-        # copies the entry for a given instance onto that instance's own standalone
-        # Logic.printf_format_string above)
-        self.submodule_instance_to_printf_format_string = {}
-        # inst_name -> quoted sim_assert message string (or None), for sim_assert-builtin
-        # submodule instances, mirroring submodule_instance_to_printf_format_string above.
-        self.submodule_instance_to_sim_assert_msg = {}
-        self.submodule_instance_to_input_port_names = {}
-        self.ref_submodule_instance_to_input_port_driven_ref_toks = {}
-        self.ref_submodule_instance_to_ref_toks = {}
-
-        # Python graph example was {} of strings so this
-        # string based wire naming makes Pythonic sense.
-        # I think pointers would work better - constant strings are the pointer?
-        # Wire names with a dot means sub module connection
-        # func0.a  is a port on the func0 instance
-        # Connections are given as two lists "drives" and "driven by"
-        self.wire_drives = {}  # wire_name -> set([driven,wire,names])
-        self.wire_driven_by = {}  # wire_name -> driving wire
-
-        # To keep track of C execution over time in logic graph,
-        # each assignment assigns to a renamed variable, renamed
-        # variables keep execution order
-        # Need to keep dicts for variable names
-        self.wire_aliases_over_time = {}  # orig var name -> [list,of,renamed,wire,names] # Further in list is further in time
-        self.alias_to_orig_var_name = {}  # alias -> orig var name
-        self.alias_to_driven_ref_toks = {}  # alias -> [ref,toks]
-
-        # Need to look up types by wire name
-        # wire_to_c_type[wire_name] -> c_type_str
-        self.wire_to_c_type = {}
-
-        # For timing, delay integer units (tenths of nanosec probably)
-        # this is populated by vendor tool
-        self.delay = None
-        # True when delay was derived from the zero clock pipeline map
-        # (submodule delays) instead of measured by a real synthesis run
-        self.delay_is_estimated = False
-        # Optional measured path decomposition supplied by timing backends
-        # that can distinguish launch clock-to-Q, combinational, and setup
-        # delay. ``planner_delay`` is the combinational component in the same
-        # integer units as ``delay``. It is diagnostic by default; SYN's
-        # internal experimental gate decides whether a planner consumes it.
-        self.delay_components = None
-        self.planner_delay = None
-        # (value, unit) combinational cell area from a synthesis run of exactly
-        # this function, when the backend measures area (DEVICE_MODELS); see
-        # SYN.MEASURED_AREA
-        self.measured_area = None
-
-        # Save C code text for later
-        self.c_code_text = None
-
-        # Init constant clock enable stuff
-        self.wires.add(CLOCK_ENABLE_NAME)
-        self.clock_enable_wires.append(CLOCK_ENABLE_NAME)
-        self.wire_to_c_type[CLOCK_ENABLE_NAME] = BOOL_C_TYPE
-
-        # Just for functions using __clk()
-        self.is_fsm_clk_func = False
-        self.state_groups = []  # List of lists of state infos
-        self.first_user_state = None  # First/user entry state
-        self.func_call_name_to_state = {}  # Func call name to lookup of func call state
-        self.func_call_node_to_entry_exit_states = {}  # Same funcs as above, node inst specific entry and exit
-        # Current nested func scope since not single inst subroutines are inlined
-        self.fsm_subroutine_scope = []
-
-    @property
-    def c_ast_node(self):
-        """Backward-compat: returns the raw AST node stored in ast_meta.
-        C-specific code that reads .c_ast_node continues to work unchanged."""
-        return self.ast_meta.raw if self.ast_meta is not None else None
-
-    # Help!
-    def DEEPCOPY(self):
-        rv = Logic()
-        rv.func_name = self.func_name
-        rv.variable_names = set(self.variable_names)
-        rv.wires = set(
-            self.wires
-        )  # ["a","b","return"] wire names (renamed variable regs), includes inputs+outputs
-        rv.inputs = self.inputs[:]  # ["a","b"]
-        rv.outputs = self.outputs[:]  # ["return"]
-        rv.state_regs = dict(
-            self.state_regs
-        )  # self.DEEPCOPY_DICT_COPY(self.state_regs)
-        rv.read_only_global_wires = dict(self.read_only_global_wires)
-        rv.write_only_global_wires = dict(self.write_only_global_wires)
-        rv.global_wire_driven_paths = {
-            k: set(v) for k, v in self.global_wire_driven_paths.items()
-        }
-        rv.global_wire_dynamic_index_writes = set(self.global_wire_dynamic_index_writes)
-        rv.readback_global_wires = dict(self.readback_global_wires)
-        rv.feedback_vars = dict.fromkeys(self.feedback_vars)
-        rv.uses_nonvolatile_state_regs = self.uses_nonvolatile_state_regs
-        rv.submodule_instances = dict(
-            self.submodule_instances
-        )  # instance name -> logic func_name all IMMUTABLE types?
-        rv.next_user_inst_name = self.next_user_inst_name
-        rv.debug_names = set(self.debug_names)
-        rv.mcp_tuples = set(self.mcp_tuples)
-        rv.auto_multi_cycle_tuples = dict(self.auto_multi_cycle_tuples)
-        rv.next_func_call_auto_pipeline_latency = self.next_func_call_auto_pipeline_latency
-        rv.sub_inst_to_auto_pipeline_latency = dict(self.sub_inst_to_auto_pipeline_latency)
-        rv.sub_inst_to_auto_pipeline_key = dict(self.sub_inst_to_auto_pipeline_key)
-        rv.sub_inst_to_auto_fsm_key = dict(self.sub_inst_to_auto_fsm_key)
-        rv.ast_meta = self.ast_meta
-        rv.pypeline_emission_names = self.pypeline_emission_names
-        rv.submodule_latencies_are_self_timed = set(
-            getattr(self, "submodule_latencies_are_self_timed", ())
-        )
-        rv.submodule_instance_to_source_origins = {
-            k: set(v) for k, v in self.submodule_instance_to_source_origins.items()
-        }
-        rv.is_c_built_in = self.is_c_built_in
-        rv.is_vhdl_func = self.is_vhdl_func
-        rv.is_vhdl_expr = self.is_vhdl_expr
-        rv.vhdl_module_text = self.vhdl_module_text
-        rv.printf_format_string = self.printf_format_string
-        rv.sim_assert_msg = self.sim_assert_msg
-        rv.is_new_style_bit_manip = self.is_new_style_bit_manip
-        rv.is_clock_crossing = self.is_clock_crossing
-        rv.submodule_instance_to_ast_meta = self.DEEPCOPY_DICT_COPY(
-            self.submodule_instance_to_ast_meta
-        )  # dict(self.submodule_instance_to_ast_meta) # IMMUTABLE types / dont care
-        rv.submodule_instance_to_printf_format_string = dict(
-            self.submodule_instance_to_printf_format_string
-        )  # IMMUTABLE (plain strings)
-        rv.submodule_instance_to_sim_assert_msg = dict(
-            self.submodule_instance_to_sim_assert_msg
-        )  # IMMUTABLE (plain strings or None)
-        rv.submodule_instance_to_input_port_names = self.DEEPCOPY_DICT_LIST(
-            self.submodule_instance_to_input_port_names
-        )
-        rv.wire_drives = self.DEEPCOPY_DICT_SET(self.wire_drives)
-        rv.wire_driven_by = dict(
-            self.wire_driven_by
-        )  # wire_name -> driving wire #IMMUTABLE
-        rv.wire_aliases_over_time = self.DEEPCOPY_DICT_LIST(self.wire_aliases_over_time)
-        rv.alias_to_orig_var_name = dict(self.alias_to_orig_var_name)  # IMMUTABLE
-        rv.alias_to_driven_ref_toks = self.DEEPCOPY_DICT_LIST(
-            self.alias_to_driven_ref_toks
-        )  # alias -> [ref,toks]
-        rv.wire_to_c_type = dict(self.wire_to_c_type)  # IMMUTABLE
-        rv.delay = self.delay
-        rv.delay_is_estimated = self.delay_is_estimated
-        rv.delay_components = (
-            dict(self.delay_components)
-            if self.delay_components is not None
-            else None
-        )
-        rv.planner_delay = self.planner_delay
-        rv.measured_area = getattr(self, "measured_area", None)
-        rv.c_code_text = self.c_code_text
-        rv.containing_funcs = set(self.containing_funcs)
-        rv.ref_submodule_instance_to_input_port_driven_ref_toks = (
-            self.DEEPCOPY_DICT_LIST(
-                self.ref_submodule_instance_to_input_port_driven_ref_toks
-            )
-        )
-        rv.ref_submodule_instance_to_ref_toks = self.DEEPCOPY_DICT_LIST(
-            self.ref_submodule_instance_to_ref_toks
-        )
-        rv.clock_enable_wires = self.clock_enable_wires[:]
-        rv.is_fsm_clk_func = self.is_fsm_clk_func
-        rv.state_groups = self.state_groups[:]
-        rv.first_user_state = self.first_user_state
-        rv.func_call_name_to_state = dict(self.func_call_name_to_state)
-        rv.func_call_node_to_entry_exit_states = dict(
-            self.func_call_node_to_entry_exit_states
-        )
-
-        return rv
-
-    # Really, help! # Replace with deep copy?
-    def DEEPCOPY_DICT_LIST(self, d):
-        rv = {}
-        for key in d:
-            rv[key] = d[key][:]
-        return rv
-
-    def DEEPCOPY_DICT_SET(self, d):
-        rv = {}
-        for key in d:
-            rv[key] = set(d[key])
-        return rv
-
-    def DEEPCOPY_DICT_COPY(self, d):
-        rv = {}
-        for key in d:
-            rv[key] = copy.copy(d[key])
-        return rv
-
-    # Merges logic_b into self
-    # Returns none intentionally
-    def MERGE_COMB_LOGIC(self, logic_b):
-        # Um...?
-        if self == logic_b:
-            return None
-
-        # Func name must match if set
-        if (self.func_name is not None) and (logic_b.func_name is not None):
-            if self.func_name != logic_b.func_name:
-                print("Cannot merge comb logic with mismatching func names!")
-                print(self.func_name)
-                print(logic_b.func_name)
-            else:
-                self.func_name = self.func_name
-        # Otherwise use whichever is set
-        elif self.func_name is not None:
-            self.func_name = self.func_name
-        else:
-            self.func_name = logic_b.func_name
-
-        # C built in status must match if set
-        if (self.is_c_built_in is not None) and (logic_b.is_c_built_in is not None):
-            if self.is_c_built_in != logic_b.is_c_built_in:
-                print("Cannot merge comb logic with mismatching is_c_built_in !")
-                print(self.func_name, self.is_c_built_in)
-                print(logic_b.func_name, logic_b.is_c_built_in)
-                sys.exit(-1)
-            else:
-                self.is_c_built_in = self.is_c_built_in
-        # Otherwise use whichever is set
-        elif self.is_c_built_in is not None:
-            self.is_c_built_in = self.is_c_built_in
-        else:
-            self.is_c_built_in = logic_b.is_c_built_in
-
-        # VHDL func status must match if set
-        if (self.is_vhdl_func is not None) and (logic_b.is_vhdl_func is not None):
-            if self.is_vhdl_func != logic_b.is_vhdl_func:
-                print("Cannot merge comb logic with mismatching is_vhdl_func !")
-                print(self.func_name, self.is_vhdl_func)
-                print(logic_b.func_name, logic_b.is_vhdl_func)
-                sys.exit(-1)
-            else:
-                self.is_vhdl_func = self.is_vhdl_func
-        # Otherwise use whichever is set
-        elif self.is_vhdl_func is not None:
-            self.is_vhdl_func = self.is_vhdl_func
-        else:
-            self.is_vhdl_func = logic_b.is_vhdl_func
-
-        # VHDL expression status must match if set
-        if (self.is_vhdl_expr is not None) and (logic_b.is_vhdl_expr is not None):
-            if self.is_vhdl_expr != logic_b.is_vhdl_expr:
-                print("Cannot merge comb logic with mismatching is_vhdl_expr !")
-                print(self.func_name, self.is_vhdl_expr)
-                print(logic_b.func_name, logic_b.is_vhdl_expr)
-                sys.exit(-1)
-            else:
-                self.is_vhdl_expr = self.is_vhdl_expr
-        # Otherwise use whichever is set
-        elif self.is_vhdl_expr is not None:
-            self.is_vhdl_expr = self.is_vhdl_expr
-        else:
-            self.is_vhdl_expr = logic_b.is_vhdl_expr
-
-        # VHDL module text keep whichever is set
-        if (self.vhdl_module_text is not None) and (
-            logic_b.vhdl_module_text is not None
-        ):
-            if self.vhdl_module_text != logic_b.vhdl_module_text:
-                print("Cannot merge comb logic with mismatching vhdl_module_text !")
-                print(self.func_name, self.vhdl_module_text)
-                print(logic_b.func_name, logic_b.vhdl_module_text)
-                sys.exit(-1)
-            else:
-                self.vhdl_module_text = self.vhdl_module_text
-        # Otherwise use whichever is set
-        elif self.vhdl_module_text is not None:
-            self.vhdl_module_text = self.vhdl_module_text
-        else:
-            self.vhdl_module_text = logic_b.vhdl_module_text
-
-        # Printf format string keep whichever is set (same pattern as vhdl_module_text)
-        if (self.printf_format_string is not None) and (
-            logic_b.printf_format_string is not None
-        ):
-            if self.printf_format_string != logic_b.printf_format_string:
-                print("Cannot merge comb logic with mismatching printf_format_string !")
-                print(self.func_name, self.printf_format_string)
-                print(logic_b.func_name, logic_b.printf_format_string)
-                sys.exit(-1)
-            else:
-                self.printf_format_string = self.printf_format_string
-        elif self.printf_format_string is not None:
-            self.printf_format_string = self.printf_format_string
-        else:
-            self.printf_format_string = logic_b.printf_format_string
-
-        # sim_assert message string keep whichever is set (same pattern as printf_format_string)
-        if (self.sim_assert_msg is not None) and (logic_b.sim_assert_msg is not None):
-            if self.sim_assert_msg != logic_b.sim_assert_msg:
-                print("Cannot merge comb logic with mismatching sim_assert_msg !")
-                print(self.func_name, self.sim_assert_msg)
-                print(logic_b.func_name, logic_b.sim_assert_msg)
-                sys.exit(-1)
-            else:
-                self.sim_assert_msg = self.sim_assert_msg
-        elif self.sim_assert_msg is not None:
-            self.sim_assert_msg = self.sim_assert_msg
-        else:
-            self.sim_assert_msg = logic_b.sim_assert_msg
-
-        # TODO refactor all the above copypasta
-
-        # Dont do the same dumb above code - probably dont need it?
-        # Absorb true values of using globals
-        self.uses_nonvolatile_state_regs = (
-            self.uses_nonvolatile_state_regs or logic_b.uses_nonvolatile_state_regs
-        )
-        self.is_clock_crossing = self.is_clock_crossing or logic_b.is_clock_crossing
-        self.is_new_style_bit_manip = (
-            self.is_new_style_bit_manip or logic_b.is_new_style_bit_manip
-        )
-
-        # Merge sets
-        self.wires = self.wires | logic_b.wires
-        self.state_regs = UNIQUE_KEY_DICT_MERGE(self.state_regs, logic_b.state_regs)
-        self.variable_names = self.variable_names | logic_b.variable_names
-        self.feedback_vars = dict.fromkeys(
-            [*self.feedback_vars, *logic_b.feedback_vars]
-        )
-        self.debug_names = self.debug_names | logic_b.debug_names
-
-        self.write_only_global_wires = UNIQUE_KEY_DICT_MERGE(
-            self.write_only_global_wires, logic_b.write_only_global_wires
-        )
-        # Hacky hack gah, A.M. 180 - Song by Grandaddy
-        # Auto remove read only regs promoted to local state regs
-        self.read_only_global_wires = UNIQUE_KEY_DICT_MERGE(
-            self.read_only_global_wires, logic_b.read_only_global_wires
-        )
-        read_only_reg_names = list(self.read_only_global_wires.keys())
-        for read_only_reg_name in read_only_reg_names:
-            if read_only_reg_name in self.state_regs:
-                self.read_only_global_wires.pop(read_only_reg_name)
-
-        # I/O order matters - check that
-        # If one is empty then thats fine
-        if len(self.inputs) > 0 and len(logic_b.inputs) > 0:
-            # Check for equal
-            if self.inputs != logic_b.inputs:
-                print("Cannot merge comb logic with mismatching inputs !")
-                print(self.func_name, self.inputs)
-                print(logic_b.func_name, logic_b.inputs)
-                print(0 / 0)
-                sys.exit(-1)
-            else:
-                self.inputs = self.inputs[:]
-        else:
-            # Default a
-            self.inputs = self.inputs[:]
-            if len(self.inputs) <= 0:
-                self.inputs = logic_b.inputs[:]
-
-        if len(self.outputs) > 0 and len(logic_b.outputs) > 0:
-            # Check for equal
-            if self.outputs != logic_b.outputs:
-                print("Cannot merge comb logic with mismatching outputs !")
-                print(self.func_name, self.outputs)
-                print(logic_b.func_name, logic_b.outputs)
-                sys.exit(-1)
-            else:
-                self.outputs = self.outputs[:]
-        else:
-            # Default a
-            self.outputs = self.outputs[:]
-            if len(self.outputs) <= 0:
-                self.outputs = logic_b.outputs[:]
-
-        # Merge dicts
-        self.wire_to_c_type = UNIQUE_KEY_DICT_MERGE(
-            self.wire_to_c_type, logic_b.wire_to_c_type
-        )
-        self.submodule_instances = UNIQUE_KEY_DICT_MERGE(
-            self.submodule_instances, logic_b.submodule_instances
-        )
-        self.wire_driven_by = UNIQUE_KEY_DICT_MERGE(
-            self.wire_driven_by, logic_b.wire_driven_by
-        )
-
-        # Delay
-        if self.delay is not None and logic_b.delay is not None:
-            if self.delay != logic_b.delay:
-                raise Exception("Mismatch delay!")
-        elif self.delay is None:
-            self.delay = logic_b.delay
-
-        # Optional planner-only timing diagnostics follow the same merge
-        # contract as measured delay. In ordinary frontend merges both sides
-        # are None; this also makes post-measurement copies deterministic.
-        if (
-            self.delay_components is not None
-            and logic_b.delay_components is not None
-            and self.delay_components != logic_b.delay_components
-        ):
-            raise Exception("Mismatch delay components!")
-        if self.delay_components is None:
-            self.delay_components = (
-                dict(logic_b.delay_components)
-                if logic_b.delay_components is not None
-                else None
-            )
-        if (
-            self.planner_delay is not None
-            and logic_b.planner_delay is not None
-            and self.planner_delay != logic_b.planner_delay
-        ):
-            raise Exception("Mismatch planner delay!")
-        if self.planner_delay is None:
-            self.planner_delay = logic_b.planner_delay
-        measured_area = getattr(self, "measured_area", None)
-        measured_area_b = getattr(logic_b, "measured_area", None)
-        if (
-            measured_area is not None
-            and measured_area_b is not None
-            and measured_area != measured_area_b
-        ):
-            raise Exception("Mismatch measured area!")
-        self.measured_area = measured_area if measured_area is not None else measured_area_b
-
-        # NExt user inst name?
-        if self.next_user_inst_name != logic_b.next_user_inst_name:
-            if self.next_user_inst_name is None:
-                self.next_user_inst_name = logic_b.next_user_inst_name
-            else:
-                raise Exception(
-                    f"How to merge next inst names {self.next_user_inst_name} {logic_b.next_user_inst_name}?"
-                )
-
-        # WTF MERGE BUG?
-        lens = len(self.wire_drives) + len(logic_b.wire_drives)
-        self.wire_drives = DICT_SET_VALUE_MERGE(self.wire_drives, logic_b.wire_drives)
-        if lens > 0 and len(self.wire_drives) == 0:
-            print("self.wire_drives", self.wire_drives)
-            print("logic_b.wire_drives", logic_b.wire_drives)
-            print("Should have at least", lens, "entries...")
-            print("MERGE COMB self.wire_drives", self.wire_drives)
-            print("WTF")
-            sys.exit(-1)
-
-        # C ast node values wont be == , manual check with coord str
-        self.submodule_instance_to_ast_meta = C_AST_VAL_UNIQUE_KEY_DICT_MERGE(
-            self.submodule_instance_to_ast_meta,
-            logic_b.submodule_instance_to_ast_meta,
-        )
-        self.submodule_instance_to_source_origins = DICT_SET_VALUE_MERGE(
-            self.submodule_instance_to_source_origins,
-            logic_b.submodule_instance_to_source_origins,
-        )
-        # Plain strings, unlike ast_meta -- ordinary equality-based merge is fine
-        self.submodule_instance_to_printf_format_string = UNIQUE_KEY_DICT_MERGE(
-            self.submodule_instance_to_printf_format_string,
-            logic_b.submodule_instance_to_printf_format_string,
-        )
-        self.submodule_instance_to_sim_assert_msg = UNIQUE_KEY_DICT_MERGE(
-            self.submodule_instance_to_sim_assert_msg,
-            logic_b.submodule_instance_to_sim_assert_msg,
-        )
-        self.submodule_instance_to_input_port_names = LIST_VAL_UNIQUE_KEY_DICT_MERGE(
-            self.submodule_instance_to_input_port_names,
-            logic_b.submodule_instance_to_input_port_names,
-        )
-        self.ref_submodule_instance_to_input_port_driven_ref_toks = (
-            LIST_VAL_UNIQUE_KEY_DICT_MERGE(
-                self.ref_submodule_instance_to_input_port_driven_ref_toks,
-                logic_b.ref_submodule_instance_to_input_port_driven_ref_toks,
-            )
-        )
-        self.ref_submodule_instance_to_ref_toks = LIST_VAL_UNIQUE_KEY_DICT_MERGE(
-            self.ref_submodule_instance_to_ref_toks,
-            logic_b.ref_submodule_instance_to_ref_toks,
-        )
-
-        # Also for both wire drives and driven by, remove wire driving self:
-        # wire_driven_by
-        new_wire_driven_by = {}
-        for driven_wire in self.wire_driven_by:
-            # Filter out self driving
-            driving_wire = self.wire_driven_by[driven_wire]
-            if driving_wire != driven_wire:
-                new_wire_driven_by[driven_wire] = driving_wire
-
-        # print "new_wire_driven_by",new_wire_driven_by
-        self.wire_driven_by = new_wire_driven_by
-
-        # wire_drives
-        new_wire_drives = {}
-        for driving_wire in self.wire_drives:
-            driven_wires = self.wire_drives[driving_wire]
-            new_driven_wires = set()
-            for driven_wire in driven_wires:
-                if driven_wire != driving_wire:
-                    new_driven_wires.add(driven_wire)
-            new_wire_drives[driving_wire] = new_driven_wires
-        self.wire_drives = new_wire_drives
-
-        # If one node is null then use ot
-        if (self.c_ast_node is not None) and (logic_b.c_ast_node is not None):
-            if not C_AST_NODES_EQUAL(self.c_ast_node, logic_b.c_ast_node):
-                # EW WTF SLOW? if C_AST_NODE_COORD_STR(self.c_ast_node) != C_AST_NODE_COORD_STR(logic_b.c_ast_node):
-                print("Cannot merge comb logic with mismatching c_ast_node!")
-                print(self.func_name)
-                print(logic_b.func_name)
-                print(self.c_ast_node)
-                print(logic_b.c_ast_node)
-                print(0 / 0)
-                sys.exit(-1)
-            else:
-                pass  # self.ast_meta already correct
-        # Otherwise use whichever is set
-        elif self.ast_meta is not None:
-            pass  # self.ast_meta already correct
-        else:
-            self.ast_meta = logic_b.ast_meta
-
-        # Only way this makes sense with MERGE_SEQUENTIAL_LOGIC
-        # Need to be equal per variable
-        # List val merge should do the trick
-        self.wire_aliases_over_time = LIST_VAL_UNIQUE_KEY_DICT_MERGE(
-            self.wire_aliases_over_time, logic_b.wire_aliases_over_time
-        )
-
-        # Only one orig wire name per alias
-        self.alias_to_orig_var_name = UNIQUE_KEY_DICT_MERGE(
-            self.alias_to_orig_var_name, logic_b.alias_to_orig_var_name
-        )
-        self.alias_to_driven_ref_toks = UNIQUE_KEY_DICT_MERGE(
-            self.alias_to_driven_ref_toks, logic_b.alias_to_driven_ref_toks
-        )
-
-        # Code text keep whichever is set
-        if (self.c_code_text is not None) and (logic_b.c_code_text is not None):
-            if self.c_code_text != logic_b.c_code_text:
-                print("Cannot merge comb logic with mismatching c_code_text!")
-                print(self.c_code_text)
-                print(logic_b.c_code_text)
-            else:
-                self.c_code_text = self.c_code_text
-        # Otherwise use whichever is set
-        elif self.c_code_text is not None:
-            self.c_code_text = self.c_code_text
-        else:
-            self.c_code_text = logic_b.c_code_text
-
-        # Clock enables need to be equal
-        if self.clock_enable_wires != logic_b.clock_enable_wires:
-            print("Mismatch clock enable wires merging parallel logic!")
-            print(self.clock_enable_wires)
-            print(logic_b.clock_enable_wires)
-            sys.exit(-1)
-
-        # Might never need this?
-        self.is_fsm_clk_func |= logic_b.is_fsm_clk_func
-        if self.state_groups != logic_b.state_groups:
-            print("Cant merge state groups:")
-            sys.exit(-1)
-        if self.first_user_state != logic_b.first_user_state:
-            print("Cant merge first user state")
-            sys.exit(-1)
-        if self.func_call_name_to_state != logic_b.func_call_name_to_state:
-            print("Cant merge func_call_name_to_state")
-            sys.exit(-1)
-        if (
-            self.func_call_node_to_entry_exit_states
-            != logic_b.func_call_node_to_entry_exit_states
-        ):
-            print("Cant merge func_call_node_to_entry_exit_states")
-            sys.exit(-1)
-
-        return None
-
-    # Function to merge logic with implied execution order
-    # Merges with self
-    # Intentionally returns None
-    def MERGE_SEQ_LOGIC(self, second_logic):
-        # only need to do specifically sequential part of merge here
-        # We call COMB merge after adjusting for sequential
-        # Um...?
-        if self == second_logic:
-            return None
-
-        # print "===="
-        # print "self.wire_drives", self.wire_drives
-        # print "self.wire_driven_by", self.wire_driven_by
-        # print "second_logic.wire_drives", second_logic.wire_drives
-        # print "second_logic.wire_driven_by", second_logic.wire_driven_by
-
-        # Driving wires need to reflect over time
-        # Last alias from first logic replaces original wire name in second logic
-        # self.wire_drives = {} # wire_name -> set(driven,wire,names])
-        for orig_var in self.wire_aliases_over_time:
-            # And the var drives second_logic
-            if orig_var in second_logic.wire_drives:
-                # First logic has aliases for orig var
-                # Second logic has record of the orig var driving things
-                # Both first and second logic should have same driven wies
-                first_driven_wires = set()
-                if orig_var in self.wire_drives:
-                    first_driven_wires = self.wire_drives[orig_var]
-                second_driven_wires = set()
-                if orig_var in second_logic.wire_drives:
-                    second_driven_wires = second_logic.wire_drives[orig_var]
-
-                sorted_first_driven_wires = sorted(first_driven_wires)
-                sorted_second_driven_wires = sorted(second_driven_wires)
-                # Was the second logic actually refering to something different?
-                if sorted_first_driven_wires != sorted_second_driven_wires:
-                    # If second just has extra then OK
-                    if len(sorted_first_driven_wires) < len(sorted_second_driven_wires):
-                        # Check for match, but not like a dummy?
-                        # for i in range(0, len(sorted_first_driven_wires)):
-                        # if sorted_first_driven_wires[i] != sorted_second_driven_wires[i]:
-                        for sorted_first_driven_wire in sorted_first_driven_wires:
-                            if (
-                                sorted_first_driven_wire
-                                not in sorted_second_driven_wires
-                            ):
-                                print(
-                                    "first driven wire:",
-                                    sorted_first_driven_wire,
-                                    "was not in second logic driven wires? was removed? wtf?",
-                                )
-                                print("first:", sorted_first_driven_wires)
-                                print("second:", sorted_second_driven_wires)
-                                # print 0/0
-                                sys.exit(-1)
-                        # Got match, first is subset of second, update first to match second
-                        if len(second_driven_wires) > 0:
-                            self.wire_drives[orig_var] = second_driven_wires
-                        for second_driven_wire in second_driven_wires:
-                            self.wire_driven_by[second_driven_wire] = (
-                                second_logic.wire_driven_by[second_driven_wire]
-                            )
-
-                    else:
-                        # First has same or more, cant match second at this point
-                        print("orig_var", orig_var)
-                        aliases = self.wire_aliases_over_time[orig_var]
-                        print("first aliases", aliases)
-                        last_alias = aliases[len(aliases) - 1]
-                        print("first logic last_alias", last_alias)
-                        print("self.wire_drives[orig_var]", first_driven_wires)
-                        print("second_logic.wire_drives[orig_var]", second_driven_wires)
-                        # Get the last alias for that var from first logic
-                        print(
-                            "second aliases",
-                            second_logic.wire_aliases_over_time[orig_var],
-                        )
-
-                        # If this last alias is not in the first logic
-
-                        # If aliases over time already agree then no need
-
-                        # And replace that wire in the
-                        # second logic wire_drives key (not value)
-                        temp_value = set(second_logic.wire_drives[orig_var])
-                        # Delete orig var key
-                        second_logic.wire_drives.pop(orig_var, None)
-                        # Replace with last alias
-                        second_logic.wire_drives[last_alias] = temp_value
-                        print(last_alias, " DRIVES ", temp_value)
-                        sys.exit(-1)
-
-        # wire_driven_by can't have multiple drivers over time and
-        # should error out in normal merge below
-
-        # wire_aliases_over_time
-        # Do first+second first
-        # If first logic has aliases over time
-        for var_name in self.wire_aliases_over_time:
-            if var_name in second_logic.wire_aliases_over_time:
-                # And so does second
-                # Merged value is first plus second
-                first = self.wire_aliases_over_time[var_name]
-                second = second_logic.wire_aliases_over_time[var_name]
-                # Start with including first
-                self.wire_aliases_over_time[var_name] = first[:]
-
-                # Check that the aliases over time are equal
-                # in the period of time they share (the first logic)
-                for i in range(0, len(first)):
-                    if first[i] != second[i]:
-                        print(
-                            "At time index",
-                            i,
-                            "for orig variable name =",
-                            var_name,
-                            "the first and second logic do not agree:",
-                        )
-                        print("First logic aliases over time:", first)
-                        print("Second logic aliases over time:", second)
-                        print(0 / 0)
-                        sys.exit(-1)
-
-                # Equal in shared time so only append not shared part of second
-                for i in range(len(first), len(second)):
-                    self.wire_aliases_over_time[var_name].append(second[i])
-                # print "self.wire_aliases_over_time",self.wire_aliases_over_time
-
-            else:
-                # First only alias (second does not have alias)
-                # Merged value is first only
-                self.wire_aliases_over_time[var_name] = self.wire_aliases_over_time[
-                    var_name
-                ][:]
-        # Then include wire_aliases_over_time ONLY from second logic
-        for var_name in second_logic.wire_aliases_over_time:
-            # And first logic does not
-            if var_name not in self.wire_aliases_over_time:
-                # Merged value is just from second logic
-                second = second_logic.wire_aliases_over_time[var_name]
-                self.wire_aliases_over_time[var_name] = second[:]
-
-        # To not error in normal MERGE_LOGIC below, first and second logic must have same
-        # resulting wire_aliases_over_time
-        modified_second_logic = second_logic
-        modified_second_logic.wire_aliases_over_time = self.wire_aliases_over_time
-        # Then merge logic as normal
-        self.MERGE_COMB_LOGIC(modified_second_logic)
-
-        return None
-
-    # Allow a wire not to be driven
-    def WIRE_ALLOW_NO_DRIVEN_BY(self, wire, FuncLogicLookupTable):
-        if WIRE_IS_CONSTANT(wire):
-            return True
-        if wire in self.variable_names:
-            return True
-        if wire in self.inputs:
-            return True
-        if wire == CLOCK_ENABLE_NAME:
-            return True
-        if wire in self.state_regs and self.state_regs[wire].is_volatile:
-            return True
-        # Only output ports are allowed to not to be driven by something
-        if SUBMODULE_MARKER in wire:
-            toks = wire.split(SUBMODULE_MARKER)
-            submodule_inst = toks[0]
-            # Uh if inst doesnt exist then problem....
-            if submodule_inst not in self.submodule_instances:
-                print("self.func_name", self.func_name)
-                print("wire", wire)
-                print("No submodule instance called", submodule_inst)
-                print(self.submodule_instances)
-                print(0 / 0)
-                sys.exit(-1)
-            # Otherwise proceed checking for outputs
-            submodule_func_name = self.submodule_instances[submodule_inst]
-            if submodule_func_name not in FuncLogicLookupTable:
-                print("self.func_name", self.func_name)
-                print("wire", wire)
-                print("No func def for sub", submodule_func_name)
-                print(FuncLogicLookupTable)
-                sys.exit(-1)
-            submodule_logic = FuncLogicLookupTable[submodule_func_name]
-            port_name = toks[1]
-            if port_name in submodule_logic.outputs:
-                return True
-
-        return False
-
-    # Allow a wire not to drive anything
-    def WIRE_ALLOW_NO_DRIVES(self, wire, FuncLogicLookupTable):
-        if wire in self.variable_names:
-            return True
-        if wire in self.inputs:
-            return True
-        if wire == CLOCK_ENABLE_NAME:
-            return True
-        if wire in self.outputs:
-            return True
-        if wire in self.state_regs:
-            return True
-        if wire in self.write_only_global_wires:
-            return True
-        # Only clock enable and input ports are allowed to not drive anything
-        if SUBMODULE_MARKER in wire:
-            toks = wire.split(SUBMODULE_MARKER)
-            submodule_inst = toks[0]
-            # Uh if inst doesnt exist then problem....
-            if submodule_inst not in self.submodule_instances:
-                print("self.func_name", self.func_name)
-                print("wire", wire)
-                print("No submodule instance called", submodule_inst)
-                print(self.submodule_instances)
-                print(0 / 0)
-                sys.exit(-1)
-            # Otherwise proceed checking for inputs
-            submodule_func_name = self.submodule_instances[submodule_inst]
-            # Printf/sim_assert/sim_finish allow output(and outputs) not to not to drive anything
-            if IS_SIM_CTRL_FUNC_NAME(submodule_func_name):
-                return True
-            if submodule_func_name not in FuncLogicLookupTable:
-                print("self.func_name", self.func_name)
-                print("wire", wire)
-                print("No func def for sub", submodule_func_name)
-                print(FuncLogicLookupTable)
-                sys.exit(-1)
-            submodule_logic = FuncLogicLookupTable[submodule_func_name]
-            port_name = toks[1]
-            if port_name == CLOCK_ENABLE_NAME:
-                return True
-            if port_name in submodule_logic.inputs:
-                return True
-
-        return False
-
-    def WIRE_DO_NOT_COLLAPSE(self, wire, parser_state):
-        if wire in self.variable_names:
-            return True
-        if wire in self.inputs:
-            return True
-        if wire == CLOCK_ENABLE_NAME:
-            return True
-        if wire in self.outputs:
-            return True
-        if wire in self.state_regs:
-            return True
-        if wire in self.write_only_global_wires:
-            return True
-        if wire in self.feedback_vars:
-            return True
-
-        # WANT TO TRIM SUBMODULES!
-        # if SUBMODULE_MARKER in wire:
-        #  return True
-        # Most submodules are entirely in the same function/clock domain
-        # So it is correct (for now until multi global readers?) to rip up submodule
-        # if reached an output wire
-        # CLOCK CROSSING functions are not this way and have 'used' outputs not see
-        # since the outputs are in another domain
-        if SUBMODULE_MARKER in wire:
-            inst_name = wire.split(SUBMODULE_MARKER)[0]
-            func_name = self.submodule_instances[inst_name]
-            sub_func_logic = parser_state.FuncLogicLookupTable[func_name]
-            # If self or any submodules uses clock crossings
-            if sub_func_logic.is_clock_crossing:
-                return True
-            # if VHDL.LOGIC_NEEDS_GLOBAL_TO_MODULE(sub_func_logic, parser_state)
-            #  return True
-            # Only need to check if has outputs
-            # inputs to something with no outputs still rips up
-            if VHDL.LOGIC_NEEDS_MODULE_TO_GLOBAL(sub_func_logic, parser_state):
-                return True
-
-        return False
-
-    def REMOVE_WIRES_AND_SUBMODULES_RECURSIVE(self, wire, parser_state):
-        debug = False
-
-        # Stop recursion if reached special wire
-        if self.WIRE_DO_NOT_COLLAPSE(wire, parser_state):
-            if debug:
-                print("NOT REMOVE WIRE", self.func_name, "  ", wire, flush=True)
-            return
-        if debug:
-            print("REMOVE WIRE", self.func_name, "  ", wire, flush=True)
-
-        self.wires.discard(wire)
-        self.wire_to_c_type.pop(wire, None)
-
-        # Remove record of driving-wire driving wire
-        #   This might also remove the driving-wire
-        if wire in self.wire_driven_by:
-            driving_wire = self.wire_driven_by[wire]
-            all_driven_wires = []
-            if driving_wire in self.wire_drives:
-                all_driven_wires = self.wire_drives[driving_wire]
-                all_driven_wires.discard(wire)
-            if len(all_driven_wires) > 0:
-                self.wire_drives[driving_wire] = all_driven_wires
-            else:
-                # Driving wire no longer drives anything, recurse to delete it too
-                self.REMOVE_WIRES_AND_SUBMODULES_RECURSIVE(driving_wire, parser_state)
-                # self.wire_drives.pop(driving_wire)
-
-            # Remove record of wire being driven by driving-wire
-            self.wire_driven_by.pop(wire, None)
-
-        # Remove record of wire driving driven-wires
-        if wire in self.wire_drives:
-            driven_wires = self.wire_drives[wire]
-            self.wire_drives.pop(wire, None)
-            # And remove all the driven wires too
-            for driven_wire in driven_wires:
-                self.REMOVE_WIRES_AND_SUBMODULES_RECURSIVE(driven_wire, parser_state)
-
-        # Is this wire a submodule port?
-        if SUBMODULE_MARKER in wire:
-            toks = wire.split(SUBMODULE_MARKER)
-            if len(toks) > 2:
-                print("What berries? Goji Berries - Rubik")
-                sys.exit(-1)
-            submodule_inst = toks[0]
-            submodule_func_name = self.submodule_instances[submodule_inst]
-            submodule_logic = parser_state.FuncLogicLookupTable[submodule_func_name]
-
-            # Skip ripping up vhdl text submodules modules
-            if submodule_func_name == VHDL_FUNC_NAME:
-                return
-            # Also skip ripping up printfs/sim_asserts/sim_finishes
-            if IS_SIM_CTRL_FUNC_NAME(submodule_func_name):
-                return
-
-            # Do the output ports drive anything now?
-            # (know this output port wire doesnt)
-            all_outputs_disconnected = True
-            if len(submodule_logic.outputs) == 0:
-                all_outputs_disconnected = False
-            for output_port in submodule_logic.outputs:
-                submodule_output_wire = submodule_inst + SUBMODULE_MARKER + output_port
-                if submodule_output_wire in self.wire_drives:
-                    # Still drives something
-                    all_outputs_disconnected = False
-
-            # Rip up the submodule
-            if all_outputs_disconnected:
-                # Rip up wires starting at its inputs
-                for in_port in submodule_logic.inputs:
-                    submodule_input_wire = submodule_inst + SUBMODULE_MARKER + in_port
-                    if submodule_input_wire in self.wires:
-                        self.REMOVE_WIRES_AND_SUBMODULES_RECURSIVE(
-                            submodule_input_wire, parser_state
-                        )
-                # Finally remove submodule itself
-                self.REMOVE_SUBMODULE(
-                    submodule_inst,
-                    submodule_logic.inputs,
-                    submodule_logic.outputs,
-                    parser_state,
-                )
-
-    # Intentionally return None
-    def REMOVE_SUBMODULE(
-        self,
-        submodule_inst,
-        input_port_names,
-        output_port_names,
-        parser_state,
-        remove_global=True,
-    ):
-        debug = False
-        if debug:
-            print("removing sub inst", self.func_name, submodule_inst, flush=True)
-
-        # Remove from list of subs yo
-        self.submodule_instances.pop(submodule_inst, None)
-        self.submodule_instance_to_source_origins.pop(submodule_inst, None)
-
-        # Make list of wires that look like
-        #   submodule_inst + SUBMODULE_MARKER
-        # SHOULD ONLY BE INPUT AND OUTPUT WIRES + submodule name
-        # AND CLOCK EN TOO!
-        io_wires = set()
-        in_wires = set()
-        out_wires = set()
-        ce_wire = submodule_inst + SUBMODULE_MARKER + CLOCK_ENABLE_NAME
-        io_wires.add(ce_wire)
-        for input_port_name in input_port_names:
-            in_wire = submodule_inst + SUBMODULE_MARKER + input_port_name
-            io_wires.add(in_wire)
-            in_wires.add(in_wire)
-        for output_port_name in output_port_names:
-            out_wire = submodule_inst + SUBMODULE_MARKER + output_port_name
-            io_wires.add(out_wire)
-            out_wires.add(out_wire)
-
-        # Fast
-        self.submodule_instance_to_ast_meta.pop(
-            submodule_inst, None
-        )  # NOT DONE UNTIL AFTER TRY GET LOGIC  needed?
-        self.submodule_instance_to_input_port_names.pop(
-            submodule_inst, None
-        )  # NOT DONE UNTIL AFTER TRY GET LOGIC  needed?
-        self.ref_submodule_instance_to_input_port_driven_ref_toks.pop(
-            submodule_inst, None
-        )
-        self.ref_submodule_instance_to_ref_toks.pop(submodule_inst, None)
-
-        # Discard a few, or intersect for many?
-        if len(io_wires) < len(self.wires):
-            for io_wire in io_wires:
-                self.wires.discard(io_wire)
-        else:
-            self.wires = self.wires - io_wires
-
-        for io_wire in io_wires:
-            self.wire_to_c_type.pop(io_wire, None)
-
-        # Super sloo?
-
-        # WIRE_DRIVES
-        # Only output port can drive something
-        # NOT DONE UNTIL AFTER TRY GET LOGIC needed?
-        for out_wire in out_wires:
-            # Output wire drives stuff
-            driven_wires = []
-            if out_wire in self.wire_drives:
-                driven_wires = self.wire_drives[out_wire]
-            # Remove opposite direction here
-            for driven_wire in driven_wires:
-                self.wire_driven_by.pop(driven_wire)
-            # Then remove original direction
-            self.wire_drives.pop(out_wire, None)
-
-        # WIRE DRIVEN BY
-        # Only inputs (and CE wire)
-        for in_wire in list(in_wires) + [ce_wire]:
-            # IO wire is driven by thing
-            if in_wire in self.wire_driven_by:
-                driving_wire = self.wire_driven_by[in_wire]
-                # Remove io wire from opposite direction
-                all_driven_wires = self.wire_drives[driving_wire]
-                all_driven_wires.discard(in_wire)
-                if len(all_driven_wires) > 0:
-                    self.wire_drives[driving_wire] = all_driven_wires
-                else:
-                    self.wire_drives.pop(driving_wire, None)
-                # Then remove original direction
-                self.wire_driven_by.pop(in_wire, None)
-
-        # Shouldnt need to remove wire aliases since submodule connnections dont make assignment aliases?
-
-        # Global instance removal:
-        if remove_global:
-            all_insts_of_this_logic = []
-            if self.func_name in parser_state.FuncToInstances:
-                all_insts_of_this_logic = parser_state.FuncToInstances[self.func_name]
-                for global_inst in all_insts_of_this_logic:
-                    global_sub_inst_name = (
-                        global_inst + SUBMODULE_MARKER + submodule_inst
-                    )
-                    # Why ya gotta be so mad? Its only game?
-                    # Dont do dumb loop collecting submodules with startswith
-                    # Do recursive remove instead
-                    parser_state = RECURSIVE_REMOVE_GLOBAL_INST(
-                        global_sub_inst_name, parser_state
-                    )
-
-        return None
-
-    def REMOVE_VAR_WIRE_DRIVE_HISTORY(self, var_name):
-        self.wire_drives.pop(var_name, None)
-        self.wire_driven_by.pop(var_name, None)
-        # Then do all alias stuff
-        if var_name in self.wire_aliases_over_time:
-            all_aliases = self.wire_aliases_over_time[var_name]
-            for alias in all_aliases:
-                self.wires.discard(alias)
-                self.wire_to_c_type.pop(alias, None)
-                self.alias_to_orig_var_name.pop(alias, None)
-                self.alias_to_driven_ref_toks.pop(alias, None)
-
-                # Pop driven by, do corresponding wire drives
-                driving_wire = self.wire_driven_by.pop(alias, None)
-                if driving_wire is not None:
-                    wires_driven_by_driving_wire = self.wire_drives[driving_wire]
-                    wires_driven_by_driving_wire.remove(alias)
-                    if len(wires_driven_by_driving_wire) == 0:
-                        self.wire_drives.pop(driving_wire)
-
-                # Pop wire_drives, do coresponding wire driven by
-                driven_wires = self.wire_drives.pop(alias, None)
-                if driven_wires is not None:
-                    for driven_wire in driven_wires:
-                        self.wire_driven_by.pop(driven_wire, None)
-
-            self.wire_aliases_over_time[var_name] = []
-
-    def COPY_SUBMODULE_INFO(self, new_inst, old_inst):
-        if old_inst in self.submodule_instance_to_source_origins:
-            self.submodule_instance_to_source_origins[new_inst] = set(
-                self.submodule_instance_to_source_origins[old_inst]
-            )
-        if old_inst in self.submodule_instances:
-            self.submodule_instances[new_inst] = self.submodule_instances[old_inst]
-        if old_inst in self.submodule_instance_to_ast_meta:
-            self.submodule_instance_to_ast_meta[
-                new_inst
-            ] = self.submodule_instance_to_ast_meta[old_inst]
-        if old_inst in self.submodule_instance_to_input_port_names:
-            self.submodule_instance_to_input_port_names[new_inst] = (
-                self.submodule_instance_to_input_port_names[old_inst]
-            )
-        if old_inst in self.ref_submodule_instance_to_input_port_driven_ref_toks:
-            self.ref_submodule_instance_to_input_port_driven_ref_toks[new_inst] = (
-                self.ref_submodule_instance_to_input_port_driven_ref_toks[old_inst]
-            )
-        if old_inst in self.ref_submodule_instance_to_ref_toks:
-            self.ref_submodule_instance_to_ref_toks[new_inst] = (
-                self.ref_submodule_instance_to_ref_toks[old_inst]
-            )
-        # A collapsed duplicate keeps its calls' AUTO_PIPELINE / AUTO_FSM tag
-        # (duplicates are only ever collapsed within one tag group)
-        for tags in (
-            self.sub_inst_to_auto_pipeline_latency,
-            self.sub_inst_to_auto_pipeline_key,
-            self.sub_inst_to_auto_fsm_key,
-        ):
-            if old_inst in tags:
-                tags[new_inst] = tags[old_inst]
-
-    def CAN_HAVE_ADDED_LATENCY(self, parser_state):
-        if self.func_name in parser_state.func_fixed_latency:
-            return False
-        if self.vhdl_module_text is not None:
-            return False
-        if self.is_vhdl_func:
-            return False
-        if self.is_vhdl_expr:
-            return False
-        if self.is_clock_crossing:
-            return False
-        if self.uses_nonvolatile_state_regs:
-            return False
-        # Is actually OK since global wires arent registered like func/pipelined IO regs
-        # if self.uses_nonvolatile_state_regs and len(self.write_only_global_wires) > 0:
-        #    return False
-        # if self.uses_nonvolatile_state_regs and len(self.read_only_global_wires) > 0:
-        #    return False
-        if SW_LIB.IS_MEM(self):
-            # TODO support IO regs on built in RAM prim funcs
-            return False
-        # Yes actually want user prim funcs to pipeline, is their purpose
-        #   if FUNC_IS_PRIMITIVE(self.func_name, parser_state):
-        #       return False
-        if self.func_name in parser_state.func_marked_blackbox:
-            return False
-        if self.uses_nonvolatile_state_regs:
-            return False
-        if len(self.feedback_vars) > 0:
-            return False
-        return True
-
-    def SUB_HAS_AUTO_PIPELINE_IN_HIER(self, sub_inst, parser_state):
-        if sub_inst in self.sub_inst_to_auto_pipeline_latency:
-            return True
-        sub_func_name = self.submodule_instances[sub_inst]
-        sub_logic = parser_state.FuncLogicLookupTable[sub_func_name]
-        if len(sub_logic.sub_inst_to_auto_pipeline_latency) > 0:
-            return True
-        for sub_sub_inst in sub_logic.submodule_instances:
-            if sub_logic.SUB_HAS_AUTO_PIPELINE_IN_HIER(sub_sub_inst, parser_state):
-                return True
-        return False
-
-    def HAS_AUTO_PIPELINE_IN_HIER(self, parser_state):
-        for sub_inst in self.submodule_instances:
-            if self.SUB_HAS_AUTO_PIPELINE_IN_HIER(sub_inst, parser_state):
-                return True
-        return False
-
-    def CAN_USE_AUTOPIPELINING(self, parser_state):
-        return self.CAN_HAVE_ADDED_LATENCY(
-            parser_state
-        ) or self.HAS_AUTO_PIPELINE_IN_HIER(parser_state)
-
-
-def RECURSIVE_RENAME_GLOBAL_INST(inst_to_rename, renamed_inst_name, parser_state):
-    # Do for all submodules first
-    func_logic = parser_state.LogicInstLookupTable[inst_to_rename]
-    for local_sub_inst in func_logic.submodule_instances:
-        global_sub_inst = inst_to_rename + SUBMODULE_MARKER + local_sub_inst
-        renamed_global_sub_inst = renamed_inst_name + SUBMODULE_MARKER + local_sub_inst
-        parser_state = RECURSIVE_RENAME_GLOBAL_INST(
-            global_sub_inst, renamed_global_sub_inst, parser_state
-        )
-
-    # Then rename current inst
-    inst_func_name = func_logic.func_name
-    ## Prevent renames from doing weird double copy paste
-    # if inst_to_rename == global_dup_sub_inst_name:
-    #  renamed_inst_name = global_new_sub_inst_name
-    # else:
-    #  renamed_inst_name = inst_to_rename.replace(global_dup_sub_inst_name+SUBMODULE_MARKER, global_new_sub_inst_name+SUBMODULE_MARKER)
-    parser_state.FuncToInstances[inst_func_name].remove(inst_to_rename)
-    parser_state.FuncToInstances[inst_func_name].add(renamed_inst_name)
-    parser_state.LogicInstLookupTable[renamed_inst_name] = (
-        parser_state.LogicInstLookupTable[inst_to_rename]
-    )
-    parser_state.LogicInstLookupTable.pop(inst_to_rename)
-
-    return parser_state
-
-
-def RECURSIVE_REMOVE_GLOBAL_INST(inst_to_remove, parser_state):
-    # WTF sometimes func isnt in here already? Modest Mouse - Medication
-    if inst_to_remove not in parser_state.LogicInstLookupTable:
-        return parser_state
-    func_logic = parser_state.LogicInstLookupTable[inst_to_remove]
-
-    # Do for all submodules first
-    for local_sub_inst in func_logic.submodule_instances:
-        global_sub_inst = inst_to_remove + SUBMODULE_MARKER + local_sub_inst
-        parser_state = RECURSIVE_REMOVE_GLOBAL_INST(global_sub_inst, parser_state)
-
-    # Then remove current inst
-    inst_func_logic_name = func_logic.func_name
-    parser_state.LogicInstLookupTable.pop(inst_to_remove)
-    all_insts_of_sub = parser_state.FuncToInstances[inst_func_logic_name]
-    if inst_to_remove in all_insts_of_sub:
-        all_insts_of_sub.remove(inst_to_remove)  # Not all inst shows up?
-    if len(all_insts_of_sub) > 0:
-        parser_state.FuncToInstances[inst_func_logic_name] = all_insts_of_sub
-    else:
-        parser_state.FuncToInstances.pop(inst_func_logic_name)
-
-    return parser_state
-
-
-def WIRE_IS_CONSTANT(wire):
-    new_wire = wire
-
-    # Also split on last submodule marker
-    toks = new_wire.split(SUBMODULE_MARKER)
-    last_tok = toks[len(toks) - 1]
-
-    # Hey - this is dumb
-    rv = (
-        last_tok.startswith(CONST_PREFIX)
-        and not last_tok.startswith(CONST_REF_RD_FUNC_NAME_PREFIX + "_")
-        and not last_tok.startswith(CONST_PREFIX + BIN_OP_SL_NAME + "_")
-        and not last_tok.startswith(CONST_PREFIX + BIN_OP_SR_NAME + "_")
-    )
-    if (
-        (CONST_PREFIX in wire)
-        and not (rv)
-        and CONST_REF_RD_FUNC_NAME_PREFIX + "_" not in wire
-        and CONST_PREFIX + BIN_OP_SL_NAME + "_" not in wire
-        and CONST_PREFIX + BIN_OP_SR_NAME + "_" not in wire
-    ):
-        print("WHJAT!?")
-        print("wire", wire)
-        print("new_wire", new_wire)
-        print("WIRE_IS_CONSTANT   but is not?")
-        raise Exception("This shouldn't happen")
-
-    return rv
-
-
-def WIRE_IS_SUBMODULE_PORT(wire, logic):
-    # Remove last tok, should be port name
-    toks = wire.split(SUBMODULE_MARKER)
-    possible_submodule_inst_name = SUBMODULE_MARKER.join(toks[0 : len(toks) - 1])
-
-    # Check port name too?
-    # No for now?
-    return possible_submodule_inst_name in logic.submodule_instances
-
-
-def WIRE_IS_VHDL_EXPR_SUBMODULE_INPUT_PORT(wire, Logic, parser_state):
-    if SUBMODULE_MARKER in wire:
-        toks = wire.split(SUBMODULE_MARKER)
-        submodule_inst_name = toks[0]
-        port_name = toks[1]
-        submodule_func_name = Logic.submodule_instances[submodule_inst_name]
-        submodule_logic = parser_state.FuncLogicLookupTable[submodule_func_name]
-        if submodule_logic.is_vhdl_expr and (port_name in submodule_logic.inputs):
-            return True
-    return False
-
-
-def WIRE_IS_VHDL_FUNC_SUBMODULE_INPUT_PORT(wire, Logic, parser_state):
-    if SUBMODULE_MARKER in wire:
-        toks = wire.split(SUBMODULE_MARKER)
-        submodule_inst_name = toks[0]
-        port_name = toks[1]
-        submodule_func_name = Logic.submodule_instances[submodule_inst_name]
-        submodule_logic = parser_state.FuncLogicLookupTable[submodule_func_name]
-        if submodule_logic.is_vhdl_func and (port_name in submodule_logic.inputs):
-            return True
-    return False
-
-
-def BUILD_C_BUILT_IN_SUBMODULE_FUNC_LOGIC(
-    containing_func_logic, submodule_inst, parser_state
-):
-    # Construct a fake 'submodule_logic' with correct name, inputs, outputs
-    submodule_logic = Logic()
-    submodule_logic.is_c_built_in = True
-    # Look up logic name for the submodule instance
-    # print "containing_func_logic.func_name",containing_func_logic.func_name
-    submodule_logic_name = containing_func_logic.submodule_instances[submodule_inst]
-    # print "submodule_inst",submodule_inst
-    # print "submodule_logic_name",submodule_logic_name
-    submodule_logic.func_name = submodule_logic_name
-    # print("...", submodule_logic.func_name, flush=True)
-
-    # Ports and types are specific to the submodule instance
-    # Get data from c ast node
-    if submodule_inst in containing_func_logic.submodule_instance_to_ast_meta:
-        ast_meta = containing_func_logic.submodule_instance_to_ast_meta[submodule_inst]
-        submodule_logic.ast_meta = ast_meta
-    if (
-        submodule_inst
-        in containing_func_logic.submodule_instance_to_printf_format_string
-    ):
-        submodule_logic.printf_format_string = (
-            containing_func_logic.submodule_instance_to_printf_format_string[
-                submodule_inst
-            ]
-        )
-    if submodule_inst in containing_func_logic.submodule_instance_to_sim_assert_msg:
-        submodule_logic.sim_assert_msg = (
-            containing_func_logic.submodule_instance_to_sim_assert_msg[submodule_inst]
-        )
-
-    # It looks like the c parser doesnt let you look up type from name...
-    # Probably would be complicated
-    # Lets manually do it.
-    # 1) parse funtion param declartions in wire_to_c_type
-    # 2) parse var decls to wire_to_c_type
-    # 3) Look up driver of submodule to determine type
-
-    # Assume children list is is order of args
-    input_names = []
-    if submodule_inst in containing_func_logic.submodule_instance_to_input_port_names:
-        input_names = containing_func_logic.submodule_instance_to_input_port_names[
-            submodule_inst
-        ]
-        submodule_logic.inputs += input_names
-    else:
-        raise Exception(f"Cannot find submodule input port names! {submodule_inst}")
-        # input_names = c_ast_node.get_input_names(parser_state)
-        # submodule_logic.inputs += input_names
-
-    # Try to get input type from port name in container logic
-    # Fall back on type of driving wires
-    # For each input wire look up type of driving wire
-    input_types = []
-    for input_name in input_names:
-        input_wire_name = submodule_inst + SUBMODULE_MARKER + input_name
-        # First try input port type
-        if input_wire_name in containing_func_logic.wire_to_c_type:
-            c_type = containing_func_logic.wire_to_c_type[input_wire_name]
-        else:
-            # Fall back on driving wire
-            # print logic.wire_driven_by
-            driving_wire = containing_func_logic.wire_driven_by[input_wire_name]
-            c_type = containing_func_logic.wire_to_c_type[driving_wire]
-
-        """ Shouldnt need this here, is handled for general BIN OP?
-    # If driving wire c type is enum and this is BIN OP == then replace with input port wire with uint
-    if (C_TYPE_IS_ENUM(c_type, parser_state)) and (submodule_logic_name.startswith(BIN_OP_LOGIC_NAME_PREFIX + "_" + BIN_OP_EQ_NAME)):
-      c_type = ...
-    """
-
-        # Record input info
-        submodule_logic.wire_to_c_type[input_name] = c_type
-        input_types.append(c_type)
-
-    # Output wire is return wire
-    # Try to get output port type from containing logic
-    # Fall back on type of what is driven
-    output_port_name = RETURN_WIRE_NAME
-    output_wire_name = submodule_inst + SUBMODULE_MARKER + output_port_name
-    c_type = None
-    if output_wire_name in containing_func_logic.wire_to_c_type:
-        c_type = containing_func_logic.wire_to_c_type[output_wire_name]
-    else:
-        # Fall back type of driven wire
-        # By default assume type of driven wire if not yet driven
-        if output_wire_name in containing_func_logic.wire_drives:
-            driven_wires = containing_func_logic.wire_drives[output_wire_name]
-            if len(driven_wires) == 0:
-                print("Built in submodule not driving anthying?", submodule_inst)
-                sys.exit(-1)
-            c_type = containing_func_logic.wire_to_c_type[list(driven_wires)[0]]
-        else:
-            # Fine if vhdl func or other build in stuff like printf?
-            if submodule_logic.func_name == VHDL_FUNC_NAME:
-                pass
-            elif IS_SIM_CTRL_FUNC_NAME(submodule_logic.func_name):
-                pass
-            else:
-                print(
-                    "containing_func_logic.func_name", containing_func_logic.func_name
-                )
-                print("output_wire_name", output_wire_name)
-                # print "containing_func_logic.wire_drives",containing_func_logic.wire_drives
-                for wire in containing_func_logic.wire_drives:
-                    print(wire, "=>", containing_func_logic.wire_drives[wire])
-                print(
-                    "Input type to output type mapping assumption for built in submodule output "
-                )
-                print(submodule_logic.func_name)
-                sys.exit(-1)
-
-    # Record output type
-    if c_type is not None:
-        submodule_logic.outputs.append(output_port_name)
-        submodule_logic.wire_to_c_type[output_port_name] = c_type
-
-    # Record if vhdl func
-    # CONST refs are vhdl funcs
-    if submodule_logic_name.startswith(CONST_REF_RD_FUNC_NAME_PREFIX):
-        submodule_logic.is_vhdl_func = True
-
-    # Casts of ints are vhdl funcs too
-    if submodule_logic_name.startswith(
-        CAST_FUNC_NAME_PREFIX
-    ) and VHDL.C_TYPES_ARE_INTEGERS(input_types + [c_type]):
-        submodule_logic.is_vhdl_func = True
-
-    # Bit manip is VHDL func too
-    if SW_LIB.IS_BIT_MANIP(submodule_logic):
-        submodule_logic.is_vhdl_func = True
-
-    # Also do submodule instances for built in logic that is not raw VHDL
-    if VHDL.C_BUILT_IN_FUNC_IS_RAW_HDL(
-        submodule_logic_name, input_types, c_type, parser_state
-    ):
-        # IS RAW VHDL
-        pass
-    # NOT RAW VHDL (assumed to be built from C code then)
-    else:
-        submodule_logic = BUILD_LOGIC_AS_C_CODE(
-            submodule_inst, submodule_logic, parser_state, containing_func_logic
-        )
-
-    return submodule_logic
-
-
 _other_partial_logic_cache = {}
-
-# Set by PY_TO_LOGIC.PARSE_FILE around a Pypeline build so BUILD_LOGIC_AS_C_CODE
-# below raises instead of silently falling back to the SW_LIB/cpp/pycparser C
-# generation path. Pypeline builds no longer emit anything that reaches this
-# function (integer NEGATE/compare/DIV/MOD/variable-shift now have Pypeline HDL
-# lowerings available) -- this is the enforcement that it stays that way.
-PYPELINE_NO_SW_LIB_GUARD = False
 
 
 def BUILD_LOGIC_AS_C_CODE(
@@ -2147,13 +221,6 @@ def BUILD_LOGIC_AS_C_CODE(
     parser_state,
     containing_func_logic,
 ):
-    if PYPELINE_NO_SW_LIB_GUARD:
-        raise Exception(
-            f"Pypeline build reached the SW_LIB/cpp/pycparser C-generation path "
-            f"for '{partially_complete_logic.func_name}' -- this should be "
-            f"unreachable from Pypeline. Register a soft/Pypeline-HDL "
-            f"implementation for whichever operator produced this entity."
-        )
     # Cache the other partial logic
     cache_tok = partially_complete_logic.func_name
     # SHOULDNT NEED INPUT TYPES SINCE FUNC NAME IS UNIQUE
@@ -2168,9 +235,9 @@ def BUILD_LOGIC_AS_C_CODE(
         # print "containing_func_logic.func_name",containing_func_logic.func_name
         # print "=================================================================="
         if partially_complete_logic.func_name.startswith(
-            VAR_REF_ASSIGN_FUNC_NAME_PREFIX + "_"
+            LOGIC.VAR_REF_ASSIGN_FUNC_NAME_PREFIX + "_"
         ):
-            c_code_text = SW_LIB.GET_VAR_REF_ASSIGN_C_CODE(
+            c_code_text = GET_VAR_REF_ASSIGN_C_CODE(
                 partially_complete_logic_local_inst_name,
                 partially_complete_logic,
                 containing_func_logic,
@@ -2178,85 +245,85 @@ def BUILD_LOGIC_AS_C_CODE(
                 parser_state,
             )
         elif partially_complete_logic.func_name.startswith(
-            VAR_REF_RD_FUNC_NAME_PREFIX + "_"
+            LOGIC.VAR_REF_RD_FUNC_NAME_PREFIX + "_"
         ):
-            c_code_text = SW_LIB.GET_VAR_REF_RD_C_CODE(
+            c_code_text = GET_VAR_REF_RD_C_CODE(
                 partially_complete_logic_local_inst_name,
                 partially_complete_logic,
                 containing_func_logic,
                 out_dir,
                 parser_state,
             )
-        elif partially_complete_logic.func_name.startswith(CAST_FUNC_NAME_PREFIX + "_"):
-            c_code_text = SW_LIB.GET_CAST_C_CODE(
+        elif partially_complete_logic.func_name.startswith(LOGIC.CAST_FUNC_NAME_PREFIX + "_"):
+            c_code_text = GET_CAST_C_CODE(
                 partially_complete_logic, containing_func_logic, out_dir, parser_state
             )
         elif partially_complete_logic.func_name.startswith(
-            UNARY_OP_LOGIC_NAME_PREFIX + "_" + UNARY_OP_NEGATE_NAME
+            LOGIC.UNARY_OP_LOGIC_NAME_PREFIX + "_" + LOGIC.UNARY_OP_NEGATE_NAME
         ):
-            c_code_text = SW_LIB.GET_UNARY_OP_NEGATE_C_CODE(
+            c_code_text = GET_UNARY_OP_NEGATE_C_CODE(
                 partially_complete_logic, out_dir, containing_func_logic, parser_state
             )
         elif partially_complete_logic.func_name.startswith(
-            BIN_OP_LOGIC_NAME_PREFIX + "_" + BIN_OP_MULT_NAME
+            LOGIC.BIN_OP_LOGIC_NAME_PREFIX + "_" + LOGIC.BIN_OP_MULT_NAME
         ) or partially_complete_logic.func_name.startswith(
-            BIN_OP_LOGIC_NAME_PREFIX + "_" + BIN_OP_INFERRED_MULT_NAME
+            LOGIC.BIN_OP_LOGIC_NAME_PREFIX + "_" + LOGIC.BIN_OP_INFERRED_MULT_NAME
         ):
-            c_code_text = SW_LIB.GET_BIN_OP_MULT_C_CODE(
+            c_code_text = GET_BIN_OP_MULT_C_CODE(
                 partially_complete_logic, out_dir, parser_state
             )
         elif partially_complete_logic.func_name.startswith(
-            BIN_OP_LOGIC_NAME_PREFIX + "_" + BIN_OP_DIV_NAME
+            LOGIC.BIN_OP_LOGIC_NAME_PREFIX + "_" + LOGIC.BIN_OP_DIV_NAME
         ):
-            c_code_text = SW_LIB.GET_BIN_OP_DIV_C_CODE(
+            c_code_text = GET_BIN_OP_DIV_C_CODE(
                 partially_complete_logic, out_dir, parser_state
             )
         elif partially_complete_logic.func_name.startswith(
-            BIN_OP_LOGIC_NAME_PREFIX + "_" + BIN_OP_MOD_NAME
+            LOGIC.BIN_OP_LOGIC_NAME_PREFIX + "_" + LOGIC.BIN_OP_MOD_NAME
         ):
-            c_code_text = SW_LIB.GET_BIN_OP_MOD_C_CODE(
+            c_code_text = GET_BIN_OP_MOD_C_CODE(
                 partially_complete_logic, out_dir, parser_state
             )
         elif partially_complete_logic.func_name.startswith(
-            BIN_OP_LOGIC_NAME_PREFIX + "_" + BIN_OP_GTE_NAME
+            LOGIC.BIN_OP_LOGIC_NAME_PREFIX + "_" + LOGIC.BIN_OP_GTE_NAME
         ):
-            c_code_text = SW_LIB.GET_BIN_OP_GT_GTE_C_CODE(
+            c_code_text = GET_BIN_OP_GT_GTE_C_CODE(
                 partially_complete_logic, out_dir, op_str=">="
             )
         elif partially_complete_logic.func_name.startswith(
-            BIN_OP_LOGIC_NAME_PREFIX + "_" + BIN_OP_GT_NAME
+            LOGIC.BIN_OP_LOGIC_NAME_PREFIX + "_" + LOGIC.BIN_OP_GT_NAME
         ):
-            c_code_text = SW_LIB.GET_BIN_OP_GT_GTE_C_CODE(
+            c_code_text = GET_BIN_OP_GT_GTE_C_CODE(
                 partially_complete_logic, out_dir, op_str=">"
             )
         elif partially_complete_logic.func_name.startswith(
-            BIN_OP_LOGIC_NAME_PREFIX + "_" + BIN_OP_LTE_NAME
+            LOGIC.BIN_OP_LOGIC_NAME_PREFIX + "_" + LOGIC.BIN_OP_LTE_NAME
         ):
-            c_code_text = SW_LIB.GET_BIN_OP_LT_LTE_C_CODE(
+            c_code_text = GET_BIN_OP_LT_LTE_C_CODE(
                 partially_complete_logic, out_dir, op_str="<="
             )
         elif partially_complete_logic.func_name.startswith(
-            BIN_OP_LOGIC_NAME_PREFIX + "_" + BIN_OP_LT_NAME
+            LOGIC.BIN_OP_LOGIC_NAME_PREFIX + "_" + LOGIC.BIN_OP_LT_NAME
         ):
-            c_code_text = SW_LIB.GET_BIN_OP_LT_LTE_C_CODE(
+            c_code_text = GET_BIN_OP_LT_LTE_C_CODE(
                 partially_complete_logic, out_dir, op_str="<"
             )
         elif partially_complete_logic.func_name.startswith(
-            BIN_OP_LOGIC_NAME_PREFIX + "_" + BIN_OP_PLUS_NAME
+            LOGIC.BIN_OP_LOGIC_NAME_PREFIX + "_" + LOGIC.BIN_OP_PLUS_NAME
         ):
-            c_code_text = SW_LIB.GET_BIN_OP_PLUS_C_CODE(
+            c_code_text = GET_BIN_OP_PLUS_C_CODE(
                 partially_complete_logic, out_dir
             )
         elif partially_complete_logic.func_name.startswith(
-            BIN_OP_LOGIC_NAME_PREFIX + "_" + BIN_OP_MINUS_NAME
+            LOGIC.BIN_OP_LOGIC_NAME_PREFIX + "_" + LOGIC.BIN_OP_MINUS_NAME
         ):
-            c_code_text = SW_LIB.GET_BIN_OP_MINUS_C_CODE(
+            c_code_text = GET_BIN_OP_MINUS_C_CODE(
                 partially_complete_logic, out_dir
             )
         elif partially_complete_logic.func_name.startswith(
-            BIN_OP_LOGIC_NAME_PREFIX + "_" + BIN_OP_SL_NAME
+            LOGIC.BIN_OP_LOGIC_NAME_PREFIX + "_" + LOGIC.BIN_OP_SL_NAME
         ):
-            c_code_text = SW_LIB.GET_BIN_OP_SL_C_CODE(
+            c_code_text = GET_BIN_OP_SL_C_CODE(
                 partially_complete_logic_local_inst_name,
                 partially_complete_logic,
                 out_dir,
@@ -2264,17 +331,17 @@ def BUILD_LOGIC_AS_C_CODE(
                 parser_state,
             )
         elif partially_complete_logic.func_name.startswith(
-            BIN_OP_LOGIC_NAME_PREFIX + "_" + BIN_OP_SR_NAME
+            LOGIC.BIN_OP_LOGIC_NAME_PREFIX + "_" + LOGIC.BIN_OP_SR_NAME
         ):
-            c_code_text = SW_LIB.GET_BIN_OP_SR_C_CODE(
+            c_code_text = GET_BIN_OP_SR_C_CODE(
                 partially_complete_logic_local_inst_name,
                 partially_complete_logic,
                 out_dir,
                 containing_func_logic,
                 parser_state,
             )
-        elif partially_complete_logic.func_name.startswith(ONE_HOT_EQ_LOGIC_NAME):
-            c_code_text = SW_LIB.GET_ONE_HOT_EQ_C_CODE(
+        elif partially_complete_logic.func_name.startswith(LOGIC.ONE_HOT_EQ_LOGIC_NAME):
+            c_code_text = GET_ONE_HOT_EQ_C_CODE(
                 partially_complete_logic_local_inst_name,
                 partially_complete_logic,
                 containing_func_logic,
@@ -2304,7 +371,7 @@ def BUILD_LOGIC_AS_C_CODE(
 
         preprocessed_c_code_text = preprocess_text(c_code_text)
         sw_func_name_2_logic = (
-            SW_LIB.GET_AUTO_GENERATED_FUNC_NAME_LOGIC_LOOKUP_FROM_PREPROCESSED_TEXT(
+            GET_AUTO_GENERATED_FUNC_NAME_LOGIC_LOOKUP_FROM_PREPROCESSED_TEXT(
                 preprocessed_c_code_text, parser_state
             )
         )
@@ -2488,7 +555,7 @@ def C_AST_PRAGMA_TO_LOGIC(c_ast_node, driven_wire_names, prepend_text, parser_st
                         f"Cannot use non constant values in instance names! {index_tok}"
                     )
                 # Get value from this constant
-                maybe_digit = GET_VAL_STR_FROM_CONST_WIRE(
+                maybe_digit = LOGIC.GET_VAL_STR_FROM_CONST_WIRE(
                     const_driving_wire, parser_state.existing_logic, parser_state
                 )
                 next_inst_name += "[" + maybe_digit + "]"
@@ -2517,7 +584,7 @@ def C_AST_PRAGMA_TO_LOGIC(c_ast_node, driven_wire_names, prepend_text, parser_st
         # Bare pragma: unconstrained (the sweep picks the latency).
         # `#pragma AUTOPIPELINE N`: fixed latency N (N inserted registers).
         # -1 is kept as the legacy spelling of unconstrained.
-        constraint = AutoPipelineLatency()
+        constraint = LOGIC.AutoPipelineLatency()
         if len(toks) > 1 and not toks[1].startswith("/"):
             try:
                 latency = int(toks[1])
@@ -2527,7 +594,7 @@ def C_AST_PRAGMA_TO_LOGIC(c_ast_node, driven_wire_names, prepend_text, parser_st
                     "latency (number of inserted registers)"
                 )
             if latency >= 0:
-                constraint = AutoPipelineLatency(latency=latency)
+                constraint = LOGIC.AutoPipelineLatency(latency=latency)
             elif latency != -1:
                 raise Exception(
                     f"#pragma AUTOPIPELINE {latency}: latency must be >= 0"
@@ -2539,7 +606,7 @@ def C_AST_PRAGMA_TO_LOGIC(c_ast_node, driven_wire_names, prepend_text, parser_st
 
 def C_AST_RETURN_TO_LOGIC(c_ast_return, prepend_text, parser_state):
     # Check for double return
-    if RETURN_WIRE_NAME in parser_state.existing_logic.wire_driven_by:
+    if LOGIC.RETURN_WIRE_NAME in parser_state.existing_logic.wire_driven_by:
         print(
             "What, more than one return? Come on eh don't make me sad...",
             str(c_ast_return.coord),
@@ -2550,7 +617,7 @@ def C_AST_RETURN_TO_LOGIC(c_ast_return, prepend_text, parser_state):
     # Since each logic blob is a C function
     # only one return per function allowed
     # connect variable wire name to "return"
-    driven_wire_names = [RETURN_WIRE_NAME]
+    driven_wire_names = [LOGIC.RETURN_WIRE_NAME]
     prepend_text = ""
     return_logic = C_AST_NODE_TO_LOGIC(
         c_ast_return.expr, driven_wire_names, prepend_text, parser_state
@@ -2765,12 +832,12 @@ def GET_VAR_REF_REF_TOK_INDICES_DIMS_ITER_TYPES(ref_toks, c_ast_node, parser_sta
                 curr_ref_toks, c_ast_node, parser_state
             )
             # Sanity check
-            if not C_TYPE_IS_ARRAY(c_array_type):
+            if not LOGIC.C_TYPE_IS_ARRAY(c_array_type):
                 print("Oh no not an array?", c_array_type)
                 sys.exit(-1)
             # Get the dims from the array
             # print "c_array_type",c_array_type
-            elem_type, dims = C_ARRAY_TYPE_TO_ELEM_TYPE_AND_DIMS(c_array_type)
+            elem_type, dims = LOGIC.C_ARRAY_TYPE_TO_ELEM_TYPE_AND_DIMS(c_array_type)
             # print "elem_type",elem_type
             # print "dims",dims
             # Want last dim?
@@ -2906,7 +973,7 @@ def C_AST_ASSIGNMENT_TO_LOGIC(
     FuncLogicLookupTable = parser_state.FuncLogicLookupTable
     existing_logic = parser_state.existing_logic
 
-    parser_state.existing_logic = Logic()
+    parser_state.existing_logic = LOGIC.Logic()
     if existing_logic is not None:
         parser_state.existing_logic = existing_logic
     # BOTH LHS and RHS CAN BE EXPRESSIONS!!!!!!
@@ -3034,12 +1101,12 @@ def C_AST_ASSIGNMENT_TO_LOGIC(
         # Build C array type using variable dimensions
         lhs_array_type = None
         # Elem might be array so try to break apart
-        if C_TYPE_IS_ARRAY(lhs_elem_c_type):
+        if LOGIC.C_TYPE_IS_ARRAY(lhs_elem_c_type):
             # Innner element is constant sized array, has those dims, then variable ones
             (
                 lhs_array_elem_c_type,
                 lhs_array_elem_dims,
-            ) = C_ARRAY_TYPE_TO_ELEM_TYPE_AND_DIMS(lhs_elem_c_type)
+            ) = LOGIC.C_ARRAY_TYPE_TO_ELEM_TYPE_AND_DIMS(lhs_elem_c_type)
             lhs_array_type = lhs_array_elem_c_type
             for var_dim in var_dims:
                 lhs_array_type += "[" + str(var_dim) + "]"
@@ -3068,7 +1135,7 @@ def C_AST_ASSIGNMENT_TO_LOGIC(
         lhs_struct_array_type += "_t"
 
         # This is going to be implemented in as C so func name needs to be unique
-        func_name = VAR_REF_ASSIGN_FUNC_NAME_PREFIX
+        func_name = LOGIC.VAR_REF_ASSIGN_FUNC_NAME_PREFIX
 
         # Fuck it just make names that wont be wrong/overlap
         # Are there built in structs?
@@ -3140,7 +1207,7 @@ def C_AST_ASSIGNMENT_TO_LOGIC(
         func_inst_name = BUILD_INST_NAME(
             prepend_text, func_base_name, c_ast_assignment.lvalue
         )
-        output_wire_name = func_inst_name + SUBMODULE_MARKER + RETURN_WIRE_NAME
+        output_wire_name = func_inst_name + LOGIC.SUBMODULE_MARKER + LOGIC.RETURN_WIRE_NAME
         # LHS type is output type too
         parser_state.existing_logic.wire_to_c_type[output_wire_name] = (
             lhs_struct_array_type
@@ -3155,7 +1222,7 @@ def C_AST_ASSIGNMENT_TO_LOGIC(
 
         # Elem val is from rhs
         input_port_name = "elem_val"
-        input_wire = func_inst_name + SUBMODULE_MARKER + input_port_name
+        input_wire = func_inst_name + LOGIC.SUBMODULE_MARKER + input_port_name
         # Set type of input wire if not set already
         if input_wire not in parser_state.existing_logic.wire_to_c_type:
             parser_state.existing_logic.wire_to_c_type[input_wire] = lhs_elem_c_type
@@ -3189,12 +1256,12 @@ def C_AST_ASSIGNMENT_TO_LOGIC(
             ## if base variable then call it base
             # if len(ref_toks) == 1:
             # input_port_name = "base_var"
-            input_wire = func_inst_name + SUBMODULE_MARKER + input_port_name
+            input_wire = func_inst_name + LOGIC.SUBMODULE_MARKER + input_port_name
 
             # Make the ref toks drive the input wire
             # This can create submoduel so have useful prepend text saying auto gen by this assignment
             input_connnect_prepend_text = (
-                VAR_REF_ASSIGN_FUNC_NAME_PREFIX + "_INPUT_" + prepend_text
+                LOGIC.VAR_REF_ASSIGN_FUNC_NAME_PREFIX + "_INPUT_" + prepend_text
             )
             input_connect_logic = C_AST_REF_TOKS_TO_LOGIC(
                 ref_toks,
@@ -3234,7 +1301,7 @@ def C_AST_ASSIGNMENT_TO_LOGIC(
             # Cant use hacky str encode sinc eis just "*"
             # Say which variable index this is
             input_port_name = "var_dim_" + str(var_dim_i)
-            input_wire = func_inst_name + SUBMODULE_MARKER + input_port_name
+            input_wire = func_inst_name + LOGIC.SUBMODULE_MARKER + input_port_name
 
             # Set type of input wire
             parser_state.existing_logic.wire_to_c_type[input_wire] = var_dim_iter_types[
@@ -3513,11 +1580,11 @@ def EXPAND_REF_TOKS_OR_STRS(ref_toks_or_strs, c_ast_ref, parser_state):
                 curr_ref_toks_faked, c_ast_ref, parser_state
             )
             # Sanity check
-            if not C_TYPE_IS_ARRAY(c_array_type):
+            if not LOGIC.C_TYPE_IS_ARRAY(c_array_type):
                 print("Oh no not an array?2", c_array_type)
                 sys.exit(-1)
             # Get the dims from the array
-            elem_type, dims = C_ARRAY_TYPE_TO_ELEM_TYPE_AND_DIMS(c_array_type)
+            elem_type, dims = LOGIC.C_ARRAY_TYPE_TO_ELEM_TYPE_AND_DIMS(c_array_type)
             # Want last dim
             # last_dim = dims[len(dims)-1]
             # First dim?
@@ -3604,7 +1671,7 @@ def REF_TOKS_TO_OWN_BRANCH_REF_TOKS(ref_toks, c_ast_ref, parser_state):
     # Use this type to do struct and array expansion
     rv = set()
     # Struct?
-    if C_TYPE_IS_STRUCT(c_type, parser_state):
+    if LOGIC.C_TYPE_IS_STRUCT(c_type, parser_state):
         # Child branches are struct field names
         field_type_dict = parser_state.struct_to_field_type_dict[c_type]
         if debug:
@@ -3615,9 +1682,9 @@ def REF_TOKS_TO_OWN_BRANCH_REF_TOKS(ref_toks, c_ast_ref, parser_state):
             rv.add(new_toks)
 
     # Array?
-    elif C_TYPE_IS_ARRAY(c_type):
+    elif LOGIC.C_TYPE_IS_ARRAY(c_type):
         # One dimension at a time works?
-        base_elem_type, dims = C_ARRAY_TYPE_TO_ELEM_TYPE_AND_DIMS(c_type)
+        base_elem_type, dims = LOGIC.C_ARRAY_TYPE_TO_ELEM_TYPE_AND_DIMS(c_type)
         current_dim = dims[0]
         if debug:
             print("Array current_dim:", current_dim)
@@ -3774,7 +1841,7 @@ def REDUCE_REF_TOKS_OR_STRS(ref_toks_set, c_ast_node, parser_state):
                 root_ref_toks, c_ast_node, parser_state
             )
             all_fields_present = True
-            if C_TYPE_IS_STRUCT(root_c_type, parser_state):
+            if LOGIC.C_TYPE_IS_STRUCT(root_c_type, parser_state):
                 field_types_dict = parser_state.struct_to_field_type_dict[root_c_type]
                 for field_name in field_types_dict:
                     possible_ref_toks = root_ref_toks + (field_name,)
@@ -3792,11 +1859,11 @@ def REDUCE_REF_TOKS_OR_STRS(ref_toks_set, c_ast_node, parser_state):
                     # Next iteration
                     break
 
-            elif C_TYPE_IS_ARRAY(root_c_type):
+            elif LOGIC.C_TYPE_IS_ARRAY(root_c_type):
                 # print "!~~~"
                 # print "root_ref_toks",root_ref_toks
                 # print "root_c_type",root_c_type
-                elem_type, dims = C_ARRAY_TYPE_TO_ELEM_TYPE_AND_DIMS(root_c_type)
+                elem_type, dims = LOGIC.C_ARRAY_TYPE_TO_ELEM_TYPE_AND_DIMS(root_c_type)
                 # last_dim = dims[len(dims)-1]
                 # No want first dim?
                 first_dim = dims[0]
@@ -4120,23 +2187,6 @@ def REMOVE_COVERED_REF_TOK_BRANCHES(
     return remaining_ref_toks_set
 
 
-# Struct read is different from array read since:
-# At the time of struct read it is possible to narrow down the
-# renamed intermediate wires that of what the struct ref is referreing
-# for an array reference the "struct locations in memory / memory addrs" cannot be known ahead of time
-# Always need to input entire array unless constant, when constant do like struct ref?
-
-"""
-DID you do struct ref wrong?
-CANT PROCESS AS single x.y.z expression
-Need to recursively get X, with .y  ... then get output of that DOT z
-fuck
-
-ONly diff between constant array and dynamic is where the "branches" start in the structref/array search
-# Since arrays are written to like structs, COPY ON READ
-Structref and constant array look very similar
-"""
-
 # ID could be a struct ID which needs struct read logic
 # ID could also be an array ID which needs array read logic
 
@@ -4168,117 +2218,22 @@ Structref and constant array look very similar
 # s.y[1][1]
 
 
-def C_TYPE_IS_STRUCT(c_type_str, parser_state):
-    return (
-        c_type_str in parser_state.struct_to_field_type_dict
-    ) or SW_LIB.C_TYPE_IS_ARRAY_STRUCT(c_type_str, parser_state)
+# Struct read is different from array read since:
+# At the time of struct read it is possible to narrow down the
+# renamed intermediate wires that of what the struct ref is referreing
+# for an array reference the "struct locations in memory / memory addrs" cannot be known ahead of time
+# Always need to input entire array unless constant, when constant do like struct ref?
 
+"""
+DID you do struct ref wrong?
+CANT PROCESS AS single x.y.z expression
+Need to recursively get X, with .y  ... then get output of that DOT z
+fuck
 
-def C_TYPE_IS_ENUM(c_type_str, parser_state):
-    return c_type_str in parser_state.enum_info_dict
-
-
-# Includes intN and uintN
-def C_TYPES_ARE_ENUMS(c_types, parser_state):
-    for c_type in c_types:
-        if not C_TYPE_IS_ENUM(c_type, parser_state):
-            return False
-    return True
-
-
-def C_TYPE_IS_ARRAY(c_type):
-    if c_type is None:
-        return False
-    return "[" in c_type and c_type.endswith("]")
-
-
-def C_TYPE_IS_FLOAT_E_M(c_type):
-    if c_type is None:
-        return False
-    toks = c_type.split("_")
-    if (
-        c_type.startswith("float_")
-        and c_type.endswith("_t")
-        and len(toks) == 4
-        and toks[1].isdigit()
-        and toks[2].isdigit()
-    ):
-        return True
-    return False
-
-
-def C_TYPE_IS_FLOAT_TYPE(c_type):
-    if c_type == "float":
-        return True
-    elif C_TYPE_IS_FLOAT_E_M(c_type):
-        return True
-    return False
-
-
-def C_TYPES_ARE_FLOAT_TYPES(c_types):
-    for c_type in c_types:
-        if not C_TYPE_IS_FLOAT_TYPE(c_type):
-            return False
-    return True
-
-
-def C_FLOAT_E_M_TYPE_TO_E_M(c_type):
-    if c_type == "float":
-        return (8, 23)
-    # print("c_type",c_type)
-    toks = c_type.split("_")
-    e = int(toks[1])
-    m = int(toks[2])
-    return e, m
-
-
-def C_FLOAT_TYPES_ARE_EQUAL(c_types):
-    the_type = c_types[0]
-    for c_type in c_types:
-        if c_type == "float" and the_type == "float_8_23_t":
-            continue
-        elif c_type == "float_8_23_t" and the_type == "float":
-            continue
-        elif c_type != the_type:
-            return False
-    return True
-
-
-def C_FLOAT_TYPES_TO_COMMON_TYPE(c_types):
-    # Since alternative fp types are typically smaller
-    # Find the minimum fp width involved, use probabaly wants that
-    min_e = 9999
-    min_m = 9999
-    for c_type in c_types:
-        e, m = C_FLOAT_E_M_TYPE_TO_E_M(c_type)
-        min_e = min(min_e, e)
-        min_m = min(min_m, m)
-    if e == 8 and min_m == 23:
-        return "float"
-    return "float_" + str(min_e) + "_" + str(min_m) + "_t"
-
-
-def C_TYPE_IS_USER_TYPE(c_type, parser_state):
-    user_code = False
-    if C_TYPE_IS_STRUCT(c_type, parser_state):
-        if SW_LIB.C_TYPE_IS_ARRAY_STRUCT(c_type, parser_state):
-            c_array_type = SW_LIB.C_ARRAY_STRUCT_TYPE_TO_ARRAY_TYPE(
-                c_type, parser_state
-            )
-            elem_t, dims = C_ARRAY_TYPE_TO_ELEM_TYPE_AND_DIMS(c_array_type)
-            if C_TYPE_IS_STRUCT(elem_t, parser_state):
-                user_code = True
-        else:
-            # Not the dumb array thing, is regular struct
-            user_code = True
-    elif C_TYPE_IS_ARRAY(c_type):
-        elem_type, dims = C_ARRAY_TYPE_TO_ELEM_TYPE_AND_DIMS(c_type)
-        if C_TYPE_IS_STRUCT(elem_type, parser_state):
-            user_code = True
-    elif C_TYPE_IS_ENUM(c_type, parser_state):
-        user_code = True
-
-    return user_code
+ONly diff between constant array and dynamic is where the "branches" start in the structref/array search
+# Since arrays are written to like structs, COPY ON READ
+Structref and constant array look very similar
+"""
 
 
 def RESOLVE_C_AST_NODE_TO_CONSTANT_STR(c_ast_node, prepend_text, parser_state):
@@ -4296,7 +2251,7 @@ def RESOLVE_C_AST_NODE_TO_CONSTANT_STR(c_ast_node, prepend_text, parser_state):
         c_ast_node, driven_wire_names, prepend_text, parser_state
     )
     # Is dummy wire driven by constant?
-    const_driving_wire = FIND_CONST_DRIVING_WIRE(
+    const_driving_wire = LOGIC.FIND_CONST_DRIVING_WIRE(
         dummy_wire, parser_state.existing_logic
     )
 
@@ -4319,7 +2274,7 @@ def RESOLVE_C_AST_NODE_TO_CONSTANT_STR(c_ast_node, prepend_text, parser_state):
     # Return the constant or None
     if const_driving_wire is not None:
         # Get value from this constant
-        val_str = GET_VAL_STR_FROM_CONST_WIRE(
+        val_str = LOGIC.GET_VAL_STR_FROM_CONST_WIRE(
             const_driving_wire, parser_state.existing_logic, parser_state
         )
         return val_str  # , parser_state.existing_logic
@@ -4343,7 +2298,7 @@ def RESOLVE_REF_TOKS_TO_CONSTANT_WIRE(ref_toks, c_ast_node, prepend_text, parser
         ref_toks, c_ast_node, driven_wire_names, prepend_text, parser_state
     )
     # Is dummy wire driven by constant?
-    const_driving_wire = FIND_CONST_DRIVING_WIRE(
+    const_driving_wire = LOGIC.FIND_CONST_DRIVING_WIRE(
         dummy_wire, parser_state.existing_logic
     )
 
@@ -4387,7 +2342,7 @@ def RESOLVE_CONST_ARRAY_REF_TO_LOGIC(c_ast_array_ref, prepend_text, parser_state
         c_ast_array_ref.subscript, driven_wire_names, prepend_text, parser_state
     )
     # Is dummy wire driven by constant?
-    const_driving_wire = FIND_CONST_DRIVING_WIRE(
+    const_driving_wire = LOGIC.FIND_CONST_DRIVING_WIRE(
         dummy_wire, parser_state.existing_logic
     )
 
@@ -4410,7 +2365,7 @@ def RESOLVE_CONST_ARRAY_REF_TO_LOGIC(c_ast_array_ref, prepend_text, parser_state
     # Return the constant or None
     if const_driving_wire is not None:
         # Get value from this constant
-        maybe_digit = GET_VAL_STR_FROM_CONST_WIRE(
+        maybe_digit = LOGIC.GET_VAL_STR_FROM_CONST_WIRE(
             const_driving_wire, parser_state.existing_logic, parser_state
         )
         if not maybe_digit.isdigit():
@@ -4557,7 +2512,7 @@ def C_AST_REF_TOKS_TO_CONST_C_TYPE(ref_toks, c_ast_ref, parser_state):
             if type(next_tok) is int:
                 # Constant array ref
                 # Sanity check
-                if not C_TYPE_IS_ARRAY(current_c_type):
+                if not LOGIC.C_TYPE_IS_ARRAY(current_c_type):
                     # TODO Explore allowing uint/float to be C TYPE CAN BE BIT ARRAY?
                     print(
                         "Looks like an array reference but not an array type?",
@@ -4573,7 +2528,7 @@ def C_AST_REF_TOKS_TO_CONST_C_TYPE(ref_toks, c_ast_ref, parser_state):
             elif type(next_tok) is str:
                 # Struct
                 # Sanity check
-                if not C_TYPE_IS_STRUCT(current_c_type, parser_state):
+                if not LOGIC.C_TYPE_IS_STRUCT(current_c_type, parser_state):
                     print(
                         "Struct ref tok but not struct type?",
                         remaining_toks,
@@ -4598,7 +2553,7 @@ def C_AST_REF_TOKS_TO_CONST_C_TYPE(ref_toks, c_ast_ref, parser_state):
             elif not C_AST_REF_TOK_IS_CONST(next_tok):
                 # Variable array ref
                 # Sanity check
-                if not C_TYPE_IS_ARRAY(current_c_type):
+                if not LOGIC.C_TYPE_IS_ARRAY(current_c_type):
                     print(
                         "Arrayref tok but not array type?2",
                         current_c_type,
@@ -4866,9 +2821,9 @@ def C_AST_REF_TOKS_TO_LOGIC(
 
         # Constant ref ?
         # Variable ref needs different func name but mostly same args
-        prefix = CONST_REF_RD_FUNC_NAME_PREFIX
+        prefix = LOGIC.CONST_REF_RD_FUNC_NAME_PREFIX
         if not C_AST_REF_TOKS_ARE_CONST(ref_toks):
-            prefix = VAR_REF_RD_FUNC_NAME_PREFIX
+            prefix = LOGIC.VAR_REF_RD_FUNC_NAME_PREFIX
 
         # NEEDS TO BE LEGIT C FUNC NAME
         # Func name == base name since is custom unique name
@@ -5007,7 +2962,7 @@ def C_AST_REF_TOKS_TO_LOGIC(
             # input_port_name = "base_var"
             input_port_name = "ref_toks_" + str(ref_toks_i)
             ref_toks_i += 1
-            input_port_wire = func_inst_name + SUBMODULE_MARKER + input_port_name
+            input_port_wire = func_inst_name + LOGIC.SUBMODULE_MARKER + input_port_name
             # Remember using driving wire not c ast node  (since doing use_input_nodes_fuck_it = False)
             # print "driving_alias",driving_alias
             # print "drives:"
@@ -5045,7 +3000,7 @@ def C_AST_REF_TOKS_TO_LOGIC(
 
             # Say which variable index this is
             input_port_name = "var_dim_" + str(var_dim_i)
-            input_wire = func_inst_name + SUBMODULE_MARKER + input_port_name
+            input_wire = func_inst_name + LOGIC.SUBMODULE_MARKER + input_port_name
 
             # Set type of input wire
             parser_state.existing_logic.wire_to_c_type[input_wire] = var_dim_iter_types[
@@ -5071,15 +3026,15 @@ def C_AST_REF_TOKS_TO_LOGIC(
         # So force output to be same type as ref would imply
 
         # Output wire is the type of the struct ref
-        output_port_name = RETURN_WIRE_NAME
+        output_port_name = LOGIC.RETURN_WIRE_NAME
 
         # Output wire is the type of the ref rd
         output_c_type = c_type
         # Variable ref reads are implemented in C
         # and so cant have an output type of an array type
         # Use auto gen struct array types
-        if not C_AST_REF_TOKS_ARE_CONST(ref_toks) and C_TYPE_IS_ARRAY(c_type):
-            elem_t, dims = C_ARRAY_TYPE_TO_ELEM_TYPE_AND_DIMS(c_type)
+        if not C_AST_REF_TOKS_ARE_CONST(ref_toks) and LOGIC.C_TYPE_IS_ARRAY(c_type):
+            elem_t, dims = LOGIC.C_ARRAY_TYPE_TO_ELEM_TYPE_AND_DIMS(c_type)
             output_struct_array_type = (
                 elem_t.replace("[", "_").replace("]", "_").replace("__", "_").strip("_")
                 + "_array"
@@ -5089,7 +3044,7 @@ def C_AST_REF_TOKS_TO_LOGIC(
             output_struct_array_type += "_t"
             output_c_type = output_struct_array_type
 
-        output_wire = func_inst_name + SUBMODULE_MARKER + output_port_name
+        output_wire = func_inst_name + LOGIC.SUBMODULE_MARKER + output_port_name
         parser_state.existing_logic.wire_to_c_type[output_wire] = output_c_type
         # Don't set type of output wire - shouldnt need to?
 
@@ -5115,66 +3070,14 @@ def C_AST_REF_TOKS_TO_LOGIC(
         return func_logic
 
 
-def C_ARRAY_TYPE_TO_ELEM_TYPE_AND_DIMS(input_array_type):
-    toks = input_array_type.split("[")
-    # print toks
-    elem_type = toks[0]
-    dims = []
-    for tok_i in range(1, len(toks)):
-        tok = toks[tok_i]
-        dim = int(tok.replace("]", ""))
-        dims.append(dim)
-    return elem_type, dims
-
-
 def GET_ARRAYREF_OUTPUT_TYPE_FROM_C_TYPE(input_array_type):
-    elem_type, dims = C_ARRAY_TYPE_TO_ELEM_TYPE_AND_DIMS(input_array_type)
+    elem_type, dims = LOGIC.C_ARRAY_TYPE_TO_ELEM_TYPE_AND_DIMS(input_array_type)
     output_dims = dims[1:]
     output_type = elem_type
     for output_dim in output_dims:
         output_type = output_type + "[" + str(output_dim) + "]"
 
     return output_type
-
-
-# WTF enums
-# Bullshit.
-#
-def WIRE_IS_ENUM(maybe_not_enum_wire, existing_logic, parser_state):
-    # Will not be:
-    # (this is dumb)
-    #   known to enum
-    #   Known not to be enum? wtf?
-    # input
-    # global
-    #   volatile global
-    # variable
-    #   output
-    #
-    # Then must be ENUM
-
-    # ORIG_WIRE_NAME_TO_ORIG_VAR_NAME
-    if ENUM_CONST_MARKER in maybe_not_enum_wire:
-        return True
-    elif (maybe_not_enum_wire in existing_logic.wire_to_c_type) and C_TYPE_IS_ENUM(
-        existing_logic.wire_to_c_type[maybe_not_enum_wire], parser_state
-    ):
-        return True
-    elif (maybe_not_enum_wire in existing_logic.wire_to_c_type) and not C_TYPE_IS_ENUM(
-        existing_logic.wire_to_c_type[maybe_not_enum_wire], parser_state
-    ):
-        return False
-    # elif maybe_not_enum_wire in existing_logic.inputs:
-    #  return False
-    # elif (maybe_not_enum_wire in existing_logic.state_regs):
-    #  return False
-    # elif maybe_not_enum_wire in existing_logic.variable_names:
-    #  return False
-    # elif maybe_not_enum_wire in existing_logic.outputs:
-    #  return False
-    else:
-        print("Unknown maybe ENUM?:", maybe_not_enum_wire)
-        sys.exit(-1)
         # return True
 
 
@@ -5195,8 +3098,8 @@ def ID_IS_ENUM_CONST(c_ast_id, existing_logic, prepend_text, parser_state):
     # Then must be ENUM
     if (
         (base_name in existing_logic.wire_to_c_type)
-        and C_TYPE_IS_ENUM(existing_logic.wire_to_c_type[base_name], parser_state)
-        and WIRE_IS_CONSTANT(base_name)
+        and LOGIC.C_TYPE_IS_ENUM(existing_logic.wire_to_c_type[base_name], parser_state)
+        and LOGIC.WIRE_IS_CONSTANT(base_name)
     ):
         return True
     elif base_name in existing_logic.inputs:
@@ -5235,7 +3138,7 @@ def C_AST_ENUM_CONST_TO_LOGIC(
     # Hacky use $ for enum only oh sad
     # Um how did this work before?
     wire_name = (
-        CONST_PREFIX + str(value) + ENUM_CONST_MARKER + C_AST_NODE_COORD_STR(c_ast_node)
+        LOGIC.CONST_PREFIX + str(value) + LOGIC.ENUM_CONST_MARKER + C_AST_NODE_COORD_STR(c_ast_node)
     )
 
     # Try to set type based on enum name, might not be possible if multiple matches
@@ -5282,51 +3185,13 @@ def C_AST_COMPOUND_NULL_TO_LOGIC(
         print("No type information for compound null expression at", c_ast_node.coord)
         sys.exit(-1)
     # Make up a wire name?
-    wire_name = BUILD_CONST_WIRE(COMPOUND_NULL, C_AST_NODE_TO_META(c_ast_node))
+    wire_name = LOGIC.BUILD_CONST_WIRE(LOGIC.COMPOUND_NULL, C_AST_NODE_TO_META(c_ast_node))
     parser_state.existing_logic.wire_to_c_type[wire_name] = driven_type
     # Connect the constant to the wire it drives
     parser_state.existing_logic = APPLY_CONNECT_WIRES_LOGIC(
         parser_state, wire_name, driven_wire_names, prepend_text, c_ast_node, False
     )
     return parser_state.existing_logic
-
-
-def GET_VAL_STR_FROM_CONST_WIRE(wire_name, Logic, parser_state):
-    local_name = wire_name
-
-    # Special null token
-    if wire_name.startswith(CONST_PREFIX + COMPOUND_NULL):
-        return COMPOUND_NULL
-
-    # Get last submodule tok
-    toks = local_name.split(SUBMODULE_MARKER)
-    last_tok = toks[len(toks) - 1]
-    local_name = last_tok
-
-    # Strip off CONST_
-    stripped_wire_name = local_name
-    if local_name.startswith(CONST_PREFIX):
-        stripped_wire_name = local_name[len(CONST_PREFIX) :]
-
-    # CANT SPLIT ON UNDER dummy - ENUMS ARE CONSTs too
-    if ENUM_CONST_MARKER in stripped_wire_name:
-        ami_digit = stripped_wire_name.split(ENUM_CONST_MARKER)[0]
-    else:
-        # OK now can do dumb splitting
-        toks = stripped_wire_name.split("_")
-        ami_digit = toks[0]
-
-    # print("const wire:",wire_name,"valuestr:",ami_digit)
-
-    return ami_digit
-
-
-def BUILD_CONST_WIRE(value_str, ast_meta, is_negated=False):
-    rv = CONST_PREFIX
-    if is_negated:
-        rv += "-"
-    rv += value_str + "_" + ast_meta.coord_str()
-    return rv
 
 
 # Const jsut makes wire with CONST name
@@ -5444,7 +3309,7 @@ def NON_ENUM_CONST_VALUE_STR_TO_VALUE_AND_C_TYPE(
         or ("." in value_str)
         or (value_str.lower().endswith("f"))
         or (value_str.lower().endswith("l"))
-        or (expected_c_type is not None and C_TYPE_IS_FLOAT_TYPE(expected_c_type))
+        or (expected_c_type is not None and LOGIC.C_TYPE_IS_FLOAT_TYPE(expected_c_type))
     ):
         value = float(value_str.strip("f").strip("l").strip("F").strip("L"))
         c_type_str = "float"
@@ -5487,7 +3352,7 @@ def NON_ENUM_CONST_VALUE_STR_TO_LOGIC(
                 known_c_type = parser_state.existing_logic.wire_to_c_type[driven_wire]
 
     # Determine type if needed
-    wire_name = BUILD_CONST_WIRE(value_str, C_AST_NODE_TO_META(c_ast_node), is_negated)
+    wire_name = LOGIC.BUILD_CONST_WIRE(value_str, C_AST_NODE_TO_META(c_ast_node), is_negated)
     if known_c_type is None:
         value, c_type_str = NON_ENUM_CONST_VALUE_STR_TO_VALUE_AND_C_TYPE(
             value_str, c_ast_node, is_negated
@@ -5627,9 +3492,9 @@ def C_AST_INIT_TO_LOGIC(
         # What is expected for this expression given type?
         ref_toks = None
         expr_node = None
-        if type(c_ast_init) == c_ast.InitList and C_TYPE_IS_ARRAY(c_type):
+        if type(c_ast_init) == c_ast.InitList and LOGIC.C_TYPE_IS_ARRAY(c_type):
             # Array
-            elem_t, dims = C_ARRAY_TYPE_TO_ELEM_TYPE_AND_DIMS(c_type)
+            elem_t, dims = LOGIC.C_ARRAY_TYPE_TO_ELEM_TYPE_AND_DIMS(c_type)
             expr_node = init_expr
             expr_type = elem_t
             # Assign this pos in array, or specified pos
@@ -5646,7 +3511,7 @@ def C_AST_INIT_TO_LOGIC(
                 prepend_text,
                 parser_state,
             )
-        elif type(c_ast_init) == c_ast.InitList and C_TYPE_IS_STRUCT(
+        elif type(c_ast_init) == c_ast.InitList and LOGIC.C_TYPE_IS_STRUCT(
             c_type, parser_state
         ):
             # Struct
@@ -5764,7 +3629,7 @@ def C_AST_COMPOUND_TO_LOGIC(c_ast_compound, prepend_text, parser_state):
     # Assumption: Compound logic block items imply execution order
     rv = existing_logic
     if existing_logic is None:
-        rv = Logic()
+        rv = LOGIC.Logic()
 
     if c_ast_compound.block_items is not None:
         for block_item in c_ast_compound.block_items:
@@ -5797,20 +3662,8 @@ def C_AST_COMPOUND_TO_LOGIC(c_ast_compound, prepend_text, parser_state):
     return rv
 
 
-def C_AST_NODES_EQUAL(node0, node1):
-    # EW WTF SLOW? C_AST_NODE_COORD_STR(node0) == C_AST_NODE_COORD_STR(node1)
-    # return node0==node1
-    # return node0.coord==node1.coord
-    # Uhhhh cant rely on parser coords?
-    # https://github.com/eliben/pycparser/issues/411?
-    # return node0==node1
-    # return id(node0)==id(node1) #no?
-    # return (node0.coord == node1.coord) and (str(node0) == str(node1))  # WTF?
-    return node0 == node1  # .coord_str
-
-
 # C AST nodes from different parsing runs, i.e. different object, same looking C code will produce different coordinate strings
-# This is wtf hacky since C_AST_NODES_EQUAL problems too
+# This is wtf hacky since comparing C AST nodes has problems too
 _C_AST_NODE_COORD_STR_cache = {}
 
 
@@ -5829,12 +3682,12 @@ def C_AST_NODE_COORD_STR(c_ast_node):
     # But string representation of node is correct and can be hashed
     str_to_hash = str(
         c_ast_node
-    )  # Doesnt actually identify nodes, nor does coord, see C_AST_NODES_EQUAL
+    )  # Doesnt actually identify nodes, nor does coord, see LOGIC.AST_META_VAL_UNIQUE_KEY_DICT_MERGE
     if TEMP_HACKY_C_AST_NODE_ID:
         str_to_hash = str(id(c_ast_node))
     hash_ext = (
         "_"
-        + (hashlib.md5(str_to_hash.encode("utf-8")).hexdigest())[0:C_AST_NODE_HASH_LEN]
+        + (hashlib.md5(str_to_hash.encode("utf-8")).hexdigest())[0:LOGIC.C_AST_NODE_HASH_LEN]
     )  # 4 chars enough?
 
     file_coord_str = (
@@ -5870,9 +3723,9 @@ def C_AST_NODE_TO_META(c_ast_node):
     cord = c_ast_node.coord
     str_to_hash = str(id(c_ast_node)) if TEMP_HACKY_C_AST_NODE_ID else str(c_ast_node)
     hash_suffix = (
-        "_" + hashlib.md5(str_to_hash.encode("utf-8")).hexdigest()[:C_AST_NODE_HASH_LEN]
+        "_" + hashlib.md5(str_to_hash.encode("utf-8")).hexdigest()[:LOGIC.C_AST_NODE_HASH_LEN]
     )
-    return AST.ASTMeta(
+    return LOGIC.ASTMeta(
         src_file=str(cord.file) if cord else "",
         line=cord.line if cord else 0,
         col=cord.column if cord else 0,
@@ -5907,11 +3760,11 @@ def C_AST_FOR_TO_LOGIC(c_ast_node, driven_wire_names, prepend_text, parser_state
         # Evaluate condition driving a dummy wire so we can recover the value?
         cond_val = None
         COND_DUMMY = iter_prepend_text + "COND_DUMMY"
-        parser_state.existing_logic.wire_to_c_type[COND_DUMMY] = BOOL_C_TYPE
+        parser_state.existing_logic.wire_to_c_type[COND_DUMMY] = LOGIC.BOOL_C_TYPE
         parser_state.existing_logic = C_AST_NODE_TO_LOGIC(
             c_ast_node.cond, [COND_DUMMY], iter_prepend_text, parser_state
         )
-        const_cond_wire = FIND_CONST_DRIVING_WIRE(
+        const_cond_wire = LOGIC.FIND_CONST_DRIVING_WIRE(
             COND_DUMMY, parser_state.existing_logic
         )
         if const_cond_wire is None:
@@ -5923,7 +3776,7 @@ def C_AST_FOR_TO_LOGIC(c_ast_node, driven_wire_names, prepend_text, parser_state
             )
             sys.exit(-1)
         cond_val = int(
-            GET_VAL_STR_FROM_CONST_WIRE(
+            LOGIC.GET_VAL_STR_FROM_CONST_WIRE(
                 const_cond_wire, parser_state.existing_logic, parser_state
             )
         )
@@ -5972,11 +3825,11 @@ def C_AST_WHILE_TO_LOGIC(c_ast_node, driven_wire_names, prepend_text, parser_sta
         # Evaluate condition driving a dummy wire so we can recover the value?
         cond_val = None
         COND_DUMMY = iter_prepend_text + "COND_DUMMY"
-        parser_state.existing_logic.wire_to_c_type[COND_DUMMY] = BOOL_C_TYPE
+        parser_state.existing_logic.wire_to_c_type[COND_DUMMY] = LOGIC.BOOL_C_TYPE
         parser_state.existing_logic = C_AST_NODE_TO_LOGIC(
             c_ast_node.cond, [COND_DUMMY], iter_prepend_text, parser_state
         )
-        const_cond_wire = FIND_CONST_DRIVING_WIRE(
+        const_cond_wire = LOGIC.FIND_CONST_DRIVING_WIRE(
             COND_DUMMY, parser_state.existing_logic
         )
         if const_cond_wire is None:
@@ -5988,7 +3841,7 @@ def C_AST_WHILE_TO_LOGIC(c_ast_node, driven_wire_names, prepend_text, parser_sta
             )
             sys.exit(-1)
         cond_val = int(
-            GET_VAL_STR_FROM_CONST_WIRE(
+            LOGIC.GET_VAL_STR_FROM_CONST_WIRE(
                 const_cond_wire, parser_state.existing_logic, parser_state
             )
         )
@@ -6038,19 +3891,19 @@ def C_AST_TERNARY_OP_TO_LOGIC(
 
     # MUX output type is the same as inputs (aside from select)
     # Try to determine types by evaluating input nodes like done for binary ops
-    func_base_name = MUX_LOGIC_NAME
+    func_base_name = LOGIC.MUX_LOGIC_NAME
     ter_op_cond_input_port_name = c_ast_node.children()[0][0]
     ter_op_true_input_port_name = c_ast_node.children()[1][0]
     ter_op_false_input_port_name = c_ast_node.children()[2][0]
     func_inst_name = BUILD_INST_NAME(prepend_text, func_base_name, c_ast_node)
-    ter_op_cond_input = func_inst_name + SUBMODULE_MARKER + ter_op_cond_input_port_name
-    ter_op_true_input = func_inst_name + SUBMODULE_MARKER + ter_op_true_input_port_name
+    ter_op_cond_input = func_inst_name + LOGIC.SUBMODULE_MARKER + ter_op_cond_input_port_name
+    ter_op_true_input = func_inst_name + LOGIC.SUBMODULE_MARKER + ter_op_true_input_port_name
     ter_op_false_input = (
-        func_inst_name + SUBMODULE_MARKER + ter_op_false_input_port_name
+        func_inst_name + LOGIC.SUBMODULE_MARKER + ter_op_false_input_port_name
     )
 
     # Get logic for condition wire
-    parser_state.existing_logic.wire_to_c_type[ter_op_cond_input] = BOOL_C_TYPE
+    parser_state.existing_logic.wire_to_c_type[ter_op_cond_input] = LOGIC.BOOL_C_TYPE
     parser_state.existing_logic = C_AST_BOOL_COND_NODE_TO_LOGIC(
         c_ast_node.cond,
         [ter_op_cond_input],
@@ -6112,7 +3965,7 @@ def C_AST_TERNARY_OP_TO_LOGIC(
     input_port_names.append(ter_op_true_input_port_name)  # true
     input_port_names.append(ter_op_false_input_port_name)  # false
     input_driver_types = []
-    input_driver_types.append(BOOL_C_TYPE)
+    input_driver_types.append(LOGIC.BOOL_C_TYPE)
     input_driver_types.append(true_input_type)
     input_driver_types.append(false_input_type)
     input_drivers = []  # Wires or C ast nodes
@@ -6181,7 +4034,7 @@ def C_AST_IF_TO_LOGIC(c_ast_node, prepend_text, parser_state):
     mux_cond_port_name = c_ast_node.children()[0][0]
     mux_intermediate_cond_wire_wo_var_name = (
         prepend_text
-        + MUX_LOGIC_NAME
+        + LOGIC.MUX_LOGIC_NAME
         + "_"
         + file_coord_str
         + "_interm_"
@@ -6190,7 +4043,7 @@ def C_AST_IF_TO_LOGIC(c_ast_node, prepend_text, parser_state):
     parser_state.existing_logic.wires.add(mux_intermediate_cond_wire_wo_var_name)
     parser_state.existing_logic.wire_to_c_type[
         mux_intermediate_cond_wire_wo_var_name
-    ] = BOOL_C_TYPE
+    ] = LOGIC.BOOL_C_TYPE
     # Get logic for this if condition with it driving the shared condition wire
     cond_logic = C_AST_BOOL_COND_NODE_TO_LOGIC(
         c_ast_node.cond,
@@ -6202,13 +4055,13 @@ def C_AST_IF_TO_LOGIC(c_ast_node, prepend_text, parser_state):
 
     # See if condition is constant - no mux at all
     # Just only parse one branch of the logic as is just a compound statement in line
-    const_driving_wire = FIND_CONST_DRIVING_WIRE(
+    const_driving_wire = LOGIC.FIND_CONST_DRIVING_WIRE(
         mux_intermediate_cond_wire_wo_var_name, parser_state.existing_logic
     )
     if const_driving_wire is not None:
         # print("const_driving_wire",const_driving_wire)
         # ONLY USE ONE BRANCH AND RETURN
-        const_val_str = GET_VAL_STR_FROM_CONST_WIRE(
+        const_val_str = LOGIC.GET_VAL_STR_FROM_CONST_WIRE(
             const_driving_wire, parser_state.existing_logic, parser_state
         )
         try:
@@ -6272,19 +4125,19 @@ def C_AST_IF_TO_LOGIC(c_ast_node, prepend_text, parser_state):
         mux_false_port_name = c_ast_node.children()[2][0]
 
     # Create TRUE and FALSE branch clock enable muxes
-    func_base_name = MUX_LOGIC_NAME
+    func_base_name = LOGIC.MUX_LOGIC_NAME
     base_name_is_name = False  # Append types
     most_recent_clk_en_wire = parser_state.existing_logic.clock_enable_wires[-1]
-    zero_wire = BUILD_CONST_WIRE(str(0), C_AST_NODE_TO_META(c_ast_node))
-    parser_state.existing_logic.wire_to_c_type[zero_wire] = BOOL_C_TYPE
+    zero_wire = LOGIC.BUILD_CONST_WIRE(str(0), C_AST_NODE_TO_META(c_ast_node))
+    parser_state.existing_logic.wire_to_c_type[zero_wire] = LOGIC.BOOL_C_TYPE
     input_port_names = []
     input_port_names.append(mux_cond_port_name)
     input_port_names.append(mux_true_port_name)
     input_port_names.append(mux_false_port_name)
     input_driver_types = []
-    input_driver_types.append(BOOL_C_TYPE)
-    input_driver_types.append(BOOL_C_TYPE)
-    input_driver_types.append(BOOL_C_TYPE)
+    input_driver_types.append(LOGIC.BOOL_C_TYPE)
+    input_driver_types.append(LOGIC.BOOL_C_TYPE)
+    input_driver_types.append(LOGIC.BOOL_C_TYPE)
     # TRUE
     #  mux cond true means clock enable should be on the true mux input
     input_drivers = []
@@ -6292,7 +4145,7 @@ def C_AST_IF_TO_LOGIC(c_ast_node, prepend_text, parser_state):
     input_drivers.append(most_recent_clk_en_wire)  # true value is clock enable
     input_drivers.append(zero_wire)  # false value is zero
     # New clock enable wire to be used in TRUE branch
-    true_clock_enable_prepend_text = prepend_text + "TRUE_" + CLOCK_ENABLE_NAME + "_"
+    true_clock_enable_prepend_text = prepend_text + "TRUE_" + LOGIC.CLOCK_ENABLE_NAME + "_"
     true_clock_enable_wire_name = true_clock_enable_prepend_text + "_" + file_coord_str
     output_driven_wire_names = []
     output_driven_wire_names.append(true_clock_enable_wire_name)
@@ -6308,7 +4161,7 @@ def C_AST_IF_TO_LOGIC(c_ast_node, prepend_text, parser_state):
         parser_state,
     )
     # FALSE
-    false_clock_enable_prepend_text = prepend_text + "FALSE_" + CLOCK_ENABLE_NAME + "_"
+    false_clock_enable_prepend_text = prepend_text + "FALSE_" + LOGIC.CLOCK_ENABLE_NAME + "_"
     false_clock_enable_wire_name = (
         false_clock_enable_prepend_text + "_" + file_coord_str
     )
@@ -6484,14 +4337,14 @@ def C_AST_IF_TO_LOGIC(c_ast_node, prepend_text, parser_state):
             ref_tok_id_str = C_AST_IF_REF_TOKS_TO_STR(ref_toks, c_ast_node)
             mux_prepend_text = prepend_text + ref_tok_id_str + "_"
             func_c_ast_node = c_ast_node
-            func_base_name = MUX_LOGIC_NAME
+            func_base_name = LOGIC.MUX_LOGIC_NAME
             base_name_is_name = False  # Append types
             input_port_names = []
             input_port_names.append(mux_cond_port_name)
             input_port_names.append(mux_true_port_name)
             input_port_names.append(mux_false_port_name)
             input_driver_types = []
-            input_driver_types.append(BOOL_C_TYPE)
+            input_driver_types.append(LOGIC.BOOL_C_TYPE)
             input_driver_types.append(c_type)
             input_driver_types.append(c_type)
             input_drivers = []
@@ -6507,7 +4360,7 @@ def C_AST_IF_TO_LOGIC(c_ast_node, prepend_text, parser_state):
             # Using each branches logic use id_or_structref logic to form read wire driving T/F ports
             # TRUE
             mux_true_connection_wire_name = (
-                func_inst_name + SUBMODULE_MARKER + mux_true_port_name
+                func_inst_name + LOGIC.SUBMODULE_MARKER + mux_true_port_name
             )
             parser_state.existing_logic.wire_to_c_type[
                 mux_true_connection_wire_name
@@ -6518,7 +4371,7 @@ def C_AST_IF_TO_LOGIC(c_ast_node, prepend_text, parser_state):
                 ref_toks,
                 c_ast_node,
                 [mux_true_connection_wire_name],
-                mux_prepend_text + "TRUE_INPUT_" + MUX_LOGIC_NAME + "_",
+                mux_prepend_text + "TRUE_INPUT_" + LOGIC.MUX_LOGIC_NAME + "_",
                 parser_state_for_true,
             )
             # Merge in read
@@ -6537,7 +4390,7 @@ def C_AST_IF_TO_LOGIC(c_ast_node, prepend_text, parser_state):
 
             # FALSE
             mux_false_connection_wire_name = (
-                func_inst_name + SUBMODULE_MARKER + mux_false_port_name
+                func_inst_name + LOGIC.SUBMODULE_MARKER + mux_false_port_name
             )
             parser_state.existing_logic.wire_to_c_type[
                 mux_false_connection_wire_name
@@ -6548,7 +4401,7 @@ def C_AST_IF_TO_LOGIC(c_ast_node, prepend_text, parser_state):
                 ref_toks,
                 c_ast_node,
                 [mux_false_connection_wire_name],
-                mux_prepend_text + "FALSE_INPUT_" + MUX_LOGIC_NAME + "_",
+                mux_prepend_text + "FALSE_INPUT_" + LOGIC.MUX_LOGIC_NAME + "_",
                 parser_state_for_false,
             )
             # Merge in read
@@ -6569,7 +4422,7 @@ def C_AST_IF_TO_LOGIC(c_ast_node, prepend_text, parser_state):
             # Instead mux changes most recent alias for a variable
             output_driven_wire_names = []
             # Record type of output wire
-            mux_output_wire_name = func_inst_name + SUBMODULE_MARKER + RETURN_WIRE_NAME
+            mux_output_wire_name = func_inst_name + LOGIC.SUBMODULE_MARKER + LOGIC.RETURN_WIRE_NAME
             parser_state.existing_logic.wire_to_c_type[mux_output_wire_name] = c_type
             ref_toks_id_str_to_output_wire[ref_tok_id_str] = mux_output_wire_name
 
@@ -6694,40 +4547,6 @@ def C_AST_IF_TO_LOGIC(c_ast_node, prepend_text, parser_state):
     return parser_state.existing_logic
 
 
-def GET_CONTAINER_INST(inst_name):
-    # Construct container from full inst name
-    toks = inst_name.split(SUBMODULE_MARKER)
-    container = SUBMODULE_MARKER.join(toks[0 : len(toks) - 1])
-    if container == inst_name:
-        return None
-    if container == "":
-        return None
-    return container
-
-
-def RECURSIVE_FIND_MAIN_FUNC_FROM_INST(inst_name, parser_state):
-    container = GET_CONTAINER_INST(inst_name)
-    if container is None:
-        # Top level
-        return inst_name
-    else:
-        return RECURSIVE_FIND_MAIN_FUNC_FROM_INST(container, parser_state)
-
-
-# For things that look like
-# Get the last token (leaf) token when splitting by "/" and sub marker
-def LEAF_NAME(name, do_submodule_split=True):
-    new_name = name
-
-    # Pick last submodule item
-    if (SUBMODULE_MARKER in name) and do_submodule_split:
-        toks = new_name.split(SUBMODULE_MARKER)
-        toks.reverse()
-        new_name = toks[0]
-
-    return new_name
-
-
 # Function instance is module connection
 # Connect certain input nodes to certain lists of wire names
 # dict[c_ast_node] => [list of driven wire names]
@@ -6773,7 +4592,7 @@ def TRY_CONST_REDUCE_C_AST_N_ARG_FUNC_INST_TO_LOGIC(
         input_driver = input_drivers[i]
         if isinstance(input_driver, c_ast.Node):
             input_port_name = input_port_names[i]
-            input_wire_name = func_inst_name + SUBMODULE_MARKER + input_port_name
+            input_wire_name = func_inst_name + LOGIC.SUBMODULE_MARKER + input_port_name
             c_ast_node_2_driven_input_wire_names[input_driver] = [input_wire_name]
     parser_state.existing_logic = SEQ_C_AST_NODES_TO_LOGIC(
         c_ast_node_2_driven_input_wire_names, prepend_text, parser_state
@@ -6785,7 +4604,7 @@ def TRY_CONST_REDUCE_C_AST_N_ARG_FUNC_INST_TO_LOGIC(
         if type(input_driver) is tuple:
             driver_ref_toks = input_driver
             input_port_name = input_port_names[i]
-            driven_input_port_wire = func_inst_name + SUBMODULE_MARKER + input_port_name
+            driven_input_port_wire = func_inst_name + LOGIC.SUBMODULE_MARKER + input_port_name
             parser_state.existing_logic = C_AST_REF_TOKS_TO_LOGIC(
                 driver_ref_toks,
                 func_c_ast_node,
@@ -6799,7 +4618,7 @@ def TRY_CONST_REDUCE_C_AST_N_ARG_FUNC_INST_TO_LOGIC(
         input_driver = input_drivers[i]
         if type(input_driver) is str:
             input_port_name = input_port_names[i]
-            driven_input_port_wire = func_inst_name + SUBMODULE_MARKER + input_port_name
+            driven_input_port_wire = func_inst_name + LOGIC.SUBMODULE_MARKER + input_port_name
             parser_state.existing_logic = APPLY_CONNECT_WIRES_LOGIC(
                 parser_state,
                 input_driver,
@@ -6816,7 +4635,7 @@ def TRY_CONST_REDUCE_C_AST_N_ARG_FUNC_INST_TO_LOGIC(
         input_driver_type = input_driver_types[i]
         if input_driver_type is None:
             input_port_name = input_port_names[i]
-            driven_input_wire_name = func_inst_name + SUBMODULE_MARKER + input_port_name
+            driven_input_wire_name = func_inst_name + LOGIC.SUBMODULE_MARKER + input_port_name
             updated_input_driver_type = None
             if driven_input_wire_name in parser_state.existing_logic.wire_to_c_type:
                 updated_input_driver_type = parser_state.existing_logic.wire_to_c_type[
@@ -6842,7 +4661,7 @@ def TRY_CONST_REDUCE_C_AST_N_ARG_FUNC_INST_TO_LOGIC(
         input_port_name = input_port_names[i]
         input_driver_type = input_driver_types[i]
         if input_driver_type is not None:
-            driven_input_wire_name = func_inst_name + SUBMODULE_MARKER + input_port_name
+            driven_input_wire_name = func_inst_name + LOGIC.SUBMODULE_MARKER + input_port_name
             if driven_input_wire_name in parser_state.existing_logic.wire_driven_by:
                 driving_wire = parser_state.existing_logic.wire_driven_by[
                     driven_input_wire_name
@@ -6864,9 +4683,9 @@ def TRY_CONST_REDUCE_C_AST_N_ARG_FUNC_INST_TO_LOGIC(
         return None
 
     # Pass through cast of same type?
-    if func_base_name.startswith(CAST_FUNC_NAME_PREFIX) and not base_name_is_name:
+    if func_base_name.startswith(LOGIC.CAST_FUNC_NAME_PREFIX) and not base_name_is_name:
         # Assume one input wire
-        driven_input_port_wire = func_inst_name + SUBMODULE_MARKER + input_port_names[0]
+        driven_input_port_wire = func_inst_name + LOGIC.SUBMODULE_MARKER + input_port_names[0]
         input_driver_wire_name = parser_state.existing_logic.wire_driven_by[
             driven_input_port_wire
         ]
@@ -6883,7 +4702,7 @@ def TRY_CONST_REDUCE_C_AST_N_ARG_FUNC_INST_TO_LOGIC(
             # Remove old submodule instance
             # print("Replacing cast:",func_inst_name,"with direct wire...")
             parser_state.existing_logic.REMOVE_SUBMODULE(
-                func_inst_name, input_port_names, [RETURN_WIRE_NAME], parser_state
+                func_inst_name, input_port_names, [LOGIC.RETURN_WIRE_NAME], parser_state
             )
             # Directly connect input driver to output
             APPLY_CONNECT_WIRES_LOGIC(
@@ -6897,14 +4716,14 @@ def TRY_CONST_REDUCE_C_AST_N_ARG_FUNC_INST_TO_LOGIC(
 
     # One hot enum compare
     if (
-        func_base_name.startswith(BIN_OP_LOGIC_NAME_PREFIX + "_" + BIN_OP_EQ_NAME)
-        and C_TYPES_ARE_ENUMS(input_driver_types, parser_state)
+        func_base_name.startswith(LOGIC.BIN_OP_LOGIC_NAME_PREFIX + "_" + LOGIC.BIN_OP_EQ_NAME)
+        and LOGIC.C_TYPES_ARE_ENUMS(input_driver_types, parser_state)
         and input_driver_types[0] == input_driver_types[1]
         and input_driver_types[0] in parser_state.marked_onehot
     ):
         # Rewrite ex. BIN_OP_EQ_uint1_t_my_enum_t_my_enum_t -> ONE_HOT_EQ_uint1_uint128_t_uint128_t
         # Prepare for call to C_AST_N_ARG_FUNC_INST_TO_LOGIC with replacement
-        new_func_base_name = ONE_HOT_EQ_LOGIC_NAME
+        new_func_base_name = LOGIC.ONE_HOT_EQ_LOGIC_NAME
         new_base_name_is_name = False  # Do append types to name (base is not complete)
         new_input_drivers = input_drivers[
             :
@@ -6918,7 +4737,7 @@ def TRY_CONST_REDUCE_C_AST_N_ARG_FUNC_INST_TO_LOGIC(
         new_input_driver_types = [enum_int_type, enum_int_type]
         # Remove old submodule instance
         parser_state.existing_logic.REMOVE_SUBMODULE(
-            func_inst_name, input_port_names, [RETURN_WIRE_NAME], parser_state
+            func_inst_name, input_port_names, [LOGIC.RETURN_WIRE_NAME], parser_state
         )
         # Connect new function call
         parser_state.existing_logic = C_AST_N_ARG_FUNC_INST_TO_LOGIC(
@@ -6942,8 +4761,8 @@ def TRY_CONST_REDUCE_C_AST_N_ARG_FUNC_INST_TO_LOGIC(
     const_input_wires = []
     for i in range(0, len(input_drivers)):
         input_port_name = input_port_names[i]
-        driven_input_port_wire = func_inst_name + SUBMODULE_MARKER + input_port_name
-        const_driving_wire = FIND_CONST_DRIVING_WIRE(
+        driven_input_port_wire = func_inst_name + LOGIC.SUBMODULE_MARKER + input_port_name
+        const_driving_wire = LOGIC.FIND_CONST_DRIVING_WIRE(
             driven_input_port_wire, parser_state.existing_logic
         )
         const_input_wires.append(const_driving_wire)
@@ -6982,18 +4801,18 @@ def TRY_CONST_REDUCE_C_AST_N_ARG_FUNC_INST_TO_LOGIC(
         const_val_str = None
         const_val_str_known_c_type = None
         # TRINARY OPS = MUX
-        if func_base_name == MUX_LOGIC_NAME and not base_name_is_name:
+        if func_base_name == LOGIC.MUX_LOGIC_NAME and not base_name_is_name:
             sel_wire = const_input_wires[0]
             t_wire = const_input_wires[1]
             f_wire = const_input_wires[2]
             # Get values from constants
-            sel_val_str = GET_VAL_STR_FROM_CONST_WIRE(
+            sel_val_str = LOGIC.GET_VAL_STR_FROM_CONST_WIRE(
                 sel_wire, parser_state.existing_logic, parser_state
             )
-            t_val_str = GET_VAL_STR_FROM_CONST_WIRE(
+            t_val_str = LOGIC.GET_VAL_STR_FROM_CONST_WIRE(
                 t_wire, parser_state.existing_logic, parser_state
             )
-            f_val_str = GET_VAL_STR_FROM_CONST_WIRE(
+            f_val_str = LOGIC.GET_VAL_STR_FROM_CONST_WIRE(
                 f_wire, parser_state.existing_logic, parser_state
             )
             if sel_val_str == "1":
@@ -7004,29 +4823,29 @@ def TRY_CONST_REDUCE_C_AST_N_ARG_FUNC_INST_TO_LOGIC(
                 raise Exception("Bad cond value")
         # BINARY OPERATIONS
         elif (
-            func_base_name.startswith(BIN_OP_LOGIC_NAME_PREFIX)
+            func_base_name.startswith(LOGIC.BIN_OP_LOGIC_NAME_PREFIX)
             and not base_name_is_name
         ):
             lhs_wire = const_input_wires[0]
             rhs_wire = const_input_wires[1]
 
             # Get values from constants
-            lhs_val_str = GET_VAL_STR_FROM_CONST_WIRE(
+            lhs_val_str = LOGIC.GET_VAL_STR_FROM_CONST_WIRE(
                 lhs_wire, parser_state.existing_logic, parser_state
             )
-            rhs_val_str = GET_VAL_STR_FROM_CONST_WIRE(
+            rhs_val_str = LOGIC.GET_VAL_STR_FROM_CONST_WIRE(
                 rhs_wire, parser_state.existing_logic, parser_state
             )
 
             # Skip compund null wire optmizations for now
-            if lhs_val_str == COMPOUND_NULL or rhs_val_str == COMPOUND_NULL:
+            if lhs_val_str == LOGIC.COMPOUND_NULL or rhs_val_str == LOGIC.COMPOUND_NULL:
                 return None
 
             # Constant enums: future me - yes the future is now
-            lhs_is_enum = WIRE_IS_ENUM(
+            lhs_is_enum = LOGIC.WIRE_IS_ENUM(
                 lhs_wire, parser_state.existing_logic, parser_state
             )
-            rhs_is_enum = WIRE_IS_ENUM(
+            rhs_is_enum = LOGIC.WIRE_IS_ENUM(
                 rhs_wire, parser_state.existing_logic, parser_state
             )
             if lhs_is_enum != rhs_is_enum:
@@ -7069,7 +4888,7 @@ def TRY_CONST_REDUCE_C_AST_N_ARG_FUNC_INST_TO_LOGIC(
             is_ints = VHDL.C_TYPES_ARE_INTEGERS([lhs_c_type, rhs_c_type])
 
             # Then allow for floats, if either float then treat boths as floats
-            is_floats = C_TYPE_IS_FLOAT_TYPE(lhs_c_type) or C_TYPE_IS_FLOAT_TYPE(
+            is_floats = LOGIC.C_TYPE_IS_FLOAT_TYPE(lhs_c_type) or LOGIC.C_TYPE_IS_FLOAT_TYPE(
                 rhs_c_type
             )
 
@@ -7084,48 +4903,48 @@ def TRY_CONST_REDUCE_C_AST_N_ARG_FUNC_INST_TO_LOGIC(
                 sys.exit(-1)
 
             # What type of binary op
-            if func_base_name == (BIN_OP_LOGIC_NAME_PREFIX + "_" + BIN_OP_PLUS_NAME):
+            if func_base_name == (LOGIC.BIN_OP_LOGIC_NAME_PREFIX + "_" + LOGIC.BIN_OP_PLUS_NAME):
                 const_val_str = str(lhs_val + rhs_val)
-            elif func_base_name == (BIN_OP_LOGIC_NAME_PREFIX + "_" + BIN_OP_MINUS_NAME):
+            elif func_base_name == (LOGIC.BIN_OP_LOGIC_NAME_PREFIX + "_" + LOGIC.BIN_OP_MINUS_NAME):
                 const_val_str = str(lhs_val - rhs_val)
-            elif func_base_name == (BIN_OP_LOGIC_NAME_PREFIX + "_" + BIN_OP_OR_NAME):
+            elif func_base_name == (LOGIC.BIN_OP_LOGIC_NAME_PREFIX + "_" + LOGIC.BIN_OP_OR_NAME):
                 const_val_str = str(lhs_val | rhs_val)
-            elif func_base_name == (BIN_OP_LOGIC_NAME_PREFIX + "_" + BIN_OP_XOR_NAME):
+            elif func_base_name == (LOGIC.BIN_OP_LOGIC_NAME_PREFIX + "_" + LOGIC.BIN_OP_XOR_NAME):
                 const_val_str = str(lhs_val ^ rhs_val)
-            elif func_base_name == (BIN_OP_LOGIC_NAME_PREFIX + "_" + BIN_OP_AND_NAME):
+            elif func_base_name == (LOGIC.BIN_OP_LOGIC_NAME_PREFIX + "_" + LOGIC.BIN_OP_AND_NAME):
                 const_val_str = str(lhs_val & rhs_val)
-            elif func_base_name == (BIN_OP_LOGIC_NAME_PREFIX + "_" + BIN_OP_MULT_NAME):
+            elif func_base_name == (LOGIC.BIN_OP_LOGIC_NAME_PREFIX + "_" + LOGIC.BIN_OP_MULT_NAME):
                 const_val_str = str(lhs_val * rhs_val)
             elif func_base_name == (
-                BIN_OP_LOGIC_NAME_PREFIX + "_" + BIN_OP_INFERRED_MULT_NAME
+                LOGIC.BIN_OP_LOGIC_NAME_PREFIX + "_" + LOGIC.BIN_OP_INFERRED_MULT_NAME
             ):
                 const_val_str = str(lhs_val * rhs_val)
-            elif func_base_name == (BIN_OP_LOGIC_NAME_PREFIX + "_" + BIN_OP_DIV_NAME):
+            elif func_base_name == (LOGIC.BIN_OP_LOGIC_NAME_PREFIX + "_" + LOGIC.BIN_OP_DIV_NAME):
                 # Div leaves group of ints and returns float
                 if is_ints:
                     const_val_str = str(int(lhs_val / rhs_val))
                 else:
                     const_val_str = str(lhs_val / rhs_val)
-            elif func_base_name == (BIN_OP_LOGIC_NAME_PREFIX + "_" + BIN_OP_MOD_NAME):
+            elif func_base_name == (LOGIC.BIN_OP_LOGIC_NAME_PREFIX + "_" + LOGIC.BIN_OP_MOD_NAME):
                 const_val_str = str(lhs_val % rhs_val)
-            elif func_base_name == (BIN_OP_LOGIC_NAME_PREFIX + "_" + BIN_OP_LT_NAME):
+            elif func_base_name == (LOGIC.BIN_OP_LOGIC_NAME_PREFIX + "_" + LOGIC.BIN_OP_LT_NAME):
                 const_val_str = "1" if lhs_val < rhs_val else "0"
-            elif func_base_name == (BIN_OP_LOGIC_NAME_PREFIX + "_" + BIN_OP_LTE_NAME):
+            elif func_base_name == (LOGIC.BIN_OP_LOGIC_NAME_PREFIX + "_" + LOGIC.BIN_OP_LTE_NAME):
                 const_val_str = "1" if lhs_val <= rhs_val else "0"
-            elif func_base_name == (BIN_OP_LOGIC_NAME_PREFIX + "_" + BIN_OP_GT_NAME):
+            elif func_base_name == (LOGIC.BIN_OP_LOGIC_NAME_PREFIX + "_" + LOGIC.BIN_OP_GT_NAME):
                 const_val_str = "1" if lhs_val > rhs_val else "0"
-            elif func_base_name == (BIN_OP_LOGIC_NAME_PREFIX + "_" + BIN_OP_GTE_NAME):
+            elif func_base_name == (LOGIC.BIN_OP_LOGIC_NAME_PREFIX + "_" + LOGIC.BIN_OP_GTE_NAME):
                 const_val_str = "1" if lhs_val >= rhs_val else "0"
-            elif func_base_name == (BIN_OP_LOGIC_NAME_PREFIX + "_" + BIN_OP_EQ_NAME):
+            elif func_base_name == (LOGIC.BIN_OP_LOGIC_NAME_PREFIX + "_" + LOGIC.BIN_OP_EQ_NAME):
                 const_val_str = "1" if lhs_val == rhs_val else "0"
-            elif func_base_name == (BIN_OP_LOGIC_NAME_PREFIX + "_" + BIN_OP_NEQ_NAME):
+            elif func_base_name == (LOGIC.BIN_OP_LOGIC_NAME_PREFIX + "_" + LOGIC.BIN_OP_NEQ_NAME):
                 const_val_str = "1" if lhs_val != rhs_val else "0"
             # Bit operations
             elif func_base_name == (
-                BIN_OP_LOGIC_NAME_PREFIX + "_" + BIN_OP_SR_NAME
-            ) or func_base_name == (BIN_OP_LOGIC_NAME_PREFIX + "_" + BIN_OP_SL_NAME):
+                LOGIC.BIN_OP_LOGIC_NAME_PREFIX + "_" + LOGIC.BIN_OP_SR_NAME
+            ) or func_base_name == (LOGIC.BIN_OP_LOGIC_NAME_PREFIX + "_" + LOGIC.BIN_OP_SL_NAME):
                 if is_ints and func_base_name == (
-                    BIN_OP_LOGIC_NAME_PREFIX + "_" + BIN_OP_SR_NAME
+                    LOGIC.BIN_OP_LOGIC_NAME_PREFIX + "_" + LOGIC.BIN_OP_SR_NAME
                 ):
                     # Output type is type of LHS
                     c_type = parser_state.existing_logic.wire_to_c_type[lhs_wire]
@@ -7142,7 +4961,7 @@ def TRY_CONST_REDUCE_C_AST_N_ARG_FUNC_INST_TO_LOGIC(
                     const_val_str = str(output_int)
                     # print(lhs_bin_str,">>",rhs_val, const_val_str)
                 elif is_ints and func_base_name == (
-                    BIN_OP_LOGIC_NAME_PREFIX + "_" + BIN_OP_SL_NAME
+                    LOGIC.BIN_OP_LOGIC_NAME_PREFIX + "_" + LOGIC.BIN_OP_SL_NAME
                 ):
                     # Int constants are made as wide as possible
                     # ex.
@@ -7161,18 +4980,18 @@ def TRY_CONST_REDUCE_C_AST_N_ARG_FUNC_INST_TO_LOGIC(
                     const_val_str = str(output_int)
                     # print(lhs_bin_str,"<<",rhs_val, const_val_str)
                 elif (
-                    C_TYPE_IS_FLOAT_TYPE(lhs_c_type)
+                    LOGIC.C_TYPE_IS_FLOAT_TYPE(lhs_c_type)
                     and VHDL.C_TYPES_ARE_INTEGERS([rhs_c_type])
                     and func_base_name
-                    == (BIN_OP_LOGIC_NAME_PREFIX + "_" + BIN_OP_SL_NAME)
+                    == (LOGIC.BIN_OP_LOGIC_NAME_PREFIX + "_" + LOGIC.BIN_OP_SL_NAME)
                 ):
                     # Implement pow2 mult for <<
                     const_val_str = str(lhs_val * pow(2, rhs_val))
                 elif (
-                    C_TYPE_IS_FLOAT_TYPE(lhs_c_type)
+                    LOGIC.C_TYPE_IS_FLOAT_TYPE(lhs_c_type)
                     and VHDL.C_TYPES_ARE_INTEGERS([rhs_c_type])
                     and func_base_name
-                    == (BIN_OP_LOGIC_NAME_PREFIX + "_" + BIN_OP_SL_NAME)
+                    == (LOGIC.BIN_OP_LOGIC_NAME_PREFIX + "_" + LOGIC.BIN_OP_SL_NAME)
                 ):
                     # Implement pow2 div for >>
                     const_val_str = str(lhs_val / pow(2, rhs_val))
@@ -7191,16 +5010,16 @@ def TRY_CONST_REDUCE_C_AST_N_ARG_FUNC_INST_TO_LOGIC(
 
         # UNARY OPERATIONS
         elif (
-            func_base_name.startswith(UNARY_OP_LOGIC_NAME_PREFIX)
+            func_base_name.startswith(LOGIC.UNARY_OP_LOGIC_NAME_PREFIX)
             and not base_name_is_name
         ):
             in_wire = const_input_wires[0]
             in_c_type = parser_state.existing_logic.wire_to_c_type[in_wire]
-            in_val_str = GET_VAL_STR_FROM_CONST_WIRE(
+            in_val_str = LOGIC.GET_VAL_STR_FROM_CONST_WIRE(
                 in_wire, parser_state.existing_logic, parser_state
             )
             # Skip compund null wire optmizations for now
-            if in_val_str == COMPOUND_NULL:
+            if in_val_str == LOGIC.COMPOUND_NULL:
                 return None
             in_negated = in_val_str.startswith("-")
             in_val_str_no_neg = in_val_str.strip("-")
@@ -7216,11 +5035,11 @@ def TRY_CONST_REDUCE_C_AST_N_ARG_FUNC_INST_TO_LOGIC(
                     func_c_ast_node.coord,
                 )
                 sys.exit(-1)"""
-            if C_TYPE_IS_FLOAT_TYPE(in_c_type):
+            if LOGIC.C_TYPE_IS_FLOAT_TYPE(in_c_type):
                 # Floats
                 # What op?
                 if func_base_name == (
-                    UNARY_OP_LOGIC_NAME_PREFIX + "_" + UNARY_OP_NEGATE_NAME
+                    LOGIC.UNARY_OP_LOGIC_NAME_PREFIX + "_" + LOGIC.UNARY_OP_NEGATE_NAME
                 ):
                     const_val_str = str(in_val * -1.0)
                 else:
@@ -7237,7 +5056,7 @@ def TRY_CONST_REDUCE_C_AST_N_ARG_FUNC_INST_TO_LOGIC(
                 in_width = VHDL.GET_WIDTH_FROM_C_TYPE_STR(parser_state, in_c_type)
                 # What op?
                 if func_base_name == (
-                    UNARY_OP_LOGIC_NAME_PREFIX + "_" + UNARY_OP_NOT_NAME
+                    LOGIC.UNARY_OP_LOGIC_NAME_PREFIX + "_" + LOGIC.UNARY_OP_NOT_NAME
                 ):
                     in_bin_str = int2bin(in_val, in_width)
                     out_bin_str = (
@@ -7246,7 +5065,7 @@ def TRY_CONST_REDUCE_C_AST_N_ARG_FUNC_INST_TO_LOGIC(
                     out_val = to_int(out_bin_str, signed)
                     const_val_str = str(out_val)
                 elif func_base_name == (
-                    UNARY_OP_LOGIC_NAME_PREFIX + "_" + UNARY_OP_NEGATE_NAME
+                    LOGIC.UNARY_OP_LOGIC_NAME_PREFIX + "_" + LOGIC.UNARY_OP_NEGATE_NAME
                 ):
                     const_val_str = str(int(in_val * -1))
                 else:
@@ -7258,24 +5077,24 @@ def TRY_CONST_REDUCE_C_AST_N_ARG_FUNC_INST_TO_LOGIC(
                     )
                     sys.exit(-1)
         # BIT MANIPULATION
-        elif (func_logic is not None) and SW_LIB.IS_BIT_MANIP(func_logic):
+        elif (func_logic is not None) and LOGIC.IS_BIT_MANIP(func_logic):
             # TODO
             return None
         # CASTING
-        elif func_base_name.startswith(CAST_FUNC_NAME_PREFIX) and not base_name_is_name:
+        elif func_base_name.startswith(LOGIC.CAST_FUNC_NAME_PREFIX) and not base_name_is_name:
             in_t = parser_state.existing_logic.wire_to_c_type[const_input_wires[0]]
             out_t = parser_state.existing_logic.wire_to_c_type[
                 output_driven_wire_names[0]
             ]
             const_val_str_known_c_type = out_t
-            in_val_str = GET_VAL_STR_FROM_CONST_WIRE(
+            in_val_str = LOGIC.GET_VAL_STR_FROM_CONST_WIRE(
                 const_input_wires[0], parser_state.existing_logic, parser_state
             )
-            if C_TYPES_ARE_FLOAT_TYPES([in_t, out_t]):
+            if LOGIC.C_TYPES_ARE_FLOAT_TYPES([in_t, out_t]):
                 const_val_str = str(float(in_val_str))
-            elif VHDL.C_TYPES_ARE_INTEGERS([in_t]) and C_TYPE_IS_FLOAT_TYPE(out_t):
+            elif VHDL.C_TYPES_ARE_INTEGERS([in_t]) and LOGIC.C_TYPE_IS_FLOAT_TYPE(out_t):
                 const_val_str = str(float(in_val_str))
-            elif C_TYPE_IS_FLOAT_TYPE(in_t) and VHDL.C_TYPES_ARE_INTEGERS([out_t]):
+            elif LOGIC.C_TYPE_IS_FLOAT_TYPE(in_t) and VHDL.C_TYPES_ARE_INTEGERS([out_t]):
                 const_val_str = str(int(float(in_val_str)))
             elif VHDL.C_TYPES_ARE_INTEGERS([in_t, out_t]):
                 (
@@ -7324,35 +5143,35 @@ def TRY_CONST_REDUCE_C_AST_N_ARG_FUNC_INST_TO_LOGIC(
 
         # MATH FUNCS
         elif func_base_name == "sqrt" and base_name_is_name:
-            in_val_str = GET_VAL_STR_FROM_CONST_WIRE(
+            in_val_str = LOGIC.GET_VAL_STR_FROM_CONST_WIRE(
                 const_input_wires[0], parser_state.existing_logic, parser_state
             )
             in_val = float(in_val_str)
             out_val = math.sqrt(in_val)
             const_val_str = str(out_val)
         elif func_base_name == "ceil" and base_name_is_name:
-            in_val_str = GET_VAL_STR_FROM_CONST_WIRE(
+            in_val_str = LOGIC.GET_VAL_STR_FROM_CONST_WIRE(
                 const_input_wires[0], parser_state.existing_logic, parser_state
             )
             in_val = float(in_val_str)
             out_val = math.ceil(in_val)
             const_val_str = str(out_val)
         elif func_base_name == "log2" and base_name_is_name:
-            in_val_str = GET_VAL_STR_FROM_CONST_WIRE(
+            in_val_str = LOGIC.GET_VAL_STR_FROM_CONST_WIRE(
                 const_input_wires[0], parser_state.existing_logic, parser_state
             )
             in_val = float(in_val_str)
             out_val = math.log2(in_val)
             const_val_str = str(out_val)
         elif func_base_name == "cos" and base_name_is_name:
-            in_val_str = GET_VAL_STR_FROM_CONST_WIRE(
+            in_val_str = LOGIC.GET_VAL_STR_FROM_CONST_WIRE(
                 const_input_wires[0], parser_state.existing_logic, parser_state
             )
             in_val = float(in_val_str)
             out_val = math.cos(in_val)
             const_val_str = str(out_val)
         elif func_base_name == "sin" and base_name_is_name:
-            in_val_str = GET_VAL_STR_FROM_CONST_WIRE(
+            in_val_str = LOGIC.GET_VAL_STR_FROM_CONST_WIRE(
                 const_input_wires[0], parser_state.existing_logic, parser_state
             )
             in_val = float(in_val_str)
@@ -7360,10 +5179,10 @@ def TRY_CONST_REDUCE_C_AST_N_ARG_FUNC_INST_TO_LOGIC(
             const_val_str = str(out_val)
 
         # String funcs
-        elif func_base_name.startswith(PRINTF_FUNC_NAME + "_"):
+        elif func_base_name.startswith(LOGIC.PRINTF_FUNC_NAME + "_"):
             return None
         elif func_base_name.startswith(STRLEN_FUNC_NAME + "_") and base_name_is_name:
-            in_val_str = GET_VAL_STR_FROM_CONST_WIRE(
+            in_val_str = LOGIC.GET_VAL_STR_FROM_CONST_WIRE(
                 const_input_wires[0], parser_state.existing_logic, parser_state
             )
             str_val = in_val_str.strip('"')
@@ -7371,7 +5190,7 @@ def TRY_CONST_REDUCE_C_AST_N_ARG_FUNC_INST_TO_LOGIC(
             const_val_str = str(out_val)
 
         # CONST REFs are ok not to reduce for now. I.e CANNOT PROPOGATE CONSTANTS through compound references (structs, arrays)
-        elif func_base_name.startswith(CONST_REF_RD_FUNC_NAME_PREFIX):
+        elif func_base_name.startswith(LOGIC.CONST_REF_RD_FUNC_NAME_PREFIX):
             return None
         # If func has no inputs and is not global then must be const
         # similar to above cant propogate consts through compound types yet?
@@ -7385,7 +5204,7 @@ def TRY_CONST_REDUCE_C_AST_N_ARG_FUNC_INST_TO_LOGIC(
         if const_val_str.startswith("-"):
             const_val_str = const_val_str.lstrip("-")
             is_negated = True
-        driving_output_port_wire = func_inst_name + SUBMODULE_MARKER + RETURN_WIRE_NAME
+        driving_output_port_wire = func_inst_name + LOGIC.SUBMODULE_MARKER + LOGIC.RETURN_WIRE_NAME
         output_c_type = GET_C_TYPE_FROM_WIRE_NAMES(
             [driving_output_port_wire], parser_state.existing_logic, allow_fail=True
         )
@@ -7397,7 +5216,7 @@ def TRY_CONST_REDUCE_C_AST_N_ARG_FUNC_INST_TO_LOGIC(
         # Remove old submodule instance
         # print "Replacing:",func_inst_name,"with constant",const_val_str
         parser_state.existing_logic.REMOVE_SUBMODULE(
-            func_inst_name, input_port_names, [RETURN_WIRE_NAME], parser_state
+            func_inst_name, input_port_names, [LOGIC.RETURN_WIRE_NAME], parser_state
         )
 
         # Do connection using real parser state and logic
@@ -7427,15 +5246,15 @@ def TRY_CONST_REDUCE_C_AST_N_ARG_FUNC_INST_TO_LOGIC(
     # CONSTANT SHIFT LEFT on INT
     if (
         VHDL.C_TYPES_ARE_INTEGERS([input_driver_types[0]])
-        and func_base_name.startswith(BIN_OP_LOGIC_NAME_PREFIX + "_" + BIN_OP_SL_NAME)
+        and func_base_name.startswith(LOGIC.BIN_OP_LOGIC_NAME_PREFIX + "_" + LOGIC.BIN_OP_SL_NAME)
         and const_input_wires[1] is not None
     ):
         # Replace with const
         rhs_wire = const_input_wires[1]
-        rhs_val_str = GET_VAL_STR_FROM_CONST_WIRE(
+        rhs_val_str = LOGIC.GET_VAL_STR_FROM_CONST_WIRE(
             rhs_wire, parser_state.existing_logic, parser_state
         )
-        new_func_base_name = CONST_PREFIX + BIN_OP_SL_NAME + "_" + rhs_val_str
+        new_func_base_name = LOGIC.CONST_PREFIX + LOGIC.BIN_OP_SL_NAME + "_" + rhs_val_str
         new_base_name_is_name = False  # needs types
         new_input_drivers = [input_drivers[0]]  # Dont need RHS, is const
         new_input_driver_types = [input_driver_types[0]]
@@ -7443,7 +5262,7 @@ def TRY_CONST_REDUCE_C_AST_N_ARG_FUNC_INST_TO_LOGIC(
         new_func_inst_name = BUILD_INST_NAME(
             prepend_text, new_func_base_name, func_c_ast_node
         )
-        new_output_wire = new_func_inst_name + SUBMODULE_MARKER + RETURN_WIRE_NAME
+        new_output_wire = new_func_inst_name + LOGIC.SUBMODULE_MARKER + LOGIC.RETURN_WIRE_NAME
         parser_state.existing_logic.wire_to_c_type[new_output_wire] = (
             new_input_driver_types[0]
         )  # Shift outputs LHS type
@@ -7451,15 +5270,15 @@ def TRY_CONST_REDUCE_C_AST_N_ARG_FUNC_INST_TO_LOGIC(
     # CONSTANT SHIFT RIGHT on INT
     elif (
         VHDL.C_TYPES_ARE_INTEGERS([input_driver_types[0]])
-        and func_base_name.startswith(BIN_OP_LOGIC_NAME_PREFIX + "_" + BIN_OP_SR_NAME)
+        and func_base_name.startswith(LOGIC.BIN_OP_LOGIC_NAME_PREFIX + "_" + LOGIC.BIN_OP_SR_NAME)
         and const_input_wires[1] is not None
     ):
         # Replace with const
         rhs_wire = const_input_wires[1]
-        rhs_val_str = GET_VAL_STR_FROM_CONST_WIRE(
+        rhs_val_str = LOGIC.GET_VAL_STR_FROM_CONST_WIRE(
             rhs_wire, parser_state.existing_logic, parser_state
         )
-        new_func_base_name = CONST_PREFIX + BIN_OP_SR_NAME + "_" + rhs_val_str
+        new_func_base_name = LOGIC.CONST_PREFIX + LOGIC.BIN_OP_SR_NAME + "_" + rhs_val_str
         new_base_name_is_name = False  # needs types
         new_input_drivers = [input_drivers[0]]  # Dont need RHS, is const
         new_input_driver_types = [input_driver_types[0]]
@@ -7467,28 +5286,28 @@ def TRY_CONST_REDUCE_C_AST_N_ARG_FUNC_INST_TO_LOGIC(
         new_func_inst_name = BUILD_INST_NAME(
             prepend_text, new_func_base_name, func_c_ast_node
         )
-        new_output_wire = new_func_inst_name + SUBMODULE_MARKER + RETURN_WIRE_NAME
+        new_output_wire = new_func_inst_name + LOGIC.SUBMODULE_MARKER + LOGIC.RETURN_WIRE_NAME
         parser_state.existing_logic.wire_to_c_type[new_output_wire] = (
             new_input_driver_types[0]
         )  # Shift outputs LHS type
         is_reducable = True
     # CONSTANT condition MUX
-    elif func_base_name == MUX_LOGIC_NAME and const_input_wires[0] is not None:
+    elif func_base_name == LOGIC.MUX_LOGIC_NAME and const_input_wires[0] is not None:
         # What is const value for condition?
-        const_val_str = GET_VAL_STR_FROM_CONST_WIRE(
+        const_val_str = LOGIC.GET_VAL_STR_FROM_CONST_WIRE(
             const_input_wires[0], parser_state.existing_logic, parser_state
         )
         val, unused_c_type = NON_ENUM_CONST_VALUE_STR_TO_VALUE_AND_C_TYPE(
             const_val_str,
             func_c_ast_node,
             is_negated=False,
-            expected_c_type=BOOL_C_TYPE,
+            expected_c_type=LOGIC.BOOL_C_TYPE,
         )
         # Not reducing to replacement func,
         # is just wire from selected input driver to output wires
         # Remove old submodule instance
         parser_state.existing_logic.REMOVE_SUBMODULE(
-            func_inst_name, input_port_names, [RETURN_WIRE_NAME], parser_state
+            func_inst_name, input_port_names, [LOGIC.RETURN_WIRE_NAME], parser_state
         )
         if val == 1:
             # Select true branch
@@ -7509,7 +5328,7 @@ def TRY_CONST_REDUCE_C_AST_N_ARG_FUNC_INST_TO_LOGIC(
         )
         return parser_state.existing_logic
     # Constant one hot enum compare eq
-    elif func_base_name == ONE_HOT_EQ_LOGIC_NAME and (
+    elif func_base_name == LOGIC.ONE_HOT_EQ_LOGIC_NAME and (
         const_input_wires[0] is not None or const_input_wires[1] is not None
     ):
         # Which input is the const left or right?
@@ -7521,7 +5340,7 @@ def TRY_CONST_REDUCE_C_AST_N_ARG_FUNC_INST_TO_LOGIC(
             const_input_wire = const_input_wires[1]
             var_input_driver = input_drivers[0]
         # What is the constant?
-        const_val_str = GET_VAL_STR_FROM_CONST_WIRE(
+        const_val_str = LOGIC.GET_VAL_STR_FROM_CONST_WIRE(
             const_input_wire, parser_state.existing_logic, parser_state
         )
         # Will be an enum const, convert to int...
@@ -7540,16 +5359,16 @@ def TRY_CONST_REDUCE_C_AST_N_ARG_FUNC_INST_TO_LOGIC(
         new_input_driver_types = [int_c_type]
         new_input_port_names = [
             "x"
-        ]  # Port name on submodule (from SW_LIB.GET_BIT_MANIP_H_LOGIC_LOOKUP_FROM_CODE_TEXT)
+        ]  # Port name on submodule (from GET_BIT_MANIP_H_LOGIC_LOOKUP_FROM_CODE_TEXT)
         APPEND_BIT_MANIP_FUNC(new_func_base_name, parser_state)
         is_reducable = True
     # Turn uint1_t!=0, and uint1_t==1 into pass through wires (mostly for bool supporting inserting NEQ 0)
     elif (
-        func_base_name.startswith(BIN_OP_LOGIC_NAME_PREFIX + "_" + BIN_OP_NEQ_NAME)
-        or func_base_name.startswith(BIN_OP_LOGIC_NAME_PREFIX + "_" + BIN_OP_EQ_NAME)
+        func_base_name.startswith(LOGIC.BIN_OP_LOGIC_NAME_PREFIX + "_" + LOGIC.BIN_OP_NEQ_NAME)
+        or func_base_name.startswith(LOGIC.BIN_OP_LOGIC_NAME_PREFIX + "_" + LOGIC.BIN_OP_EQ_NAME)
     ) and (
-        (const_input_wires[0] is not None and input_driver_types[1] == BOOL_C_TYPE)
-        or (const_input_wires[1] is not None and input_driver_types[0] == BOOL_C_TYPE)
+        (const_input_wires[0] is not None and input_driver_types[1] == LOGIC.BOOL_C_TYPE)
+        or (const_input_wires[1] is not None and input_driver_types[0] == LOGIC.BOOL_C_TYPE)
     ):
         # Which is var?
         if const_input_wires[0] is not None:
@@ -7559,10 +5378,10 @@ def TRY_CONST_REDUCE_C_AST_N_ARG_FUNC_INST_TO_LOGIC(
             const_input_wire = const_input_wires[1]
             var_input_driver = input_drivers[0]
         # What is const value?
-        const_val_str = GET_VAL_STR_FROM_CONST_WIRE(
+        const_val_str = LOGIC.GET_VAL_STR_FROM_CONST_WIRE(
             const_input_wire, parser_state.existing_logic, parser_state
         )
-        if WIRE_IS_ENUM(const_input_wire, parser_state.existing_logic, parser_state):
+        if LOGIC.WIRE_IS_ENUM(const_input_wire, parser_state.existing_logic, parser_state):
             # TODO const enum compare reduce...and only for 1b enums...come on...
             is_reducable = False
         else:
@@ -7570,24 +5389,24 @@ def TRY_CONST_REDUCE_C_AST_N_ARG_FUNC_INST_TO_LOGIC(
                 const_val_str,
                 func_c_ast_node,
                 is_negated=False,
-                expected_c_type=BOOL_C_TYPE,
+                expected_c_type=LOGIC.BOOL_C_TYPE,
             )
             # uint1_t!=0, and uint1_t==1 #TODO  uint1_t==0 and uint1_t!=1 is NOT
             if (
                 func_base_name.startswith(
-                    BIN_OP_LOGIC_NAME_PREFIX + "_" + BIN_OP_NEQ_NAME
+                    LOGIC.BIN_OP_LOGIC_NAME_PREFIX + "_" + LOGIC.BIN_OP_NEQ_NAME
                 )
                 and val == 0
             ) or (
                 func_base_name.startswith(
-                    BIN_OP_LOGIC_NAME_PREFIX + "_" + BIN_OP_EQ_NAME
+                    LOGIC.BIN_OP_LOGIC_NAME_PREFIX + "_" + LOGIC.BIN_OP_EQ_NAME
                 )
                 and val == 1
             ):
                 # Not reducing to replacement func, is just wire from input driver output wires
                 # Remove old submodule instance
                 parser_state.existing_logic.REMOVE_SUBMODULE(
-                    func_inst_name, input_port_names, [RETURN_WIRE_NAME], parser_state
+                    func_inst_name, input_port_names, [LOGIC.RETURN_WIRE_NAME], parser_state
                 )
                 # And connect input port drive to output driven wires
                 parser_state.existing_logic = APPLY_CONNECT_WIRES_LOGIC(
@@ -7607,7 +5426,7 @@ def TRY_CONST_REDUCE_C_AST_N_ARG_FUNC_INST_TO_LOGIC(
     # Remove old submodule instance
     # print "Replacing:",func_inst_name, "with reduced function", new_func_base_name
     parser_state.existing_logic.REMOVE_SUBMODULE(
-        func_inst_name, input_port_names, [RETURN_WIRE_NAME], parser_state
+        func_inst_name, input_port_names, [LOGIC.RETURN_WIRE_NAME], parser_state
     )
 
     # And remove the constant wires that were optimized away ?
@@ -7676,7 +5495,7 @@ def C_AST_N_ARG_FUNC_INST_TO_LOGIC(
     # Should not be evaluating c ast node if driver is already known
     for input_i in range(0, len(input_port_names)):
         input_port_name = input_port_names[input_i]
-        input_port_wire = func_inst_name + SUBMODULE_MARKER + input_port_name
+        input_port_wire = func_inst_name + LOGIC.SUBMODULE_MARKER + input_port_name
         if input_port_wire in parser_state.existing_logic.wire_driven_by and isinstance(
             input_drivers[input_i], c_ast.Node
         ):
@@ -7700,7 +5519,7 @@ def C_AST_N_ARG_FUNC_INST_TO_LOGIC(
         # Get types from func defs
         func_def_logic_object = parser_state.FuncLogicLookupTable[func_base_name]
         for input_port in func_def_logic_object.inputs:
-            input_port_wire = func_inst_name + SUBMODULE_MARKER + input_port
+            input_port_wire = func_inst_name + LOGIC.SUBMODULE_MARKER + input_port
             parser_state.existing_logic.wire_to_c_type[input_port_wire] = (
                 func_def_logic_object.wire_to_c_type[input_port]
             )
@@ -7709,26 +5528,26 @@ def C_AST_N_ARG_FUNC_INST_TO_LOGIC(
     # Should be knowable except for mux, which can be inferred
     # Set type for outputs based on func_name (only base name known right now? base name== func name for parsed C coe) if possible
     output_type = None
-    output_wire_name = func_inst_name + SUBMODULE_MARKER + RETURN_WIRE_NAME
+    output_wire_name = func_inst_name + LOGIC.SUBMODULE_MARKER + LOGIC.RETURN_WIRE_NAME
     if func_base_name in parser_state.FuncLogicLookupTable:
         output_type = "void"
         func_def_logic_object = parser_state.FuncLogicLookupTable[func_base_name]
         if len(func_def_logic_object.outputs) > 0:
             # Get type of output
-            output_type = func_def_logic_object.wire_to_c_type[RETURN_WIRE_NAME]
+            output_type = func_def_logic_object.wire_to_c_type[LOGIC.RETURN_WIRE_NAME]
     # Set type for outputs based on output port if possible
     elif output_wire_name in parser_state.existing_logic.wire_to_c_type:
         output_type = parser_state.existing_logic.wire_to_c_type[output_wire_name]
     # Mux Types must match to assume
     elif (
-        func_base_name == MUX_LOGIC_NAME
+        func_base_name == LOGIC.MUX_LOGIC_NAME
         and (input_driver_types[1] == input_driver_types[2])
         and input_driver_types[1] is not None
     ):
         output_type = input_driver_types[1]  # [0] is cond for mux
         parser_state.existing_logic.wire_to_c_type[output_wire_name] = output_type
     # Or muxing integers, take max size
-    elif func_base_name == MUX_LOGIC_NAME and VHDL.C_TYPES_ARE_INTEGERS(
+    elif func_base_name == LOGIC.MUX_LOGIC_NAME and VHDL.C_TYPES_ARE_INTEGERS(
         input_driver_types[1:3]
     ):
         # print("output type for func",func_base_name, input_driver_types, func_c_ast_node.coord)
@@ -7754,15 +5573,15 @@ def C_AST_N_ARG_FUNC_INST_TO_LOGIC(
             input_type = output_type
             input_driver_types[input_i] = input_type
             input_port_wire = (
-                func_inst_name + SUBMODULE_MARKER + input_port_names[input_i]
+                func_inst_name + LOGIC.SUBMODULE_MARKER + input_port_names[input_i]
             )
             parser_state.existing_logic.wire_to_c_type[input_port_wire] = input_type
         # print("Mux type",input_type)
     # Printf returns void for now
-    elif func_base_name.startswith(PRINTF_FUNC_NAME + "_"):
+    elif func_base_name.startswith(LOGIC.PRINTF_FUNC_NAME + "_"):
         output_type = "void"
     # __vhdl__ also void
-    elif func_base_name == VHDL_FUNC_NAME:
+    elif func_base_name == LOGIC.VHDL_FUNC_NAME:
         output_type = "void"
 
     # Try to infer out type from driven wires if not set by now? # Hacky?
@@ -7801,7 +5620,7 @@ def C_AST_N_ARG_FUNC_INST_TO_LOGIC(
         return const_reduced_logic
 
     # Build func name
-    func_name = BUILD_FUNC_NAME(
+    func_name = LOGIC.BUILD_FUNC_NAME(
         func_base_name, output_type, input_driver_types, base_name_is_name
     )
     # Sub module inst
@@ -7816,11 +5635,11 @@ def C_AST_N_ARG_FUNC_INST_TO_LOGIC(
     # OK since up until printf, all built in funcs were pure, no clock enable
     if func_name in parser_state.FuncLogicLookupTable:
         func_def_logic_object = parser_state.FuncLogicLookupTable[func_name]
-        if LOGIC_NEEDS_CLOCK_ENABLE(func_def_logic_object, parser_state):
+        if LOGIC.LOGIC_NEEDS_CLOCK_ENABLE(func_def_logic_object, parser_state):
             ce_driver_wire = parser_state.existing_logic.clock_enable_wires[-1]
-            func_ce_wire = func_inst_name + SUBMODULE_MARKER + CLOCK_ENABLE_NAME
+            func_ce_wire = func_inst_name + LOGIC.SUBMODULE_MARKER + LOGIC.CLOCK_ENABLE_NAME
             # print(func_ce_wire,"<=",ce_driver_wire)
-            parser_state.existing_logic.wire_to_c_type[func_ce_wire] = BOOL_C_TYPE
+            parser_state.existing_logic.wire_to_c_type[func_ce_wire] = LOGIC.BOOL_C_TYPE
             parser_state.existing_logic = APPLY_CONNECT_WIRES_LOGIC(
                 parser_state,
                 ce_driver_wire,
@@ -7839,7 +5658,7 @@ def C_AST_N_ARG_FUNC_INST_TO_LOGIC(
     for i in range(0, len(input_drivers)):
         input_port_name = input_port_names[i]
         input_driver_type = input_driver_types[i]
-        driven_input_wire_name = func_inst_name + SUBMODULE_MARKER + input_port_name
+        driven_input_wire_name = func_inst_name + LOGIC.SUBMODULE_MARKER + input_port_name
 
         # Sanity check types instead of relying on them
         # Check type for input based on func_name if possible
@@ -7868,7 +5687,7 @@ def C_AST_N_ARG_FUNC_INST_TO_LOGIC(
 
     # Outputs
     # Most special type inferring post input connections for implicit template kind of things?
-    if func_base_name == ACCUM_FUNC_NAME:
+    if func_base_name == LOGIC.ACCUM_FUNC_NAME:
         output_type = input_driver_types[
             0
         ]  # First increment is same as output type,storage
@@ -7920,79 +5739,6 @@ def C_AST_N_ARG_FUNC_INST_TO_LOGIC(
     return parser_state.existing_logic
 
 
-_LOGIC_NEEDS_CLOCK_ENABLE_cache = {}
-
-
-def LOGIC_NEEDS_CLOCK_ENABLE(logic, parser_state):
-    try:
-        needs = _LOGIC_NEEDS_CLOCK_ENABLE_cache[logic.func_name]
-        # print("Got cache!")
-        return needs
-    except:
-        pass
-
-    # Only async/flow control clock crossings (need clock enable to work with their write and read enable side fifos)
-    # or WRITE side on wires that will default hold value
-    # Almost covered by LOGIC_NEEDS_MODULE_TO_GLOBAL but thats for submodules
-    if logic.is_clock_crossing:
-        # i_need = VHDL.LOGIC_NEEDS_MODULE_TO_GLOBAL(logic, parser_state)
-        clk_cross_var = CLK_CROSS_FUNC_TO_VAR_NAME(logic.func_name)
-        clk_cross_info = parser_state.clk_cross_var_info[clk_cross_var]
-        i_need = ("_WRITE" in logic.func_name) or clk_cross_info.flow_control
-    else:
-        # TODO use needs clock too?
-        i_need = (
-            len(logic.state_regs) > 0
-            or logic.uses_nonvolatile_state_regs
-            or IS_SIM_CTRL_FUNC_NAME(logic.func_name)
-        )
-
-    # Check submodules too
-    needs = i_need
-
-    if not needs:
-        sub_funcs = set(logic.submodule_instances.values())
-        for submodule_logic_name in sub_funcs:
-            # If not in FuncLogicLookupTable then not parsed from C code (i.e. built in assumed?), couldnt need clock enable
-            if submodule_logic_name in parser_state.FuncLogicLookupTable:
-                submodule_logic = parser_state.FuncLogicLookupTable[
-                    submodule_logic_name
-                ]
-                needs = needs or LOGIC_NEEDS_CLOCK_ENABLE(submodule_logic, parser_state)
-                if needs:
-                    break
-            elif IS_SIM_CTRL_FUNC_NAME(submodule_logic_name):
-                needs = True
-                break
-
-    _LOGIC_NEEDS_CLOCK_ENABLE_cache[logic.func_name] = needs
-
-    return needs
-
-
-def BUILD_FUNC_NAME(func_base_name, output_type, input_driver_types, base_name_is_name):
-    # Build func name
-    func_name = func_base_name
-    if not base_name_is_name:
-        types_str = ""
-        ## Output type
-        # types_str += "_" + output_type.replace("[","_").replace("]","")
-        # Append input types to base name
-        for input_driver_type in input_driver_types:
-            if input_driver_type is None:
-                print(
-                    "Oh no, dont know types building func name instance", func_base_name
-                )
-                print(0 / 0)
-                sys.exit(-1)
-            # Input could be array type with brackets so remove for safe C func name
-            types_str += "_" + input_driver_type.replace("[", "_").replace("]", "")
-
-        func_name = func_base_name + types_str
-
-    return func_name
-
-
 # Base name only is different for built in ops
 # OK to use only base name (no types)
 # here since this inst name is only leaf, full inst name will be type specific
@@ -8001,84 +5747,6 @@ def BUILD_INST_NAME(prepend_text, func_base_name, c_ast_node):
     file_coord_str = C_AST_NODE_COORD_STR(c_ast_node)
     inst_name = prepend_text + func_base_name + "[" + file_coord_str + "]"
     return inst_name
-
-
-class PrintfFormat:
-    def __init__(self):
-        self.index = None
-        self.specifier = None
-        self.c_type = None
-        self.vhdl_to_string_toks = [None, None]
-        self.base = None
-
-
-def PRTINTF_STRING_TO_FORMATS(format_string):
-    rv = []
-    # Parse format string to get types of arguments
-    # Thanks internet, https://stackoverflow.com/questions/30011379/how-can-i-parse-a-c-format-string-in-python
-
-    cfmt = (
-        f"""\
-        (                                  # start of capture group 1
-        %                                  # literal "%"
-        (?:                                # first option
-        (?:[-+0 #]"""
-        + "{0,5})"
-        + rf"""    # optional flags
-        (?:\d+|\*)?                        # width
-        (?:\.(?:\d+|\*))?                  # precision
-        (?:h|l|ll|w|I|I32|I64)?            # size
-        [cCdiouxXeEfgGaAnpsSZ]             # type
-        ) |                                # OR
-        %%)                                # literal "%%"
-        """
-    )
-    format_specifier_tups = tuple(
-        (m.start(1), m.group(1)) for m in re.finditer(cfmt, format_string, flags=re.X)
-    )
-    for format_specifier_tup in format_specifier_tups:
-        index, format_specifier = format_specifier_tup
-        f = PrintfFormat()
-        f.index = index
-        f.specifier = format_specifier
-        if format_specifier == "%d":
-            f.c_type = "int32_t"
-            f.base = 10
-            f.vhdl_to_string_toks = ["integer'image(to_integer(", "))"]
-        elif format_specifier == "%u":
-            f.c_type = "uint32_t"  # VHDL cant do full u32 range printed as int?32
-            f.base = 10
-            f.vhdl_to_string_toks = ["integer'image(to_integer(", "))"]
-        elif (format_specifier == "%08X") or (
-            format_specifier == "%X"
-        ):  # hstring is UPPER CASE and 32b wide
-            f.c_type = "uint32_t"
-            f.base = 16
-            f.vhdl_to_string_toks = ["to_hstring(", ")"]
-        elif format_specifier == "%f":
-            f.c_type = "float"
-            f.base = None
-            f.vhdl_to_string_toks = ["real'image(to_real(to_float(", ")))"]
-        elif format_specifier == "%c":
-            f.c_type = "char"
-            f.base = None
-            f.vhdl_to_string_toks = ["character'val(to_integer(", "))"]
-        elif format_specifier == "%s":
-            # Real type/size not known from the format string alone -- callers
-            # (C_AST_PRINTF_FUNC_CALL_TO_LOGIC) inspect the driving wire's actual type
-            # instead, mirroring C_AST_STRLEN_FUNC_CALL_TO_LOGIC. VHDL codegen already
-            # supports any real length (to_string() operates on the unconstrained
-            # byte_array_t), so no placeholder size is needed here.
-            f.c_type = None
-            f.base = None
-            f.vhdl_to_string_toks = ["to_string(", ")"]
-        else:
-            print("TODO: Unsupported printf format:", format_specifier)
-            sys.exit(-1)
-
-        rv.append(f)
-
-    return rv
 
 
 def C_AST_PRINTF_FUNC_CALL_TO_FORMATS(c_ast_func_call):
@@ -8091,7 +5759,7 @@ def C_AST_PRINTF_FUNC_CALL_TO_FORMATS(c_ast_func_call):
         print("Hey now, simple printfs for now!", c_ast_func_call.coord)
         sys.exit(-1)
     format_string = str_arg.value
-    return PRTINTF_STRING_TO_FORMATS(format_string)
+    return LOGIC.PRTINTF_STRING_TO_FORMATS(format_string)
 
 
 def C_AST_PRINTF_FUNC_CALL_TO_LOGIC(
@@ -8114,7 +5782,7 @@ def C_AST_PRINTF_FUNC_CALL_TO_LOGIC(
         arg_base.append(f.base)
     # Make up a func call to eval
     func_base_name = (
-        PRINTF_FUNC_NAME
+        LOGIC.PRINTF_FUNC_NAME
         + "_"
         + VHDL.WIRE_TO_VHDL_NAME(C_AST_NODE_COORD_STR(c_ast_func_call))
     )
@@ -8134,7 +5802,7 @@ def C_AST_PRINTF_FUNC_CALL_TO_LOGIC(
     # instead of PRTINTF_STRING_TO_FORMATS's placeholder (None) for %s.
     for i, f in enumerate(formats):
         if f.specifier == "%s":
-            input_wire_name = func_inst_name + SUBMODULE_MARKER + input_port_names[i]
+            input_wire_name = func_inst_name + LOGIC.SUBMODULE_MARKER + input_port_names[i]
             parser_state.existing_logic = C_AST_NODE_TO_LOGIC(
                 format_args[i], [input_wire_name], prepend_text, parser_state
             )
@@ -8145,8 +5813,8 @@ def C_AST_PRINTF_FUNC_CALL_TO_LOGIC(
             input_driver_types[i] = real_type
             input_drivers[i] = driver_of_input  # resolved wire name, not a c_ast node
 
-    func_ce_wire = func_inst_name + SUBMODULE_MARKER + CLOCK_ENABLE_NAME
-    parser_state.existing_logic.wire_to_c_type[func_ce_wire] = BOOL_C_TYPE
+    func_ce_wire = func_inst_name + LOGIC.SUBMODULE_MARKER + LOGIC.CLOCK_ENABLE_NAME
+    parser_state.existing_logic.wire_to_c_type[func_ce_wire] = LOGIC.BOOL_C_TYPE
     # This is suspiciously stolen from n arg where it doesnt happen since printf is first
     # built in needing clock enable?
     # Hey future me - hope things are still kool
@@ -8186,17 +5854,17 @@ def APPEND_BIT_MANIP_FUNC(bit_manip_func_name, parser_state):
         input_port_names,
         input_types,
         output_type,
-    ) = SW_LIB.BIT_SEL_FUNC_TO_INPUTS_TYPES_OUTPUT_TYPE(bit_manip_func_name)
+    ) = BIT_SEL_FUNC_TO_INPUTS_TYPES_OUTPUT_TYPE(bit_manip_func_name)
     if bit_manip_func_name not in parser_state.FuncLogicLookupTable:
-        bit_manip_func_logic = Logic()
+        bit_manip_func_logic = LOGIC.Logic()
         bit_manip_func_logic.func_name = bit_manip_func_name
         for i in range(0, len(input_port_names)):
             input_port_name = input_port_names[i]
             input_type = input_types[i]
             bit_manip_func_logic.inputs.append(input_port_name)
             bit_manip_func_logic.wire_to_c_type[input_port_name] = input_type
-        bit_manip_func_logic.outputs.append(RETURN_WIRE_NAME)
-        bit_manip_func_logic.wire_to_c_type[RETURN_WIRE_NAME] = output_type
+        bit_manip_func_logic.outputs.append(LOGIC.RETURN_WIRE_NAME)
+        bit_manip_func_logic.wire_to_c_type[LOGIC.RETURN_WIRE_NAME] = output_type
         bit_manip_func_logic.is_vhdl_func = True
         bit_manip_func_logic.is_new_style_bit_manip = True
         parser_state.FuncLogicLookupTable[bit_manip_func_name] = bit_manip_func_logic
@@ -8216,7 +5884,7 @@ def C_AST_VAR_AS_FUNC_CALL_TO_LOGIC(
     # As is tradition, do the easiest possible thing first
     # and see what happens for future me
     is_bit_sel = False
-    if VHDL.C_TYPES_ARE_INTEGERS([c_type]) or C_TYPES_ARE_FLOAT_TYPES([c_type]):
+    if VHDL.C_TYPES_ARE_INTEGERS([c_type]) or LOGIC.C_TYPES_ARE_FLOAT_TYPES([c_type]):
         if len(args) == 1 or len(args) == 2:
             is_bit_sel = True
     if is_bit_sel:
@@ -8233,7 +5901,7 @@ def C_AST_VAR_AS_FUNC_CALL_TO_LOGIC(
                 )
             arg_const_strs.append(arg_const_str)
         # Build func name starting with type info
-        if C_TYPES_ARE_FLOAT_TYPES([c_type]):
+        if LOGIC.C_TYPES_ARE_FLOAT_TYPES([c_type]):
             bit_manip_func_name = c_type
         else:
             int_prefix = c_type.replace("_t", "")
@@ -8246,16 +5914,16 @@ def C_AST_VAR_AS_FUNC_CALL_TO_LOGIC(
         elif len(arg_const_strs) == 2:
             for arg_const_str in arg_const_strs:
                 bit_manip_func_name += "_" + arg_const_str
-        # Unlike SW_LIB generating C headers to parse and create func def objects,
+        # Unlike the C code generation section generating C headers to parse and create func def objects,
         # Do the same thing here, during function body parsing, as come across new funcs?
         (
             input_port_names,
             input_types,
             output_type,
-        ) = SW_LIB.BIT_SEL_FUNC_TO_INPUTS_TYPES_OUTPUT_TYPE(bit_manip_func_name)
+        ) = BIT_SEL_FUNC_TO_INPUTS_TYPES_OUTPUT_TYPE(bit_manip_func_name)
         input_port_name = input_port_names[0]
         APPEND_BIT_MANIP_FUNC(bit_manip_func_name, parser_state)
-        # Make up a func call to eval, copying SW_LIB funcs? hacky hack
+        # Make up a func call to eval, copying generated C code funcs? hacky hack
         func_base_name = bit_manip_func_name
         base_name_is_name = True  # Dont need type into since base name has it
         input_port_names = [input_port_name]
@@ -8296,18 +5964,18 @@ def C_AST_STRLEN_FUNC_CALL_TO_LOGIC(
     func_inst_name = BUILD_INST_NAME(prepend_text, func_base_name, c_ast_func_call)
     input_expr_c_ast_node = c_ast_func_call.args.exprs[0]
     input_port_name = "str"
-    input_wire_name = func_inst_name + SUBMODULE_MARKER + input_port_name
+    input_wire_name = func_inst_name + LOGIC.SUBMODULE_MARKER + input_port_name
     parser_state.existing_logic = C_AST_NODE_TO_LOGIC(
         input_expr_c_ast_node, [input_wire_name], prepend_text, parser_state
     )
     # Get driver of input and use that type to determine strlen io types
     driver_of_input = parser_state.existing_logic.wire_driven_by[input_wire_name]
     input_type = parser_state.existing_logic.wire_to_c_type[driver_of_input]
-    elem_t, dims = C_ARRAY_TYPE_TO_ELEM_TYPE_AND_DIMS(input_type)
+    elem_t, dims = LOGIC.C_ARRAY_TYPE_TO_ELEM_TYPE_AND_DIMS(input_type)
     strlen = dims[0]
     bitwidth = strlen.bit_length()
     output_type = "uint" + str(bitwidth) + "_t"
-    output_wire = func_inst_name + SUBMODULE_MARKER + RETURN_WIRE_NAME
+    output_wire = func_inst_name + LOGIC.SUBMODULE_MARKER + LOGIC.RETURN_WIRE_NAME
     parser_state.existing_logic.wire_to_c_type[output_wire] = output_type
 
     # Then do normal N ARG INST
@@ -8316,8 +5984,8 @@ def C_AST_STRLEN_FUNC_CALL_TO_LOGIC(
     input_port_names = [input_port_name]
     output_driven_wire_names = driven_wire_names
     # Need special CE handling like printf?
-    func_ce_wire = func_inst_name + SUBMODULE_MARKER + CLOCK_ENABLE_NAME
-    parser_state.existing_logic.wire_to_c_type[func_ce_wire] = BOOL_C_TYPE
+    func_ce_wire = func_inst_name + LOGIC.SUBMODULE_MARKER + LOGIC.CLOCK_ENABLE_NAME
+    parser_state.existing_logic.wire_to_c_type[func_ce_wire] = LOGIC.BOOL_C_TYPE
     ce_driver_wire = parser_state.existing_logic.clock_enable_wires[-1]
     parser_state.existing_logic = APPLY_CONNECT_WIRES_LOGIC(
         parser_state, ce_driver_wire, [func_ce_wire], prepend_text, c_ast_func_call
@@ -8393,9 +6061,9 @@ def C_AST_ACCUM_FUNC_CALL_TO_LOGIC(
     c_ast_func_call, driven_wire_names, prepend_text, parser_state
 ):
     """
-    # Unlike SW_LIB generating C headers to parse and create func def objects,
+    # Unlike the C code generation section generating C headers to parse and create func def objects,
     # Do the same thing here, during function body parsing, as come across new funcs?
-    input_port_names, input_types, output_type = SW_LIB.BIT_SEL_FUNC_TO_INPUTS_TYPES_OUTPUT_TYPE(bit_manip_func_name)
+    input_port_names, input_types, output_type = BIT_SEL_FUNC_TO_INPUTS_TYPES_OUTPUT_TYPE(bit_manip_func_name)
     input_port_name = input_port_names[0]
     if bit_manip_func_name not in parser_state.FuncLogicLookupTable:
       bit_manip_func_logic = Logic()
@@ -8411,7 +6079,7 @@ def C_AST_ACCUM_FUNC_CALL_TO_LOGIC(
 
     # Tempalte/built in style
     base_name_is_name = False  # DO NEED types appended
-    func_base_name = ACCUM_FUNC_NAME
+    func_base_name = LOGIC.ACCUM_FUNC_NAME
     input_port_names = ["increment", "reset_and_read"]
     input_driver_types = [None, "uint1_t"]  # Inc type unknown now is ok?
     input_drivers = list(c_ast_func_call.args.exprs)  # c ast nodes
@@ -8444,11 +6112,11 @@ def C_AST_FUNC_CALL_TO_LOGIC(
         # Aww can brams get in on this too?
         # Animal Collective - Sand That Moves
         # Just wait and see how vars as func names works out!
-        if func_name == VHDL_FUNC_NAME:
+        if func_name == LOGIC.VHDL_FUNC_NAME:
             return C_AST_VHDL_TEXT_FUNC_CALL_TO_LOGIC(
                 c_ast_func_call, driven_wire_names, prepend_text, parser_state
             )
-        elif func_name == PRINTF_FUNC_NAME:
+        elif func_name == LOGIC.PRINTF_FUNC_NAME:
             return C_AST_PRINTF_FUNC_CALL_TO_LOGIC(
                 c_ast_func_call, driven_wire_names, prepend_text, parser_state
             )
@@ -8456,15 +6124,15 @@ def C_AST_FUNC_CALL_TO_LOGIC(
             return C_AST_STRLEN_FUNC_CALL_TO_LOGIC(
                 c_ast_func_call, driven_wire_names, prepend_text, parser_state
             )
-        elif "_" + SW_LIB.RAM_SP_RF in func_name:
+        elif "_" + LOGIC.RAM_SP_RF in func_name:
             # Hacky af remove def of original state reg local (is used by mangled func)
-            local_static_var = func_name.split("_" + SW_LIB.RAM_SP_RF)[0]
+            local_static_var = func_name.split("_" + LOGIC.RAM_SP_RF)[0]
             if local_static_var not in parser_state.existing_logic.state_regs:
                 print(
                     "Doesnt look like",
                     local_static_var,
                     "was recognized as correct",
-                    SW_LIB.RAM_SP_RF,
+                    LOGIC.RAM_SP_RF,
                     "RAM template?",
                     c_ast_func_call.coord,
                 )
@@ -8481,15 +6149,15 @@ def C_AST_FUNC_CALL_TO_LOGIC(
                 parser_state.existing_logic.uses_nonvolatile_state_regs = False
             # Mangle to include local func name calling this func
             func_name = parser_state.existing_logic.func_name + "_" + func_name
-        elif "_" + SW_LIB.RAM_DP_RF in func_name:
+        elif "_" + LOGIC.RAM_DP_RF in func_name:
             # Hacky af remove def of original state reg local (is used by mangled func)
-            local_static_var = func_name.split("_" + SW_LIB.RAM_DP_RF)[0]
+            local_static_var = func_name.split("_" + LOGIC.RAM_DP_RF)[0]
             if local_static_var not in parser_state.existing_logic.state_regs:
                 print(
                     "Doesnt look like",
                     local_static_var,
                     "was recognized as correct",
-                    SW_LIB.RAM_DP_RF,
+                    LOGIC.RAM_DP_RF,
                     "RAM template?",
                     c_ast_func_call.coord,
                 )
@@ -8511,7 +6179,7 @@ def C_AST_FUNC_CALL_TO_LOGIC(
             return C_AST_VAR_AS_FUNC_CALL_TO_LOGIC(
                 c_ast_func_call, driven_wire_names, prepend_text, parser_state
             )
-        elif func_name == ACCUM_FUNC_NAME:
+        elif func_name == LOGIC.ACCUM_FUNC_NAME:
             return C_AST_ACCUM_FUNC_CALL_TO_LOGIC(
                 c_ast_func_call, driven_wire_names, prepend_text, parser_state
             )
@@ -8584,10 +6252,10 @@ def C_AST_FUNC_CALL_TO_LOGIC(
 def C_AST_CAST_TO_LOGIC(c_ast_node, driven_wire_names, prepend_text, parser_state):
     output_t = str(c_ast_node.to_type.type.type.names[0])
     # Need to evaluate input node/type first
-    func_base_name = CAST_FUNC_NAME_PREFIX + "_" + output_t
+    func_base_name = LOGIC.CAST_FUNC_NAME_PREFIX + "_" + output_t
     func_inst_name = BUILD_INST_NAME(prepend_text, func_base_name, c_ast_node)
     input_port_name = "rhs"
-    input_port_wire = func_inst_name + SUBMODULE_MARKER + input_port_name
+    input_port_wire = func_inst_name + LOGIC.SUBMODULE_MARKER + input_port_name
     parser_state.existing_logic = C_AST_NODE_TO_LOGIC(
         c_ast_node.expr, [input_port_wire], prepend_text, parser_state
     )
@@ -8601,7 +6269,7 @@ def C_AST_CAST_TO_LOGIC(c_ast_node, driven_wire_names, prepend_text, parser_stat
     input_port_names = [input_port_name]
     output_driven_wire_names = driven_wire_names
     # Record output port type as the to_type
-    output_wire_name = func_inst_name + SUBMODULE_MARKER + RETURN_WIRE_NAME
+    output_wire_name = func_inst_name + LOGIC.SUBMODULE_MARKER + LOGIC.RETURN_WIRE_NAME
     parser_state.existing_logic.wire_to_c_type[output_wire_name] = output_t
 
     # TODO Sanity dont make submodule doing pass through wire?
@@ -8622,50 +6290,11 @@ def C_AST_CAST_TO_LOGIC(c_ast_node, driven_wire_names, prepend_text, parser_stat
     #  APPLY_CONNECT_WIRES_LOGIC(parser_state,
 
 
-def C_TYPE_SIZE(c_type, parser_state, allow_fail=False, c_ast_node=None):
-    if C_TYPE_IS_ARRAY(c_type):
-        elem_t, dims = C_ARRAY_TYPE_TO_ELEM_TYPE_AND_DIMS(c_type)
-        elem_size = C_TYPE_SIZE(elem_t, parser_state)
-        byte_size = elem_size
-        for dim in dims:
-            byte_size = byte_size * dim
-    elif C_TYPE_IS_STRUCT(c_type, parser_state):
-        field_to_type_dict = parser_state.struct_to_field_type_dict[c_type]
-        byte_size = 0
-        for field in field_to_type_dict:
-            field_type = field_to_type_dict[field]
-            field_size = C_TYPE_SIZE(field_type, parser_state)
-            byte_size = byte_size + field_size
-    elif VHDL.C_TYPES_ARE_INTEGERS([c_type]):
-        bit_width = VHDL.GET_WIDTH_FROM_C_N_BITS_INT_TYPE_STR(c_type)
-        byte_size = int(math.ceil(float(bit_width) / float(8)))
-    elif C_TYPE_IS_FLOAT_TYPE(c_type):
-        e, m = C_FLOAT_E_M_TYPE_TO_E_M(c_type)
-        bit_width = 1 + e + m
-        byte_size = int(math.ceil(float(bit_width) / float(8)))
-    elif C_TYPE_IS_ENUM(c_type, parser_state):
-        bit_width = VHDL.GET_WIDTH_FROM_C_TYPE_STR(parser_state, c_type)
-        byte_size = int(math.ceil(float(bit_width) / float(8)))
-    else:
-        if not allow_fail:
-            print("How to sizeof", c_type, "???")
-            if c_ast_node:
-                print(c_ast_node)
-                print(c_ast_node.coord)
-            else:
-                print(0 / 0)
-            # print("parser_state.struct_to_field_type_dict",parser_state.struct_to_field_type_dict)
-            sys.exit(-1)
-        byte_size = -1
-
-    return byte_size
-
-
 def C_AST_SIZEOF_TO_LOGIC(c_ast_node, driven_wire_names, prepend_text, parser_state):
     # This is weird - todo error check
     c_type_str = c_ast_node.expr.type.type.names[0]
     # Replace with constant
-    size = C_TYPE_SIZE(c_type_str, parser_state, False, c_ast_node)
+    size = LOGIC.C_TYPE_SIZE(c_type_str, parser_state, False, c_ast_node)
     value_str = str(size)
     is_negated = False
     return NON_ENUM_CONST_VALUE_STR_TO_LOGIC(
@@ -8704,11 +6333,11 @@ def C_AST_UNARY_OP_TO_LOGIC(
     is_bool_op = False
     if c_ast_unary_op_str == "!":
         is_bool_op = True
-        c_ast_op_str = UNARY_OP_NOT_NAME
+        c_ast_op_str = LOGIC.UNARY_OP_NOT_NAME
     elif c_ast_unary_op_str == "~":
-        c_ast_op_str = UNARY_OP_NOT_NAME
+        c_ast_op_str = LOGIC.UNARY_OP_NOT_NAME
     elif c_ast_unary_op_str == "-":
-        c_ast_op_str = UNARY_OP_NEGATE_NAME
+        c_ast_op_str = LOGIC.UNARY_OP_NEGATE_NAME
     else:
         print(
             "Unsupported unary op '" + c_ast_unary_op_str + "'?", c_ast_unary_op.coord
@@ -8716,7 +6345,7 @@ def C_AST_UNARY_OP_TO_LOGIC(
         sys.exit(-1)
 
     # Set port names based on func name
-    func_base_name = UNARY_OP_LOGIC_NAME_PREFIX + "_" + c_ast_op_str
+    func_base_name = LOGIC.UNARY_OP_LOGIC_NAME_PREFIX + "_" + c_ast_op_str
     base_name_is_name = False  # No needs types attached
     input_drivers = []  # Wires or C ast nodes
     input_driver_types = []  # Might be none if not known
@@ -8726,8 +6355,8 @@ def C_AST_UNARY_OP_TO_LOGIC(
     func_inst_name = BUILD_INST_NAME(prepend_text, func_base_name, c_ast_unary_op)
     unary_op_input_port_name = c_ast_unary_op.children()[0][0]
     input_port_names.append(unary_op_input_port_name)
-    unary_op_input = func_inst_name + SUBMODULE_MARKER + unary_op_input_port_name
-    unary_op_output = func_inst_name + SUBMODULE_MARKER + RETURN_WIRE_NAME
+    unary_op_input = func_inst_name + LOGIC.SUBMODULE_MARKER + unary_op_input_port_name
+    unary_op_output = func_inst_name + LOGIC.SUBMODULE_MARKER + LOGIC.RETURN_WIRE_NAME
     # Evaluate input node
     if is_bool_op:  # TODO invert bool !=0 check since know this is !(input!=0)
         parser_state.existing_logic = C_AST_BOOL_COND_NODE_TO_LOGIC(
@@ -8748,24 +6377,24 @@ def C_AST_UNARY_OP_TO_LOGIC(
     input_driver_types.append(expr_type)
     in_driver_wire = parser_state.existing_logic.wire_driven_by[unary_op_input]
     input_drivers.append(in_driver_wire)
-    func_name = BUILD_FUNC_NAME(
+    func_name = LOGIC.BUILD_FUNC_NAME(
         func_base_name, None, input_driver_types, base_name_is_name
     )
 
     # Operator overload?
     if func_name in parser_state.FuncLogicLookupTable:
         func_logic = parser_state.FuncLogicLookupTable[func_name]
-        output_c_type = func_logic.wire_to_c_type[RETURN_WIRE_NAME]
+        output_c_type = func_logic.wire_to_c_type[LOGIC.RETURN_WIRE_NAME]
     # Determine output type based on operator or driving wire type
     else:
         # Most unary ops use the type of the driven wire
         if c_ast_unary_op_str == "!":
-            output_c_type = BOOL_C_TYPE
+            output_c_type = LOGIC.BOOL_C_TYPE
         elif c_ast_unary_op_str == "~":
             output_c_type = expr_type
         # Negate is like signed mult by -1
         elif c_ast_unary_op_str == "-":
-            if C_TYPE_IS_FLOAT_TYPE(expr_type):
+            if LOGIC.C_TYPE_IS_FLOAT_TYPE(expr_type):
                 output_c_type = expr_type
             else:
                 # Integer types
@@ -8892,53 +6521,53 @@ def C_AST_BINARY_OP_TO_LOGIC(
     is_bit_shift = False
     is_bool_op = False
     if c_ast_bin_op_str == ">":
-        c_ast_op_str = BIN_OP_GT_NAME
+        c_ast_op_str = LOGIC.BIN_OP_GT_NAME
     elif c_ast_bin_op_str == ">=":
-        c_ast_op_str = BIN_OP_GTE_NAME
+        c_ast_op_str = LOGIC.BIN_OP_GTE_NAME
     elif c_ast_bin_op_str == "<":
-        c_ast_op_str = BIN_OP_LT_NAME
+        c_ast_op_str = LOGIC.BIN_OP_LT_NAME
     elif c_ast_bin_op_str == "<=":
-        c_ast_op_str = BIN_OP_LTE_NAME
+        c_ast_op_str = LOGIC.BIN_OP_LTE_NAME
     elif c_ast_bin_op_str == "+":
-        c_ast_op_str = BIN_OP_PLUS_NAME
+        c_ast_op_str = LOGIC.BIN_OP_PLUS_NAME
     elif c_ast_bin_op_str == "-":
-        c_ast_op_str = BIN_OP_MINUS_NAME
+        c_ast_op_str = LOGIC.BIN_OP_MINUS_NAME
     elif c_ast_bin_op_str == "*" and local_mult_style == MULT_STYLE_INFERRED:
-        c_ast_op_str = BIN_OP_INFERRED_MULT_NAME
+        c_ast_op_str = LOGIC.BIN_OP_INFERRED_MULT_NAME
     elif c_ast_bin_op_str == "*" and local_mult_style == MULT_STYLE_FABRIC:
-        c_ast_op_str = BIN_OP_MULT_NAME
+        c_ast_op_str = LOGIC.BIN_OP_MULT_NAME
     elif c_ast_bin_op_str == "/":
-        c_ast_op_str = BIN_OP_DIV_NAME
+        c_ast_op_str = LOGIC.BIN_OP_DIV_NAME
     elif c_ast_bin_op_str == "==":
-        c_ast_op_str = BIN_OP_EQ_NAME
+        c_ast_op_str = LOGIC.BIN_OP_EQ_NAME
     elif c_ast_bin_op_str == "!=":
-        c_ast_op_str = BIN_OP_NEQ_NAME
+        c_ast_op_str = LOGIC.BIN_OP_NEQ_NAME
     elif c_ast_bin_op_str == "&":
-        c_ast_op_str = BIN_OP_AND_NAME
+        c_ast_op_str = LOGIC.BIN_OP_AND_NAME
     elif c_ast_bin_op_str == "|":
-        c_ast_op_str = BIN_OP_OR_NAME
+        c_ast_op_str = LOGIC.BIN_OP_OR_NAME
     elif c_ast_bin_op_str == "^":
-        c_ast_op_str = BIN_OP_XOR_NAME
+        c_ast_op_str = LOGIC.BIN_OP_XOR_NAME
     elif c_ast_bin_op_str == "<<":
-        c_ast_op_str = BIN_OP_SL_NAME
+        c_ast_op_str = LOGIC.BIN_OP_SL_NAME
         is_bit_shift = True
     elif c_ast_bin_op_str == ">>":
-        c_ast_op_str = BIN_OP_SR_NAME
+        c_ast_op_str = LOGIC.BIN_OP_SR_NAME
         is_bit_shift = True
     elif c_ast_bin_op_str == "%":
-        c_ast_op_str = BIN_OP_MOD_NAME
+        c_ast_op_str = LOGIC.BIN_OP_MOD_NAME
     elif c_ast_bin_op_str == "&&":
         is_bool_op = True
-        c_ast_op_str = BIN_OP_AND_NAME
+        c_ast_op_str = LOGIC.BIN_OP_AND_NAME
     elif c_ast_bin_op_str == "||":
         is_bool_op = True
-        c_ast_op_str = BIN_OP_OR_NAME
+        c_ast_op_str = LOGIC.BIN_OP_OR_NAME
     else:
         print("BIN_OP name for c_ast_bin_op_str '" + c_ast_bin_op_str + "'?")
         sys.exit(-1)
 
     # Set port names based on func name
-    func_base_name = BIN_OP_LOGIC_NAME_PREFIX + "_" + c_ast_op_str
+    func_base_name = LOGIC.BIN_OP_LOGIC_NAME_PREFIX + "_" + c_ast_op_str
     base_name_is_name = False  # Need types attached
 
     # Inputs
@@ -8949,9 +6578,9 @@ def C_AST_BINARY_OP_TO_LOGIC(
     bin_op_left_input_port_name = c_ast_binary_op.children()[0][0]
     bin_op_right_input_port_name = c_ast_binary_op.children()[1][0]
     func_inst_name = BUILD_INST_NAME(prepend_text, func_base_name, c_ast_binary_op)
-    bin_op_left_input = func_inst_name + SUBMODULE_MARKER + bin_op_left_input_port_name
+    bin_op_left_input = func_inst_name + LOGIC.SUBMODULE_MARKER + bin_op_left_input_port_name
     bin_op_right_input = (
-        func_inst_name + SUBMODULE_MARKER + bin_op_right_input_port_name
+        func_inst_name + LOGIC.SUBMODULE_MARKER + bin_op_right_input_port_name
     )
     if is_bool_op:
         parser_state.existing_logic = C_AST_BOOL_COND_NODE_TO_LOGIC(
@@ -9011,8 +6640,8 @@ def C_AST_BINARY_OP_TO_LOGIC(
 
     # If types are floats, round to common float format needed
     # This is instead of having non-equal width FP binary op
-    if C_TYPES_ARE_FLOAT_TYPES([left_type, right_type]):
-        common_fp_type = C_FLOAT_TYPES_TO_COMMON_TYPE([left_type, right_type])
+    if LOGIC.C_TYPES_ARE_FLOAT_TYPES([left_type, right_type]):
+        common_fp_type = LOGIC.C_FLOAT_TYPES_TO_COMMON_TYPE([left_type, right_type])
         left_type = common_fp_type
         parser_state.existing_logic.wire_to_c_type[bin_op_left_input] = left_type
         right_type = common_fp_type
@@ -9050,7 +6679,7 @@ def C_AST_BINARY_OP_TO_LOGIC(
         enum_int_type = parser_state.enum_info_dict[left_type].int_c_type
         left_type = enum_int_type
         parser_state.existing_logic.wire_to_c_type[bin_op_left_input] = left_type
-        if right_type is None or C_TYPE_IS_ENUM(right_type, parser_state):
+        if right_type is None or LOGIC.C_TYPE_IS_ENUM(right_type, parser_state):
             right_type = left_type
             parser_state.existing_logic.wire_to_c_type[bin_op_right_input] = right_type
     # Right correcting left+right ports
@@ -9062,7 +6691,7 @@ def C_AST_BINARY_OP_TO_LOGIC(
         enum_int_type = parser_state.enum_info_dict[right_type].int_c_type
         right_type = enum_int_type
         parser_state.existing_logic.wire_to_c_type[bin_op_right_input] = right_type
-        if left_type is None or C_TYPE_IS_ENUM(left_type, parser_state):
+        if left_type is None or LOGIC.C_TYPE_IS_ENUM(left_type, parser_state):
             left_type = right_type
             parser_state.existing_logic.wire_to_c_type[bin_op_left_input] = left_type
 
@@ -9087,7 +6716,7 @@ def C_AST_BINARY_OP_TO_LOGIC(
     # Can't cast float to from int in comb logic
     # No cast need for bit shifts
     if not is_bit_shift:
-        if C_TYPE_IS_FLOAT_TYPE(left_type) and not C_TYPE_IS_FLOAT_TYPE(right_type):
+        if LOGIC.C_TYPE_IS_FLOAT_TYPE(left_type) and not LOGIC.C_TYPE_IS_FLOAT_TYPE(right_type):
             raise Exception(
                 "TODO: Floats ops mixing types? Shouldn't occur. Add cast for now.",
                 left_type,
@@ -9095,7 +6724,7 @@ def C_AST_BINARY_OP_TO_LOGIC(
                 right_type,
                 str(c_ast_binary_op.coord),
             )
-        elif not C_TYPE_IS_FLOAT_TYPE(left_type) and C_TYPE_IS_FLOAT_TYPE(right_type):
+        elif not LOGIC.C_TYPE_IS_FLOAT_TYPE(left_type) and LOGIC.C_TYPE_IS_FLOAT_TYPE(right_type):
             raise Exception(
                 "TODO: Floats ops mixing types? Shouldn't occur. Add cast for now.",
                 left_type,
@@ -9105,9 +6734,9 @@ def C_AST_BINARY_OP_TO_LOGIC(
             )
 
     # Hack in resizing single dim arrays to max size
-    if C_TYPE_IS_ARRAY(left_type) and C_TYPE_IS_ARRAY(right_type):
-        lhs_elem_t, lhs_dims = C_ARRAY_TYPE_TO_ELEM_TYPE_AND_DIMS(left_type)
-        rhs_elem_t, rhs_dims = C_ARRAY_TYPE_TO_ELEM_TYPE_AND_DIMS(right_type)
+    if LOGIC.C_TYPE_IS_ARRAY(left_type) and LOGIC.C_TYPE_IS_ARRAY(right_type):
+        lhs_elem_t, lhs_dims = LOGIC.C_ARRAY_TYPE_TO_ELEM_TYPE_AND_DIMS(left_type)
+        rhs_elem_t, rhs_dims = LOGIC.C_ARRAY_TYPE_TO_ELEM_TYPE_AND_DIMS(right_type)
         # And swap char arrays to uint8 arrays like char to uint8 swap above
         # Swapping of char to uint8 is only necessary for compare GT/LT compares
         # Arrays arent compared iwht LT/GT right now so dont need swap
@@ -9141,21 +6770,21 @@ def C_AST_BINARY_OP_TO_LOGIC(
     # Determine output type based on operator or driving wire type
     # Do bool operations first
     if c_ast_bin_op_str == ">":
-        output_c_type = BOOL_C_TYPE
+        output_c_type = LOGIC.BOOL_C_TYPE
     elif c_ast_bin_op_str == ">=":
-        output_c_type = BOOL_C_TYPE
+        output_c_type = LOGIC.BOOL_C_TYPE
     elif c_ast_bin_op_str == "<":
-        output_c_type = BOOL_C_TYPE
+        output_c_type = LOGIC.BOOL_C_TYPE
     elif c_ast_bin_op_str == "<=":
-        output_c_type = BOOL_C_TYPE
+        output_c_type = LOGIC.BOOL_C_TYPE
     elif c_ast_bin_op_str == "==":
-        output_c_type = BOOL_C_TYPE
+        output_c_type = LOGIC.BOOL_C_TYPE
     elif c_ast_bin_op_str == "!=":
-        output_c_type = BOOL_C_TYPE
+        output_c_type = LOGIC.BOOL_C_TYPE
     elif c_ast_bin_op_str == "&&":
-        output_c_type = BOOL_C_TYPE
+        output_c_type = LOGIC.BOOL_C_TYPE
     elif c_ast_bin_op_str == "||":
-        output_c_type = BOOL_C_TYPE
+        output_c_type = LOGIC.BOOL_C_TYPE
     else:
         # Not bool operation
         # OUTPUT TYPE MUST BE DERIVED FROM FUNCITONALITY
@@ -9190,23 +6819,23 @@ def C_AST_BINARY_OP_TO_LOGIC(
 
             # Does it match a user operator overload func?
             # No output type in func name now
-            maybe_user_overload_func_name = BUILD_FUNC_NAME(
+            maybe_user_overload_func_name = LOGIC.BUILD_FUNC_NAME(
                 func_base_name, None, [left_type, right_type], False
             )
             if maybe_user_overload_func_name in parser_state.FuncLogicLookupTable:
                 overload_logic = parser_state.FuncLogicLookupTable[
                     maybe_user_overload_func_name
                 ]
-                output_c_type = overload_logic.wire_to_c_type[RETURN_WIRE_NAME]
+                output_c_type = overload_logic.wire_to_c_type[LOGIC.RETURN_WIRE_NAME]
             # New float_e_m_t types
-            elif C_TYPES_ARE_FLOAT_TYPES(
+            elif LOGIC.C_TYPES_ARE_FLOAT_TYPES(
                 [left_type, right_type]
-            ) and C_FLOAT_TYPES_ARE_EQUAL([left_type, right_type]):
+            ) and LOGIC.C_FLOAT_TYPES_ARE_EQUAL([left_type, right_type]):
                 output_c_type = left_type  # same as right
             # Float shifts (mult/div by pow2)
             elif (
                 is_bit_shift
-                and C_TYPE_IS_FLOAT_TYPE(left_type)
+                and LOGIC.C_TYPE_IS_FLOAT_TYPE(left_type)
                 and VHDL.C_TYPES_ARE_INTEGERS([right_type])
             ):
                 output_c_type = left_type
@@ -9358,7 +6987,7 @@ def C_AST_BINARY_OP_TO_LOGIC(
                     sys.exit(-1)
 
     # Set type for output wire
-    bin_op_output = func_inst_name + SUBMODULE_MARKER + RETURN_WIRE_NAME
+    bin_op_output = func_inst_name + LOGIC.SUBMODULE_MARKER + LOGIC.RETURN_WIRE_NAME
 
     # print " ----- ", bin_op_output, output_c_type
     func_c_ast_node = c_ast_binary_op
@@ -9418,18 +7047,6 @@ def GET_C_TYPE_FROM_WIRE_NAMES(wire_names, logic, allow_fail=False):
                 sys.exit(-1)
 
     return rv
-
-
-# Return None if wire is not driven by const (or anything)
-def FIND_CONST_DRIVING_WIRE(wire, logic):
-    if WIRE_IS_CONSTANT(wire):
-        return wire
-    elif wire in logic.wire_driven_by:
-        driving_wire = logic.wire_driven_by[wire]
-        # Wtf some wires like state vars driven themselves?
-        if driving_wire != wire:
-            return FIND_CONST_DRIVING_WIRE(driving_wire, logic)
-    return None
 
 
 # def SIMPLE_CONNECT_TO_LOGIC(driving_wire, driven_wire_names, c_ast_node, prepend_text, parser_state):
@@ -9500,12 +7117,12 @@ def APPLY_CONNECT_WIRES_LOGIC(
                     or VHDL.WIRES_ARE_INT_N(
                         [driven_wire_name], parser_state.existing_logic
                     )
-                ) and WIRE_IS_ENUM(
+                ) and LOGIC.WIRE_IS_ENUM(
                     driving_wire, parser_state.existing_logic, parser_state
                 ):
                     continue
                 # U/INT driving enum is fine
-                elif WIRE_IS_ENUM(
+                elif LOGIC.WIRE_IS_ENUM(
                     driven_wire_name, parser_state.existing_logic, parser_state
                 ) and (
                     VHDL.WIRES_ARE_UINT_N([driving_wire], parser_state.existing_logic)
@@ -9515,11 +7132,11 @@ def APPLY_CONNECT_WIRES_LOGIC(
 
                 # Getting pretty hacky here with this 'internal' / PipelineC specific code
                 # Could do for all...single/multi? dimension int-like(having null/0) arrays?
-                elif C_TYPE_IS_ARRAY(driven_wire_type) and C_TYPE_IS_ARRAY(rhs_type):
-                    lhs_elem_t, lhs_dims = C_ARRAY_TYPE_TO_ELEM_TYPE_AND_DIMS(
+                elif LOGIC.C_TYPE_IS_ARRAY(driven_wire_type) and LOGIC.C_TYPE_IS_ARRAY(rhs_type):
+                    lhs_elem_t, lhs_dims = LOGIC.C_ARRAY_TYPE_TO_ELEM_TYPE_AND_DIMS(
                         driven_wire_type
                     )
-                    rhs_elem_t, rhs_dims = C_ARRAY_TYPE_TO_ELEM_TYPE_AND_DIMS(rhs_type)
+                    rhs_elem_t, rhs_dims = LOGIC.C_ARRAY_TYPE_TO_ELEM_TYPE_AND_DIMS(rhs_type)
                     # Only exact type elems for now, allow char uint8
                     if (
                         len(lhs_dims) != 1
@@ -9546,25 +7163,25 @@ def APPLY_CONNECT_WIRES_LOGIC(
                     continue
                 # I'm dumb and C doesnt return arrays - I think this is only needed for internal code
                 elif (
-                    SW_LIB.C_TYPE_IS_ARRAY_STRUCT(driven_wire_type, parser_state)
+                    LOGIC.C_TYPE_IS_ARRAY_STRUCT(driven_wire_type, parser_state)
                     and (
-                        SW_LIB.C_ARRAY_STRUCT_TYPE_TO_ARRAY_TYPE(
+                        LOGIC.C_ARRAY_STRUCT_TYPE_TO_ARRAY_TYPE(
                             driven_wire_type, parser_state
                         )
                         == rhs_type
                     )
                 ) or (
-                    SW_LIB.C_TYPE_IS_ARRAY_STRUCT(rhs_type, parser_state)
+                    LOGIC.C_TYPE_IS_ARRAY_STRUCT(rhs_type, parser_state)
                     and (
                         driven_wire_type
-                        == SW_LIB.C_ARRAY_STRUCT_TYPE_TO_ARRAY_TYPE(
+                        == LOGIC.C_ARRAY_STRUCT_TYPE_TO_ARRAY_TYPE(
                             rhs_type, parser_state
                         )
                     )
                 ):
                     continue
                 # Float casting is wires in VHDl for now
-                elif C_TYPES_ARE_FLOAT_TYPES([driven_wire_type, rhs_type]):
+                elif LOGIC.C_TYPES_ARE_FLOAT_TYPES([driven_wire_type, rhs_type]):
                     continue
 
                 #######
@@ -9577,19 +7194,19 @@ def APPLY_CONNECT_WIRES_LOGIC(
                 if (
                     (
                         VHDL.C_TYPE_IS_INT_N(rhs_type)
-                        and C_TYPE_IS_FLOAT_TYPE(driven_wire_type)
+                        and LOGIC.C_TYPE_IS_FLOAT_TYPE(driven_wire_type)
                     )
                     or (
-                        C_TYPE_IS_FLOAT_TYPE(rhs_type)
+                        LOGIC.C_TYPE_IS_FLOAT_TYPE(rhs_type)
                         and VHDL.C_TYPE_IS_INT_N(driven_wire_type)
                     )
                     or (
                         VHDL.C_TYPE_IS_UINT_N(rhs_type)
-                        and C_TYPE_IS_FLOAT_TYPE(driven_wire_type)
+                        and LOGIC.C_TYPE_IS_FLOAT_TYPE(driven_wire_type)
                     )
                 ):
                     # Return n arg func
-                    func_base_name = CAST_FUNC_NAME_PREFIX + "_" + driven_wire_type
+                    func_base_name = LOGIC.CAST_FUNC_NAME_PREFIX + "_" + driven_wire_type
                     base_name_is_name = False  # append types in name too
                     input_drivers = [driving_wire]
                     input_driver_types = [rhs_type]
@@ -9602,7 +7219,7 @@ def APPLY_CONNECT_WIRES_LOGIC(
                     # print("cast",func_inst_name,rhs_type,driven_wire_type)
                     # Record output port type
                     output_wire_name = (
-                        func_inst_name + SUBMODULE_MARKER + RETURN_WIRE_NAME
+                        func_inst_name + LOGIC.SUBMODULE_MARKER + LOGIC.RETURN_WIRE_NAME
                     )
                     parser_state.existing_logic.wire_to_c_type[output_wire_name] = (
                         driven_wire_type
@@ -9640,24 +7257,9 @@ def APPLY_CONNECT_WIRES_LOGIC(
         # ^^^~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~^^^^
 
     #########   Record connnnnections in the parser_state.existing_logic graph ######
-    # Record wire_drives
-    all_driven_wire_names = set()
-    # Start with existing driven wires
-    if driving_wire in parser_state.existing_logic.wire_drives:
-        all_driven_wire_names = parser_state.existing_logic.wire_drives[driving_wire]
-    # Append the new wires
-    for driven_wire_name in driven_wire_names:
-        all_driven_wire_names.add(driven_wire_name)
-    # Save
-    if len(all_driven_wire_names) > 0:
-        parser_state.existing_logic.wire_drives[driving_wire] = all_driven_wire_names
-    # Record wire_driven_by
-    for driven_wire_name in driven_wire_names:
-        parser_state.existing_logic.wire_driven_by[driven_wire_name] = driving_wire
-    # print "parser_state.existing_logic.wire_drives", parser_state.existing_logic.wire_drives
-    # print "parser_state.existing_logic.wire_driven_by", parser_state.existing_logic.wire_driven_by
-
-    return parser_state.existing_logic
+    return LOGIC.CONNECT_WIRES_LOGIC(
+        parser_state.existing_logic, driving_wire, driven_wire_names
+    )
 
 
 # int x[2]     returns "x", "int", 2
@@ -9673,20 +7275,20 @@ def C_AST_ARRAYDECL_TO_NAME_ELEM_TYPE_DIM(array_decl, parser_state):
     while len(children) > 1 and children[1][0] == "dim":
         # Get the dimension with dummies
         dummy_parser_state = parser_state.DEEPCOPY()  # ParserState() # too slow?
-        dummy_parser_state.existing_logic = Logic()
+        dummy_parser_state.existing_logic = LOGIC.Logic()
         dummy_parser_state.existing_logic.func_name = "ARRAY_DECL"
         dummy_wire = "ARRAY_DECL_DIM"
         dummy_parser_state.existing_logic = C_AST_NODE_TO_LOGIC(
             children[1][1], [dummy_wire], "", dummy_parser_state
         )
         driving_wire = dummy_parser_state.existing_logic.wire_driven_by[dummy_wire]
-        const_driving_wire = FIND_CONST_DRIVING_WIRE(
+        const_driving_wire = LOGIC.FIND_CONST_DRIVING_WIRE(
             driving_wire, dummy_parser_state.existing_logic
         )
         if const_driving_wire is None:
             raise Exception("Array dimensions not constant!", str(array_decl.coord))
         dim = int(
-            GET_VAL_STR_FROM_CONST_WIRE(
+            LOGIC.GET_VAL_STR_FROM_CONST_WIRE(
                 const_driving_wire,
                 dummy_parser_state.existing_logic,
                 dummy_parser_state,
@@ -9739,14 +7341,14 @@ def C_AST_FUNC_DEF_TO_LOGIC(
 
     # print("FUNC_DEF",c_ast_funcdef, flush=True)
 
-    parser_state.existing_logic = Logic()
+    parser_state.existing_logic = LOGIC.Logic()
     # Save the c_ast node
     parser_state.existing_logic.ast_meta = C_AST_NODE_TO_META(c_ast_funcdef)
 
     # All func def logic has an output wire called "return"
     return_type = c_ast_funcdef.decl.type.type.type.names[0]
     if return_type != "void":
-        return_wire_name = RETURN_WIRE_NAME
+        return_wire_name = LOGIC.RETURN_WIRE_NAME
         parser_state.existing_logic.outputs.append(return_wire_name)
         parser_state.existing_logic.wires.add(return_wire_name)
         # print("return_type",return_type)
@@ -9812,10 +7414,10 @@ def C_AST_FUNC_DEF_TO_LOGIC(
             prepend_text, parser_state, c_ast_funcdef
         )
 
-        # Final chance for SW_LIB generated code to do stuff to func logic
+        # Final chance for generated C code to do stuff to func logic
         # Hah wtf this is hacky - its calculation saving, tag now, dont compute over and over awesomness of course
         # Bright Eyes - An Attempt to Tip the Scales
-        parser_state.existing_logic = SW_LIB.GEN_CODE_POST_PARSE_LOGIC_ADJUST(
+        parser_state.existing_logic = GEN_CODE_POST_PARSE_LOGIC_ADJUST(
             parser_state.existing_logic, parser_state
         )
 
@@ -9896,404 +7498,9 @@ def MOVE_UNREAD_GLOBAL_STATE_REGS_TO_WIRES(prepend_text, parser_state, c_ast_nod
     return parser_state.existing_logic
 
 
-def GET_SUBMODULE_INPUT_PORT_DRIVING_WIRE(logic, submodule_inst, input_port_name):
-    # print "logic.func_name", logic.func_name
-    name = submodule_inst + SUBMODULE_MARKER + input_port_name
-    # print " logic.wire_driven_by"
-    # print logic.wire_driven_by
-    driving_wire = logic.wire_driven_by[name]
-    return driving_wire
-
-
-def PRINT_DRIVER_WIRE_TRACE(start, logic, wires_driven_so_far=None):
-    text = ""
-    while start is not None:
-        if wires_driven_so_far is None:
-            text += start + " <= "
-        else:
-            text += start + "(driven? " + str(start in wires_driven_so_far) + ") <= "
-
-        if start in logic.wire_driven_by:
-            start = logic.wire_driven_by[start]
-        else:
-            text += "has no driver!!!!?"
-            start = None
-    print(text)
-    return start
-
-
-def FIND_DANGLING_LOGIC(logic):
-    for driving_wire in logic.wire_drives:
-        driven_wires = logic.wire_drives[driving_wire]
-        # Handle each driven wire
-        for driven_wire in driven_wires:
-            if driven_wire not in logic.wire_driven_by:
-                raise Exception(
-                    f"{logic.func_name} has driving_wire {driving_wire} that is listed as driving driven_wire {driven_wire} but driven_wire is not in wire_driven_by dict?"
-                )
-
-
-_TRIM_COLLAPSE_FUNC_DEFS_RECURSIVE_done_cache = set()
-
-
-# Wow this is post elab and includes adjustments to global table of instance names etc...
-def TRIM_COLLAPSE_FUNC_DEFS_RECURSIVE(func_logic, parser_state):
-    # Done already?
-    if func_logic.func_name in _TRIM_COLLAPSE_FUNC_DEFS_RECURSIVE_done_cache:
-        return parser_state
-
-    # First do recursively for each submodule
-    for submodule_inst in func_logic.submodule_instances:
-        submodule_func_name = func_logic.submodule_instances[submodule_inst]
-        # Skip vhdl
-        if submodule_func_name == VHDL_FUNC_NAME:
-            continue
-        # Skip clock crossings too
-        submodule_logic = parser_state.FuncLogicLookupTable[submodule_func_name]
-        if submodule_logic.is_clock_crossing:
-            continue
-        parser_state = TRIM_COLLAPSE_FUNC_DEFS_RECURSIVE(submodule_logic, parser_state)
-
-    debug = False
-    # Then do for self
-    parser_state.existing_logic = func_logic
-    # Some code creates logic that will optimize away
-    # But actually the amount of generated VHDL can be too much
-    # So manually prune logic
-    # Look for wires that do not drive anything
-    #   Note: submodule input ports are
-    #   the only wires that can stay and not drive anything to module
-    #   Inputs for some faked funcs with no func body need to be saved too
-    #   Original variable wires dont drive things because alias will drive instead; int x; x=1;
-    for wire in set(func_logic.wires):  # Copy for iter
-        if wire in func_logic.wires:  # Changes during iter
-            drives_nothing = wire not in func_logic.wire_drives
-            must_drive_something = not func_logic.WIRE_ALLOW_NO_DRIVES(
-                wire, parser_state.FuncLogicLookupTable
-            )
-            if drives_nothing and must_drive_something:
-                if debug:
-                    print(
-                        func_logic.func_name,
-                        "drives_nothing and must_drive_something Removing",
-                        wire,
-                    )
-                func_logic.REMOVE_WIRES_AND_SUBMODULES_RECURSIVE(wire, parser_state)
-            else:
-                pass
-                # if debug:
-                #  print(func_logic.func_name,"drives_nothing", drives_nothing, wire)
-                #  if not drives_nothing:
-                #    print(func_logic.func_name,"Drives:",func_logic.wire_drives[wire])
-                #  print(func_logic.func_name,"must_drive_something",must_drive_something, wire)
-        else:
-            if debug:
-                pass
-                # print(func_logic.func_name, "NOT Removing", wire)
-                # print("drives_nothing",drives_nothing)
-                # if not drives_nothing:
-                #  print(func_logic.wire_drives[wire])
-                #  print("must_drive_something",must_drive_something)
-
-    # Songs: Ohia - Farewell Transmission
-    # Not all wires are necessary
-    # In fact, any wire that is not a sub/module port is probably extra?
-    # Use 'WIRE_DO_NOT_COLLAPSE' to collapse connections down to submodule port connections
-    making_changes = True
-    while making_changes:
-        making_changes = False
-        for wire in set(func_logic.wires):  # Copy for iter
-            if wire in func_logic.wires:  # Changes during iter
-                # Look for not special wires that have driving info
-                if (
-                    not func_logic.WIRE_DO_NOT_COLLAPSE(wire, parser_state)
-                    and (wire in func_logic.wire_driven_by)
-                    and (wire in func_logic.wire_drives)
-                ):
-                    # Get driving info
-                    driving_wire = func_logic.wire_driven_by[wire]
-                    driven_wires = func_logic.wire_drives[wire]
-                    # Replacing wire with driving_wire, must have same type dummy
-                    types_match = True
-                    driving_wire_c_type = func_logic.wire_to_c_type[driving_wire]
-                    wire_c_type = func_logic.wire_to_c_type[wire]
-                    if driving_wire_c_type != wire_c_type:
-                        types_match = False
-                    for driven_wire in driven_wires:
-                        driven_wire_c_type = func_logic.wire_to_c_type[driven_wire]
-                        if driving_wire_c_type != driven_wire_c_type:
-                            types_match = False
-                    if not types_match:
-                        continue
-                    # Do removal
-                    making_changes = True
-                    # Remove record of this wire driving anything so removal doesnt progate forward, only backwards
-                    if debug:
-                        print(func_logic.func_name, "unecessary Removing", wire)
-                        print(driving_wire, "drives -> ", driven_wires)
-                    func_logic.wire_drives.pop(wire)
-                    # Make new connection before ripping up old wire
-                    func_logic = APPLY_CONNECT_WIRES_LOGIC(
-                        parser_state, driving_wire, driven_wires, None, None
-                    )
-                    # Totally remove old wire
-                    func_logic.REMOVE_WIRES_AND_SUBMODULES_RECURSIVE(wire, parser_state)
-                    # break # Needed?  Wanted?
-
-    # Detect duplicate submodules
-    # Clock enable makes thing complicated - todo make neater future me
-    #   Bill Withers - Lean on Me
-    # dict[ tuple(func name, in_port, driver, wires) ] = [list,of,matching,insts]
-    # Do repeatedly unitl no more opts?
-    making_changes = True
-    while making_changes:
-        making_changes = False
-
-        # Find duplicates
-        submodule_dups = {}
-        for submodule_inst in func_logic.submodule_instances:
-            submodule_func_name = func_logic.submodule_instances[submodule_inst]
-            # Skip printf/sim_assert/sim_finish (each instance is distinct, not a dedup candidate)
-            if IS_SIM_CTRL_FUNC_NAME(submodule_func_name):
-                continue
-            if submodule_func_name not in parser_state.FuncLogicLookupTable:
-                continue
-            submodule_logic = parser_state.FuncLogicLookupTable[submodule_func_name]
-            # Make id tup
-            # Name
-            id_tup = (submodule_logic.func_name,)
-            # Clock enable
-            # Make ce connection
-            if LOGIC_NEEDS_CLOCK_ENABLE(submodule_logic, parser_state):
-                sub_ce_wire = submodule_inst + SUBMODULE_MARKER + CLOCK_ENABLE_NAME
-                driver_of_ce = func_logic.wire_driven_by[sub_ce_wire]
-                id_tup += (driver_of_ce,)
-            # Inputs
-            for sub_input_port in submodule_logic.inputs:
-                sub_input_wire = submodule_inst + SUBMODULE_MARKER + sub_input_port
-                driver_of_input = func_logic.wire_driven_by[sub_input_wire]
-                id_tup += (driver_of_input,)
-            # Which AUTO_PIPELINE / AUTO_FSM group the call belongs to, last
-            # (the collapse below reads drivers by position): two calls of one
-            # function in different latency groups, or one tagged and one not,
-            # are different hardware even with equal inputs
-            id_tup += (
-                func_logic.sub_inst_to_auto_pipeline_key.get(submodule_inst),
-                func_logic.sub_inst_to_auto_pipeline_latency.get(submodule_inst),
-                func_logic.sub_inst_to_auto_fsm_key.get(submodule_inst),
-            )
-            # Record
-            if id_tup not in submodule_dups:
-                submodule_dups[id_tup] = []
-            submodule_dups[id_tup].append(submodule_inst)
-
-        # Filter out "single instances" in duplicates list
-        for id_tup, dup_insts in list(submodule_dups.items()):
-            if len(dup_insts) <= 1:
-                submodule_dups.pop(id_tup)
-        if len(submodule_dups) <= 0:
-            continue
-
-        # Since removal of duplicate can rewire potential 'downstream' (and upstream?) connections to other duplicates
-        # Only remove one duplicate per round of collecting id_tups above
-        # Collapse all duplicates (more than 1 inst per id tup)
-        # for id_tup,dup_insts in :
-        id_tup, dup_insts = list(submodule_dups.items())[0]
-        sub_func_name = id_tup[0]
-        tup_idx = 1
-        sub_func_logic = parser_state.FuncLogicLookupTable[sub_func_name]
-        # print(id_tup,"duplicates:",dup_insts)
-
-        # Have instances to collapse
-        # Create new inst
-        # Mangle me some name
-        # Special case loops easy to identify since have same coord?
-        new_sub_inst_name = None
-        c_ast_metas = set()
-        for sub_inst in dup_insts:
-            if sub_inst in func_logic.submodule_instance_to_ast_meta:
-                c_ast_metas.add(func_logic.submodule_instance_to_ast_meta[sub_inst])
-        # Same c ast node or not, need to keep prepend id text
-        # Create hash based on all inst names
-        dup_inst_name_hash = (
-            hashlib.md5(",".join(dup_insts).encode("utf-8")).hexdigest()
-        )[0:4]  # 4 chars enough?
-        dup_postpend_text = "_DUPLICATE_" + dup_inst_name_hash
-        if len(c_ast_metas) == 1:  # TODO what does this look like otherwise?
-            the_ast_meta = list(c_ast_metas)[0]
-            the_c_ast_node = (
-                the_ast_meta.raw
-            )  # raw pycparser node for C-specific calls below
-            # Use coord_str() directly — raw node may be a Python AST node (Pypeline)
-            new_sub_inst_name = (
-                sub_func_logic.func_name
-                + "["
-                + the_ast_meta.coord_str()
-                + "]"
-                + dup_postpend_text
-            )
-        else:
-            the_c_ast_node = None
-            file_lines = []
-            last_ast_meta = None
-            # c_ast_metas is a set of ASTMeta, whose __hash__ is
-            # hash(coord_str()) -- a str hash, randomized per-process by
-            # PYTHONHASHSEED. Both the emitted "lNN" order below and
-            # last_ast_meta (which alone picks src_file_str) would otherwise
-            # leak that order into new_sub_inst_name, changing generated VHDL
-            # bytes for an identical design and defeating DEVICE_MODELS'
-            # byte-hash synthesis cache (confirmed: 5 fresh builds, 4x
-            # l35_l34, 1x l34_l35). Sort on the location fields only --
-            # NOT coord_str()/hash_suffix, which embed str(id(node)) for the
-            # C frontend (TEMP_HACKY_C_AST_NODE_ID) and are themselves
-            # process-unstable.
-            for ast_meta in sorted(
-                c_ast_metas,
-                key=lambda m: (
-                    m.src_file,
-                    m.line,
-                    m.col,
-                    -1 if m.end_col is None else m.end_col,
-                ),
-            ):
-                # file_coord_strs += "[" + C_AST_NODE_COORD_STR(c_ast_node) + "]"
-                file_line = "l" + str(ast_meta.line)
-                if file_line not in file_lines:
-                    file_lines.append(file_line)
-                last_ast_meta = ast_meta
-            # new_sub_inst_name = sub_func_logic.func_name + file_coord_strs + dup_postpend_text
-            file_coord_strs = "_".join(file_lines)
-            if file_coord_strs != "":
-                file_coord_strs = "_" + file_coord_strs
-            src_file_str = "internal"
-            if last_ast_meta and last_ast_meta.src_file:
-                src_file_str = os.path.basename(last_ast_meta.src_file).replace(
-                    ".", "_"
-                )
-            new_sub_inst_name = (
-                sub_func_logic.func_name
-                + "_"
-                + src_file_str
-                + file_coord_strs
-                + dup_postpend_text
-            )
-        # print("replacing with",new_sub_inst_name)
-
-        # Copy the submodule information from one of the identical insts to this
-        func_logic.COPY_SUBMODULE_INFO(new_sub_inst_name, dup_insts[0])
-        func_logic.submodule_instance_to_source_origins[
-            new_sub_inst_name
-        ] = set().union(
-            *(
-                func_logic.submodule_instance_to_source_origins.get(i, set())
-                for i in dup_insts
-            )
-        )
-
-        # Wire new inst ce+inputs with known identical drivers
-        # Make ce connection
-        if LOGIC_NEEDS_CLOCK_ENABLE(sub_func_logic, parser_state):
-            new_ce_wire = new_sub_inst_name + SUBMODULE_MARKER + CLOCK_ENABLE_NAME
-            func_logic.wire_to_c_type[new_ce_wire] = sub_func_logic.wire_to_c_type[
-                CLOCK_ENABLE_NAME
-            ]
-            driver_of_ce = id_tup[tup_idx]
-            func_logic = APPLY_CONNECT_WIRES_LOGIC(
-                parser_state, driver_of_ce, [new_ce_wire], None, the_c_ast_node
-            )
-            tup_idx += 1
-        for input_port in sub_func_logic.inputs:
-            new_input_port_wire = new_sub_inst_name + SUBMODULE_MARKER + input_port
-            func_logic.wire_to_c_type[new_input_port_wire] = (
-                sub_func_logic.wire_to_c_type[input_port]
-            )
-            driver_of_input = id_tup[tup_idx]
-            tup_idx += 1
-            # Make input connection
-            func_logic = APPLY_CONNECT_WIRES_LOGIC(
-                parser_state,
-                driver_of_input,
-                [new_input_port_wire],
-                None,
-                the_c_ast_node,
-            )
-
-        # Wire new inst outputs to all outputs
-        # Make dict[sub out port] = [list of driven wires, from, all dup, insts, outputs]
-        sub_out_port_to_driven_wires = {}
-        for output_port in sub_func_logic.outputs:
-            for sub_inst in dup_insts:
-                sub_inst_output = sub_inst + SUBMODULE_MARKER + output_port
-                wires_driven_by_sub_output = func_logic.wire_drives[sub_inst_output]
-                if output_port not in sub_out_port_to_driven_wires:
-                    sub_out_port_to_driven_wires[output_port] = set()
-                sub_out_port_to_driven_wires[output_port] |= set(
-                    wires_driven_by_sub_output
-                )
-
-        # Remove all local duplicate insts - ripping up outputs we just recorded
-        for sub_inst in dup_insts:
-            # Local func def removal + dont do global insts since will be renamed below
-            func_logic.REMOVE_SUBMODULE(
-                sub_inst,
-                sub_func_logic.inputs,
-                sub_func_logic.outputs,
-                parser_state,
-                remove_global=False,
-            )
-
-        # Use info on now ripped up outputs to rewire outputs
-        for sub_out_port, driven_wires in sub_out_port_to_driven_wires.items():
-            new_inst_output = new_sub_inst_name + SUBMODULE_MARKER + sub_out_port
-            func_logic.wire_to_c_type[new_inst_output] = sub_func_logic.wire_to_c_type[
-                sub_out_port
-            ]
-            # print("new_inst_output",new_inst_output)
-            # print("drives",driven_wires)
-            func_logic = APPLY_CONNECT_WIRES_LOGIC(
-                parser_state, new_inst_output, list(driven_wires), None, the_c_ast_node
-            )
-            # for driven_wire in driven_wires:
-            #  print("func_logic.wire_driven_by",func_logic.wire_driven_by[driven_wire])
-
-        # Record global insts by doing process for each global inst of container
-        all_insts_of_container_func = parser_state.FuncToInstances[func_logic.func_name]
-        for global_inst in all_insts_of_container_func:
-            # Record new glb inst
-            global_new_sub_inst_name = (
-                global_inst + SUBMODULE_MARKER + new_sub_inst_name
-            )
-            parser_state.LogicInstLookupTable[global_new_sub_inst_name] = sub_func_logic
-            if sub_func_name not in parser_state.FuncToInstances:
-                parser_state.FuncToInstances[sub_func_name] = set()
-            parser_state.FuncToInstances[sub_func_name].add(global_new_sub_inst_name)
-
-            # Rename duplicate global insts (to capture renaming of submoduels too)
-            # SHit this is hack af
-            for sub_inst in dup_insts:
-                global_dup_sub_inst_name = global_inst + SUBMODULE_MARKER + sub_inst
-                # Because the game is hard
-                # Dont do dumb loop collecting submodules with startswith
-                # Do recursive rename instead
-                parser_state = RECURSIVE_RENAME_GLOBAL_INST(
-                    global_dup_sub_inst_name, global_new_sub_inst_name, parser_state
-                )
-        # print("==")
-
-        making_changes = True
-
-    # Record doing this logic
-    _TRIM_COLLAPSE_FUNC_DEFS_RECURSIVE_done_cache.add(func_logic.func_name)
-
-    return parser_state
-
-
 def DEL_ALL_CACHES():
-    # Clear all caches after parsing is done
-    # The trim/collapse memo is per-parse state: it records func NAMES already
-    # pruned, but a later parse rebuilds fresh (untrimmed) Logic objects under
-    # the same names and must not skip trimming them.
-    _TRIM_COLLAPSE_FUNC_DEFS_RECURSIVE_done_cache.clear()
+    # Clear all caches after parsing is done: the shared LOGIC ones, then the C front end's
+    LOGIC.DEL_ALL_CACHES()
     global _other_partial_logic_cache
     global _REF_TOKS_TO_OWN_BRANCH_REF_TOKS_cache
     global _REF_TOKS_TO_ENTIRE_TREE_REF_TOKS_cache
@@ -10317,149 +7524,6 @@ def DEL_ALL_CACHES():
     _C_AST_NODE_COORD_STR_cache = {}
     _C_AST_FUNC_DEF_TO_LOGIC_cache = {}
     # _GET_ZERO_ADDED_CLKS_PIPELINE_MAP_cache          = {}
-
-
-_EXE_ABS_DIR = None
-
-
-def EXE_ABS_DIR():
-    global _EXE_ABS_DIR
-    if _EXE_ABS_DIR:
-        return _EXE_ABS_DIR
-    _EXE_ABS_DIR = os.path.dirname(os.path.realpath(__file__))
-    return _EXE_ABS_DIR
-
-
-# This class hold all the state obtained by parsing a single C file
-class ParserState:
-    def __init__(self):
-        # Parsed from pre-prepreprocessed text - dont do this?
-
-        # From parsed preprocessed text
-        # The file of parsed C code
-        self.c_file_ast = None  # Single C file tree
-
-        # Parsed pre func defintions
-        # Build map just of func names and where there are used
-        self.func_name_to_calls = {}  # dict[func_name] = set(called_func_names)
-        self.func_names_to_called_from = {}  # dict[func_name] = set(calling_func_names)
-        self.struct_to_field_type_dict = {}
-        self.enum_info_dict = {}
-        self.global_vars = {}  # name->state reg info
-        self.global_consts = {}  # name->global const info
-        # The func body stuff here is hacky af damn
-        #   State regs only needed for GET_MEM_H_LOGIC_LOOKUP?
-        self.func_to_local_state_regs = {}  # funcname-> [state,reg,infos]
-        #   Local vars needed since doing MAYBE global all names in func body before parsing decls?
-        self.func_to_local_variables = {}  # funcname-> set(vars)
-
-        # Parsed from function defintions
-        # Function definitons as logic
-        self.FuncLogicLookupTable = {}  # dict[func_name]=Logic() <--
-        # Special primitive funcs
-        self.PrimFuncLogicLookupTable = {}  # Why table vs .is_prim_func on logic?
-        # Elaborated to instances
-        self.LogicInstLookupTable = {}  # dict[inst_name]=Logic()  (^ same logic object as above)
-        self.FuncToInstances = {}  # dict[func_name]=set([instance, name, usages, of , func)
-
-        # Pragma info
-        self.main_mhz = {}  # dict[main_inst_name]=mhz # Any inst name can be used
-        self.main_syn_mhz = {}
-        self.main_clk_group = {}  # dict[main_inst_name]=clk_group_str
-        self.func_mult_style = {}
-        self.func_marked_wires = set()
-        self.func_fixed_latency = {}
-        self.auto_pipeline_rams = {}
-        self.func_marked_blackbox = set()
-        self.func_marked_no_add_io_regs = set()
-        self.func_marked_debug = set()
-        self.marked_onehot = set()
-        self.part = None
-        # Set by pypeline's SYN_TOOL(...) / --syn_tool; no C pragma yet.
-        self.syn_tool_name = None
-        self.io_pairs = set()
-        self.inst_array_dict = dict()
-        self.async_wires = set()
-        self.input_wires = set()
-        self.output_wires = set()
-        self.clk_mhz = {}
-        self.clk_group = {}  # dict[user_clk_wire]=clk_group_str
-
-        # Clock crossing info
-        self.clk_cross_var_info = {}  # var name -> clk cross var info
-        self.arb_handshake_infos = set()
-
-        # Generated header info
-        # FSM funcs
-        self.func_fsm_header_included = set()
-        # SINGLE inst funcs
-        self.func_single_inst_header_included = set()
-
-        # Temp working copy of current func logic, probably should not be here?
-        self.existing_logic = Logic()  # Empty start for 'global namespace parsing'?
-
-    def DEEPCOPY(self):
-        # Fuck me how many times will I get caught with objects getting copied incorrectly?
-        rv = ParserState()
-
-        rv.FuncLogicLookupTable = {}
-        for fname in self.FuncLogicLookupTable:
-            rv.FuncLogicLookupTable[fname] = self.FuncLogicLookupTable[fname].DEEPCOPY()
-
-        rv.PrimFuncLogicLookupTable = {}
-        for fname in self.PrimFuncLogicLookupTable:
-            rv.PrimFuncLogicLookupTable[fname] = rv.FuncLogicLookupTable[fname]
-
-        rv.LogicInstLookupTable = {}
-        for inst_name in self.LogicInstLookupTable:
-            func_name = self.LogicInstLookupTable[inst_name].func_name
-            rv_func_logic = rv.FuncLogicLookupTable[func_name]
-            rv.LogicInstLookupTable[inst_name] = rv_func_logic
-
-        rv.FuncToInstances = copy.deepcopy(self.FuncToInstances)
-
-        rv.existing_logic = None
-        if self.existing_logic is not None:
-            rv.existing_logic = self.existing_logic.DEEPCOPY()
-
-        rv.struct_to_field_type_dict = dict(self.struct_to_field_type_dict)
-        rv.enum_info_dict = dict(self.enum_info_dict)
-        rv.global_vars = dict(self.global_vars)
-        rv.global_consts = dict(self.global_consts)
-        rv.func_to_local_state_regs = dict(self.func_to_local_state_regs)
-        rv.func_to_local_variables = dict(self.func_to_local_variables)
-
-        rv.func_name_to_calls = dict(self.func_name_to_calls)
-        rv.func_names_to_called_from = dict(self.func_name_to_calls)
-
-        rv.main_mhz = dict(self.main_mhz)
-        rv.main_syn_mhz = dict(self.main_syn_mhz)
-        rv.main_clk_group = dict(self.main_clk_group)
-        rv.func_mult_style = dict(self.func_mult_style)
-        rv.func_marked_wires = set(self.func_marked_wires)
-        rv.func_fixed_latency = dict(self.func_fixed_latency)
-        rv.auto_pipeline_rams = dict(self.auto_pipeline_rams)
-        rv.func_marked_blackbox = set(self.func_marked_blackbox)
-        rv.func_marked_no_add_io_regs = set(self.func_marked_no_add_io_regs)
-        rv.func_marked_debug = set(self.func_marked_debug)
-        rv.marked_onehot = set(self.marked_onehot)
-        rv.part = self.part
-        rv.syn_tool_name = self.syn_tool_name
-        rv.io_pairs = set(self.io_pairs)
-        rv.inst_array_dict = dict(self.inst_array_dict)
-        rv.async_wires = set(self.async_wires)
-        rv.input_wires = set(self.input_wires)
-        rv.output_wires = set(self.output_wires)
-        rv.clk_mhz = dict(self.clk_mhz)
-        rv.clk_group = dict(self.clk_group)
-
-        rv.clk_cross_var_info = dict(self.clk_cross_var_info)
-        rv.arb_handshake_infos = set(self.arb_handshake_infos)
-
-        rv.func_fsm_header_included = set(self.func_fsm_header_included)
-        rv.func_single_inst_header_included = set(self.func_single_inst_header_included)
-
-        return rv
 
 
 def GET_PARSER_STATE_CACHE_FILEPATH(c_filename):
@@ -10487,9 +7551,13 @@ def WRITE_PARSER_STATE_CACHE(parser_state, c_filename):
 def GET_PARSER_STATE_CACHE(c_filename):
     filepath = GET_PARSER_STATE_CACHE_FILEPATH(c_filename)
     if os.path.exists(filepath):
-        with open(filepath, "rb") as input:
-            parser_state = pickle.load(input)
-            return parser_state
+        # A cache written by an older compiler (renamed/moved classes) is just a miss
+        try:
+            with open(filepath, "rb") as input:
+                parser_state = pickle.load(input)
+                return parser_state
+        except Exception:
+            return None
     return None
 
 
@@ -10552,7 +7620,7 @@ def GET_FUNC_NAME_TO_FROM_FUNC_CALLS_LOOKUPS(parser_state):
         if func_name + C_TO_FSM.FSM_EXT in func_name_to_calls:
             submodule_func_names.add(func_name)
             submodule_func_names.add(func_name + C_TO_FSM.FSM_EXT)
-        if FUNC_IS_OP_OVERLOAD(func_name):
+        if LOGIC.FUNC_IS_OP_OVERLOAD(func_name):
             submodule_func_names.add(func_name)
     # print("submodule_func_names",submodule_func_names)
     while len(submodule_func_names) > 0:
@@ -10635,7 +7703,7 @@ def PARSE_FILE(c_filename):
         return cached_parser_state
 
     # Otherwise do for real
-    parser_state = ParserState()
+    parser_state = LOGIC.ParserState()
 
     # Catch pycparser exceptions
     try:
@@ -10672,7 +7740,7 @@ def PARSE_FILE(c_filename):
                     # Code generate empty to-be-generated header files
                     # so initial preprocessing can happen
                     # Then do repeated re-parsing as code gen continues
-                    new_regenerate_files |= SW_LIB.GEN_EMPTY_GENERATED_HEADERS(
+                    new_regenerate_files |= GEN_EMPTY_GENERATED_HEADERS(
                         all_code_files, inital_missing_files, parser_state
                     )
                     if (new_regenerate_files | regenerate_files) != regenerate_files:
@@ -10691,7 +7759,7 @@ def PARSE_FILE(c_filename):
                 )
                 preprocessed_c_text = preprocess_file(c_filename)
                 # Code gen based purely on preprocessed C text
-                new_regenerate_files |= SW_LIB.WRITE_POST_PREPROCESS_GEN_CODE(
+                new_regenerate_files |= WRITE_POST_PREPROCESS_GEN_CODE(
                     preprocessed_c_text, regenerate_files, parser_state
                 )
                 if (new_regenerate_files | regenerate_files) != regenerate_files:
@@ -10760,7 +7828,7 @@ def PARSE_FILE(c_filename):
                     flush=True,
                 )
                 new_regenerate_files |= (
-                    SW_LIB.WRITE_POST_PREPROCESS_WITH_NONFUNCDEFS_GEN_CODE(
+                    WRITE_POST_PREPROCESS_WITH_NONFUNCDEFS_GEN_CODE(
                         preprocessed_c_text, parser_state, regenerate_files
                     )
                 )
@@ -10797,7 +7865,7 @@ def PARSE_FILE(c_filename):
         # This is the old more hacky way
         # Get SW existing logic for this c file
         sw_func_name_2_logic = (
-            SW_LIB.GET_AUTO_GENERATED_FUNC_NAME_LOGIC_LOOKUP_FROM_PREPROCESSED_TEXT(
+            GET_AUTO_GENERATED_FUNC_NAME_LOGIC_LOOKUP_FROM_PREPROCESSED_TEXT(
                 preprocessed_c_text, parser_state
             )
         )
@@ -10873,11 +7941,11 @@ def PARSE_FILE(c_filename):
             )
 
         # Remove excess user code
-        if TRIM_COLLAPSE_LOGIC:
+        if LOGIC.TRIM_COLLAPSE_LOGIC:
             print("Doing obvious logic trimming/collapsing...", flush=True)
             for main_func in list(parser_state.main_mhz.keys()):
                 main_func_logic = parser_state.FuncLogicLookupTable[main_func]
-                parser_state = TRIM_COLLAPSE_FUNC_DEFS_RECURSIVE(
+                parser_state = LOGIC.TRIM_COLLAPSE_FUNC_DEFS_RECURSIVE(
                     main_func_logic, parser_state
                 )
 
@@ -10915,194 +7983,6 @@ def PARSE_FILE(c_filename):
         sys.exit(-1)
 
 
-def WRITE_0_ADDED_CLKS_INIT_FILES(parser_state):
-    # print("Building map of logic to be pipelined...", flush=True)
-    SYN.PART_SET_TOOL(
-        parser_state.part, allow_fail=True
-    )  # Comb logic only might not have tool set
-    ZeroAddedClocksTimingParamsLookupTable = (
-        AUTO_PIPELINE.GET_ZERO_ADDED_CLKS_TIMING_PARAMS_LOOKUP(parser_state)
-    )
-    multimain_timing_params = AUTO_PIPELINE.MultiMainTimingParams()
-    multimain_timing_params.TimingParamsLookupTable = (
-        ZeroAddedClocksTimingParamsLookupTable
-    )
-    # Write dir first if needed
-    output_directory = SYN.SYN_OUTPUT_DIRECTORY
-    if not os.path.exists(output_directory):
-        os.makedirs(output_directory)
-    # Write report of floating point module use - hi Victor!
-    WRITE_FLOAT_MODULE_INSTANCES_REPORT(multimain_timing_params, parser_state)
-    # Integers too..
-    WRITE_INTEGER_MODULE_INSTANCES_REPORT(multimain_timing_params, parser_state)
-    print(
-        "Writing VHDL files for all functions (before any added pipelining)...",
-        flush=True,
-    )
-    AUTO_PIPELINE.WRITE_ALL_ZERO_CLK_VHDL(parser_state, ZeroAddedClocksTimingParamsLookupTable)
-    print(
-        "Writing the constant struct+enum definitions as defined from C code...",
-        flush=True,
-    )
-    VHDL.WRITE_C_DEFINED_VHDL_STRUCTS_PACKAGE(parser_state)
-    print("Writing global wire definitions as parsed from C code...", flush=True)
-    VHDL.WRITE_GLOBAL_WIRES_VHDL_PACKAGE(parser_state)
-
-    # Copy pipelinec vhdl directory to output so users can export output directory alone
-    copy_tree(f"{REPO_ABS_DIR()}/src/vhdl", SYN.SYN_OUTPUT_DIRECTORY + "/built_in")
-
-
-def INSTANCE_IS_INSIDE_BUILT_IN_OP(parser_state, inst_name):
-    container_inst = GET_CONTAINER_INST(inst_name)
-    if container_inst:
-        container_func_logic = parser_state.LogicInstLookupTable[container_inst]
-        if container_func_logic.is_c_built_in:
-            return True
-        else:
-            return INSTANCE_IS_INSIDE_BUILT_IN_OP(parser_state, container_inst)
-    return False
-
-
-def WRITE_INTEGER_MODULE_INSTANCES_REPORT(
-    multimain_timing_params, parser_state, exclude_built_in_op_insides=True
-):
-    # Easier to just exclude non integer ops
-    # Even FPGA wires like "shift by constant" are considered integer ops, like in a CPU
-
-    # Keep just integer ops that are built in
-    int_funcs = []
-    int_func_to_max_in_width = {}
-    for func_name in parser_state.FuncToInstances:
-        func_logic = parser_state.FuncLogicLookupTable[func_name]
-        func_types = []
-        # INputs types
-        for input_port in func_logic.inputs:
-            input_c_type = func_logic.wire_to_c_type[input_port]
-            func_types.append(input_c_type)
-        max_in_width = 0
-        if VHDL.C_TYPES_ARE_INTEGERS(func_types):
-            for func_type in func_types:
-                width = VHDL.GET_WIDTH_FROM_C_N_BITS_INT_TYPE_STR(func_type)
-                if width > max_in_width:
-                    max_in_width = width
-        # Outputs types
-        for output_port in func_logic.outputs:
-            output_c_type = func_logic.wire_to_c_type[output_port]
-            func_types.append(output_c_type)
-        # Skip casts
-        if func_name.startswith(CAST_FUNC_NAME_PREFIX + "_"):
-            continue
-        if func_logic.is_c_built_in and VHDL.C_TYPES_ARE_INTEGERS(func_types):
-            int_funcs.append(func_name)
-            int_func_to_max_in_width[func_name] = max_in_width
-
-    if len(int_funcs) <= 0:
-        return
-
-    # Write instance of each func
-    text = ""
-    for func_name in sorted(int_funcs):
-        instances = parser_state.FuncToInstances[func_name]
-        max_in_width = int_func_to_max_in_width[func_name]
-
-        # Filter instances to ones that dont occur inside another built in operation
-        if exclude_built_in_op_insides:
-            instances_to_keep = []
-            for instance in instances:
-                if not INSTANCE_IS_INSIDE_BUILT_IN_OP(parser_state, instance):
-                    instances_to_keep.append(instance)
-            instances = instances_to_keep
-        if len(instances) <= 0:
-            continue
-
-        # Sort by main func
-        main_to_insts = {}
-        for instance in instances:
-            main_func = instance.split(SUBMODULE_MARKER)[0]
-            if main_func not in main_to_insts:
-                main_to_insts[main_func] = []
-            main_to_insts[main_func].append(instance)
-
-        # Print total and then by main func
-        text += f"{func_name} MaxInputWidth= {max_in_width} num_instances= {len(instances)} :\n"
-        for main_func in sorted(main_to_insts):
-            this_main_insts = main_to_insts[main_func]
-            text += f"{func_name} main: {main_func} MaxInputWidth= {max_in_width} num_instances= {len(this_main_insts)} :\n"
-            for instance in sorted(this_main_insts):
-                text += instance.replace(SUBMODULE_MARKER, "/") + "\n"
-        text += "\n"
-
-    out_file = SYN.SYN_OUTPUT_DIRECTORY + "/integer_module_instances.log"
-    print(f"Writing log of integer module instances: {out_file}")
-    f = open(out_file, "w")
-    f.write(text)
-    f.close()
-
-
-def WRITE_FLOAT_MODULE_INSTANCES_REPORT(multimain_timing_params, parser_state):
-    # Collect float func names dumb way
-    # looking for any built in funcs with 'float' in the name
-
-    float_funcs = set()
-    for func_name in parser_state.FuncToInstances:
-        func_logic = parser_state.FuncLogicLookupTable[func_name]
-        # Also ignore 'CONST_' things like CONST_REF, and muxes
-        if (
-            "float" in func_name
-            and func_logic.is_c_built_in
-            and "CONST_" not in func_name
-            and "MUX_" not in func_name
-        ):
-            float_funcs.add(func_name)
-
-    if len(float_funcs) <= 0:
-        return
-
-    text = ""
-    for func_name in sorted(float_funcs):
-        instances = sorted(parser_state.FuncToInstances[func_name])
-        # Sort by main func
-        main_to_insts = {}
-        for instance in instances:
-            main_func = instance.split(SUBMODULE_MARKER)[0]
-            if main_func not in main_to_insts:
-                main_to_insts[main_func] = []
-            main_to_insts[main_func].append(instance)
-
-        # Print total and then by main func
-        text += f"{func_name} num_instances= {len(instances)} :\n"
-        for main_func in sorted(main_to_insts):
-            this_main_insts = main_to_insts[main_func]
-            text += f"{func_name} main: {main_func} num_instances= {len(this_main_insts)} :\n"
-            for instance in sorted(this_main_insts):
-                text += instance.replace(SUBMODULE_MARKER, "/") + "\n"
-        text += "\n"
-
-    out_file = SYN.SYN_OUTPUT_DIRECTORY + "/float_module_instances.log"
-    print(f"Writing log of floating point module instances: {out_file}")
-    f = open(out_file, "w")
-    f.write(text)
-    f.close()
-
-
-# Global list of these in parser_state + lists per function in logic for locally delclared
-class VariableInfo:
-    def __init__(self):
-        self.name = None
-        self.type_name = None
-        self.init = None  # c ast node or string filename
-        self.resolved_const_str = None
-        self.is_volatile = False
-        self.is_static_local = False
-        self.path_id = None  # Use associated path id, for clk cross
-        self.used_in_funcs = set()  # Global id occurs in funcs
-        # Global wire timing inside a pipelined function (AUTO_PIPELINE.GLOBAL_WIRE_TIMING):
-        # "legacy" (C: read at earliest use, written when ready),
-        # "aligned" (Pypeline Wire: read with the args, written with the return),
-        # "volatile" (Pypeline Wire[T, VOLATILE]: read per consumer stage, written when ready).
-        self.pipeline_timing = "legacy"
-
-
 def GET_GLOBAL_VAR_INFO(parser_state):
     # Read in file with C parser to get global def nodes
     parser_state.global_vars = {}
@@ -11115,7 +7995,7 @@ def GET_GLOBAL_VAR_INFO(parser_state):
         # Skip function prototypes
         if type(global_decl.type) == c_ast.FuncDecl:
             continue
-        var_info = VariableInfo()
+        var_info = LOGIC.VariableInfo()
         var_info.name = name_str
         c_type, var_name = C_AST_DECL_TO_C_TYPE_AND_VAR_NAME(global_decl, parser_state)
         if c_type:  # Pointer decls ignored could be none
@@ -11190,7 +8070,7 @@ def GET_LOCAL_VAR_INFO(parser_state):
             # Record static state registers
             if "static" not in decl_c_ast_node.storage:
                 continue
-            var_info = VariableInfo()
+            var_info = LOGIC.VariableInfo()
             var_info.name = var_name
             var_info.type_name = c_type
             var_info.init = decl_c_ast_node.init
@@ -11293,11 +8173,11 @@ def APPEND_ARRAY_STRUCT_INFO(parser_state):
         func_logic = parser_state.FuncLogicLookupTable[func_name]
         for wire in func_logic.wire_to_c_type:
             c_type = func_logic.wire_to_c_type[wire]
-            if SW_LIB.C_TYPE_IS_ARRAY_STRUCT(c_type, parser_state):
-                c_array_type = SW_LIB.C_ARRAY_STRUCT_TYPE_TO_ARRAY_TYPE(
+            if LOGIC.C_TYPE_IS_ARRAY_STRUCT(c_type, parser_state):
+                c_array_type = LOGIC.C_ARRAY_STRUCT_TYPE_TO_ARRAY_TYPE(
                     c_type, parser_state
                 )
-                elem_t, dims = C_ARRAY_TYPE_TO_ELEM_TYPE_AND_DIMS(c_array_type)
+                elem_t, dims = LOGIC.C_ARRAY_TYPE_TO_ELEM_TYPE_AND_DIMS(c_array_type)
                 data_array_type = elem_t
                 for dim in dims:
                     data_array_type += "[" + str(dim) + "]"
@@ -11310,248 +8190,21 @@ def APPEND_ARRAY_STRUCT_INFO(parser_state):
     return parser_state
 
 
-def RECURSIVE_FIND_MAIN_FUNCS(
-    func_name, func_name_to_calls, func_names_to_called_from, main_funcs
-):
-    # Is it main?
-    if func_name in main_funcs:
-        return set([func_name])
-    rv = set()
-    # Where called from?
-    if func_name in func_names_to_called_from:
-        called_from_funcs = func_names_to_called_from[func_name]
-        for called_from_func in called_from_funcs:
-            rv |= RECURSIVE_FIND_MAIN_FUNCS(
-                called_from_func,
-                func_name_to_calls,
-                func_names_to_called_from,
-                main_funcs,
-            )
-    return rv
-
-
-class ClkCrossVarInfo:
-    def __init__(self):
-        self.write_read_main_funcs = ([], [])
-        self.write_read_funcs = (None, None)
-        self.write_read_sizes = (None, None)
-        self.flow_control = False
-        self.is_part_of_arb_handshake = False
-
-
-def INFER_CLOCK_DOMAINS(
-    var_to_rw_main_funcs, var_to_read_func, var_to_write_func, parser_state
-):
-    """Propagate known MHz/group values to MAINs sharing globals or clock-crossing vars.
-
-    Pass empty dicts for all three var_to_* arguments when called from the Python path
-    (no C-style clock-crossing variables exist there).
-    Returns var_to_rw_mhz_groups dict (needed by GET_CLK_CROSSING_INFO for object construction).
-    """
-    inferring = True
-    var_to_rw_mhz_groups = {}
-    while inferring:
-        inferring = False
-        # Do pass over all shared globals (same domain) trying to match domains
-        for global_var, global_var_state_reg_info in parser_state.global_vars.items():
-            # Shared globals only here
-            if not VHDL.GLOBAL_VAR_IS_SHARED(global_var, parser_state):
-                continue
-            # Cannot do inferring for async wires
-            if global_var in parser_state.async_wires:
-                continue
-            # Read+write mains for func
-            rw_mains = set()
-            for used_in_func in global_var_state_reg_info.used_in_funcs:
-                used_in_mains = RECURSIVE_FIND_MAIN_FUNCS(
-                    used_in_func,
-                    parser_state.func_name_to_calls,
-                    parser_state.func_names_to_called_from,
-                    list(parser_state.main_mhz.keys()),
-                )
-                rw_mains |= used_in_mains
-            # Look for a first valid main func domain and try to match it to others
-            valid_main = None
-            valid_mhz = None
-            valid_group = None
-            for rw_main in rw_mains:
-                if (
-                    rw_main in parser_state.main_mhz
-                    and parser_state.main_mhz[rw_main] is not None
-                ):
-                    valid_main = rw_main
-                    valid_mhz = parser_state.main_mhz[rw_main]
-                    valid_group = parser_state.main_clk_group[rw_main]
-                    break
-            if valid_main:
-                for rw_main in rw_mains - set([valid_main]):
-                    if (
-                        rw_main not in parser_state.main_mhz
-                        or parser_state.main_mhz[rw_main] is None
-                    ) and (
-                        rw_main not in parser_state.main_clk_group
-                        or parser_state.main_clk_group[rw_main] is None
-                        or parser_state.main_clk_group[rw_main] == valid_group
-                    ):
-                        if rw_main not in parser_state.func_marked_wires:
-                            print(
-                                "Matching clock domain: main function",
-                                rw_main,
-                                "based on shared global variable",
-                                global_var,
-                                "used with clock domain for main function",
-                                valid_main,
-                                "@",
-                                valid_mhz,
-                                "MHz, Group:",
-                                valid_group,
-                            )
-                        parser_state.main_mhz[rw_main] = valid_mhz
-                        parser_state.main_clk_group[rw_main] = valid_group
-                        if (
-                            rw_main not in parser_state.main_syn_mhz
-                            or parser_state.main_syn_mhz[rw_main] is None
-                        ):
-                            parser_state.main_syn_mhz[rw_main] = valid_mhz
-                        inferring = True
-        # Make sure global wires infer first
-        if inferring:
-            continue
-
-        # Do pass over all clk crossing vars trying to match domains
-        for var_name in var_to_rw_main_funcs:
-            # Skip temp during code gen disconnected write side
-            if var_name not in var_to_write_func:
-                continue
-            read_main_funcs, write_main_funcs = var_to_rw_main_funcs[var_name]
-            read_func_name = var_to_read_func[var_name]
-            write_func_name = var_to_write_func[var_name]
-            # Can only be one write side mhz,group
-            write_mhz_group_tuples = set()
-            write_mhz = None
-            write_group = None
-            for write_main_func in write_main_funcs:
-                if write_main_func in parser_state.main_mhz:
-                    write_mhz = parser_state.main_mhz[write_main_func]
-                    write_group = parser_state.main_clk_group[write_main_func]
-                    if write_mhz is not None:
-                        write_mhz_group_tuples.add((write_mhz, write_group))
-            if len(write_mhz_group_tuples) > 1:
-                print(
-                    f"WARNING: Cannot use clock crossing {var_name} written from multiple clock domains (mhz,group) {write_mhz_group_tuples}!"
-                )
-                inferring = True
-            if len(write_mhz_group_tuples) == 1:
-                write_mhz, write_group = list(write_mhz_group_tuples)[0]
-            else:
-                write_mhz = None
-                write_group = None
-            # Can only be one read side mhz,group
-            read_mhz_group_tuples = set()
-            read_mhz = None
-            read_group = None
-            for read_main_func in read_main_funcs:
-                if read_main_func in parser_state.main_mhz:
-                    read_mhz = parser_state.main_mhz[read_main_func]
-                    read_group = parser_state.main_clk_group[read_main_func]
-                    if read_mhz is not None:
-                        read_mhz_group_tuples.add((read_mhz, read_group))
-            if len(read_mhz_group_tuples) > 1:
-                print(
-                    f"WARNING: Cannot use clock crossing {var_name} read from multiple clock domains (mhz,group) {read_mhz_group_tuples}!"
-                )
-                inferring = True
-            if len(read_mhz_group_tuples) == 1:
-                read_mhz, read_group = list(read_mhz_group_tuples)[0]
-            else:
-                read_mhz = None
-                read_group = None
-            # print("var_name",var_name, "read_mhz", read_mhz, "read_main_funcs",read_main_funcs,"write_mhz",write_mhz, "write_main_funcs",write_main_funcs)
-            # Infer from each side if not marked async
-            if var_name not in parser_state.async_wires:
-                for read_main_func in read_main_funcs:
-                    # Infer freqs to match if possible and same groups
-                    if (
-                        read_main_func is not None
-                        and parser_state.main_mhz[read_main_func] is None
-                        and write_mhz is not None
-                        and (read_group is None or read_group == write_group)
-                    ):
-                        print(
-                            "Matching clock domain: read side main function",
-                            read_main_func,
-                            "based on clock crossing variable",
-                            var_name,
-                            "from clock domain with write side main function",
-                            write_main_func,
-                            "@",
-                            write_mhz,
-                            "MHz, Group:",
-                            write_group,
-                        )
-                        read_mhz = write_mhz
-                        parser_state.main_mhz[read_main_func] = read_mhz
-                        read_group = write_group
-                        parser_state.main_clk_group[read_main_func] = read_group
-                        if (
-                            read_main_func not in parser_state.main_syn_mhz
-                            or parser_state.main_syn_mhz[read_main_func] is None
-                        ):
-                            parser_state.main_syn_mhz[read_main_func] = read_mhz
-                        inferring = True
-                for write_main_func in write_main_funcs:
-                    if (
-                        write_main_func is not None
-                        and read_mhz is not None
-                        and parser_state.main_mhz[write_main_func] is None
-                        and (write_group is None or write_group == read_group)
-                    ):
-                        print(
-                            "Matching clock domain: write side main function",
-                            write_main_func,
-                            "based on clock crossing variable",
-                            var_name,
-                            "from clock domain with read side main function",
-                            read_main_func,
-                            "@",
-                            read_mhz,
-                            "MHz, Group:",
-                            read_group,
-                        )
-                        write_mhz = read_mhz
-                        parser_state.main_mhz[write_main_func] = write_mhz
-                        write_group = read_group
-                        parser_state.main_clk_group[write_main_func] = write_group
-                        if (
-                            write_main_func not in parser_state.main_syn_mhz
-                            or parser_state.main_syn_mhz[write_main_func] is None
-                        ):
-                            parser_state.main_syn_mhz[write_main_func] = write_mhz
-                        inferring = True
-            # Finally record mhz,group
-            var_to_rw_mhz_groups[var_name] = (
-                (read_mhz, read_group),
-                (write_mhz, write_group),
-            )
-
-    return var_to_rw_mhz_groups
-
-
 def GET_CLK_CROSSING_INFO(preprocessed_c_text, parser_state):
     # Regex search c_text for pair of write and read funcs
     write_func_calls = []
     r = rf"\w+" + "_WRITE" + rf"\s?\("
-    write_func_calls += SW_LIB.FIND_REGEX_MATCHES(r, preprocessed_c_text)
+    write_func_calls += FIND_REGEX_MATCHES(r, preprocessed_c_text)
     r = rf"\w+" + "_WRITE_[0-9]+" + rf"\s?\("
-    write_func_calls += SW_LIB.FIND_REGEX_MATCHES(r, preprocessed_c_text)
+    write_func_calls += FIND_REGEX_MATCHES(r, preprocessed_c_text)
     write_func_names = []
     for write_func_call in write_func_calls:
         write_func_names.append(write_func_call.strip("(").strip())
     read_func_calls = []
     r = rf"\w+" + "_READ" + rf"\s?\("
-    read_func_calls += SW_LIB.FIND_REGEX_MATCHES(r, preprocessed_c_text)
+    read_func_calls += FIND_REGEX_MATCHES(r, preprocessed_c_text)
     r = rf"\w+" + "_READ_[0-9]+" + rf"\s?\("
-    read_func_calls += SW_LIB.FIND_REGEX_MATCHES(r, preprocessed_c_text)
+    read_func_calls += FIND_REGEX_MATCHES(r, preprocessed_c_text)
     read_func_names = []
     for read_func_call in read_func_calls:
         read_func_names.append(read_func_call.strip("(").strip())
@@ -11562,11 +8215,11 @@ def GET_CLK_CROSSING_INFO(preprocessed_c_text, parser_state):
     all_var_names = set()
     for func_name in write_func_names + read_func_names:
         if "_WRITE" in func_name:
-            var_name = CLK_CROSS_FUNC_TO_VAR_NAME(func_name)
+            var_name = LOGIC.CLK_CROSS_FUNC_TO_VAR_NAME(func_name)
             all_var_names.add(var_name)
             var_to_write_func[var_name] = func_name
         if "_READ" in func_name:
-            var_name = CLK_CROSS_FUNC_TO_VAR_NAME(func_name)
+            var_name = LOGIC.CLK_CROSS_FUNC_TO_VAR_NAME(func_name)
             all_var_names.add(var_name)
             var_to_read_func[var_name] = func_name
     var_names = []
@@ -11612,7 +8265,7 @@ def GET_CLK_CROSSING_INFO(preprocessed_c_text, parser_state):
             # Read
             if read_func_name in called_funcs:
                 read_containing_funcs.add(func_name)
-                read_main_funcs |= RECURSIVE_FIND_MAIN_FUNCS(
+                read_main_funcs |= LOGIC.RECURSIVE_FIND_MAIN_FUNCS(
                     func_name,
                     parser_state.func_name_to_calls,
                     parser_state.func_names_to_called_from,
@@ -11622,7 +8275,7 @@ def GET_CLK_CROSSING_INFO(preprocessed_c_text, parser_state):
             # Write
             if write_func_name in called_funcs:
                 write_containing_funcs.add(func_name)
-                write_main_funcs |= RECURSIVE_FIND_MAIN_FUNCS(
+                write_main_funcs |= LOGIC.RECURSIVE_FIND_MAIN_FUNCS(
                     func_name,
                     parser_state.func_name_to_calls,
                     parser_state.func_names_to_called_from,
@@ -11636,7 +8289,7 @@ def GET_CLK_CROSSING_INFO(preprocessed_c_text, parser_state):
         #  #sys.exit(-1)
         var_to_rw_main_funcs[var_name] = (read_main_funcs, write_main_funcs)
 
-    var_to_rw_mhz_groups = INFER_CLOCK_DOMAINS(
+    var_to_rw_mhz_groups = LOGIC.INFER_CLOCK_DOMAINS(
         var_to_rw_main_funcs, var_to_read_func, var_to_write_func, parser_state
     )
 
@@ -11752,7 +8405,7 @@ def GET_CLK_CROSSING_INFO(preprocessed_c_text, parser_state):
                 # sys.exit(-1)
 
         # Record
-        parser_state.clk_cross_var_info[var_name] = ClkCrossVarInfo()
+        parser_state.clk_cross_var_info[var_name] = LOGIC.ClkCrossVarInfo()
         parser_state.clk_cross_var_info[var_name].flow_control = flow_control
         parser_state.clk_cross_var_info[var_name].write_read_funcs = (
             write_func_name,
@@ -11770,23 +8423,6 @@ def GET_CLK_CROSSING_INFO(preprocessed_c_text, parser_state):
     return parser_state
 
 
-def CLK_CROSS_FUNC_TO_VAR_NAME(func_name):
-    if "_READ" in func_name:
-        var_name = func_name.split("_READ")[0]
-    elif "_WRITE" in func_name:
-        var_name = func_name.split("_WRITE")[0]
-
-    return var_name
-
-
-class ArbHandshakeInfo:
-    def __init__(self):
-        self.input_var_name = None
-        self.input_clk_cross_var_info = None
-        self.output_var_name = None
-        self.output_clk_cross_var_info = None
-
-
 # return parser state with updated info
 def DERIVE_ARB_CLK_CROSSING_INFO(preprocessed_c_text, parser_state):
     parser_state.arb_handshake_infos = set()
@@ -11796,7 +8432,7 @@ def DERIVE_ARB_CLK_CROSSING_INFO(preprocessed_c_text, parser_state):
             i_var in parser_state.clk_cross_var_info
             and o_var in parser_state.clk_cross_var_info
         ):
-            arb_handshake_info = ArbHandshakeInfo()
+            arb_handshake_info = LOGIC.ArbHandshakeInfo()
             arb_handshake_info.input_var_name = i_var
             arb_handshake_info.output_var_name = o_var
             arb_handshake_info.input_clk_cross_var_info = (
@@ -11811,13 +8447,6 @@ def DERIVE_ARB_CLK_CROSSING_INFO(preprocessed_c_text, parser_state):
             parser_state.arb_handshake_infos.add(arb_handshake_info)
 
     return parser_state
-
-
-class EnumInfo:
-    def __init__(self):
-        self.name = None
-        self.id_to_int_val = OrderedDict()
-        self.int_c_type = None
 
 
 _printed_GET_ENUM_INFO_DICT = False
@@ -11847,7 +8476,7 @@ def GET_ENUM_INFO_DICT(c_file_ast, parser_state):
 
         enum_name = str(enum_def.name)
         # print "struct_name",struct_name
-        rv[enum_name] = EnumInfo()
+        rv[enum_name] = LOGIC.EnumInfo()
         rv[enum_name].name = enum_name
         is_one_hot = enum_name in parser_state.marked_onehot
         # print(enum_name)
@@ -12005,7 +8634,7 @@ def BUILD_PRIMITIVE_FUNC_LOGIC(
     orig_func_logic = parser_state.FuncLogicLookupTable[func_name]
 
     # Only copy io, black box otherwise
-    func_logic = Logic()
+    func_logic = LOGIC.Logic()
     func_logic.func_name = orig_func_logic.func_name
     func_logic.inputs = orig_func_logic.inputs[:]
     func_logic.outputs = orig_func_logic.outputs[:]
@@ -12014,15 +8643,6 @@ def BUILD_PRIMITIVE_FUNC_LOGIC(
         func_logic.wire_to_c_type[wire] = orig_func_logic.wire_to_c_type[wire]
 
     return func_logic
-
-
-def FUNC_IS_PRIMITIVE(func_name, parser_state):
-    # Try to use the tool assume false otherwise
-    SYN.PART_SET_TOOL(parser_state.part, allow_fail=True)
-    try:
-        return SYN.SYN_TOOL.FUNC_IS_PRIMITIVE(func_name)
-    except:
-        return False
 
 
 def GET_FSM_CLK_FUNC_LOGICS(parser_state):
@@ -12048,15 +8668,6 @@ def GET_FSM_CLK_FUNC_LOGICS(parser_state):
             pass
 
     return parser_state
-
-
-# Only needed for logic to skip func parsing so what hurts if its hacky?
-def FUNC_IS_OP_OVERLOAD(func_name):
-    if func_name.startswith(BIN_OP_LOGIC_NAME_PREFIX + "_"):
-        return True
-    elif func_name.startswith(UNARY_OP_LOGIC_NAME_PREFIX + "_"):
-        return True
-    return False
 
 
 def SKIP_PARSING_FUNC(func_name, parser_state):
@@ -12094,7 +8705,7 @@ def APPEND_FUNC_NAME_LOGIC_LOOKUP_TABLE(parser_state, parse_body=True):
                     ". Using second definition.",
                 )
         # Special overload funcs
-        if FUNC_IS_OP_OVERLOAD(func_def.decl.name):
+        if LOGIC.FUNC_IS_OP_OVERLOAD(func_def.decl.name):
             print(
                 "Elaborating dataflow of operator overload function:",
                 func_def.decl.name,
@@ -12106,7 +8717,7 @@ def APPEND_FUNC_NAME_LOGIC_LOOKUP_TABLE(parser_state, parse_body=True):
             #    print("Function skipped:", func_def.decl.name)
             continue
         # Prims
-        elif FUNC_IS_PRIMITIVE(func_def.decl.name, parser_state):
+        elif SYN.FUNC_IS_PRIMITIVE(func_def.decl.name, parser_state):
             print("Parsing primitive function:", func_def.decl.name, flush=True)
             parse_func_body = False
         # General user code
@@ -12147,7 +8758,7 @@ def RECURSIVE_ADD_LOGIC_INST_LOOKUP_INFO(
 ):
     # print("func_name",func_name,flush=True)
     # Use prepend text to contruct full instance names
-    new_inst_name_prepend_text = containing_logic_inst_name + SUBMODULE_MARKER
+    new_inst_name_prepend_text = containing_logic_inst_name + LOGIC.SUBMODULE_MARKER
     if func_name in parser_state.main_mhz:
         # Main never gets prepend text
         if containing_logic_inst_name != "":
@@ -12161,7 +8772,7 @@ def RECURSIVE_ADD_LOGIC_INST_LOOKUP_INFO(
         new_inst_name_prepend_text = ""
 
     # Is this function a hardware/tool specific primative?
-    if FUNC_IS_PRIMITIVE(func_name, parser_state):
+    if SYN.FUNC_IS_PRIMITIVE(func_name, parser_state):
         if func_name in parser_state.PrimFuncLogicLookupTable:
             orig_func_logic = parser_state.PrimFuncLogicLookupTable[func_name]
         else:
@@ -12186,7 +8797,7 @@ def RECURSIVE_ADD_LOGIC_INST_LOOKUP_INFO(
             containing_logic_inst_name
         ]
         # if containing_func_logic is not None:
-        orig_func_logic = BUILD_C_BUILT_IN_SUBMODULE_FUNC_LOGIC(
+        orig_func_logic = LOGIC.BUILD_C_BUILT_IN_SUBMODULE_FUNC_LOGIC(
             containing_func_logic, local_inst_name, parser_state
         )
         orig_func_logic.containing_funcs.add(containing_func_logic.func_name)
@@ -12205,7 +8816,7 @@ def RECURSIVE_ADD_LOGIC_INST_LOOKUP_INFO(
     # print("orig_func_logic.submodule_instances",orig_func_logic.submodule_instances.values())
     for submodule_inst in orig_func_logic.submodule_instances:
         submodule_func_name = orig_func_logic.submodule_instances[submodule_inst]
-        submodule_inst_name = inst_name + SUBMODULE_MARKER + submodule_inst
+        submodule_inst_name = inst_name + LOGIC.SUBMODULE_MARKER + submodule_inst
         submodule_c_ast_node_when_used = orig_func_logic.submodule_instance_to_ast_meta[
             submodule_inst
         ]
@@ -12573,3 +9184,8481 @@ def GET_C_AST_GLOBAL_DECLS(c_file_ast):
 
 def GET_TYPE_FROM_LIST(py_type, list):
     return [item for item in list if type(item) == py_type]
+
+
+
+# ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+# C code generation: built-in operator C code, generated headers (bit manip, bit math,
+# mem, clock crossing, type arrays/bytes, FSM, single instance) and their parsing.
+# ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+CLOCK_CROSS_HEADER = "var_clock_cross.h"
+TYPE_ARRAY_N_T_HEADER = "type_array_N_t.h"
+TYPE_BYTES_T_HEADER = "type_bytes_t.h"
+FSM_CLK_HEADER = "func" + C_TO_FSM.FSM_EXT + ".h"
+SINGLE_INST_HEADER = "func_SINGLE_INST.h"
+GENERATED_HEADER_DIRS = [
+    CLOCK_CROSS_HEADER,
+    TYPE_ARRAY_N_T_HEADER,
+    TYPE_BYTES_T_HEADER,
+    FSM_CLK_HEADER,
+    SINGLE_INST_HEADER,
+]
+
+
+# Find generated logic and apply additional 'parsed' information
+def GEN_CODE_POST_PARSE_LOGIC_ADJUST(func_logic, parser_state):
+    # Hacky detect+tag clock crossing
+    is_clk_cross = False
+    if not func_logic.is_c_built_in:
+        if "_READ" in func_logic.func_name:
+            read_toks = func_logic.func_name.split("_READ")
+            var = read_toks[0]
+            if var in parser_state.clk_cross_var_info:
+                is_clk_cross = True
+        if "_WRITE" in func_logic.func_name:
+            write_toks = func_logic.func_name.split("_WRITE")
+            var = write_toks[0]
+            if var in parser_state.clk_cross_var_info:
+                is_clk_cross = True
+    if is_clk_cross:
+        func_logic.is_clock_crossing = True
+        # Hacky marking clk cross func read+write as not able to be pipelined
+        func_logic.uses_nonvolatile_state_regs = True
+
+    return func_logic
+
+
+def WRITE_POST_PREPROCESS_WITH_NONFUNCDEFS_GEN_CODE(
+    preprocessed_c_text, parser_state, regenerate_files
+):
+    new_regenerate_files = set()
+    new_regenerate_files |= GEN_CLOCK_CROSS_HEADERS(
+        preprocessed_c_text, parser_state, regenerate_files
+    )
+    new_regenerate_files |= GEN_POST_PREPROCESS_WITH_NONFUNCDEFS_TYPE_BYTES_HEADERS(
+        preprocessed_c_text, parser_state, regenerate_files
+    )
+    new_regenerate_files |= GEN_POST_PREPROCESS_WITH_NONFUNCDEFS_FSM_CLK_FUNC_HEADERS(
+        preprocessed_c_text, parser_state, regenerate_files
+    )
+    return new_regenerate_files
+
+
+def GEN_CLOCK_CROSS_HEADERS(preprocessed_c_text, parser_state, regenerate_files):
+    # Make output dir
+    cc_out_path = SYN.SYN_OUTPUT_DIRECTORY + "/" + "clock_crossing"
+    os.makedirs(cc_out_path, exist_ok=True)
+    new_regenerate_files = set()
+    # Write two funcs in a header for each var
+    for var_name in parser_state.clk_cross_var_info:
+        c_type = parser_state.global_vars[var_name].type_name
+        # is_volatile = parser_state.global_vars[var_name].is_volatile
+        write_size, read_size = parser_state.clk_cross_var_info[
+            var_name
+        ].write_read_sizes
+        write_func_name, read_func_name = parser_state.clk_cross_var_info[
+            var_name
+        ].write_read_funcs
+        flow_control = parser_state.clk_cross_var_info[var_name].flow_control
+        ratio = 0
+        if write_size > read_size:
+            ratio = write_size / read_size
+        else:
+            ratio = read_size / write_size
+        ratio = int(ratio)
+        text = "#pragma once\n"
+        text += '#include "uintN_t.h"\n'
+        text += "#define " + var_name + "_RATIO " + str(ratio) + "\n"
+
+        if flow_control:
+            # Flow control
+            c_type = parser_state.global_vars[var_name].type_name
+            # Needs to be a 1 dim array for now
+            elem_t, dims = LOGIC.C_ARRAY_TYPE_TO_ELEM_TYPE_AND_DIMS(c_type)
+            if len(dims) > 1:
+                print("Only single dim in flow control crossing!", var_name)
+                sys.exit(0)
+            if len(dims) < 1:
+                print("No async fifo depth provided for var?:", var_name)
+                sys.exit(-1)
+            fifo_depth = dims[0]
+            c_type = elem_t
+            write_in_t = c_type + "[" + str(write_size) + "]"
+            read_out_t = c_type + "[" + str(read_size) + "]"
+
+            # Define read and write structs
+            write_out_t = var_name + "_write_t"
+            text += (
+                """typedef struct """
+                + write_out_t
+                + """
+{
+"""
+            )
+            text += "uint1_t ready;\n"
+            text += (
+                "}"
+                + write_out_t
+                + """;
+"""
+            )
+            read_out_t = var_name + "_read_t"
+            text += (
+                """typedef struct """
+                + read_out_t
+                + """
+{
+"""
+            )
+            text += c_type + " data[" + str(read_size) + "]" + ";\n"
+            text += "uint1_t valid;\n"
+            text += (
+                "}"
+                + read_out_t
+                + """;
+"""
+            )
+        else:
+            # No flow control, arrays
+            c_type = None
+            if var_name in parser_state.global_vars:
+                c_type = parser_state.global_vars[var_name].type_name
+            text += '#include "' + c_type + '_array_N_t.h"\n'
+            new_regenerate_files.add(c_type + "_array_N_t.h")
+            write_out_t = "void"
+            write_in_t = c_type + "_array_" + str(write_size) + "_t"
+            read_out_t = c_type + "_array_" + str(read_size) + "_t"
+            text += "#define " + var_name + "_write_t " + write_in_t + "\n"
+            text += "#define " + var_name + "_read_t " + read_out_t + "\n"
+
+        text += """
+// Clock cross write
+"""
+        if flow_control:
+            text += (
+                write_out_t
+                + """ """
+                + write_func_name
+                + "("
+                + c_type
+                + " write_data["
+                + str(write_size)
+                + "], uint1_t write_enable)"
+            )
+        else:
+            text += (
+                write_out_t + """ """ + write_func_name + "(" + write_in_t + " in_data)"
+            )
+        text += """
+{
+  // TODO
+}
+"""
+
+        text += """
+// Clock cross read
+"""
+
+        if flow_control:
+            text += read_out_t + """ """ + read_func_name + "(uint1_t read_enable)"
+        else:
+            read_in_t = "void"
+            text += read_out_t + """ """ + read_func_name + "()"
+        text += """
+{
+  // TODO
+}
+"""
+        # Write file
+        path = cc_out_path + "/" + var_name + ".h"
+        open(path, "w").write(text)
+
+    return new_regenerate_files
+
+
+def WRITE_POST_PREPROCESS_GEN_CODE(preprocessed_c_text, regenerate_files, parser_state):
+    new_regenerate_files = set()
+    # type_array_N_t - Since C can return constant size arrays
+    new_regenerate_files |= GEN_TYPE_ARRAY_N_HEADERS(
+        preprocessed_c_text, regenerate_files
+    )
+    # type_bytes_t - For converting types to/from bytes
+    new_regenerate_files |= GEN_POST_PREPROCESS_TYPE_BYTES_HEADERS(
+        preprocessed_c_text, regenerate_files
+    )
+    # Clock fsm gen
+    new_regenerate_files |= GEN_POST_PREPROCESS_FSM_CLK_HEADERS(
+        preprocessed_c_text, regenerate_files
+    )
+    # Single inst gen
+    new_regenerate_files |= GEN_POST_PREPROCESS_SINGLE_INST_HEADERS(
+        preprocessed_c_text, regenerate_files, parser_state
+    )
+
+    return new_regenerate_files
+
+
+def GEN_EMPTY_GENERATED_HEADERS(all_code_files, inital_missing_files, parser_state):
+    # These headers are generated
+    # by looking for autogenerated header files to be included
+
+    existing_files = []
+    for f in all_code_files:
+        if os.path.exists(f):
+            existing_files.append(f)
+
+    new_regenerate_files = set()
+
+    new_regenerate_files |= GEN_EMPTY_TYPE_ARRAY_N_HEADERS(
+        existing_files, inital_missing_files
+    )
+    new_regenerate_files |= GEN_EMPTY_CLOCK_CROSS_HEADERS(
+        existing_files, inital_missing_files
+    )
+    new_regenerate_files |= GEN_EMPTY_TYPE_BYTES_HEADERS(
+        existing_files, inital_missing_files
+    )
+    new_regenerate_files |= GEN_EMPTY_FSM_CLK_FUNC_HEADERS(
+        existing_files, inital_missing_files, parser_state
+    )
+    new_regenerate_files |= GEN_EMPTY_SINGLE_INST_FUNC_HEADERS(
+        existing_files, inital_missing_files, parser_state
+    )
+
+    return new_regenerate_files
+
+
+def GEN_EMPTY_SINGLE_INST_FUNC_HEADERS(
+    existing_files, inital_missing_files, parser_state
+):
+    new_regenerate_files = set()
+    for inital_missing_file in inital_missing_files:
+        # Regex search c_text for "<func>_SINGLE_INST.h"
+        r = rf"\w+_SINGLE_INST.h"
+        header_str_quotes = FIND_REGEX_MATCHES(r, inital_missing_file)
+        func_names = []
+        for header_str_quote in header_str_quotes:
+            header = header_str_quote.strip('"')
+            toks = header.split("_SINGLE_INST.h")
+            func_name = toks[0]
+            dir_name = SYN.SYN_OUTPUT_DIRECTORY + "/" + SINGLE_INST_HEADER
+            path = dir_name + "/" + func_name + "_SINGLE_INST.h"
+            if not os.path.exists(dir_name):
+                os.makedirs(dir_name)
+            if not os.path.exists(path):
+                f = open(path, "w")
+                text = ""
+                text += '#include "wire.h"\n'
+                # text += '#include "'+func_name+'_INPUT_t_array_N_t.h"\n'
+                # text += '#include "'+func_name+'_OUTPUT_t_array_N_t.h"\n'
+                f.write(text)
+                f.close()
+            parser_state.func_single_inst_header_included.add(func_name)
+
+    return new_regenerate_files
+
+
+def GEN_EMPTY_CLOCK_CROSS_HEADERS(all_code_files, inital_missing_files):
+    new_regenerate_files = set()
+    # for f in all_code_files:
+    #  text = READ_FILE_REMOVE_COMMENTS(f)
+    for inital_missing_file in inital_missing_files:
+        # Regex search c_text for "clock_crossing/<type>/<var>.h"
+        r = ".*clock_crossing.*"
+        clock_cross_header_strs = FIND_REGEX_MATCHES(r, inital_missing_file)
+        # print("clock_cross_header_str_quotes", clock_cross_header_str_quotes)
+        var_names = []
+        for clock_cross_header_str in clock_cross_header_strs:
+            toks = clock_cross_header_str.split(".h")
+            type_slash_var = toks[0]
+            if "/" not in type_slash_var:
+                var_name = type_slash_var.split("_clock_crossing")[0]
+                print("")
+                print("Please remove array include:")
+                print('#include "<type>_array_N_t.h"')
+                print("")
+                print(
+                    "And change clock crossing variable in include statement to be like:"
+                )
+                print(f'#include "clock_crossing/{var_name}.h"')
+                sys.exit(-1)
+
+            type_slash_toks = type_slash_var.split("/")
+            # is_volatile = False
+            if len(type_slash_toks) == 2:
+                cc_str, var_name = type_slash_toks
+                dir_name = (
+                    SYN.SYN_OUTPUT_DIRECTORY + "/" + "clock_crossing"
+                )  # + "/" + var_type
+
+            path = dir_name + "/" + var_name + ".h"
+            if not os.path.exists(dir_name):
+                os.makedirs(dir_name)
+            if not os.path.exists(path):
+                f = open(path, "w")
+                # f.write(decl_text)
+                # Need dummy defines
+                f.write("#define " + var_name + "_RATIO 0\n")
+                # f.write('#define ' + var_name + "_write_t int\n")
+                # f.write('#define ' + var_name + "_read_t int\n")
+                f.write("typedef int " + var_name + "_write_t;\n")
+                f.write("typedef int " + var_name + "_read_t;\n")
+                f.write("")
+                f.close()
+
+    return new_regenerate_files
+
+
+def GEN_EMPTY_TYPE_ARRAY_N_HEADERS(all_code_files, inital_missing_files):
+    new_regenerate_files = set()
+    # for f in all_code_files:
+    #  text = READ_FILE_REMOVE_COMMENTS(f)
+    for inital_missing_file in inital_missing_files:
+        # Regex search c_text for "<type>_array_<num>_t.h"
+        r = rf"\w+_array_N_t.h"
+        array_type_header_str_quotes = FIND_REGEX_MATCHES(r, inital_missing_file)
+        var_names = []
+        for array_type_header_str_quote in array_type_header_str_quotes:
+            array_type_header = array_type_header_str_quote.strip('"')
+            toks = array_type_header.split("_array_")
+            type_name = toks[0]
+            dir_name = (
+                SYN.SYN_OUTPUT_DIRECTORY
+                + "/"
+                + TYPE_ARRAY_N_T_HEADER
+                + "/"
+                + type_name
+                + "_array_N_t.h"
+            )
+            path = dir_name + "/" + type_name + "_array_N_t.h"
+            if not os.path.exists(dir_name):
+                os.makedirs(dir_name)
+            if not os.path.exists(path):
+                open(path, "w").write("")
+
+    return new_regenerate_files
+
+
+def GEN_EMPTY_TYPE_BYTES_HEADERS(all_code_files, inital_missing_files):
+    new_regenerate_files = set()
+    # for f in all_code_files:
+    #  text = READ_FILE_REMOVE_COMMENTS(f)
+    for inital_missing_file in inital_missing_files:
+        # Regex search c_text for "<type>_bytes_t.h"
+        r = rf"\w+_bytes_t.h"
+        bytes_header_str_quotes = FIND_REGEX_MATCHES(r, inital_missing_file)
+        var_names = []
+        for bytes_header_str_quote in bytes_header_str_quotes:
+            bytes_header = bytes_header_str_quote.strip('"')
+            toks = bytes_header.split("_bytes_t.h")
+            type_name = toks[0]
+            dir_name = (
+                SYN.SYN_OUTPUT_DIRECTORY
+                + "/"
+                + TYPE_BYTES_T_HEADER
+                + "/"
+                + type_name
+                + "_bytes_t.h"
+            )
+            path = dir_name + "/" + type_name + "_bytes_t.h"
+            if not os.path.exists(dir_name):
+                os.makedirs(dir_name)
+            if not os.path.exists(path):
+                open(path, "w").write("")
+
+    return new_regenerate_files
+
+
+def GEN_EMPTY_FSM_CLK_FUNC_HEADERS(all_code_files, inital_missing_files, parser_state):
+    new_regenerate_files = set()
+    # for f in all_code_files:
+    #  text = READ_FILE_REMOVE_COMMENTS(f)
+    for inital_missing_file in inital_missing_files:
+        # Regex search c_text
+        r = rf"\w+" + C_TO_FSM.FSM_EXT + ".h"
+        str_quotes = FIND_REGEX_MATCHES(r, inital_missing_file)
+        var_names = []
+        for str_quote in str_quotes:
+            header = str_quote.strip('"')
+            toks = header.split(C_TO_FSM.FSM_EXT + ".h")
+            func_name = toks[0]
+            dir_name = (
+                SYN.SYN_OUTPUT_DIRECTORY
+                + "/"
+                + FSM_CLK_HEADER
+                + "/"
+                + func_name
+                + C_TO_FSM.FSM_EXT
+                + ".h"
+            )
+            path = dir_name + "/" + func_name + C_TO_FSM.FSM_EXT + ".h"
+            if not os.path.exists(dir_name):
+                os.makedirs(dir_name)
+            if not os.path.exists(path):
+                open(path, "w").write("")
+            parser_state.func_fsm_header_included.add(func_name)
+
+    return new_regenerate_files
+
+
+def GEN_POST_PREPROCESS_SINGLE_INST_HEADERS(
+    preprocessed_c_text, regenerate_files, parser_state
+):
+    # Nothing in preprocessed text to look at so use
+    # parser_state.func_single_inst_header_included
+    new_regenerate_files = set()
+
+    for func_name in parser_state.func_single_inst_header_included:
+        dir_name = SYN.SYN_OUTPUT_DIRECTORY + "/" + SINGLE_INST_HEADER
+        path = dir_name + "/" + func_name + "_SINGLE_INST.h"
+        if not os.path.exists(dir_name):
+            os.makedirs(dir_name)
+        if not os.path.exists(path) or "#pragma once\n" not in open(path, "r").read():
+            f = open(path, "w")
+            text = ""
+            text += '#include "wire.h"\n'
+            text += '#include "' + func_name + '_FSM.h"\n'
+            new_regenerate_files.add(func_name + "_FSM.h")
+            text += func_name + "_INPUT_t " + func_name + "_arb_inputs;\n"
+            text += func_name + "_OUTPUT_t " + func_name + "_arb_outputs;\n"
+            text += (
+                "#pragma IO_PAIR "
+                "" + func_name + "_arb_inputs " + func_name + "_arb_outputs\n"
+            )
+            text += '#include "clock_crossing/' + func_name + '_arb_inputs.h"\n'
+            new_regenerate_files.add("clock_crossing/" + func_name + "_arb_inputs.h")
+            text += '#include "clock_crossing/' + func_name + '_arb_outputs.h"\n'
+            new_regenerate_files.add("clock_crossing/" + func_name + "_arb_outputs.h")
+            text += (
+                """#pragma MAIN """
+                + func_name
+                + """_arb
+void """
+                + func_name
+                + """_arb()
+{
+  """
+                + func_name
+                + """_INPUT_t i;
+  """
+                + func_name
+                + """_OUTPUT_t o;
+  WIRE_READ("""
+                + func_name
+                + """_INPUT_t, i, """
+                + func_name
+                + """_arb_inputs)
+  o = """
+                + func_name
+                + """_FSM(i);
+  WIRE_WRITE("""
+                + func_name
+                + """_OUTPUT_t, """
+                + func_name
+                + """_arb_outputs, o)
+}
+"""
+            )
+            f.write(text)
+            f.close()
+
+    return new_regenerate_files
+
+
+def GEN_POST_PREPROCESS_FSM_CLK_HEADERS(preprocessed_c_text, regenerate_files):
+    # Regex search c_text for <type>_bytes_t
+    r = rf"\w+" + C_TO_FSM.FSM_EXT
+    func_names = FIND_REGEX_MATCHES(r, preprocessed_c_text)
+
+    # #define replacing  Typedef each one
+    for func_name in func_names:
+        toks = func_name.split(C_TO_FSM.FSM_EXT)
+        fsm_clk_func_name = toks[0]
+
+        # We are beyond asking for help
+        # Your biologial and technological distinctiveness will be added to the project
+        # Fake IO types?
+        text = ""
+        text += (
+            """
+typedef uint8_t """
+            + fsm_clk_func_name
+            + """_INPUT_t; // DUMMY
+typedef uint8_t """
+            + fsm_clk_func_name
+            + """_OUTPUT_t; // DUMMY
+"""
+        )
+
+        # Write file
+        out_dir = (
+            SYN.SYN_OUTPUT_DIRECTORY
+            + "/"
+            + FSM_CLK_HEADER
+            + "/"
+            + fsm_clk_func_name
+            + C_TO_FSM.FSM_EXT
+            + ".h"
+        )
+        if not os.path.exists(out_dir):
+            os.makedirs(out_dir)
+        path = out_dir + "/" + fsm_clk_func_name + C_TO_FSM.FSM_EXT + ".h"
+        if not os.path.exists(path) or "#pragma once\n" not in open(path, "r").read():
+            open(path, "w").write(text)
+
+    # No extra code gen
+    return set()
+
+
+def GEN_POST_PREPROCESS_WITH_NONFUNCDEFS_FSM_CLK_FUNC_HEADERS(
+    preprocessed_c_text, parser_state, regenerate_files
+):
+    for func_name, func_logic in parser_state.FuncLogicLookupTable.items():
+        # print(func_logic.func_name, ".is_fsm_clk_func",func_logic.is_fsm_clk_func)
+        if func_logic.is_fsm_clk_func:
+            text = "#pragma once\n"
+            text += C_TO_FSM.FSM_LOGIC_TO_C_CODE(func_logic, parser_state)
+            # Write file
+            out_dir = (
+                SYN.SYN_OUTPUT_DIRECTORY
+                + "/"
+                + FSM_CLK_HEADER
+                + "/"
+                + func_name
+                + C_TO_FSM.FSM_EXT
+                + ".h"
+            )
+            if not os.path.exists(out_dir):
+                os.makedirs(out_dir)
+            path = out_dir + "/" + func_name + C_TO_FSM.FSM_EXT + ".h"
+            open(path, "w").write(text)
+
+    # FSM clks do not introduce extra code gen - based on existing user code
+    return set()
+
+
+def GEN_POST_PREPROCESS_TYPE_BYTES_HEADERS(preprocessed_c_text, regenerate_files):
+    # Regex search c_text for <type>_bytes_t
+    r = rf"\w+_bytes_t"
+    byte_types = FIND_REGEX_MATCHES(r, preprocessed_c_text)
+
+    # #define replacing  Typedef each one
+    for byte_type in byte_types:
+        # print "array_type",array_type
+        toks = byte_type.split("_bytes_t")
+        elem_t = toks[0]
+
+        # Dummy typedefs for now to fool c parser?? oh plz help - double up on some help wassup
+        # Yall sitting round here helplessnshit
+        text = ""
+        text += (
+            """
+typedef uint8_t """
+            + byte_type
+            + """; // DUMMY
+#define """
+            + elem_t
+            + "_size_t"
+            + """ uint32_t // DUMMY
+#define """
+            + elem_t.upper()
+            + """_TO_BYTES(so,dumb) // DUMMY
+"""
+        )
+
+        # Write file
+        out_dir = (
+            SYN.SYN_OUTPUT_DIRECTORY
+            + "/"
+            + TYPE_BYTES_T_HEADER
+            + "/"
+            + elem_t
+            + "_bytes_t.h"
+        )
+        if not os.path.exists(out_dir):
+            os.makedirs(out_dir)
+        path = out_dir + "/" + elem_t + "_bytes_t.h"
+        if not os.path.exists(path) or "#pragma once\n" not in open(path, "r").read():
+            open(path, "w").write(text)
+
+    # No extra code gen
+    return set()
+
+
+# Hey this function is dumb large
+# Just sayin
+def GEN_POST_PREPROCESS_WITH_NONFUNCDEFS_TYPE_BYTES_HEADERS(
+    preprocessed_c_text, parser_state, regenerate_files
+):
+    new_regenerate_files = set()
+    # print preprocessed_c_text
+    # Regex search c_text for <type>_bytes_t
+    r = rf"\w+_bytes_t"
+    byte_types = FIND_REGEX_MATCHES(r, preprocessed_c_text)
+
+    # #define replacing each one with array_n_t type
+    for byte_type in byte_types:
+        # print "array_type",array_type
+        toks = byte_type.split("_bytes_t")
+        type_t = toks[0]
+
+        # Fully generate a good header file for this type
+        text = "#pragma once\n"
+
+        # Include bytes for any sub fields of this type
+        types_to_include = set()
+        if LOGIC.C_TYPE_IS_STRUCT(type_t, parser_state):
+            field_to_type_dict = parser_state.struct_to_field_type_dict[type_t]
+            for field in field_to_type_dict:
+                field_type = field_to_type_dict[field]
+                type_to_include = field_type
+                if LOGIC.C_TYPE_IS_ARRAY(field_type):
+                    elem_t, dims = LOGIC.C_ARRAY_TYPE_TO_ELEM_TYPE_AND_DIMS(
+                        field_type
+                    )
+                    type_to_include = elem_t
+                # Ok to hacky replace char with u8 here?
+                if type_to_include == "char":
+                    type_to_include = "uint8_t"
+                types_to_include.add(type_to_include)
+        for type_to_include in types_to_include:
+            text += '#include "' + type_to_include + '_bytes_t.h"\n'
+            new_regenerate_files.add(type_to_include + "_bytes_t.h")
+
+        # #define the _bytes_t to be the uint8_t_array_N_t type
+        size = LOGIC.C_TYPE_SIZE(type_t, parser_state, allow_fail=True)
+        # hacky mchack
+        if size <= 0:
+            continue
+        text += '#include "uint8_t_array_N_t.h"\n'
+        new_regenerate_files.add("uint8_t_array_N_t.h")
+        text += "#define " + byte_type + " " + "uint8_t_array_" + str(size) + "_t\n"
+        # define a size_t for iterating over as many bytes
+        size_t_width = int(math.ceil(math.log(size, 2))) + 1
+        size_t = "uint" + str(size_t_width) + "_t"
+        text += "#define " + type_t + "_SIZE" + " " + str(size) + "\n"
+        text += "#define " + type_t + "_size_t" + " " + size_t + "\n"
+        func_name = type_t + "_to_bytes"
+
+        # Func type to bytes ###############################################
+        text += (
+            """
+#pragma FUNC_WIRES """
+            + func_name
+            + """
+"""
+            + byte_type
+            + " "
+            + func_name
+            + "("
+            + type_t
+            + """ x)
+{
+"""
+            + byte_type
+            + """ rv;
+"""
+        )
+        # Base type formulas
+        if LOGIC.C_TYPE_IS_STRUCT(type_t, parser_state):
+            # Counters for packing into rv
+            text += size_t + " pos = 0;\n"
+            text += size_t + " field_pos = 0;\n"
+
+            # Loop over each field
+            field_to_type_dict = parser_state.struct_to_field_type_dict[type_t]
+            for field in field_to_type_dict:
+                text += "// " + field + "\n"
+                field_type = field_to_type_dict[field]
+                # Need to manually handle array fields for now
+                if LOGIC.C_TYPE_IS_ARRAY(field_type):
+                    elem_t, dims = LOGIC.C_ARRAY_TYPE_TO_ELEM_TYPE_AND_DIMS(
+                        field_type
+                    )
+                    # Ok to hacky replace char with u8 here?
+                    if elem_t == "char":
+                        elem_t = "uint8_t"
+                    # nest for loop for each dim
+                    for dim_i in range(0, len(dims)):
+                        dim = dims[dim_i]
+                        dim_size_t_width = dim.bit_length()
+                        dim_size_t = "uint" + str(dim_size_t_width) + "_t"
+                        dim_var = field + "_dim_" + str(dim_i)
+                        text += dim_size_t + " " + dim_var + ";\n"
+                        text += (
+                            "for("
+                            + dim_var
+                            + "=0;"
+                            + dim_var
+                            + "<"
+                            + str(dim)
+                            + ";"
+                            + dim_var
+                            + "="
+                            + dim_var
+                            + "+1){\n"
+                        )
+
+                    # The repeated bytes assignments similar to normal case below
+                    # Get bytes
+                    elem_bytes_var = field + "_elem_bytes"
+                    text += (
+                        " "
+                        + elem_t
+                        + "_bytes_t "
+                        + elem_bytes_var
+                        + " = "
+                        + elem_t
+                        + "_to_bytes(x."
+                        + field
+                    )
+                    for dim_i in range(0, len(dims)):
+                        dim_var = field + "_dim_" + str(dim_i)
+                        text += "[" + dim_var + "]"
+                    text += ");\n"
+                    # Do loop to assign bytes
+                    text += (
+                        """ for(field_pos=0;field_pos<sizeof("""
+                        + elem_t
+                        + """);field_pos = field_pos + 1)
+  {
+    rv.data[pos] = """
+                        + elem_bytes_var
+                        + """.data[field_pos];
+    pos = pos + 1;
+  }
+"""
+                    )
+                    # Close braces
+                    # nest for loop for each dim
+                    for dim_i in range(0, len(dims)):
+                        text += "}\n"
+                else:
+                    # Normal, just do recursive _to_bytes
+                    text += (
+                        field_type
+                        + "_bytes_t "
+                        + field
+                        + "_bytes = "
+                        + field_type
+                        + "_to_bytes(x."
+                        + field
+                        + ");\n"
+                    )
+                    text += (
+                        """for(field_pos=0;field_pos<sizeof("""
+                        + field_type
+                        + """);field_pos = field_pos + 1)
+{
+  rv.data[pos] = """
+                        + field
+                        + """_bytes.data[field_pos];
+  pos = pos + 1;
+}
+"""
+                    )
+
+        elif VHDL.C_TYPES_ARE_INTEGERS([type_t]):
+            width = VHDL.GET_WIDTH_FROM_C_N_BITS_INT_TYPE_STR(type_t)
+            typeprefix = type_t.split("_t")[0]
+            low_i = 0
+            high_i = 7
+            byte_i = 0
+            while high_i < width:
+                text += (
+                    "rv.data["
+                    + str(byte_i)
+                    + "] = "
+                    + typeprefix
+                    + "_"
+                    + str(high_i)
+                    + "_"
+                    + str(low_i)
+                    + "(x);\n"
+                )
+                low_i = low_i + 8
+                high_i = high_i + 8
+                byte_i = byte_i + 1
+            if low_i < width:
+                text += (
+                    "rv.data["
+                    + str(byte_i)
+                    + "] = "
+                    + typeprefix
+                    + "_"
+                    + str(width - 1)
+                    + "_"
+                    + str(low_i)
+                    + "(x);\n"
+                )
+        elif LOGIC.C_TYPE_IS_FLOAT_TYPE(type_t):
+            float_bytes = LOGIC.C_TYPE_SIZE(type_t, parser_state)
+            for float_byte_i in range(0, float_bytes):
+                text += f"rv.data[{float_byte_i}] = {type_t}_{((float_byte_i+1)*8)-1}_{float_byte_i*8}(x);\n"
+        elif LOGIC.C_TYPE_IS_ENUM(type_t, parser_state):
+            # How many bytes
+            width = VHDL.GET_WIDTH_FROM_C_TYPE_STR(parser_state, type_t)
+            typeprefix = "uint" + str(width)
+            int_type = typeprefix + "_t"
+            # Convert to uint
+            text += int_type + " int_val = x;\n"
+            # Copy uint logic from above
+            low_i = 0
+            high_i = 7
+            byte_i = 0
+            while high_i < width:
+                text += (
+                    "rv.data["
+                    + str(byte_i)
+                    + "] = "
+                    + typeprefix
+                    + "_"
+                    + str(high_i)
+                    + "_"
+                    + str(low_i)
+                    + "(int_val);\n"
+                )
+                low_i = low_i + 8
+                high_i = high_i + 8
+                byte_i = byte_i + 1
+            if low_i < width:
+                text += (
+                    "rv.data["
+                    + str(byte_i)
+                    + "] = "
+                    + typeprefix
+                    + "_"
+                    + str(width - 1)
+                    + "_"
+                    + str(low_i)
+                    + "(int_val);\n"
+                )
+
+        else:
+            print("to bytes for type:", type_t)
+            sys.exit(-1)
+
+        text += """
+    return rv;
+}
+"""
+
+        # Also gen helper macro
+        text += (
+            """
+#define """
+            + type_t.upper()
+            + """_TO_BYTES(dst_byte_array, """
+            + type_t
+            + """_x)\\
+"""
+            + byte_type
+            + " "
+            + type_t
+            + "_to_bytes_WIRE = "
+            + type_t
+            + "_to_bytes("
+            + type_t
+            + """_x);\\
+uint32_t """
+            + type_t
+            + """_to_bytes_i;\\
+for("""
+            + type_t
+            + "_to_bytes_i=0;"
+            + type_t
+            + "_to_bytes_i<"
+            + type_t
+            + "_SIZE;"
+            + type_t
+            + """_to_bytes_i+=1)\\
+{\\
+  dst_byte_array["""
+            + type_t
+            + """_to_bytes_i] = """
+            + type_t
+            + """_to_bytes_WIRE.data["""
+            + type_t
+            + """_to_bytes_i];\\
+}
+"""
+        )
+
+        # Func bytes to type ###############################################
+        func_name = "bytes_to_" + type_t
+        text += (
+            """
+#pragma FUNC_WIRES """
+            + func_name
+            + """
+"""
+            + type_t
+            + " "
+            + func_name
+            + "(uint8_t bytes["
+            + type_t
+            + "_SIZE"
+            + """])
+{
+"""
+            + type_t
+            + """ rv;
+"""
+        )
+        # Base type formulas
+        if LOGIC.C_TYPE_IS_STRUCT(type_t, parser_state):
+            # Counters for packing into rv
+            text += size_t + " pos = 0;\n"
+            text += size_t + " field_pos = 0;\n"
+
+            # Loop over each field
+            field_to_type_dict = parser_state.struct_to_field_type_dict[type_t]
+            for field in field_to_type_dict:
+                text += "// " + field + "\n"
+                field_type = field_to_type_dict[field]
+                # Need to manually handle array fields for now
+                if LOGIC.C_TYPE_IS_ARRAY(field_type):
+                    elem_t, dims = LOGIC.C_ARRAY_TYPE_TO_ELEM_TYPE_AND_DIMS(
+                        field_type
+                    )
+                    # Ok to hacky replace char with u8 here?
+                    if elem_t == "char":
+                        elem_t = "uint8_t"
+                    # nest for loop for each dim
+                    for dim_i in range(0, len(dims)):
+                        dim = dims[dim_i]
+                        dim_size_t_width = dim.bit_length()
+                        dim_size_t = "uint" + str(dim_size_t_width) + "_t"
+                        dim_var = field + "_dim_" + str(dim_i)
+                        text += dim_size_t + " " + dim_var + ";\n"
+                        text += (
+                            "for("
+                            + dim_var
+                            + "=0;"
+                            + dim_var
+                            + "<"
+                            + str(dim)
+                            + ";"
+                            + dim_var
+                            + "="
+                            + dim_var
+                            + "+1){\n"
+                        )
+
+                    # The repeated bytes assignments similar to normal case below
+                    elem_bytes_var = field + "_elem_bytes"
+                    text += " " + elem_t + "_bytes_t " + elem_bytes_var + ";\n"
+                    text += (
+                        """ for(field_pos=0;field_pos<sizeof("""
+                        + elem_t
+                        + """);field_pos = field_pos + 1)
+  {
+    """
+                        + elem_bytes_var
+                        + """.data[field_pos] = bytes[pos];
+    pos = pos + 1;
+  }
+"""
+                    )
+                    text += " rv." + field
+                    for dim_i in range(0, len(dims)):
+                        dim_var = field + "_dim_" + str(dim_i)
+                        text += "[" + dim_var + "]"
+                    text += " = bytes_to_" + elem_t + "(" + elem_bytes_var + ");\n"
+
+                    # Close braces
+                    # nest for loop for each dim
+                    for dim_i in range(0, len(dims)):
+                        text += "}\n"
+                else:
+                    # Normal, just do recursive bytes_to_field_t
+                    # Assemble bytes for field
+                    text += field_type + "_bytes_t " + field + "_bytes;\n"
+                    text += (
+                        """for(field_pos=0;field_pos<sizeof("""
+                        + field_type
+                        + """);field_pos = field_pos + 1)
+{
+  """
+                        + field
+                        + """_bytes.data[field_pos] = bytes[pos];
+  pos = pos + 1;
+}
+"""
+                    )
+                    text += (
+                        "rv."
+                        + field
+                        + " = bytes_to_"
+                        + field_type
+                        + "("
+                        + field
+                        + "_bytes);\n"
+                    )
+
+        elif VHDL.C_TYPES_ARE_INTEGERS([type_t]):
+            width = VHDL.GET_WIDTH_FROM_C_N_BITS_INT_TYPE_STR(type_t)
+            typeprefix = type_t.split("_t")[0]
+            low_i = 0
+            high_i = 7
+            byte_i = 0
+            text += "rv = 0;\n"
+            while high_i < width:
+                text += (
+                    "rv = "
+                    + typeprefix
+                    + "_uint8_"
+                    + str(low_i)
+                    + "(rv, bytes["
+                    + str(byte_i)
+                    + "]);\n"
+                )
+                low_i = low_i + 8
+                high_i = high_i + 8
+                byte_i = byte_i + 1
+            if low_i < width:
+                rem = width - low_i
+                remprefix = "uint" + str(rem)
+                text += (
+                    "rv = "
+                    + typeprefix
+                    + "_"
+                    + remprefix
+                    + "_"
+                    + str(low_i)
+                    + "(rv, bytes["
+                    + str(byte_i)
+                    + "]);\n"
+                )
+        elif type_t == "float":
+            text += """
+    // Assemble 4 byte buffer
+    uint8_t buff[sizeof(float)];
+    uint3_t buff_pos;
+    for(buff_pos=0;buff_pos<sizeof(float);buff_pos=buff_pos+1)
+    {
+      buff[buff_pos] = bytes[buff_pos];
+    }
+    // Convert as little endian to uint32_t
+    uint32_t val_unsigned;
+    val_unsigned = uint8_array4_le(buff);
+    // Convert uint32_t to float
+    rv = float_uint32(val_unsigned);
+      """
+
+        elif LOGIC.C_TYPE_IS_ENUM(type_t, parser_state):
+            # How many bytes
+            width = VHDL.GET_WIDTH_FROM_C_TYPE_STR(parser_state, type_t)
+            typeprefix = "uint" + str(width)
+            int_type = typeprefix + "_t"
+            # Convert to uint like uint case
+            text += int_type + " int_val;\n"
+            low_i = 0
+            high_i = 7
+            byte_i = 0
+            text += "int_val = 0;\n"
+            while high_i < width:
+                text += (
+                    "int_val = "
+                    + typeprefix
+                    + "_uint8_"
+                    + str(low_i)
+                    + "(int_val, bytes["
+                    + str(byte_i)
+                    + "]);\n"
+                )
+                low_i = low_i + 8
+                high_i = high_i + 8
+                byte_i = byte_i + 1
+            if low_i < width:
+                rem = width - low_i
+                remprefix = "uint" + str(rem)
+                text += (
+                    "int_val = "
+                    + typeprefix
+                    + "_"
+                    + remprefix
+                    + "_"
+                    + str(low_i)
+                    + "(int_val, bytes["
+                    + str(byte_i)
+                    + "]);\n"
+                )
+            # And then convert uint to enum
+            text += "rv = int_val;\n"
+        else:
+            print("bytes to for type:", type_t)
+            # sys.exit(-1)
+
+        text += """
+    return rv;
+}"""
+
+        # Write file
+        out_dir = (
+            SYN.SYN_OUTPUT_DIRECTORY
+            + "/"
+            + TYPE_BYTES_T_HEADER
+            + "/"
+            + type_t
+            + "_bytes_t.h"
+        )
+        if not os.path.exists(out_dir):
+            os.makedirs(out_dir)
+        path = out_dir + "/" + type_t + "_bytes_t.h"
+        open(path, "w").write(text)
+
+        ####################################################################
+        #
+        ## DO THE SAME THING AGAIN FOR REAL C SOFTWARE SIDE
+        #
+        ####################################################################
+
+        # Fully generate a good header file for this type
+        text = "#pragma once\n"
+
+        # Include bytes for any sub fields of this type
+        for type_to_include in types_to_include:
+            text += (
+                '#include "type_bytes_t.h/'
+                + type_to_include
+                + "_bytes_t.h/"
+                + type_to_include
+                + '_bytes.h"\n'
+            )
+
+        text += "#define " + type_t + "_SIZE" + " " + str(size) + "\n"
+
+        # #define the _bytes_t to be the uint8_t_array_N_t type
+        size = LOGIC.C_TYPE_SIZE(type_t, parser_state, allow_fail=True)
+        # hacky mchack
+        if size <= 0:
+            continue
+
+        # Func type to bytes ###############################################
+        text += (
+            """
+void """
+            + type_t
+            + "_to_bytes("
+            + type_t
+            + """* x, uint8_t* bytes)
+{
+"""
+        )
+        # Base type formulas
+        if LOGIC.C_TYPE_IS_STRUCT(type_t, parser_state):
+            # Counters for packing into rv
+            text += "size_t pos = 0;\n"
+
+            # Loop over each field
+            field_to_type_dict = parser_state.struct_to_field_type_dict[type_t]
+            for field in field_to_type_dict:
+                text += "// " + field + "\n"
+                field_type = field_to_type_dict[field]
+                field_size = LOGIC.C_TYPE_SIZE(field_type, parser_state)
+                # Need to manually handle array fields for now
+                if LOGIC.C_TYPE_IS_ARRAY(field_type):
+                    elem_t, dims = LOGIC.C_ARRAY_TYPE_TO_ELEM_TYPE_AND_DIMS(
+                        field_type
+                    )
+                    # Ok to hacky replace char with u8 here?
+                    if elem_t == "char":
+                        elem_t = "uint8_t"
+                    elem_size = LOGIC.C_TYPE_SIZE(elem_t, parser_state)
+                    # nest for loop for each dim
+                    for dim_i in range(0, len(dims)):
+                        dim = dims[dim_i]
+                        dim_size_t_width = dim.bit_length()
+                        dim_size_t = "uint" + str(dim_size_t_width) + "_t"
+                        dim_var = field + "_dim_" + str(dim_i)
+                        text += "size_t " + dim_var + ";\n"
+                        text += (
+                            "for("
+                            + dim_var
+                            + "=0;"
+                            + dim_var
+                            + "<"
+                            + str(dim)
+                            + ";"
+                            + dim_var
+                            + "="
+                            + dim_var
+                            + "+1){\n"
+                        )
+
+                    # The repeated bytes assignments similar to normal case below
+                    text += " " + elem_t + "_to_bytes(&(x->" + field
+                    for dim_i in range(0, len(dims)):
+                        dim_var = field + "_dim_" + str(dim_i)
+                        text += "[" + dim_var + "]"
+                    text += "), &(bytes[pos]));\n"
+                    text += " pos = pos + " + str(elem_size) + "; // not sizeof()\n"
+
+                    # Close braces
+                    # nest for loop for each dim
+                    for dim_i in range(0, len(dims)):
+                        text += "}\n"
+                else:
+                    # Normal, just do recursive _to_bytes
+                    text += (
+                        field_type + "_to_bytes(&(x->" + field + "), &(bytes[pos]));\n"
+                    )
+                    text += "pos = pos + " + str(field_size) + "; // not sizeof()\n"
+
+        elif VHDL.C_TYPES_ARE_INTEGERS([type_t]):
+            width = VHDL.GET_WIDTH_FROM_C_N_BITS_INT_TYPE_STR(type_t)
+            typeprefix = type_t.split("_t")[0]
+            low_i = 0
+            high_i = 7
+            byte_i = 0
+            while high_i < width:
+                text += (
+                    "bytes[" + str(byte_i) + "] = (uint8_t)(*x>>" + str(low_i) + ");\n"
+                )
+                low_i = low_i + 8
+                high_i = high_i + 8
+                byte_i = byte_i + 1
+            if low_i < width:
+                print("Non byte bit width in C?", width)
+                print("Dance Hall - Modest Mouse")
+                sys.exit(-1)
+        elif type_t == "float":
+            text += """memcpy(bytes, x, 4);
+"""
+        elif LOGIC.C_TYPE_IS_ENUM(type_t, parser_state):
+            # How many bytes
+            num_bytes = LOGIC.C_TYPE_SIZE(type_t, parser_state)
+            width = 8 * num_bytes
+            typeprefix = "uint" + str(width)
+            int_type = typeprefix + "_t"
+            text += int_type + " int_val = *x;\n"
+            # Convert to uint like uint case
+            low_i = 0
+            high_i = 7
+            byte_i = 0
+            while high_i < width:
+                text += (
+                    "bytes["
+                    + str(byte_i)
+                    + "] = (uint8_t)(int_val>>"
+                    + str(low_i)
+                    + ");\n"
+                )
+                low_i = low_i + 8
+                high_i = high_i + 8
+                byte_i = byte_i + 1
+            if low_i < width:
+                print("Non byte bit width enum to sw bytes??", width, type_t)
+                sys.exit(-1)
+        else:
+            print("to sw bytes for type:", type_t)
+            sys.exit(-1)
+
+        text += """
+}
+"""
+
+        # Func bytes to type ###############################################
+        text += (
+            """
+void bytes_to_"""
+            + type_t
+            + "(uint8_t* bytes, "
+            + type_t
+            + """* x)
+{
+"""
+        )
+        # Base type formulas
+        if LOGIC.C_TYPE_IS_STRUCT(type_t, parser_state):
+            # Counters for packing into rv
+            text += "size_t pos = 0;\n"
+
+            # Loop over each field
+            field_to_type_dict = parser_state.struct_to_field_type_dict[type_t]
+            for field in field_to_type_dict:
+                text += "// " + field + "\n"
+                field_type = field_to_type_dict[field]
+                field_size = LOGIC.C_TYPE_SIZE(field_type, parser_state)
+                # Need to manually handle array fields for now
+                if LOGIC.C_TYPE_IS_ARRAY(field_type):
+                    elem_t, dims = LOGIC.C_ARRAY_TYPE_TO_ELEM_TYPE_AND_DIMS(
+                        field_type
+                    )
+                    # Ok to hacky replace char with u8 here?
+                    if elem_t == "char":
+                        elem_t = "uint8_t"
+                    elem_size = LOGIC.C_TYPE_SIZE(elem_t, parser_state)
+                    # nest for loop for each dim
+                    for dim_i in range(0, len(dims)):
+                        dim = dims[dim_i]
+                        dim_size_t_width = dim.bit_length()
+                        dim_size_t = "uint" + str(dim_size_t_width) + "_t"
+                        dim_var = field + "_dim_" + str(dim_i)
+                        text += "size_t " + dim_var + ";\n"
+                        text += (
+                            "for("
+                            + dim_var
+                            + "=0;"
+                            + dim_var
+                            + "<"
+                            + str(dim)
+                            + ";"
+                            + dim_var
+                            + "="
+                            + dim_var
+                            + "+1){\n"
+                        )
+
+                    # The repeated bytes assignments similar to normal case below
+                    text += " bytes_to_" + elem_t + "(&(bytes[pos]), &(x->" + field
+                    for dim_i in range(0, len(dims)):
+                        dim_var = field + "_dim_" + str(dim_i)
+                        text += "[" + dim_var + "]"
+                    text += "));\n"
+                    text += " pos = pos + " + str(elem_size) + "; // not sizeof()\n"
+
+                    # Close braces
+                    # nest for loop for each dim
+                    for dim_i in range(0, len(dims)):
+                        text += "}\n"
+                else:
+                    # Normal, just do recursive _to_bytes
+                    text += (
+                        "bytes_to_"
+                        + field_type
+                        + "(&(bytes[pos]), &(x->"
+                        + field
+                        + "));\n"
+                    )
+                    text += "pos = pos + " + str(field_size) + "; // not sizeof()\n"
+
+        elif VHDL.C_TYPES_ARE_INTEGERS([type_t]):
+            width = VHDL.GET_WIDTH_FROM_C_N_BITS_INT_TYPE_STR(type_t)
+            typeprefix = type_t.split("_t")[0]
+            low_i = 0
+            high_i = 7
+            byte_i = 0
+            text += "*x = 0;\n"
+            while high_i < width:
+                text += (
+                    "*x |= ((("
+                    + type_t
+                    + ")bytes["
+                    + str(byte_i)
+                    + "])<<"
+                    + str(low_i)
+                    + ");\n"
+                )
+                low_i = low_i + 8
+                high_i = high_i + 8
+                byte_i = byte_i + 1
+            if low_i < width:
+                print("Non byte bit width in C?", width)
+                print("Perfect Disguise - Modest Mouse")
+                sys.exit(-1)
+        elif type_t == "float":
+            text += """memcpy(x, bytes, 4);
+"""
+        elif LOGIC.C_TYPE_IS_ENUM(type_t, parser_state):
+            # How many bytes
+            num_bytes = LOGIC.C_TYPE_SIZE(type_t, parser_state)
+            width = 8 * num_bytes
+            typeprefix = "uint" + str(width)
+            int_type = typeprefix + "_t"
+            # Convert to uint like uint case
+            text += int_type + " int_val;\n"
+            low_i = 0
+            high_i = 7
+            byte_i = 0
+            text += "int_val = 0;\n"
+            while high_i < width:
+                text += (
+                    "int_val |= ((("
+                    + int_type
+                    + ")bytes["
+                    + str(byte_i)
+                    + "])<<"
+                    + str(low_i)
+                    + ");\n"
+                )
+                low_i = low_i + 8
+                high_i = high_i + 8
+                byte_i = byte_i + 1
+            if low_i < width:
+                print("Non byte bit width enum from sw bytes??", width, type_t)
+                sys.exit(-1)
+            # Then convert to enum
+            text += "*x = (" + type_t + ")int_val;\n"
+        else:
+            print("to type from sw bytes, type:", type_t)
+            sys.exit(-1)
+
+        text += """
+}
+"""
+
+        # Write file
+        path = (
+            out_dir + "/" + type_t + "_bytes.h"
+        )  # SW version doesnt have since dont need to deinfe byte type in SW?
+        open(path, "w").write(text)
+
+    return new_regenerate_files
+
+
+def GEN_TYPE_ARRAY_N_HEADERS(preprocessed_c_text, regenerate_files):
+    # Regex search c_text for <type>_array_<num>_t
+    r = rf"\w+_array_[0-9]+_t"
+    array_types = FIND_REGEX_MATCHES(r, preprocessed_c_text)
+    # print("preprocessed_c_text",preprocessed_c_text)
+    # print("array_types",array_types)
+    text_per_elem_t = {}
+
+    # Typedef each one
+    for array_type in array_types:
+        # print "array_type",array_type
+        toks = array_type.split("_array_")
+        elem_t = toks[0]
+        if elem_t not in text_per_elem_t:
+            text_per_elem_t[elem_t] = ""
+
+        size_str = toks[1].replace("_t", "")
+        text_per_elem_t[elem_t] += (
+            """
+typedef struct """
+            + array_type
+            + """
+{
+  """
+            + elem_t
+            + """ data["""
+            + size_str
+            + """];
+} """
+            + array_type
+            + """;"""
+        )
+
+    # Write files per elem_t
+    for elem_t in text_per_elem_t:
+        text = text_per_elem_t[elem_t]
+        out_dir = (
+            SYN.SYN_OUTPUT_DIRECTORY
+            + "/"
+            + TYPE_ARRAY_N_T_HEADER
+            + "/"
+            + elem_t
+            + "_array_N_t.h"
+        )
+        if not os.path.exists(out_dir):
+            os.makedirs(out_dir)
+        path = out_dir + "/" + elem_t + "_array_N_t.h"
+        f = open(path, "w")
+        f.write("#pragma once\n")
+        f.write(text)
+
+    # Does not introduce any more code gen
+    return set()
+
+
+def GET_AUTO_GENERATED_FUNC_NAME_LOGIC_LOOKUP_FROM_PREPROCESSED_TEXT(
+    c_text, parser_state
+):
+    # print("GET_AUTO_GENERATED_FUNC_NAME_LOGIC_LOOKUP_FROM_PREPROCESSED_TEXT\n",c_text)
+    # DONT FORGET TO CHANGE IS_AUTO_GENERATED and FUNC_NAME_INCLUDES_TYPES??
+    lookups = []
+
+    # BIT manipulation is auto generated
+    bit_manip_func_name_logic_lookup = GET_BIT_MANIP_H_LOGIC_LOOKUP_FROM_CODE_TEXT(
+        c_text, parser_state
+    )
+    lookups.append(bit_manip_func_name_logic_lookup)
+
+    # print "bit_manip_func_name_logic_lookup",bit_manip_func_name_logic_lookup
+
+    ###### THESE DEPEND ON BIT MANIP #TODO: Depedencies what?
+    bit_math_func_name_logic_lookup = GET_BIT_MATH_H_LOGIC_LOOKUP_FROM_CODE_TEXT(
+        c_text, parser_state
+    )
+    lookups.append(bit_math_func_name_logic_lookup)
+
+    # print "bit_math_func_name_logic_lookup",bit_math_func_name_logic_lookup
+
+    # MEMORY
+    # # TODO MOVE TO WRITE_POST_PREPROCESS_WITH_NONFUNCDEFS_GEN_CODE?
+    mem_func_name_logic_lookup = GET_MEM_H_LOGIC_LOOKUP(parser_state)
+    lookups.append(mem_func_name_logic_lookup)
+
+    # Combine lookups
+    rv = {}
+    for func_name_logic_lookup in lookups:
+        for func_name in func_name_logic_lookup:
+            if func_name not in rv:
+                rv[func_name] = func_name_logic_lookup[func_name]
+                # print "func_name (func_name_logic_lookup)",func_name
+                # if len(func_name_logic_lookup[func_name].wire_drives) == 0:
+                # print "BAD!"
+                # sys.exit(-1)
+            else:
+                # For now allow if from bit manip
+                # print "str(rv[func_name].c_ast_node.coord)",str(rv[func_name].c_ast_node.coord)
+                if LOGIC.IS_BIT_MANIP(rv[func_name]):
+                    pass
+                else:
+                    print(
+                        "GET_AUTO_GENERATED_FUNC_NAME_LOGIC_LOOKUP_FROM_CODE_TEXT func_name in multiple dicts?",
+                        func_name,
+                    )
+                    print(
+                        "bit_manip_func_name_logic_lookup",
+                        bit_manip_func_name_logic_lookup,
+                    )
+                    print("===")
+                    print(
+                        "bit_math_func_name_logic_lookup",
+                        bit_math_func_name_logic_lookup,
+                    )
+                    sys.exit(-1)
+
+    return rv
+
+
+# Not including user types and dumb struct thing everywhere we internally run C parsser
+# so just fake it # Pups To Dust - Modest Mouse
+def C_TYPE_NEEDS_INTERNAL_FAKE_TYPEDEF(c_type, parser_state):
+    return LOGIC.C_TYPE_IS_USER_TYPE(
+        c_type, parser_state
+    ) or LOGIC.C_TYPE_IS_ARRAY_STRUCT(c_type, parser_state)
+
+
+# Any hardware resource that can described as unit of memory, number of those units, and logic on that memory
+# Zero clock cycles just infers RAM primitives implemented in LUTS
+# 1 clock means either input or output registers - should infer bram?
+# 2 clocks means in and out regs - def BRAMable
+# Build more complex multi cycle memory out of these basics - FutureJulian
+# Ex. Start with RAM and per device resources fifo primitives, etc ....memory controllers? Next universe up Julian task
+#   The Flaming Lips - Fight Test
+
+
+# TODO MOVE TO WRITE_POST_PREPROCESS_WITH_NONFUNCDEFS_GEN_CODE?
+def GET_MEM_H_LOGIC_LOOKUP(parser_state):
+    text = ""
+    header_text = """
+#include "uintN_t.h"
+#include "intN_t.h"
+  """
+
+    # Use primitive mappings of funcs to func calls
+    # parser_state.func_name_to_calls, parser_state.func_names_to_called_from
+    # Need to indicate that these MEM functions have state registers globals/statics
+    # HACK YHACK CHAKC
+    func_name_to_state_reg_info = {}
+    func_name_was_global_def = {}
+    # _RAM_SP_RF
+    # RAM_DP_RF_RF_2  MORE THAN ONE OUTPUT DATA NEEDS DUMB C STRUCT WRAPPER!!
+    ram_types = []
+    for ram_prefix in [LOGIC.RAM_SP_RF, LOGIC.RAM_DP_RF]:
+        for ram_latency in range(0, 3):
+            ram_type = ram_prefix + "_" + str(ram_latency)
+            for (
+                calling_func_name,
+                called_func_names,
+            ) in parser_state.func_name_to_calls.items():
+                # Get local static var info for this func
+                local_state_reg_info_dict = {}
+                if calling_func_name in parser_state.func_to_local_state_regs:
+                    local_state_reg_info_dict = parser_state.func_to_local_state_regs[
+                        calling_func_name
+                    ]
+                    # for local_state_reg_info in local_state_reg_infos_dict.values():
+                    #  local_state_reg_info_dict[local_state_reg_info.name] = local_state_reg_info
+                for called_func_name in called_func_names:
+                    if called_func_name.endswith(ram_type):
+                        ram_func_name = called_func_name
+                        var_name = ram_func_name.replace("_" + ram_type, "")
+                        # print "var_name",var_name
+                        # Lookup type, should be global/static, and array
+                        c_type = None
+                        # Local scope first
+                        if var_name in local_state_reg_info_dict:
+                            c_type = local_state_reg_info_dict[var_name].type_name
+                            # BAAAHH locally typed/unique func name
+                            # Mangle name to include calling func if local?
+                            func_name = (
+                                calling_func_name + "_" + var_name + "_" + ram_type
+                            )
+                            func_name_to_state_reg_info[func_name] = (
+                                local_state_reg_info_dict[var_name]
+                            )
+                            func_name_was_global_def[func_name] = False
+                        elif var_name in parser_state.global_vars:
+                            c_type = parser_state.global_vars[var_name].type_name
+                            func_name = var_name + "_" + ram_type
+                            func_name_to_state_reg_info[func_name] = (
+                                parser_state.global_vars[var_name]
+                            )
+                            func_name_was_global_def[func_name] = True
+                        else:
+                            print("Unknown RAM prim var", var_name)
+                            sys.exit(-1)
+
+                        if not LOGIC.C_TYPE_IS_ARRAY(c_type):
+                            print("Ram function on non array?", ram_func_name)
+                            sys.exit(-1)
+                        elem_t, dims = LOGIC.C_ARRAY_TYPE_TO_ELEM_TYPE_AND_DIMS(
+                            c_type
+                        )
+                        # Multiple addresses now folks # Starfucker - Girls Just Want To Have
+                        # dim = dims[0]
+                        # addr_t = "uint" + str(int(math.ceil(math.log(dim,2)))) + "_t"
+
+                        text += (
+                            """
+      // """
+                            + ram_func_name
+                            + """
+      """
+                        )
+                        # In case type is actually user type - hacky
+                        if C_TYPE_NEEDS_INTERNAL_FAKE_TYPEDEF(elem_t, parser_state):
+                            text += """typedef uint8_t """ + elem_t + ";\n"
+                        # Declare global var that matches user
+                        text += elem_t + """ """ + var_name
+                        for dim in dims:
+                            text += "[" + str(dim) + "]"
+                        text += ";\n"
+                        text += elem_t + " " + func_name + "("
+                        if ram_type.startswith(LOGIC.RAM_SP_RF):
+                            for i in range(0, len(dims)):
+                                dim = dims[i]
+                                addr_t = "uint" + str(INDEX_BIT_WIDTH(dim)) + "_t"
+                                text += addr_t + " addr" + str(i) + ", "
+                        elif ram_type.startswith(LOGIC.RAM_DP_RF):
+                            for port_postfix in ["r", "w"]:
+                                for i in range(0, len(dims)):
+                                    dim = dims[i]
+                                    addr_t = "uint" + str(INDEX_BIT_WIDTH(dim)) + "_t"
+                                    text += (
+                                        addr_t + " addr_" + port_postfix + str(i) + ", "
+                                    )
+                        else:
+                            print("Unknown ram type:", ram_type)
+                            sys.exit(-1)
+                        # DONT ACTUALLY NEED/WANT IMPLEMENTATION FOR MEM SINCE 0 CLK IS BEST DONE/INFERRED AS RAW VHDL
+                        text += (
+                            elem_t
+                            + " wd, uint1_t we)"
+                            + """
+      {
+        /* 
+        // Need C code and VHDL equivalents, do VHDL as __vhdl__ literal?
+        */
+      }
+      """
+                        )
+
+    # print("MEM_HEADER_FILE")
+    # print(text)
+    # sys.exit(-1)
+
+    if text != "":
+        # Ok had some code, include headers
+        text = header_text + text
+        outfile = LOGIC.MEM_HEADER_FILE
+        parser_state_copy = copy.copy(parser_state)  # was DEEPCOPY
+        # Keep everything except logic stuff
+        parser_state_copy.FuncLogicLookupTable = {}  # dict[func_name]=Logic() instance with just func info
+        parser_state_copy.LogicInstLookupTable = {}  # dict[inst_name]=Logic() instance in full
+        parser_state_copy.existing_logic = (
+            LOGIC.Logic()
+        )  # Temp working copy of logic ? idk it should work
+        parse_body = False  # MEM DOES NOT HAVE SW IMPLEMENTATION
+        FuncLogicLookupTable = (
+            GET_FUNC_NAME_LOGIC_LOOKUP_TABLE_FROM_C_CODE_TEXT(
+                text, outfile, parser_state_copy, parse_body
+            )
+        )
+
+        # Apply hackyness
+        for func_name in FuncLogicLookupTable:
+            func_logic = FuncLogicLookupTable[func_name]
+            var_info = func_name_to_state_reg_info[func_name]
+            if func_name_was_global_def[func_name]:
+                # Add global for this logic
+                # print "RAM GLOBAL:",global_name
+                parser_state_copy.existing_logic = func_logic
+                func_logic = MAYBE_GLOBAL_DECL_TO_LOGIC(
+                    var_info.name, parser_state_copy, is_lhs_assign=True
+                )
+                FuncLogicLookupTable[func_name] = func_logic
+            elif not func_name_was_global_def[func_name]:
+                # Copy into local special here similar to MAYBE_GLOBAL^ above
+                # And special removing needing too?
+                # Copy info into existing_logic
+                func_logic.state_regs[var_info.name] = var_info
+                func_logic.wire_to_c_type[var_info.name] = var_info.type_name
+                func_logic.variable_names.add(var_info.name)
+                # Record using globals
+                if not func_logic.state_regs[var_info.name].is_volatile:
+                    func_logic.uses_nonvolatile_state_regs = True
+                    # print "rv.func_name",rv.func_name, rv.uses_nonvolatile_state_regs
+                FuncLogicLookupTable[func_name] = func_logic
+
+        return FuncLogicLookupTable
+
+    else:
+        # No code, no funcs
+        return {}
+
+
+def MEM_NAME_TO_LATENCY(mem_name):
+    if mem_name == LOGIC.RAM_SP_RF + "_0":
+        return 0
+    elif mem_name == LOGIC.RAM_SP_RF + "_1":
+        return 1
+    elif mem_name == LOGIC.RAM_SP_RF + "_2":
+        return 2
+    elif mem_name == LOGIC.RAM_DP_RF + "_0":
+        return 0
+    elif mem_name == LOGIC.RAM_DP_RF + "_1":
+        return 1
+    elif mem_name == LOGIC.RAM_DP_RF + "_2":
+        return 2
+    else:
+        print("MEM_NAME_TO_LATENCY for mem_name", mem_name, "?")
+        sys.exit(-1)
+
+
+def GET_BIT_MATH_H_LOGIC_LOOKUP_FROM_FUNC_NAMES(func_names, parser_state):
+    # TODO dont do string search at all - do 'in' list checks?
+    c_text = "(".join(func_names) + "("  # hacky af to keep regex matches minimal
+    return GET_BIT_MATH_H_LOGIC_LOOKUP_FROM_CODE_TEXT(c_text, parser_state)
+
+
+def GET_BIT_MATH_H_LOGIC_LOOKUP_FROM_CODE_TEXT(c_text, parser_state):
+    text = ""
+    header_text = """
+#include "uintN_t.h"
+#include "intN_t.h"
+  """
+
+    # Regex search c_text
+
+    # Negate
+    # Parse to list of width toks
+    negate_func_names = []
+    # uint24_negate(left_resized);
+    for type_regex in [rf"uint[0-9]+_negate\s?\("]:  # DO int,float negate?
+        p = re.compile(type_regex)
+        negate_func_names = p.findall(c_text)
+        negate_func_names = list(set(negate_func_names))
+        for negate_func_name in negate_func_names:
+            negate_func_name = negate_func_name.strip("(").strip()
+            toks = negate_func_name.split("_")
+            in_prefix = toks[0]
+            in_width = int(in_prefix.replace("uint", ""))
+            result_t = "int" + str(in_width + 1) + "_t"
+            result_uint_t = "uint" + str(in_width + 1) + "_t"
+
+            if type_regex == "float":
+                print(" #DO int,float negate?")
+                sys.exit(-1)
+            else:
+                in_t = in_prefix + "_t"
+
+            func_name = in_prefix + "_negate"
+            text += (
+                """
+// Negate
+"""
+                + result_t
+                + " "
+                + func_name
+                + "("
+                + in_t
+                + """ x)
+{
+  // Twos comp
+  
+  """
+                + result_uint_t
+                + """ x_wide;
+  x_wide = x;
+  
+  """
+                + result_uint_t
+                + """ x_wide_neg;
+  x_wide_neg = ~x_wide;
+  
+  """
+                + result_uint_t
+                + """ x_neg_wide_plus1;
+  x_neg_wide_plus1 = x_wide_neg + 1;
+  
+  """
+                + result_t
+                + """ rv;
+  rv = x_neg_wide_plus1;
+  
+  return rv;
+}
+"""
+            )
+
+    # abs
+    # Parse to list of width toks
+    abs_func_names = []
+    # int24_abs(left_resized);
+    for type_regex in [rf"int[0-9]+_abs\s?\("]:  # Float abs is bit manip func
+        p = re.compile(type_regex)
+        abs_func_names = p.findall(c_text)
+        abs_func_names = list(set(abs_func_names))
+        for abs_func_name in abs_func_names:
+            abs_func_name = abs_func_name.strip("(").strip()
+            toks = abs_func_name.split("_")
+            in_prefix = toks[0]
+            in_width = int(in_prefix.replace("int", ""))
+            sign_index = in_width - 1
+            result_t = "uint" + str(in_width) + "_t"
+            if type_regex == "float":
+                print(" #DO float abs?")
+                sys.exit(-1)
+            else:
+                in_t = in_prefix + "_t"
+
+            func_name = in_prefix + "_abs"
+            text += (
+                """
+#include "bit_manip.h"
+      
+// abs
+"""
+                + result_t
+                + " "
+                + func_name
+                + "("
+                + in_t
+                + """ x)
+{
+  // Reverse twos comp?
+  // Sub one and invert bits
+  // Fine with condition since other way is something like  (x + (x >> 31)) ^ (x >> 31)
+  // Which is dumb to do in SW
+  
+  // Get sign
+  uint1_t sign;
+  sign = """
+                + in_prefix
+                + """_"""
+                + str(sign_index)
+                + """_"""
+                + str(sign_index)
+                + """(x);
+  
+  // Get unsigned x
+  """
+                + result_t
+                + """ x_uint;
+  x_uint = x;
+  
+  // Minus 1
+  """
+                + result_t
+                + """ x_uint_minus1;
+  x_uint_minus1 = x_uint - 1;
+  
+  // Negate
+  """
+                + result_t
+                + """ x_uint_minus1_neg;
+  x_uint_minus1_neg = ~x_uint_minus1;
+  
+  """
+                + result_t
+                + """ rv;
+  if(sign==1)
+  {
+    rv = x_uint_minus1_neg;
+  }
+  else
+  {
+    rv = x;
+  }
+  
+  return rv;
+}
+"""
+            )
+
+    # N MUX
+    # Parse to list of width toks
+    nmux_func_names = []
+    # uint24_mux24(sel, in0, in1,...);
+    # print "DO any type NMUX"
+    for type_regex in [rf"\w+_mux[0-9]+\s?\("]:
+        p = re.compile(type_regex)
+        nmux_func_names = p.findall(c_text)
+        nmux_func_names = list(set(nmux_func_names))
+        for nmux_func_name in nmux_func_names:
+            nmux_func_name = nmux_func_name.strip("(").strip()
+            # print "nmux_func_name",nmux_func_name
+            # print c_text
+            new_toks = nmux_func_name.split("_mux")
+            mux_name = "mux" + new_toks[1]
+            n = int(mux_name.replace("mux", ""))
+            sel_width = INDEX_BIT_WIDTH(n)
+            sel_t = "uint" + str(sel_width) + "_t"
+            type_prefix = new_toks[0]
+
+            # Ew TODO clean up naming - autogenerated funcs should always be <full_type_name>_funcname(
+            # Change count0 to like lcount? rcount?
+            # See if uint
+            toks = type_prefix.split("int")
+            if (
+                len(toks) == 2
+                and (toks[0] == "" or toks[0] == "u")
+                and toks[1].isdigit()
+            ):
+                # uint special case, dumb
+                type_name = type_prefix + "_t"
+            else:
+                type_name = type_prefix
+
+            result_t = type_name
+            in_t = type_name
+            func_name = type_prefix + "_" + mux_name
+            var_2_type = {}
+
+            text += (
+                """
+#include "bit_manip.h"      
+// """
+                + str(nmux_func_name)
+                + """
+// """
+                + str(n)
+                + """ MUX\n"""
+            )
+            if C_TYPE_NEEDS_INTERNAL_FAKE_TYPEDEF(result_t, parser_state):
+                text += (
+                    """
+typedef uint8_t """
+                    + result_t
+                    + """; // FUCK
+"""
+                )
+            text += result_t + " " + func_name + "(" + sel_t + """ sel,"""
+            # List each input
+            for i in range(0, n):
+                text += in_t + " in" + str(i) + ","
+            # Remove last comma
+            text = text.strip(",")
+            text += """)
+{"""
+
+            # Hierarchy of 2x1 muxes
+            # Start with list of inputs
+            layer = 0
+            layer_nodes = []
+            for i in range(0, n):
+                layer_nodes.append("in" + str(i))
+
+            # DO
+            while True:
+                text += (
+                    """
+  // Layer """
+                    + str(layer)
+                    + """
+    """
+                )
+                # Get sel bit
+                sel_var = "sel" + str(layer)
+                text += (
+                    """
+  // Get sel bit
+  uint1_t """
+                    + sel_var
+                    + """;
+  """
+                    + sel_var
+                    + """ = uint"""
+                    + str(sel_width)
+                    + "_"
+                    + str(layer)
+                    + "_"
+                    + str(layer)
+                    + """(sel);
+"""
+                )
+                node = 0
+                new_layer_nodes = []
+                # Write adds in pairs
+                # While 2 args to add
+                while len(layer_nodes) >= 2:
+                    # Declare result of this mux
+                    out_var = "layer" + str(layer) + "_node" + str(node)
+                    text += (
+                        """
+  """
+                        + result_t
+                        + """ """
+                        + out_var
+                        + """;
+  """
+                    )
+                    # Do the if
+                    false_arg = layer_nodes.pop(0)
+                    true_arg = layer_nodes.pop(0)
+
+                    text += (
+                        """// Do regular mux
+  if("""
+                        + sel_var
+                        + """)
+  {
+    """
+                        + out_var
+                        + """ = """
+                        + true_arg
+                        + """;
+  }
+  else
+  {
+    """
+                        + out_var
+                        + """ = """
+                        + false_arg
+                        + """;
+  }
+  """
+                    )
+
+                    # This out node is on next layer
+                    new_layer_nodes.append(out_var)
+                    node += 1
+
+                # Out of while loop
+                # < 2 nodes left to sum in this node
+                if len(layer_nodes) == 1:
+                    # One node left
+                    the_arg = layer_nodes.pop(0)
+                    # Declare result of this mux
+                    out_var = "layer" + str(layer) + "_node" + str(node)
+                    text += (
+                        """
+  // Odd node in layer
+  """
+                        + result_t
+                        + """ """
+                        + out_var
+                        + """;
+  """
+                        + out_var
+                        + """ = """
+                        + the_arg
+                        + """;
+  """
+                    )
+                    # This out node is on next layer
+                    new_layer_nodes.append(out_var)
+                    node += 1
+
+                # WHILE
+                if len(new_layer_nodes) >= 2:
+                    # Continue
+                    layer_nodes = new_layer_nodes
+                    layer += 1
+                else:
+                    # DONE
+                    break
+
+            # Return last out var
+            last_out_var = "layer" + str(layer) + "_node" + str(node - 1)
+            text += (
+                """ 
+  return """
+                + last_out_var
+                + """;
+}
+"""
+            )
+
+    # print "MUX"
+    # print text
+
+    # count0 s
+    # Parse to list of width toks
+    count0_func_names = []
+    # count0s_uint24(left_resized) # Count from left, uint24_count0s counts from right
+    for type_regex in [rf"count0s_uint[0-9]+\s?\("]:
+        p = re.compile(type_regex)
+        count0_func_names = p.findall(c_text)
+        count0_func_names = list(set(count0_func_names))
+        for count0_func_name in count0_func_names:
+            count0_func_name = count0_func_name.strip("(").strip()
+            toks = count0_func_name.split("_")
+            in_prefix = toks[1]
+            in_t = in_prefix + "_t"
+            in_width = int(in_prefix.replace("uint", ""))
+            # Result width depends on width of input
+            # DONT COUNT all zeros since shift after this wont change
+            # Only need to count to in_width-1
+            result_width = int(math.ceil(math.log(in_width, 2)))
+            result_prefix = "uint" + str(result_width)
+            result_t = result_prefix + "_t"
+            func_name = count0_func_name
+
+            # include "bit_manip.h"
+            text += (
+                """
+      
+// count0s from left
+"""
+                + result_t
+                + " "
+                + func_name
+                + "("
+                + in_t
+                + """ x)
+{
+  // First do all the compares in parallel
+  // All zeros has has many zeros as width
+  uint1_t leading"""
+                + str(in_width)
+                + """ = (x==0);
+  """
+            )
+            for leading_zeros in range(1, in_width):
+                text += (
+                    """
+  uint1_t leading"""
+                    + str(leading_zeros)
+                    + """;
+  leading"""
+                    + str(leading_zeros)
+                    + """ = """
+                    + in_prefix
+                    + """_"""
+                    + str(in_width - 1)
+                    + """_"""
+                    + str(in_width - 1 - leading_zeros)
+                    + """(x) == 1;
+  
+  
+  // Mux each one hot into a constant
+  // This cant be optimal but better than before for sure
+  // Cant I just be happy for a little? maybe later?"""
+                )
+            # SKIP SUM0 SINCE IS BY DEF 0
+            var_2_type = {}
+            for leading_zeros in range(1, in_width + 1):
+                sum_width = int(math.ceil(math.log(leading_zeros + 1, 2)))
+                sum_prefix = "uint" + str(sum_width)
+                sum_t = sum_prefix + "_t"
+                var = "sum" + str(leading_zeros)
+                var_2_type[var] = sum_t
+                text += (
+                    """
+  """
+                    + sum_t
+                    + """ """
+                    + var
+                    + """;
+  if(leading"""
+                    + str(leading_zeros)
+                    + """)
+  {
+    """
+                    + var
+                    + """ = """
+                    + str(leading_zeros)
+                    + """;
+  }
+  else
+  {
+    """
+                    + var
+                    + """ = 0;
+  }
+  """
+                )
+
+            # This binary tree thing is weird?
+            # Now do binary tree ORing all these single only one will be set
+            # Fuck jsut copy from binary tree for mult
+            text += """
+  // Binary tree OR of "sums", can sine only one will be set
+"""
+            layer_nodes = []
+            for p in range(1, in_width + 1):
+                layer_nodes.append("sum" + str(p))
+
+            layer = 0
+            node = 0
+
+            # DO
+            while True:
+                text += (
+                    """
+  // Layer """
+                    + str(layer)
+                    + """
+"""
+                )
+                node = 0
+                new_layer_nodes = []
+                # Write adds in pairs
+                # While 2 args to add
+                while len(layer_nodes) >= 2:
+                    left_arg = layer_nodes.pop(0)
+                    right_arg = layer_nodes.pop(0)
+                    left_t = var_2_type[left_arg]
+                    right_t = var_2_type[right_arg]
+                    # Sum type is max width
+                    left_width = int(
+                        left_t.replace("uint", "").replace("int", "").replace("_t", "")
+                    )
+                    right_width = int(
+                        right_t.replace("uint", "").replace("int", "").replace("_t", "")
+                    )
+                    max_width = max(left_width, right_width)
+                    or_width = max_width
+
+                    sum_t = "uint" + str(or_width) + "_t"
+                    sum_var = "sum_layer" + str(layer) + "_node" + str(node)
+                    var_2_type[sum_var] = sum_t
+                    text += (
+                        """ """
+                        + sum_t
+                        + """ """
+                        + sum_var
+                        + """;
+  """
+                        + sum_var
+                        + """ = """
+                        + left_arg
+                        + " | "
+                        + right_arg
+                        + """;
+"""
+                    )
+                    # This sum node is on next layer
+                    new_layer_nodes.append(sum_var)
+                    node += 1
+
+                # Out of while loop
+                # < 2 nodes left to sum in this node
+                if len(layer_nodes) == 1:
+                    # One node left
+                    the_arg = layer_nodes.pop(0)
+                    the_t = var_2_type[the_arg]
+                    sum_t = the_t
+                    sum_var = "sum_layer" + str(layer) + "_node" + str(node)
+                    var_2_type[sum_var] = sum_t
+                    text += (
+                        """ // Odd node in layer
+  """
+                        + sum_t
+                        + """ """
+                        + sum_var
+                        + """;
+  """
+                        + sum_var
+                        + """ = """
+                        + the_arg
+                        + """;
+"""
+                    )
+                    # This sum node is on next layer
+                    new_layer_nodes.append(sum_var)
+                    node += 1
+
+                # WHILE
+                if len(new_layer_nodes) >= 2:
+                    # Continue
+                    layer_nodes = new_layer_nodes
+                    layer += 1
+                else:
+                    # DONE
+                    break
+
+            # Done with outer layer while loop
+
+            # Do return
+            return_var = "sum_layer" + str(layer) + "_node" + str(node - 1)
+            return_t = var_2_type[return_var]
+            text += (
+                """
+  """
+                + "// Return"
+                + """
+  """
+                + return_t
+                + """ rv;
+  rv = """
+                + return_var
+                + """;
+  return rv;
+}
+"""
+            )
+
+    # N Binary OP (sum, or, and, etc)
+    # Also can work with arrays
+    # Parse to list of width toks
+    n_bin_op_func_names = []
+    # uint24_sum24(left_resized);
+    # TODO better regexs
+    # TODO make full type _t in name not just uintN
+    for type_regex in [
+        "int[0-9]+",
+        "int[0-9]+_array",
+        "uint[0-9]+",
+        "uint[0-9]+_array",
+        "float",
+        "float_array",
+    ]:
+        for op_regex in ["sum", "or", "and"]:
+            regex = type_regex + "_" + op_regex + rf"[0-9]+\s?\("
+            p = re.compile(regex)
+            n_bin_op_func_names_w_paren = p.findall(c_text)
+            n_bin_op_func_names_w_paren = list(set(n_bin_op_func_names_w_paren))
+            for n_bin_op_func_name_w_paren in n_bin_op_func_names_w_paren:
+                n_bin_op_func_name = n_bin_op_func_name_w_paren.strip("(").strip()
+                # For now type strings dont include "_"
+                # Get toks by splitting on "_"
+                toks = n_bin_op_func_name.split("_")
+                # Get type and array info
+                in_elem_t_str = toks[0]
+                is_array = False
+                if len(toks) == 2:
+                    # Not array
+                    op_name = toks[1]
+                else:
+                    is_array = True
+                    op_name = toks[2]
+
+                # Get actual elem_t
+                # Special case uint, dumb
+                if in_elem_t_str == "float":
+                    in_elem_t = "float"
+                else:
+                    # Assume u/int
+                    in_elem_t = in_elem_t_str + "_t"
+
+                # how many elements?
+                n_elem = int(op_name.replace(op_regex, ""))
+                # print "n_sum",n_sum
+
+                # Result type?
+                if in_elem_t == "float":
+                    result_t = "float"
+                else:
+                    # Assume u/int
+                    # Depends on op
+                    if op_regex == "sum":
+                        type_width = int(
+                            in_elem_t_str.replace("uint", "").replace("int", "")
+                        )
+                        # Sum 2 would be bit width increase of 1
+                        if in_elem_t.startswith("u"):
+                            max_in_val = math.pow(2, type_width) - 1
+                        else:
+                            max_in_val = math.pow(2, type_width - 1)
+                        max_sum = max_in_val * n_elem
+                        result_width = int(math.ceil(math.log(max_sum + 1, 2)))
+                        if in_elem_t.startswith("u"):
+                            result_t = "uint" + str(result_width) + "_t"
+                        else:
+                            result_t = "int" + str(result_width + 1) + "_t"
+                    elif op_regex == "or" or op_regex == "and":
+                        # Result is same width as input
+                        result_t = in_elem_t
+                    else:
+                        print("Whats32@#%?@#?todo bit widths for array op")
+                        sys.exit(-1)
+
+                # Keep track of variable type so
+                # result type can be determined if needed
+                var_2_type = {}
+
+                # Start the code
+                text += (
+                    """
+  #include "bit_manip.h"      
+        
+  // N binary op
+  """
+                    + result_t
+                    + " "
+                    + n_bin_op_func_name
+                    + "("
+                )
+                # Input is either single array or many individual elements
+                if is_array:
+                    # Dont need to store array type in var_2_type
+                    text += in_elem_t + " x" + "[" + str(n_elem) + "]"
+                else:
+                    # List each input elements
+                    for i in range(0, n_elem):
+                        text += in_elem_t + " x" + str(i) + ","
+                        var_2_type["x" + str(i)] = in_elem_t
+                    # Remove last comma
+                    text = text.strip(",")
+
+                # Finish def
+                text += """)
+  {"""
+
+                # Do layers of simultaneous operations
+                layer_nodes = []
+                # Start with inputs
+                if is_array:
+                    for n in range(0, n_elem):
+                        # Can use const ref string as "variable name"
+                        var = "x[" + str(n) + "]"
+                        layer_nodes.append(var)
+                        var_2_type[var] = in_elem_t
+                else:
+                    for n in range(0, n_elem):
+                        layer_nodes.append("x" + str(n))
+
+                text += """
+        // Binary tree
+      """
+
+                # Done as while loop
+                layer = 0
+                node = 0
+
+                # DO
+                while True:
+                    text += (
+                        """
+        // Layer + """
+                        + str(layer)
+                        + """
+      """
+                    )
+                    node = 0
+                    new_layer_nodes = []
+                    # Write ops in pairs
+                    # While 2 args to do op to
+                    while len(layer_nodes) >= 2:
+                        left_arg = layer_nodes.pop(0)
+                        right_arg = layer_nodes.pop(0)
+                        left_t = var_2_type[left_arg]
+                        right_t = var_2_type[right_arg]
+                        # What is result of this op?
+                        # Depends on type
+                        if in_elem_t == "float":
+                            op_result_t = "float"
+                        else:
+                            # Assume uint
+                            # Depends on op
+                            if op_regex == "sum":
+                                # Sum type is max width+1
+                                left_width = int(
+                                    left_t.replace("uint", "")
+                                    .replace("int", "")
+                                    .replace("_t", "")
+                                )
+                                right_width = int(
+                                    right_t.replace("uint", "")
+                                    .replace("int", "")
+                                    .replace("_t", "")
+                                )
+                                max_width = max(left_width, right_width)
+                                sum_width = max_width + 1
+                                op_result_t = "uint" + str(sum_width) + "_t"
+                            elif op_regex == "or" or op_regex == "and":
+                                # Result is same width as input
+                                op_result_t = in_elem_t
+                            else:
+                                print("Whats32?")
+                                sys.exit(-1)
+
+                        op_var = "layer" + str(layer) + "_node" + str(node)
+                        var_2_type[op_var] = op_result_t
+                        # Determine C operator
+                        op_char = None
+                        if op_regex == "sum":
+                            op_char = "+"
+                        elif op_regex == "and":
+                            op_char = "&"
+                        elif op_regex == "or":
+                            op_char = "|"
+                        else:
+                            print(0 / 0)
+
+                        text += (
+                            """ """
+                            + op_result_t
+                            + """ """
+                            + op_var
+                            + """;
+        """
+                            + op_var
+                            + """ = """
+                            + left_arg
+                            + " "
+                            + op_char
+                            + " "
+                            + right_arg
+                            + """;
+      """
+                        )
+                        # This op node is on next layer
+                        new_layer_nodes.append(op_var)
+                        node += 1
+
+                    # Out of while loop
+                    # < 2 nodes left to operate on in this node
+                    if len(layer_nodes) == 1:
+                        # One node left
+                        the_arg = layer_nodes.pop(0)
+                        the_t = var_2_type[the_arg]
+                        op_result_t = the_t
+                        op_var = "layer" + str(layer) + "_node" + str(node)
+                        var_2_type[op_var] = op_result_t
+                        text += (
+                            """ // Odd node in layer
+        """
+                            + op_result_t
+                            + """ """
+                            + op_var
+                            + """;
+        """
+                            + op_var
+                            + """ = """
+                            + the_arg
+                            + """;
+        """
+                        )
+                        # This sum node is on next layer
+                        new_layer_nodes.append(op_var)
+                        node += 1
+
+                    # WHILE
+                    if len(new_layer_nodes) >= 2:
+                        # Continue
+                        layer_nodes = new_layer_nodes
+                        layer += 1
+                    else:
+                        # DONE
+                        break
+
+                # Done with outer layer while loop
+
+                # Do return
+                return_var = "layer" + str(layer) + "_node" + str(node - 1)
+                return_t = var_2_type[return_var]
+                text += (
+                    """
+        """
+                    + "// Return"
+                    + """
+        """
+                    + return_t
+                    + """ rv;
+        rv = """
+                    + return_var
+                    + """;
+        return rv;
+      }
+      """
+                )
+
+    # print("BIT_MATH_HEADER_FILE")
+    # print(text)
+
+    if text != "":
+        # Ok had some code, include headers
+        text = header_text + text
+
+        outfile = LOGIC.BIT_MATH_HEADER_FILE
+        parser_state_copy = copy.copy(parser_state)  # was DEEPCOPY()
+        # Keep everything except logic stuff
+        parser_state_copy.FuncLogicLookupTable = {}  # dict[func_name]=Logic() instance with just func info
+        parser_state_copy.LogicInstLookupTable = {}  # dict[inst_name]=Logic() instance in full
+        parser_state_copy.existing_logic = (
+            LOGIC.Logic()
+        )  # Temp working copy of logic ? idk it should work
+
+        ## NEED MANIP in MATH
+
+        """ SWITCH OVER TO ONCE NOT DOING REG EX SEARCH
+    # FUNC NAME BASED
+    preprocessed_text = preprocess_text(text)
+    c_file_ast = GET_C_FILE_AST_FROM_PREPROCESSED_TEXT(preprocessed_text, "auto_gen_bit_math_fake_filename.c")
+    func_call_nodes = C_AST_NODE_RECURSIVE_FIND_NODE_TYPE(c_file_ast, c_ast.FuncCall)
+    # get list of function names
+    func_names = set()
+    for func_call_node in func_call_nodes:
+      func_name = str(func_call_node.name.name)
+      func_names.add(func_name)
+    bit_manip_func_name_logic_lookup = GET_BIT_MANIP_H_LOGIC_LOOKUP_FROM_FUNC_NAMES(func_names,parser_state)
+    parser_state_copy.FuncLogicLookupTable = bit_manip_func_name_logic_lookup # {} 
+    """
+
+        # C TEXT NAME BASED
+        bit_manip_func_name_logic_lookup = GET_BIT_MANIP_H_LOGIC_LOOKUP_FROM_CODE_TEXT(
+            text, parser_state
+        )  # DEPENDS ON BIT MANIP # TODO: How to handle dependencies
+        parser_state_copy.FuncLogicLookupTable = bit_manip_func_name_logic_lookup  # {}
+
+        # Try to get all built in? not just manip? Recursive is nice?
+        # print("preprocessed_text",preprocessed_text)
+        # parser_state_copy.FuncLogicLookupTable = GET_AUTO_GENERATED_FUNC_NAME_LOGIC_LOOKUP_FROM_PREPROCESSED_TEXT(preprocessed_text, parser_state_copy) #parser_state??
+
+        parse_body = True  # BIT MATH IS SW IMPLEMENTATION
+        FuncLogicLookupTable = (
+            GET_FUNC_NAME_LOGIC_LOOKUP_TABLE_FROM_C_CODE_TEXT(
+                text, outfile, parser_state_copy, parse_body
+            )
+        )
+
+        for func_name in FuncLogicLookupTable:
+            func_logic = FuncLogicLookupTable[func_name]
+            if len(func_logic.wire_drives) == 0 and str(
+                func_logic.c_ast_node.coord
+            ).split(":")[0].endswith(LOGIC.BIT_MATH_HEADER_FILE):
+                print("BIT_MATH_HEADER_FILE")
+                print(text)
+                print("Bad parsing of BIT MATH", func_name)
+                sys.exit(-1)
+
+        return FuncLogicLookupTable
+
+    else:
+        # No code, no funcs
+        return {}
+
+
+def BIT_SEL_FUNC_TO_INPUTS_TYPES_OUTPUT_TYPE(bit_sel_func_name):
+    toks = bit_sel_func_name.split("_")
+    if len(toks) == 3:
+        high = int(toks[1])
+        low = int(toks[2])
+        in_prefix = toks[0]
+        if in_prefix == "float":
+            in_t = "float"
+        else:
+            in_t = in_prefix + "_t"
+        func_name = in_prefix + "_" + str(high) + "_" + str(low)
+        # Catch reverse
+        if high < low:
+            temp = low
+            low = high
+            high = temp
+        result_width = high - low + 1
+        result_t = "uint" + str(result_width) + "_t"
+    else:
+        # New float_e_m_t_#_#
+        high = int(toks[4])
+        low = int(toks[5])
+        in_t = "_".join(toks[0:4])
+        result_width = high - low + 1
+        result_t = "uint" + str(result_width) + "_t"
+    return (["x"], [in_t], result_t)
+
+
+def GET_BIT_MANIP_H_LOGIC_LOOKUP_FROM_FUNC_NAMES(func_names, parser_state):
+    # TODO dont do string search at all - do 'in' list checks?
+    c_text = "(".join(func_names) + "("  # hacky af to keep regex matches minimal
+    # print("manip func_names",func_names, flush=True)
+    return GET_BIT_MANIP_H_LOGIC_LOOKUP_FROM_CODE_TEXT(c_text, parser_state)
+
+
+def GET_BIT_MANIP_H_LOGIC_LOOKUP_FROM_CODE_TEXT(c_text, parser_state):
+    # TODO: Do bit select and bit dup as "const int"?
+
+    text = ""
+    header_text = """
+#include "uintN_t.h"
+#include "intN_t.h"
+#include "float_e_m_t.h"
+  """
+
+    # Regex search c_text
+    # Bit select
+    # Parse to list of width toks
+    bit_sel_func_names = []
+    # uint64_39_39(input);
+    for type_regex in [f"uint[0-9]+", "int[0-9]+", "float", "float_[0-9]+_[0-9]+_t"]:
+        p = re.compile(type_regex + rf"_[0-9]+_[0-9]+\s?\(")
+        bit_sel_func_names = p.findall(c_text)
+        bit_sel_func_names = list(set(bit_sel_func_names))
+        # Need bit concat and bit select
+        # BIT SELECT
+        # uint16_t uintX_15_0(uintX_t)
+        for bit_sel_func_name in bit_sel_func_names:
+            bit_sel_func_name = bit_sel_func_name.strip("(").strip()
+            (
+                input_port_names,
+                input_types,
+                result_t,
+            ) = BIT_SEL_FUNC_TO_INPUTS_TYPES_OUTPUT_TYPE(bit_sel_func_name)
+            # Only one input
+            text += (
+                """
+// BIT SELECT
+"""
+                + result_t
+                + " "
+                + bit_sel_func_name
+                + "("
+                + input_types[0]
+                + " "
+                + input_port_names[0]
+                + """)
+{
+  //TODO
+}
+"""
+            )
+
+    # BIT CONCAT
+    # Parse to list of width toks
+    bit_concat_func_names = []
+    # uint64_uint15
+    p = re.compile(rf"u?int[0-9]+_u?int[0-9]+\s?\(")
+    bit_concat_func_names = p.findall(c_text)
+    bit_concat_func_names = list(set(bit_concat_func_names))
+    # uint5_t uint2_uint3(uint2 x, uint3 y)
+    for bit_concat_func_name in bit_concat_func_names:
+        bit_concat_func_name = bit_concat_func_name.strip("(").strip()
+        toks = bit_concat_func_name.split("_")
+        first_bit_width = VHDL.GET_WIDTH_FROM_C_TYPE_STR(parser_state, toks[0] + "_t")
+        second_bit_width = VHDL.GET_WIDTH_FROM_C_TYPE_STR(parser_state, toks[1] + "_t")
+        result_width = first_bit_width + second_bit_width
+        result_t = "uint" + str(result_width) + "_t"
+        first_in_prefix = toks[0]
+        first_in_t = first_in_prefix + "_t"
+        second_in_prefix = toks[1]
+        second_in_t = second_in_prefix + "_t"
+        func_name = first_in_prefix + "_" + second_in_prefix
+        text += (
+            """
+// BIT CONCAT
+"""
+            + result_t
+            + " "
+            + func_name
+            + "("
+            + first_in_t
+            + " x, "
+            + second_in_t
+            + """ y)
+{
+  //TODO
+}
+"""
+        )
+
+    # BITS DUP
+    # Parse to list of width toks
+    bit_dup_func_names = []
+    # uint64_5
+    p = re.compile(rf"[^_][u?]int[0-9]+_[0-9]+\s?\(")
+    bit_dup_func_names = p.findall(c_text)
+    bit_dup_func_names = list(set(bit_dup_func_names))
+    # Questionable seems OK naming convention?
+    # uint(X*15)_t uintX_15(uintX_t)
+    # hacky dont match bit bit_sel_func_names
+    for bit_dup_func_name in bit_dup_func_names:
+        # if not(bit_dup_func_name in bit_sel_func_names):
+        bit_dup_func_name = bit_dup_func_name.strip("(").strip()
+        toks = bit_dup_func_name.split("_")
+        input_bit_width = VHDL.GET_WIDTH_FROM_C_TYPE_STR(parser_state, toks[0] + "_t")
+        mult = int(toks[1])
+        if mult == 0:
+            continue
+        result_width = input_bit_width * mult
+        result_t = "uint" + str(result_width) + "_t"
+        in_prefix = toks[0]
+        in_t = in_prefix + "_t"
+        func_name = in_prefix + "_" + str(mult)
+        text += (
+            """
+// BIT DUP
+"""
+            + result_t
+            + " "
+            + in_prefix
+            + "_"
+            + str(mult)
+            + "("
+            + in_t
+            + """ x)
+{
+  //TODO
+}
+"""
+        )
+
+    # Rotate left
+    # Parse to list of width toks
+    rotl_func_names = []
+    p = re.compile(rf"[^_]rotl[0-9]+_[0-9]+\s?\(")
+    rotl_func_names = p.findall(c_text)
+    rotl_func_names = list(set(rotl_func_names))
+    for rotl_func_name in rotl_func_names:
+        rotl_func_name = rotl_func_name.strip("(").strip()
+        # print("rotl_func_name",rotl_func_name)
+        toks = rotl_func_name.split("_")
+        in_prefix = "uint" + toks[0].replace("rotl", "")
+        in_t = in_prefix + "_t"
+        input_bit_width = VHDL.GET_WIDTH_FROM_C_TYPE_STR(parser_state, in_t)
+        rot_amount = int(toks[1])
+        result_width = input_bit_width
+        result_t = "uint" + str(result_width) + "_t"
+        func_name = "rotl" + str(input_bit_width) + "_" + str(rot_amount)
+        text += (
+            """
+// BIT ROTL
+"""
+            + result_t
+            + " "
+            + func_name
+            + "("
+            + in_t
+            + """ x)
+{
+  //TODO
+}
+"""
+        )
+
+    # Rotate right
+    # Parse to list of width toks
+    rotr_func_names = []
+    p = re.compile(rf"[^_]rotr[0-9]+_[0-9]+\s?\(")
+    rotr_func_names = p.findall(c_text)
+    rotr_func_names = list(set(rotr_func_names))
+    for rotr_func_name in rotr_func_names:
+        rotr_func_name = rotr_func_name.strip("(").strip()
+        # print("rotr_func_name",rotr_func_name)
+        toks = rotr_func_name.split("_")
+        in_prefix = "uint" + toks[0].replace("rotr", "")
+        in_t = in_prefix + "_t"
+        input_bit_width = VHDL.GET_WIDTH_FROM_C_TYPE_STR(parser_state, in_t)
+        rot_amount = int(toks[1])
+        result_width = input_bit_width
+        result_t = "uint" + str(result_width) + "_t"
+        func_name = "rotr" + str(input_bit_width) + "_" + str(rot_amount)
+        text += (
+            """
+// BIT ROTR
+"""
+            + result_t
+            + " "
+            + func_name
+            + "("
+            + in_t
+            + """ x)
+{
+  //TODO
+}
+"""
+        )
+
+    # Constant index assignment with N bits
+    # Otherwise large slv is like ram lookup
+    # Parse to list of width toks
+    bit_ass_func_names = []
+    # uint64_uint15_2(uint64_t in, uint15_t x)  // out = in; out(16 downto 2) = x
+    p = re.compile(rf"u?int[0-9]+_uint[0-9]+_[0-9]+\s?\(")
+    bit_ass_func_names = p.findall(c_text)
+    bit_ass_func_names = list(set(bit_ass_func_names))
+    for bit_ass_func_name in bit_ass_func_names:
+        bit_ass_func_name = bit_ass_func_name.strip("(").strip()
+        toks = bit_ass_func_name.split("_")
+        input_bit_width = VHDL.GET_WIDTH_FROM_C_TYPE_STR(parser_state, toks[0] + "_t")
+        assign_width = VHDL.GET_WIDTH_FROM_C_TYPE_STR(parser_state, toks[1] + "_t")
+        low_index = int(toks[2])
+        high_index = low_index + assign_width - 1
+        result_width = input_bit_width
+        in_prefix = toks[0]
+        in_t = in_prefix + "_t"
+        result_t = in_t
+        x_prefix = toks[1]
+        x_t = x_prefix + "_t"
+        func_name = bit_ass_func_name
+        text += (
+            """
+// CONST BIT ASSIGNMENT
+"""
+            + result_t
+            + " "
+            + func_name
+            + "("
+            + in_t
+            + """ inp, """
+            + x_t
+            + """ x)
+{
+  //TODO
+}
+"""
+        )
+
+    # Float SEM construction
+    # Regex search c_text
+    # Parse to list of width toks
+    float_const_func_names = []
+    # float_1_8_23(left_resized);
+    for type_regex in [f"float"]:
+        p = re.compile(type_regex + rf"_uint[0-9]+_uint[0-9]+\s?\(")
+        float_const_func_names = p.findall(c_text)
+        float_const_func_names = list(set(float_const_func_names))
+        for float_const_func_name in float_const_func_names:
+            float_const_func_name = float_const_func_name.strip("(").strip()
+            toks = float_const_func_name.split("_")
+            s_prefix = "uint1"
+            s_t = s_prefix + "_t"
+            e_prefix = toks[1]
+            e_t = e_prefix + "_t"
+            m_prefix = toks[2]
+            m_t = m_prefix + "_t"
+            result_t = (
+                "float_"
+                + str(e_prefix.replace("uint", ""))
+                + "_"
+                + str(m_prefix.replace("uint", ""))
+                + "_t"
+            )
+            func_name = float_const_func_name
+            text += (
+                """
+// FLOAT SEM CONSTRUCT
+"""
+                + result_t
+                + " "
+                + float_const_func_name
+                + "("
+                + s_t
+                + """ sign, """
+                + e_t
+                + """ exponent, """
+                + m_t
+                + """ mantissa)
+{
+  //TODO
+}
+"""
+            )
+
+    # Float UINT32 construction ... bleh ... implement unions?
+    # Regex search c_text
+    # Parse to list of width toks
+    float_const_func_names = []
+    # float_uint32(in);
+    for type_regex in [f"float", "float_[0-9]+_[0-9]+_t"]:
+        p = re.compile(type_regex + rf"_uint[0-9]+\s?\(")
+        float_const_func_names = p.findall(c_text)
+        float_const_func_names = list(set(float_const_func_names))
+        for float_const_func_name in float_const_func_names:
+            float_const_func_name = float_const_func_name.strip("(").strip()
+            toks = float_const_func_name.split("_")
+            if len(toks) == 2:
+                in_prefix = toks[1]
+                in_t = in_prefix + "_t"
+                result_t = type_regex
+            else:
+                in_prefix = toks[4]
+                in_t = in_prefix + "_t"
+                result_t = "float_" + toks[1] + "_" + toks[2] + "_t"
+
+            text += (
+                """
+// FLOAT UINT32
+"""
+                + result_t
+                + " "
+                + float_const_func_name
+                + "("
+                + in_t
+                + """ x)
+{
+  //TODOs
+}
+"""
+            )
+
+    # Float abs, just clear sign bit
+    # Regex search c_text
+    # Parse to list of width toks
+    float_const_func_names = []
+    # float_abs(in);
+    for type_regex in [f"float", "float_[0-9]+_[0-9]+_t"]:
+        p = re.compile(type_regex + rf"_abs\s?\(")
+        float_const_func_names = p.findall(c_text)
+        float_const_func_names = list(set(float_const_func_names))
+        for float_const_func_name in float_const_func_names:
+            float_const_func_name = float_const_func_name.strip("(").strip()
+            toks = float_const_func_name.split("_")
+            if len(toks) == 2:
+                # float
+                in_t = type_regex
+                result_t = in_t
+            else:
+                # float_e_m_t
+                in_t = "float_" + toks[1] + "_" + toks[2] + "_t"
+                result_t = in_t
+
+            text += (
+                """
+// FLOAT ABS
+"""
+                + result_t
+                + " "
+                + float_const_func_name
+                + "("
+                + in_t
+                + """ x)
+{
+  //TODO
+}
+"""
+            )
+
+    # Float sign, just return sign bit
+    # Regex search c_text
+    float_const_func_names = []
+    # float_sign(in);
+    for type_regex in [f"float", "float_[0-9]+_[0-9]+_t"]:
+        p = re.compile(type_regex + rf"_sign\s?\(")
+        float_const_func_names = p.findall(c_text)
+        float_const_func_names = list(set(float_const_func_names))
+        for float_const_func_name in float_const_func_names:
+            float_const_func_name = float_const_func_name.strip("(").strip()
+            toks = float_const_func_name.split("_")
+            if len(toks) == 2:
+                # float
+                in_t = type_regex
+            else:
+                # float_e_m_t
+                in_t = "float_" + toks[1] + "_" + toks[2] + "_t"
+
+            text += (
+                """
+// FLOAT SIGN
+"""
+                + "uint1_t"
+                + " "
+                + float_const_func_name
+                + "("
+                + in_t
+                + """ x)
+{
+  //TODO
+}
+"""
+            )
+
+    # Byte swap, with same name as real C func
+    # Parse to list of width toks
+    bswap_func_names = []
+    p = re.compile(rf"bswap_[0-9]+\s?\(")
+    bswap_func_names = p.findall(c_text)
+    bswap_func_names = list(set(bswap_func_names))
+    for bswap_func_name in bswap_func_names:
+        bswap_func_name = bswap_func_name.strip("(").strip()
+        toks = bswap_func_name.split("_")
+        input_bit_width = int(toks[1])
+        result_width = input_bit_width
+        result_t = "uint" + str(result_width) + "_t"
+        in_prefix = "uint" + str(input_bit_width)
+        in_t = in_prefix + "_t"
+        func_name = bswap_func_name
+        text += (
+            """
+// BYTE SWAP
+"""
+            + result_t
+            + " "
+            + func_name
+            + "("
+            + in_t
+            + """ x)
+{
+  //TODO
+}
+"""
+        )
+
+    # Array to unsigned
+    # uint1024_t uint8_array128_be/le(uint8_t x[128])
+    # Need big and little endian
+    # Dont do casting since endianess makes everyone sad
+    # C doesnt support casting like that anyway
+    array_to_unsigned_func_names = []
+    p = re.compile(rf"uint[0-9]+_array[0-9]+_(?:be|le)\s?\(")
+    array_to_unsigned_func_names = p.findall(c_text)
+    array_to_unsigned_func_names = list(set(array_to_unsigned_func_names))
+    # print "array_to_unsigned_func_names",array_to_unsigned_func_names
+    # if len(array_to_unsigned_func_names) > 0:
+    # print "c_text"
+    for array_to_unsigned_func_name in array_to_unsigned_func_names:
+        array_to_unsigned_func_name = array_to_unsigned_func_name.strip("(").strip()
+        toks = array_to_unsigned_func_name.split("_")
+        elem_width = int(toks[0].replace("uint", ""))
+        elem_t = toks[0] + "_t"
+        dim = int(toks[1].replace("array", ""))
+        result_width = elem_width * dim
+        result_t = "uint" + str(result_width) + "_t"
+        func_name = array_to_unsigned_func_name
+        text += (
+            """
+// ARRAY TO UNSIGNED
+"""
+            + result_t
+            + " "
+            + func_name
+            + "("
+            + elem_t
+            + """ x["""
+            + str(dim)
+            + """])
+{
+  //TODO
+}
+"""
+        )
+
+    # unsigned to array
+    # uint8_t[128] be/le_uint8_array128(uint1024_t
+    # Dont do for now since not needed yet and involves dumb return of array in struct
+    # Want uint8*4_t[N/4] = uint8_arrayN_by_4_le(uint8_t x[N]) but can be done with unsigned to/from array
+    # ITS TIME TO BE SHITTY?
+
+    if text != "":
+        # Ok had some code, include headers
+        text = header_text + text
+
+        # print("BIT_MANIP_HEADER_FILE")
+        # print(text,flush=True)
+
+        # Just bit manip for now
+        outfile = LOGIC.BIT_MANIP_HEADER_FILE
+        # "GET_SW_FUNC_NAME_LOGIC_LOOKUP outfile",outfile
+
+        # Parse the c doe to logic lookup
+        parser_state_copy = copy.copy(parser_state)  # was DEEPCOPY
+        # Keep everything except logic stuff
+        parser_state_copy.FuncLogicLookupTable = {}  # dict[func_name]=Logic() instance with just func info
+        parser_state_copy.LogicInstLookupTable = {}  # dict[inst_name]=Logic() instance in full
+        parser_state_copy.existing_logic = (
+            LOGIC.Logic()
+        )  # Temp working copy of logic ? idk it should work
+        parse_body = False  # SINCE BIT MANIP IGNORES SW IMPLEMENTATION
+        FuncLogicLookupTable = (
+            GET_FUNC_NAME_LOGIC_LOOKUP_TABLE_FROM_C_CODE_TEXT(
+                text, outfile, parser_state_copy, parse_body
+            )
+        )
+
+        # All of these funcs are vhdl funcs
+        for func_name in FuncLogicLookupTable:
+            FuncLogicLookupTable[func_name].is_vhdl_func = True
+
+        return FuncLogicLookupTable
+    else:
+        # No code, no funcs
+        return {}
+
+
+def GENERATE_INT_N_HEADERS(max_bit_width=2048):
+    # Do signed and unsigned two files
+    for u in ["", "u"]:
+        text = "#pragma once\n"
+        text += "#include <stdint.h>\n"
+        min_width = 1
+        # if u=="":
+        # min_width = 2
+        for bitwidth in range(min_width, max_bit_width + 1):
+            standard_type = u + "int8_t"
+            if bitwidth > 8:
+                standard_type = u + "int16_t"
+            if bitwidth > 16:
+                standard_type = u + "int32_t"
+            if bitwidth > 32:
+                standard_type = u + "int64_t"
+
+            the_type = u + "int" + str(bitwidth) + "_t"
+
+            # Comment out standard types
+            if the_type == standard_type:
+                text += "//"
+
+            text += "typedef " + standard_type + " " + the_type + ";\n"
+
+        # print "GENERATE_INT_N_HEADERS"
+        # print text
+
+        filename = u + "intN_t.h"
+        f = open(filename, "w")
+        f.write(text)
+        f.close()
+
+
+def GET_CAST_C_CODE(
+    partially_complete_logic, containing_func_logic, out_dir, parser_state
+):
+    input_wire = partially_complete_logic.inputs[0]
+    in_t = partially_complete_logic.wire_to_c_type[input_wire]
+    output_wire = partially_complete_logic.outputs[0]
+    out_t = partially_complete_logic.wire_to_c_type[output_wire]
+    if LOGIC.C_TYPE_IS_FLOAT_TYPE(in_t) and VHDL.C_TYPE_IS_INT_N(out_t):
+        return GET_CAST_FLOAT_TO_INT_C_CODE(
+            partially_complete_logic, containing_func_logic, out_dir, parser_state
+        )
+    elif VHDL.C_TYPES_ARE_INTEGERS([in_t]) and LOGIC.C_TYPE_IS_FLOAT_TYPE(out_t):
+        return GET_CAST_INT_UINT_TO_FLOAT_C_CODE(
+            partially_complete_logic, containing_func_logic, out_dir, parser_state
+        )
+    else:
+        print("Implement more casting: Easy/Lucky/Free Bright Eyes")
+        print(in_t, out_t, partially_complete_logic.c_ast_node.coord)
+        sys.exit(-1)
+
+
+def GET_UNARY_OP_NEGATE_C_CODE(
+    partially_complete_logic, containing_func_logic, out_dir, parser_state
+):
+    input_wire = partially_complete_logic.inputs[0]
+    in_t = partially_complete_logic.wire_to_c_type[input_wire]
+    if VHDL.C_TYPES_ARE_INTEGERS([in_t]):
+        return GET_UNARY_OP_NEGATE_INT_UINT_C_CODE(
+            partially_complete_logic, containing_func_logic, out_dir, parser_state
+        )
+    else:
+        print("Implement more negate: ABBA - Dancing Queen")
+        print(in_t, out_t, partially_complete_logic.c_ast_node.coord)
+        sys.exit(-1)
+
+
+def GET_UNARY_OP_NEGATE_INT_UINT_C_CODE(
+    partially_complete_logic, containing_func_logic, out_dir, parser_state
+):
+    input_wire = partially_complete_logic.inputs[0]
+    in_t = partially_complete_logic.wire_to_c_type[input_wire]
+    in_width = VHDL.GET_WIDTH_FROM_C_N_BITS_INT_TYPE_STR(in_t)
+    is_int = VHDL.C_TYPE_IS_INT_N(in_t)
+    result_t = "int" + str(in_width + 1) + "_t"
+    result_uint_t = "uint" + str(in_width + 1) + "_t"
+
+    text = ""
+    text += (
+        """
+#include "intN_t.h"
+#include "uintN_t.h"
+// Negate
+"""
+        + result_t
+        + " "
+        + partially_complete_logic.func_name
+        + "("
+        + in_t
+        + """ expr)
+{
+  // Twos comp
+  
+  """
+        + result_uint_t
+        + """ x_wide;
+  x_wide = expr;
+  
+  """
+        + result_uint_t
+        + """ x_wide_neg;
+  x_wide_neg = ~x_wide;
+  
+  """
+        + result_uint_t
+        + """ x_neg_wide_plus1;
+  x_neg_wide_plus1 = x_wide_neg + 1;
+  
+  """
+        + result_t
+        + """ rv;
+  rv = x_neg_wide_plus1;
+  
+  return rv;
+}
+"""
+    )
+
+    return text
+
+
+def GET_CAST_INT_UINT_TO_FLOAT_C_CODE(
+    partially_complete_logic, containing_func_logic, out_dir, parser_state
+):
+    # Int to float
+    input_wire = partially_complete_logic.inputs[0]
+    in_t = partially_complete_logic.wire_to_c_type[input_wire]
+    input_width = VHDL.GET_WIDTH_FROM_C_N_BITS_INT_TYPE_STR(in_t)
+    is_int = VHDL.C_TYPE_IS_INT_N(in_t)
+    output_wire = partially_complete_logic.outputs[0]
+    out_t = partially_complete_logic.wire_to_c_type[output_wire]
+    fp_t = out_t
+
+    ######## ARB WIDTH FLOATS
+    exponent_width, mantissa_width = LOGIC.C_FLOAT_E_M_TYPE_TO_E_M(fp_t)
+    mantissa_range = [mantissa_width - 1, 0]
+    mantissa_t_prefix = "uint" + str(mantissa_width)
+    mantissa_t = mantissa_t_prefix + "_t"
+    exponent_range = [mantissa_width + exponent_width - 1, mantissa_width]
+    exponent_t_prefix = "uint" + str(exponent_width)
+    exponent_t = exponent_t_prefix + "_t"
+    exponent_width_plus1 = exponent_width + 1
+    exponent_wide_t_prefix = "uint" + str(exponent_width_plus1)
+    exponent_wide_t = exponent_wide_t_prefix + "_t"
+    exponent_max = int(math.pow(2, exponent_width) - 1)
+    exponent_bias = int(math.pow(2, exponent_width - 1) - 1)
+    exponent_bias_t = "uint" + str(exponent_width - 1) + "_t"
+    sign_index = mantissa_width + exponent_width
+    sign_width = 1
+    sign_t_prefix = "uint" + str(sign_width)
+    sign_t = sign_t_prefix + "_t"
+    fp_t_width = 1 + exponent_width + mantissa_width
+
+    text = ""
+    text += (
+        '''
+#include "intN_t.h"
+#include "uintN_t.h"
+#include "'''
+        + LOGIC.BIT_MATH_HEADER_FILE
+        + """"
+#include "float_e_m_t.h"
+
+// CAST
+"""
+        + out_t
+        + " "
+        + partially_complete_logic.func_name
+        + "("
+        + in_t
+        + """ rhs)
+{
+  // Building SEM to return
+  """
+        + mantissa_t
+        + """ mantissa;
+  """
+        + exponent_t
+        + """ biased_exponent;
+  """
+        + sign_t
+        + """ sign;
+  
+  // Special case zero
+  """
+        + out_t
+        + """ rv;
+  if(rhs==0)
+  {
+    rv = float_"""
+        + exponent_t_prefix
+        + "_"
+        + mantissa_t_prefix
+        + """(0,0,0);
+  }
+  else
+  {
+  """
+    )
+
+    unsigned_t = "uint" + str(input_width) + "_t"
+    if is_int:
+        # Integer
+        text += (
+            """ 
+    // Record sign
+    sign = int"""
+            + str(input_width)
+            + "_"
+            + str(input_width - 1)
+            + "_"
+            + str(input_width - 1)
+            + """(rhs);
+    // Take abs value
+  """
+            + unsigned_t
+            + """ unsigned_rhs;
+    unsigned_rhs = int"""
+            + str(input_width)
+            + """_abs(rhs);\n"""
+        )
+    else:
+        # Unsigned
+        text += (
+            """ 
+    // Record sign
+    sign = 0;
+    // Abs value is just rhs
+    """
+            + unsigned_t
+            + """ unsigned_rhs;
+    unsigned_rhs = rhs;\n"""
+        )
+
+    # Count leading zeros
+    num_zeros_bits = int(math.ceil(math.log(input_width + 1, 2)))
+    num_zeros_t = "uint" + str(num_zeros_bits) + "_t"
+    text += (
+        """
+    // Count leading zeros
+    """
+        + num_zeros_t
+        + """ num_zeros;
+    num_zeros = count0s"""
+        + "_uint"
+        + str(input_width)
+        + """(unsigned_rhs);"""
+    )
+
+    # Shift all the way left plus 1 to drop upper most bit
+    shift_t = "uint" + str(num_zeros_bits + 1) + "_t"
+    text += (
+        """
+    // Shift all the way left plus 1 to drop upper most bit
+    """
+        + shift_t
+        + """ shift;
+    shift = num_zeros + 1;
+    """
+        + unsigned_t
+        + """ shifted_unsigned_rhs;
+    shifted_unsigned_rhs = unsigned_rhs << shift;"""
+    )
+
+    # Might need to append zeros to right if rhs is smaller than mantissa
+    if input_width < mantissa_width:
+        # Increase width
+        maybe_resized_width = mantissa_width
+        maybe_resized_rhs_t = "uint" + str(maybe_resized_width) + "_t"
+        # Pad right with zeros
+        pad_size = mantissa_width - input_width
+        text += (
+            """
+      // Pad right with zeros
+      """
+            + maybe_resized_rhs_t
+            + """ maybe_resized_rhs;
+      maybe_resized_rhs = uint"""
+            + str(input_width)
+            + "_uint"
+            + str(pad_size)
+            + """(shifted_unsigned_rhs, 0);"""
+        )
+    else:
+        # No resize
+        maybe_resized_width = input_width
+        maybe_resized_rhs_t = "uint" + str(maybe_resized_width) + "_t"
+        text += (
+            """
+      // No resize
+      """
+            + maybe_resized_rhs_t
+            + """ maybe_resized_rhs;
+      maybe_resized_rhs = shifted_unsigned_rhs;"""
+        )
+
+    # Take mantissa from upper bits
+    top_index = maybe_resized_width - 1
+    bottom_index = top_index - mantissa_width + 1
+    text += (
+        """
+    // Take mantissa from upper bits
+    mantissa = uint"""
+        + str(maybe_resized_width)
+        + "_"
+        + str(top_index)
+        + "_"
+        + str(bottom_index)
+        + """(maybe_resized_rhs);"""
+    )
+
+    # Exponent depends on position of leading zero in original number
+    # Use that to calculate bit width needed
+    text += (
+        """
+    // Exponent depends on shift
+    // All zeros = leading zeros = width, shift=width+1
+    if(shift == """
+        + str(input_width + 1)
+        + """)
+    {
+      biased_exponent = 0;
+    }
+    else
+    {
+      // Normal non zero case
+      """
+        + exponent_t
+        + """ exponent;
+      exponent = """
+        + str(input_width)
+        + """ - shift;
+      // Add bias
+      biased_exponent = exponent + """
+        + str(exponent_bias)
+        + """;
+    }"""
+    )
+
+    # Construct float to return
+    text += (
+        """
+    rv = float_"""
+        + exponent_t_prefix
+        + "_"
+        + mantissa_t_prefix
+        + """(sign, biased_exponent, mantissa);
+  }
+  
+  return rv;
+}"""
+    )
+
+    # print(text)
+    return text
+
+
+def GET_CAST_FLOAT_TO_INT_C_CODE(
+    partially_complete_logic, containing_func_logic, out_dir, parser_state
+):
+    func_name = partially_complete_logic.func_name
+
+    # Float to int
+    input_wire = partially_complete_logic.inputs[0]
+    in_t = partially_complete_logic.wire_to_c_type[input_wire]
+    output_wire = partially_complete_logic.outputs[0]
+    out_t = partially_complete_logic.wire_to_c_type[output_wire]
+    fp_t = in_t
+    # I HATE TWOS COMPLEMENT   # A Day In The Life - The Beatles
+
+    ######## ARB WIDTH FLOATS
+    exponent_width, mantissa_width = LOGIC.C_FLOAT_E_M_TYPE_TO_E_M(fp_t)
+    mantissa_range = [mantissa_width - 1, 0]
+    mantissa_t_prefix = "uint" + str(mantissa_width)
+    mantissa_t = mantissa_t_prefix + "_t"
+    exponent_range = [mantissa_width + exponent_width - 1, mantissa_width]
+    exponent_t_prefix = "uint" + str(exponent_width)
+    exponent_t = exponent_t_prefix + "_t"
+    exponent_width_plus1 = exponent_width + 1
+    exponent_wide_t_prefix = "uint" + str(exponent_width_plus1)
+    exponent_wide_t = exponent_wide_t_prefix + "_t"
+    exponent_max = int(math.pow(2, exponent_width) - 1)
+    exponent_bias = int(math.pow(2, exponent_width - 1) - 1)
+    exponent_bias_t = "uint" + str(exponent_width - 1) + "_t"
+    sign_index = mantissa_width + exponent_width
+    sign_width = 1
+    sign_t_prefix = "uint" + str(sign_width)
+    sign_t = sign_t_prefix + "_t"
+    fp_t_width = 1 + exponent_width + mantissa_width
+
+    text = ""
+    text += (
+        '''
+#include "intN_t.h"
+#include "uintN_t.h"
+#include "'''
+        + LOGIC.BIT_MATH_HEADER_FILE
+        + """"
+#include "float_e_m_t.h"
+
+// CAST
+"""
+        + out_t
+        + " "
+        + func_name
+        + "("
+        + in_t
+        + """ rhs)
+{
+  // Break into SEM
+  """
+        + mantissa_t
+        + """ mantissa;
+  mantissa = """
+        + fp_t
+        + """_"""
+        + str(mantissa_range[0])
+        + """_"""
+        + str(mantissa_range[1])
+        + """(rhs);
+  """
+        + exponent_t
+        + """ biased_exponent;
+  biased_exponent = """
+        + fp_t
+        + """_"""
+        + str(exponent_range[0])
+        + """_"""
+        + str(exponent_range[1])
+        + """(rhs);
+  """
+        + sign_t
+        + """ sign;
+  sign = """
+        + fp_t
+        + """_"""
+        + str(sign_index)
+        + """_"""
+        + str(sign_index)
+        + """(rhs);
+  
+  """
+        + out_t
+        + """ rv;
+  // Special case zero
+  if((mantissa==0) & (biased_exponent==0))
+  {
+    rv = 0;
+  }
+  else
+  {
+  """
+    )
+
+    # Get real unbiased exponent
+    signed_exponent_t = "int" + str(exponent_width_plus1) + "_t"
+    unbiased_exponent_t = "int" + str(exponent_width) + "_t"
+    text += (
+        """
+    """
+        + signed_exponent_t
+        + """ signed_biased_exponent;
+    signed_biased_exponent = biased_exponent;
+    """
+        + unbiased_exponent_t
+        + """ unbiased_exponent;
+    unbiased_exponent = signed_biased_exponent - """
+        + str(exponent_bias)
+        + """;"""
+    )
+
+    # Append the 1 in front of the manitissa
+    mantissa_width_plus_1 = mantissa_width + 1
+    mantissa_normalized_t = "uint" + str(mantissa_width_plus_1) + "_t"
+    text += (
+        """
+    """
+        + mantissa_normalized_t
+        + """ mantissa_normalized;
+    mantissa_normalized = uint1_"""
+        + mantissa_t_prefix
+        + """(1, mantissa);"""
+    )
+
+    # 24th bit is 1 so need to include that when shifting
+    # Output width of cast limits how far we should bother shifting before overflowing into undefined output
+    # Casting to int so actual unsigned width is less
+    out_width = VHDL.GET_WIDTH_FROM_C_N_BITS_INT_TYPE_STR(out_t)
+    unsigned_width = out_width - 1
+    total_shift_max = unsigned_width
+    shift_bit_size = int(math.ceil(math.log(total_shift_max + 1, 2.0)))
+    shift_t = "uint" + str(shift_bit_size) + "_t"
+    interm_size = mantissa_width_plus_1 + unsigned_width
+    interm_prefix = "uint" + str(interm_size)
+    interm_t = interm_prefix + "_t"
+    # Extend mantissa with zeros
+    text += (
+        """
+    """
+        + interm_t
+        + """ interm;
+    interm = mantissa_normalized;"""
+    )
+    # Shift mantissa with hidden bit if greater or equal to 0 and up a limit
+    text += (
+        """
+    if( (unbiased_exponent >= 0) & (unbiased_exponent <= """
+        + str(total_shift_max)
+        + """) )
+    {
+      """
+        + shift_t
+        + """ shift;
+      shift = unbiased_exponent;
+      interm = interm << shift;
+    }else if(unbiased_exponent < 0) // Round to zero?
+    {
+      interm = 0;
+    }"""
+    )
+
+    # Take result from top of shifted interm mantissa
+    top_index = interm_size - 1
+    bottom_index = mantissa_width
+    unsigned_result_prefix = "uint" + str(unsigned_width)
+    unsigned_result_t = unsigned_result_prefix + "_t"
+    text += (
+        """
+    """
+        + unsigned_result_t
+        + """ unsigned_result;
+    unsigned_result = """
+        + interm_prefix
+        + "_"
+        + str(top_index)
+        + "_"
+        + str(bottom_index)
+        + """(interm);"""
+    )
+
+    # Negate if necessary
+    text += (
+        """
+  
+    rv = unsigned_result;
+    if(sign)
+    {
+      rv = """
+        + unsigned_result_prefix
+        + """_negate(unsigned_result);
+    }
+  
+  }
+  
+  return rv;
+}
+"""
+    )
+
+    return text
+
+
+def GET_ONE_HOT_EQ_C_CODE(
+    partially_complete_logic_local_inst_name,
+    partially_complete_logic,
+    containing_func_logic,
+    parser_state,
+):
+    func_c_name = partially_complete_logic.func_name
+    # Assumes both inputs are same type
+    input_t = partially_complete_logic.wire_to_c_type[
+        partially_complete_logic.inputs[0]
+    ]
+    bit_width = VHDL.GET_WIDTH_FROM_C_N_BITS_INT_TYPE_STR(input_t)
+    text = ""
+    text += '''
+#include "intN_t.h"
+#include "uintN_t.h"'''
+    ##include "'''
+    #        + BIT_MATH_HEADER_FILE
+    #        + """"
+    # """
+    text += (
+        """
+uint1_t """
+        + func_c_name
+        + """("""
+        + input_t
+        + """ left, """
+        + input_t
+        + """ right)
+{
+    // Bitwise and
+    """
+        + input_t
+        + """ left_and_right = left & right;
+    uint1_t bits["""
+        + str(bit_width)
+        + """];
+    uint32_t i;
+    for(i=0; i<"""
+        + str(bit_width)
+        + """; i+=1)
+    {
+        bits[i] = left_and_right(i); // Select ith bit
+    } 
+    // OR reduce with built in function
+    return uint1_array_or"""
+        + str(bit_width)
+        + """(bits);
+}
+    """
+    )
+    return text
+
+
+### Ahh fuck taking the easy way
+# Copying implemetnation from     GET_VAR_REF_ASSIGN_C_CODE
+# Might actually be worth it
+def GET_VAR_REF_RD_C_CODE(
+    partially_complete_logic_local_inst_name,
+    partially_complete_logic,
+    containing_func_logic,
+    out_dir,
+    parser_state,
+):
+    debug = False
+    # @@@@ Need to solve can't reutnr arry and any type NMUX name problem (struct_t_muxN name?)
+    ## Fuck need to put array in struct
+    # Then need to allow cast from struct wray to array type in VHDL?
+
+    ref_toks = containing_func_logic.ref_submodule_instance_to_ref_toks[
+        partially_complete_logic_local_inst_name
+    ]
+    orig_var_name = ref_toks[0]
+
+    output_t = partially_complete_logic.wire_to_c_type[
+        partially_complete_logic.outputs[0]
+    ]
+
+    func_c_name = partially_complete_logic.func_name
+
+    # First need to assign ref tokens into type matching BASE
+    # Get base var name + type from any of the inputs
+
+    # base_c_type = containing_func_logic.wire_to_c_type[orig_var_name_inst_name]
+    base_c_type = containing_func_logic.wire_to_c_type[orig_var_name]
+    base_vhdl_type = VHDL.C_TYPE_STR_TO_VHDL_TYPE_STR(
+        base_c_type, parser_state
+    )  # Structs handled and have same name as C types
+
+    text = ""
+
+    text += (
+        '''
+#include "intN_t.h"
+#include "uintN_t.h"
+#include "'''
+        + LOGIC.BIT_MATH_HEADER_FILE
+        + """"
+"""
+    )
+    # Do type defs for input structs and output array (if output is array)
+    # And base type too
+    for input_wire in partially_complete_logic.inputs:
+        input_t = partially_complete_logic.wire_to_c_type[input_wire]
+        if C_TYPE_NEEDS_INTERNAL_FAKE_TYPEDEF(input_t, parser_state):
+            text += """typedef uint8_t """ + input_t + "; // FUCK\n"
+    if C_TYPE_NEEDS_INTERNAL_FAKE_TYPEDEF(output_t, parser_state):
+        text += """typedef uint8_t """ + output_t + "; // FUCK\n"
+    if C_TYPE_NEEDS_INTERNAL_FAKE_TYPEDEF(base_c_type, parser_state):
+        text += """typedef uint8_t """ + base_c_type + "; // FUCK\n"
+
+    text += """
+
+// Var ref read
+"""
+
+    text += output_t + """ """ + func_c_name + """("""
+
+    # Inputs
+    for input_wire in partially_complete_logic.inputs:
+        input_c_name = input_wire
+        input_t = partially_complete_logic.wire_to_c_type[input_wire]
+        if LOGIC.C_TYPE_IS_ARRAY(input_t):
+            # Dimensions go after variable name
+            elem_type, dims = LOGIC.C_ARRAY_TYPE_TO_ELEM_TYPE_AND_DIMS(input_t)
+            text += elem_type + " " + input_c_name
+            for dim in dims:
+                text += "[" + str(dim) + "]"
+            text += ", "
+        else:
+            # Regular non array
+            text += input_t + " " + input_c_name + ", "
+
+    # Remove last ","
+    text = text.rstrip(", ")
+    # End line
+    text += """)
+{
+  """
+
+    # Assign ref toks into base type
+    if LOGIC.C_TYPE_IS_ARRAY(base_c_type):
+        # Dimensions go after variable name
+        elem_type, dims = LOGIC.C_ARRAY_TYPE_TO_ELEM_TYPE_AND_DIMS(base_c_type)
+        text += elem_type + " base"
+        for dim in dims:
+            text += "[" + str(dim) + "]"
+        text += ";\n"
+    else:
+        # Regular non array
+        text += base_c_type + " base;\n"
+
+    text += " // Assign ref toks to base\n"
+    # Do ref toks
+    ref_toks_i = 0
+    # print "containing_func_logic.ref_submodule_instance_to_input_port_driven_ref_toks"
+    # print containing_func_logic.ref_submodule_instance_to_input_port_driven_ref_toks
+    driven_ref_toks_list = (
+        containing_func_logic.ref_submodule_instance_to_input_port_driven_ref_toks[
+            partially_complete_logic_local_inst_name
+        ]
+    )
+    if debug:
+        print("containing_func_logic", containing_func_logic.func_name)
+        print(
+            "func",
+            partially_complete_logic.func_name,
+            partially_complete_logic_local_inst_name,
+        )
+        print("driven_ref_toks_list", driven_ref_toks_list)
+    for input_wire in partially_complete_logic.inputs:
+        if "var_dim_" not in input_wire:
+            input_c_name = input_wire
+            # Assign to base
+            # Remove base variable
+
+            # ref toks not from port name
+            driven_ref_toks = driven_ref_toks_list[ref_toks_i]
+            ref_toks_i += 1
+
+            # Expand to constant refs
+            parser_state.existing_logic = (
+                containing_func_logic  # How did this work without this before? Lucky?
+            )
+            expanded_ref_tok_list = EXPAND_REF_TOKS_OR_STRS(
+                driven_ref_toks, partially_complete_logic.c_ast_node, parser_state
+            )
+            if debug:
+                print("driven_ref_toks", driven_ref_toks)
+                print("expanded_ref_tok_list", expanded_ref_tok_list)
+            for expanded_ref_toks in expanded_ref_tok_list:
+                # Make str
+                lhs = "base"
+                appended_ref_tok_str = ""
+                for expanded_ref_tok in expanded_ref_toks[1:]:  # Skip base var name
+                    if type(expanded_ref_tok) is int:
+                        appended_ref_tok_str += "[" + str(expanded_ref_tok) + "]"
+                    elif type(expanded_ref_tok) is str:
+                        appended_ref_tok_str += "." + expanded_ref_tok
+                    else:
+                        print(
+                            "WTF var ref input wire as input ref tok to var ref??",
+                            expanded_ref_tok,
+                        )
+                        sys.exit(-1)
+                # Do assignment
+                lhs += appended_ref_tok_str
+                text += " " + lhs + " = " + input_c_name
+                # If this ref tok actually covers multiple lhs toks then need select on rhs too?
+                if len(expanded_ref_tok_list) > 1:
+                    # Hacky struct type needs .data
+                    if LOGIC.C_TYPE_IS_ARRAY_STRUCT(
+                        partially_complete_logic.wire_to_c_type[input_wire],
+                        parser_state,
+                    ):
+                        text += ".data"
+                    text += appended_ref_tok_str
+                text += ";\n"
+
+    # Then make a bunch of constant references
+    # one for each possible i,j,k variable dimension
+    # Get var dimension types
+    ## BBAAAH parser_state.existing_logic needs to be containing logic
+    parser_state_as_container = copy.copy(parser_state)
+    parser_state_as_container.existing_logic = containing_func_logic
+    (
+        var_dim_ref_tok_indices,
+        var_dims,
+        var_dim_types,
+    ) = GET_VAR_REF_REF_TOK_INDICES_DIMS_ITER_TYPES(
+        ref_toks, partially_complete_logic.c_ast_node, parser_state_as_container
+    )
+    var_dim_input_wires = []
+    for input_wire in partially_complete_logic.inputs:
+        if "var_dim_" in input_wire:
+            var_dim_input_wires.append(input_wire)
+
+    # Make multiple constant references into base
+    text += " // Make multiple constant references into base\n"
+    const_refs = ["ref"]
+    # Build variables
+    # print "var_dim_input_wires",var_dim_input_wires
+    for var_dim_i in range(0, len(var_dim_input_wires)):
+        c_type = var_dim_types[var_dim_i]
+        var_dim_width = VHDL.GET_WIDTH_FROM_C_TYPE_STR(parser_state, c_type)
+        var_dim_size = var_dims[var_dim_i]
+        # print "var_dim_width",var_dim_width
+        # print "var_dim_size",var_dim_size
+        new_const_refs = []
+        for const_ref in const_refs:
+            for dim_val in range(0, var_dim_size):
+                new_const_ref = const_ref + "_" + str(dim_val)
+                new_const_refs.append(new_const_ref)
+        # Next iter
+        const_refs = new_const_refs[:]
+    # Assign them
+    for const_ref in const_refs:
+        # Declare and begin assignment
+        text += " " + output_t + " " + const_ref + ";\n"
+        if LOGIC.C_TYPE_IS_ARRAY_STRUCT(output_t, parser_state):
+            text += " " + const_ref + ".data = base"
+        else:
+            text += " " + const_ref + " = base"
+
+        # Write out full ref toks
+        toks = const_ref.split("_")
+        indices = toks[1:]
+
+        # Loop over ref toks and insert variable ref values
+        var_dim_i = 0
+        for ref_tok in ref_toks[1:]:  # Skip base var name
+            if not C_AST_REF_TOK_IS_CONST(ref_tok):
+                text += "[" + str(indices[var_dim_i]) + "]"
+                var_dim_i += 1
+            elif type(ref_tok) is int:
+                text += "[" + str(ref_tok) + "]"
+            elif type(ref_tok) is str:
+                text += "." + ref_tok
+            else:
+                print("Why ref tok?", ref_tok)
+                sys.exit(-1)
+
+        text += ";\n"
+
+    # Is making simple sel = [i][j][k] overkill?
+    # Even an N mux per dimension still has muxes for extra bits...
+    # Can't avoid ???
+    # Easy for now??
+    # Sel width is sum of var dims
+    sel_width = 0
+    var_dim_input_widths = []
+    for var_dim_input_wire in var_dim_input_wires:
+        var_dim_c_type = partially_complete_logic.wire_to_c_type[var_dim_input_wire]
+        var_dim_width = VHDL.GET_WIDTH_FROM_C_TYPE_STR(parser_state, var_dim_c_type)
+        sel_width += var_dim_width
+        var_dim_input_widths.append(var_dim_width)
+    sel_prefix = "uint" + str(sel_width)
+    sel_t = sel_prefix + "_t"
+    sel_size = int(pow(2, sel_width))
+
+    # Loop to concat sel
+    text += " // Form select value\n"
+
+    # Initial copy of first dim
+    input_wire = var_dim_input_wires[0]
+    text += " " + sel_t + " sel;\n"
+
+    # Need initial value or pipelinemap get fuckled
+    text += " " + "sel = 0;\n"
+
+    # Assign into sel
+    index = 0
+    for var_dim_i in range(len(var_dim_input_wires) - 1, -1, -1):
+        c_type = var_dim_types[var_dim_i]
+        prefix = c_type.strip("_t")
+        var_dim_input_wire = var_dim_input_wires[var_dim_i]
+        input_width = var_dim_input_widths[var_dim_i]
+        input_c_name = var_dim_input_wire
+        text += (
+            " sel = "
+            + sel_prefix
+            + "_"
+            + prefix
+            + "_"
+            + str(index)
+            + "( sel, "
+            + input_c_name
+            + ");\n"
+        )
+        index += input_width
+
+    # Loop over each const ref
+    # Call nmux
+    text += " // Do nmux\n"  # $BLEGH TODO make generic mux functions use full type name
+    output_prefix = output_t
+    # Dumb check for uint
+    toks = output_t.strip("_t").split("int")
+    if len(toks) == 2 and (toks[0] == "" or toks[0] == "u") and toks[1].isdigit():
+        output_prefix = output_t.replace("_t", "")
+
+    text += " " + output_t + " rv;\n"
+    text += " rv = " + output_prefix + "_mux" + str(sel_size) + "("
+    # Sel
+    text += "sel,\n"
+    # Inputs
+    for sel_val in range(0, sel_size):
+        var_dim_values = []
+        index = 0
+        for var_dim_i in range(0, len(var_dim_input_wires)):
+            input_width = var_dim_input_widths[var_dim_i]
+            end_index = index + input_width - 1
+            # print "index",index
+            # print "end_index",end_index
+
+            # get number bit range sel[end:start]
+            # dim_val = int(bin(sel_val).replace("0b","").zfill(sel_width)[::-1][index:end_index+1][::-1],2)
+            dim_val = int(
+                bin(sel_val).replace("0b", "").zfill(sel_width)[index : end_index + 1],
+                2,
+            )
+            var_dim_values.append(dim_val)
+            index += input_width
+            # print "sel_val",sel_val
+            # print "dim_val",dim_val
+            #
+
+        # Use ref variable if all var dims are within correct size, otherwise 0
+        valid_dims = True
+        for var_dim_i in range(0, len(var_dim_input_wires)):
+            var_dim_value = var_dim_values[var_dim_i]
+            actual_dim_size = var_dims[var_dim_i]
+            if var_dim_value >= actual_dim_size:
+                valid_dims = False
+        if valid_dims:
+            # Build ref var str
+            ref_sel = "ref"
+            # for var_dim_value in reversed(var_dim_values):
+            for var_dim_value in var_dim_values:
+                ref_sel += "_" + str(var_dim_value)
+        else:
+            # Hacky allow unfilled to be filled in w/ prev ref?
+            # ref_sel = "0"
+            pass
+
+        # Use this ref_sel in nmux
+        text += "     " + ref_sel + ",\n"
+
+    # Remove last comma
+    text = text.strip(",\n")
+
+    text += "\n );\n"
+
+    text += """
+  return rv;
+}"""
+
+    # if debug:
+    # print("GET_VAR_REF_RD_C_CODE text")
+    # print(text)
+    # sys.exit(-1)
+
+    return text
+
+
+def GET_VAR_REF_ASSIGN_C_CODE(
+    partially_complete_logic_local_inst_name,
+    partially_complete_logic,
+    containing_func_logic,
+    out_dir,
+    parser_state,
+):
+    # Each element gets a single mux comapring == sel
+    # Old code was bloated in muxing multiple copies of huge array
+
+    # Input ref toks can be base value so need to start with base type
+    lhs_ref_toks = containing_func_logic.ref_submodule_instance_to_ref_toks[
+        partially_complete_logic_local_inst_name
+    ]
+    orig_var_name = lhs_ref_toks[0]
+    base_c_type = containing_func_logic.wire_to_c_type[orig_var_name]
+
+    # print lhs_ref_toks
+    # print orig_var_name, "base_c_type",base_c_type
+    # sys.exit(-1)
+
+    output_t = partially_complete_logic.wire_to_c_type[
+        partially_complete_logic.outputs[0]
+    ]
+    # output_t_c_name = output_t.replace("[","_").replace("]","_").replace("__","_")
+    func_c_name = (
+        partially_complete_logic.func_name
+    )  # .replace("[","_").replace("]","_").replace("__","_")
+
+    text = ""
+
+    text += (
+        '''
+#include "intN_t.h"
+#include "uintN_t.h"
+#include "'''
+        + LOGIC.BIT_MATH_HEADER_FILE
+        + """"
+"""
+    )
+    # Do type defs for input structs and output array (if output is array)
+    # And base type too
+    for input_wire in partially_complete_logic.inputs:
+        input_t = partially_complete_logic.wire_to_c_type[input_wire]
+        if C_TYPE_NEEDS_INTERNAL_FAKE_TYPEDEF(input_t, parser_state):
+            text += """typedef uint8_t """ + input_t + "; // FUCK\n"
+    if C_TYPE_NEEDS_INTERNAL_FAKE_TYPEDEF(output_t, parser_state):
+        text += """typedef uint8_t """ + output_t + "; // FUCK\n"
+    if C_TYPE_NEEDS_INTERNAL_FAKE_TYPEDEF(base_c_type, parser_state):
+        text += """typedef uint8_t """ + base_c_type + "; // FUCK\n"
+
+    text += """
+// Var ref assignment\n"""
+
+    # FUNC DEF
+    text += output_t + """ """ + func_c_name + """("""
+
+    # Inputs
+    for input_wire in partially_complete_logic.inputs:
+        input_c_name = input_wire
+        input_t = partially_complete_logic.wire_to_c_type[input_wire]
+        if LOGIC.C_TYPE_IS_ARRAY(input_t):
+            # Dimensions go after variable name
+            elem_type, dims = LOGIC.C_ARRAY_TYPE_TO_ELEM_TYPE_AND_DIMS(input_t)
+            text += elem_type + " " + input_c_name
+            for dim in dims:
+                text += "[" + str(dim) + "]"
+            text += ", "
+        else:
+            # Regular non array
+            text += input_t + " " + input_c_name + ", "
+
+    # Remove last ","
+    text = text.rstrip(", ")
+    # End line
+    text += """)
+{
+  """
+
+    # First need to assign ref tokens into type matching return
+    # Assign ref toks into base type
+    if LOGIC.C_TYPE_IS_ARRAY(base_c_type):
+        # Dimensions go after variable name
+        elem_type, dims = LOGIC.C_ARRAY_TYPE_TO_ELEM_TYPE_AND_DIMS(base_c_type)
+        text += elem_type + " base"
+        for dim in dims:
+            text += "[" + str(dim) + "]"
+        text += ";\n"
+    else:
+        # Regular non array
+        text += base_c_type + " base;\n"
+
+    text += " // Assign ref toks to base\n"
+    # Do ref toks
+    driven_ref_toks_list = (
+        containing_func_logic.ref_submodule_instance_to_input_port_driven_ref_toks[
+            partially_complete_logic_local_inst_name
+        ]
+    )
+    ref_toks_i = 0
+    for input_wire in partially_complete_logic.inputs[1:]:
+        if "var_dim_" not in input_wire:
+            input_c_name = input_wire
+
+            # ref toks not from port name
+            driven_ref_toks = driven_ref_toks_list[ref_toks_i]
+            ref_toks_i += 1
+
+            # Expand to constant refs
+            expanded_ref_tok_list = EXPAND_REF_TOKS_OR_STRS(
+                driven_ref_toks, partially_complete_logic.c_ast_node, parser_state
+            )
+            for expanded_ref_toks in expanded_ref_tok_list:
+                # Make str
+                lhs = "base"
+                for expanded_ref_tok in expanded_ref_toks[1:]:  # Skip base var name:
+                    if type(expanded_ref_tok) is int:
+                        lhs += "[" + str(expanded_ref_tok) + "]"
+                    elif type(expanded_ref_tok) is str:
+                        lhs += "." + expanded_ref_tok
+                    else:
+                        print(
+                            "WTF var ref input wire as input ref tok to var ref??",
+                            expanded_ref_tok,
+                        )
+                        sys.exit(-1)
+
+                # Do assignment
+                text += " " + lhs + " = " + input_c_name + ";\n"
+
+    # Then make a bunch of copies of rv, one for each possible i,j,k variable dimension
+    # Get var dimension types
+    var_dim_types = []
+    var_dim_input_wires = []
+    for input_wire in partially_complete_logic.inputs[1:]:
+        if "var_dim_" in input_wire:
+            c_type = partially_complete_logic.wire_to_c_type[input_wire]
+            var_dim_types.append(c_type)
+            var_dim_input_wires.append(input_wire)
+
+    text += " // Copy base into rv\n"
+    text += " " + output_t + " rv;\n"
+    ## BBAAAH parser_state.existing_logic needs to be containing logic
+    # Copy parser state since not intending to change existing logic in this func
+    parser_state_as_container = copy.copy(parser_state)
+    parser_state_as_container.existing_logic = containing_func_logic
+    # Need to assign base into rv output
+    # Output type is just N dimension array of the element type
+    # N dims are variable ref toks
+    # Loop over all the variable dimensions
+    # Do so with expanded ref toks
+    (
+        var_dim_ref_tok_indices,
+        var_dims,
+        var_dim_iter_types,
+    ) = GET_VAR_REF_REF_TOK_INDICES_DIMS_ITER_TYPES(
+        lhs_ref_toks, partially_complete_logic.c_ast_node, parser_state_as_container
+    )
+    expanded_ref_tok_list = EXPAND_REF_TOKS_OR_STRS(
+        lhs_ref_toks, partially_complete_logic.c_ast_node, parser_state_as_container
+    )
+    for expanded_ref_toks in expanded_ref_tok_list:
+        # LHS is just variable ref dims
+        lhs = "rv.data"
+        for index in var_dim_ref_tok_indices:
+            lhs += "[" + str(expanded_ref_toks[index]) + "]"
+
+        # RHS is full ref toks
+        rhs = "base"
+        for expanded_ref_tok in expanded_ref_toks[1:]:  # Skip base var name
+            if type(expanded_ref_tok) is int:
+                rhs += "[" + str(expanded_ref_tok) + "]"
+            elif type(expanded_ref_tok) is str:
+                rhs += "." + expanded_ref_tok
+            else:
+                print(
+                    "WTF var ref input wire as input ref tok to var ref?? rhs",
+                    expanded_ref_tok,
+                )
+                sys.exit(-1)
+
+        text += " " + lhs + " = " + rhs + ";\n"
+
+    # Do a mux for each element
+    text += " // Do mux for each element\n"
+    for expanded_ref_toks in expanded_ref_tok_list:
+        text += " " + "if(\n"
+        # Do each var dim
+        for var_dim_i in range(0, len(var_dim_ref_tok_indices)):
+            index = var_dim_ref_tok_indices[var_dim_i]
+            text += (
+                "   ("
+                + "var_dim_"
+                + str(var_dim_i)
+                + " == "
+                + str(expanded_ref_toks[index])
+                + ") &\n"
+            )
+        # Remove last and
+        text = text[: -len("&\n")]
+        # End if ()
+        text += "\n )\n"
+        text += " {\n"
+
+        # Build lhs
+        # LHS is just variable ref dims
+        lhs = "rv.data"
+        for var_dim_i in range(0, len(var_dim_ref_tok_indices)):
+            index = var_dim_ref_tok_indices[var_dim_i]
+            lhs += "[" + str(expanded_ref_toks[index]) + "]"
+
+        # Assign elem to it
+        text += "   " + lhs + " = elem_val;\n"
+        text += " }\n"
+
+    text += """
+  return rv;
+}"""
+
+    # print "GET_VAR_REF_ASSIGN_C_CODE text"
+    # print text
+    # sys.exit(-1)
+
+    return text
+
+
+def GET_BIN_OP_SR_FLOAT_C_CODE(
+    partially_complete_logic, out_dir, containing_func_logic, parser_state
+):
+    left_t = partially_complete_logic.wire_to_c_type[partially_complete_logic.inputs[0]]
+    right_t = partially_complete_logic.wire_to_c_type[
+        partially_complete_logic.inputs[1]
+    ]
+    output_t = partially_complete_logic.wire_to_c_type[
+        partially_complete_logic.outputs[0]
+    ]
+    if not LOGIC.C_FLOAT_TYPES_ARE_EQUAL(
+        [left_t, output_t]
+    ) or not LOGIC.C_TYPES_ARE_FLOAT_TYPES([left_t, output_t]):
+        print(""""left_t != "float" or  output_t != "float" for sr """)
+        sys.exit(-1)
+    fp_t = left_t
+
+    ######## ARB WIDTH FLOATS
+    exponent_width, mantissa_width = LOGIC.C_FLOAT_E_M_TYPE_TO_E_M(fp_t)
+    mantissa_range = [mantissa_width - 1, 0]
+    mantissa_t_prefix = "uint" + str(mantissa_width)
+    mantissa_t = mantissa_t_prefix + "_t"
+    exponent_range = [mantissa_width + exponent_width - 1, mantissa_width]
+    exponent_t_prefix = "uint" + str(exponent_width)
+    exponent_t = exponent_t_prefix + "_t"
+    exponent_width_plus1 = exponent_width + 1
+    exponent_wide_t_prefix = "uint" + str(exponent_width_plus1)
+    exponent_wide_t = exponent_wide_t_prefix + "_t"
+    exponent_max = int(math.pow(2, exponent_width) - 1)
+    exponent_bias = int(math.pow(2, exponent_width - 1) - 1)
+    exponent_bias_t = "uint" + str(exponent_width - 1) + "_t"
+    sign_index = mantissa_width + exponent_width
+    sign_width = 1
+    sign_t_prefix = "uint" + str(sign_width)
+    sign_t = sign_t_prefix + "_t"
+    fp_t_width = 1 + exponent_width + mantissa_width
+
+    text = ""
+    text += (
+        """
+#include "uintN_t.h"
+#include "intN_t.h"
+#include "bit_manip.h"
+#include "float_e_m_t.h"
+
+// Float shift right div pow2
+"""
+        + output_t
+        + """ """
+        + partially_complete_logic.func_name
+        + """("""
+        + left_t
+        + """ left, """
+        + right_t
+        + """ right)
+{
+  // LEFT
+  uint"""
+        + str(mantissa_width)
+        + """_t left_mantissa;  
+  left_mantissa = """
+        + fp_t
+        + """_"""
+        + str(mantissa_range[0])
+        + """_"""
+        + str(mantissa_range[1])
+        + """(left);
+  uint"""
+        + str(exponent_width)
+        + """_t left_exponent;
+  left_exponent = """
+        + fp_t
+        + """_"""
+        + str(exponent_range[0])
+        + """_"""
+        + str(exponent_range[1])
+        + """(left);
+  uint1_t left_sign;
+  left_sign = """
+        + fp_t
+        + """_"""
+        + str(sign_index)
+        + """_"""
+        + str(sign_index)
+        + """(left);
+  
+  // Declare the output portions
+  uint"""
+        + str(mantissa_width)
+        + """_t z_mantissa;
+  uint"""
+        + str(exponent_width)
+        + """_t z_exponent;
+  uint1_t z_sign;
+  z_sign = left_sign;
+  z_exponent = 0;
+  // Div by pow2 with sub to exponent
+  if(left_exponent != 0) // Zero divided by anything still zero
+  {
+    z_exponent = left_exponent - right;
+  }
+  z_mantissa = left_mantissa;
+  // Assemble output  
+  return float_uint"""
+        + str(exponent_width)
+        + "_uint"
+        + str(mantissa_width)
+        + """(z_sign, z_exponent, z_mantissa);
+}"""
+    )
+
+    # print "C CODE"
+    # print text
+
+    return text
+
+
+def GET_BIN_OP_SL_FLOAT_C_CODE(
+    partially_complete_logic, out_dir, containing_func_logic, parser_state
+):
+    left_t = partially_complete_logic.wire_to_c_type[partially_complete_logic.inputs[0]]
+    right_t = partially_complete_logic.wire_to_c_type[
+        partially_complete_logic.inputs[1]
+    ]
+    output_t = partially_complete_logic.wire_to_c_type[
+        partially_complete_logic.outputs[0]
+    ]
+    if not LOGIC.C_FLOAT_TYPES_ARE_EQUAL(
+        [left_t, output_t]
+    ) or not LOGIC.C_TYPES_ARE_FLOAT_TYPES([left_t, output_t]):
+        print(""""left_t != "float" or  output_t != "float" for sl """)
+        sys.exit(-1)
+    fp_t = left_t
+
+    ######## ARB WIDTH FLOATS
+    exponent_width, mantissa_width = LOGIC.C_FLOAT_E_M_TYPE_TO_E_M(fp_t)
+    mantissa_range = [mantissa_width - 1, 0]
+    mantissa_t_prefix = "uint" + str(mantissa_width)
+    mantissa_t = mantissa_t_prefix + "_t"
+    exponent_range = [mantissa_width + exponent_width - 1, mantissa_width]
+    exponent_t_prefix = "uint" + str(exponent_width)
+    exponent_t = exponent_t_prefix + "_t"
+    exponent_width_plus1 = exponent_width + 1
+    exponent_wide_t_prefix = "uint" + str(exponent_width_plus1)
+    exponent_wide_t = exponent_wide_t_prefix + "_t"
+    exponent_max = int(math.pow(2, exponent_width) - 1)
+    exponent_bias = int(math.pow(2, exponent_width - 1) - 1)
+    exponent_bias_t = "uint" + str(exponent_width - 1) + "_t"
+    sign_index = mantissa_width + exponent_width
+    sign_width = 1
+    sign_t_prefix = "uint" + str(sign_width)
+    sign_t = sign_t_prefix + "_t"
+    fp_t_width = 1 + exponent_width + mantissa_width
+
+    text = ""
+    text += (
+        """
+#include "uintN_t.h"
+#include "intN_t.h"
+#include "bit_manip.h"
+#include "float_e_m_t.h"
+
+// Float shift left mult pow2
+"""
+        + output_t
+        + """ """
+        + partially_complete_logic.func_name
+        + """("""
+        + left_t
+        + """ left, """
+        + right_t
+        + """ right)
+{
+  // LEFT
+  uint"""
+        + str(mantissa_width)
+        + """_t left_mantissa;  
+  left_mantissa = """
+        + fp_t
+        + """_"""
+        + str(mantissa_range[0])
+        + """_"""
+        + str(mantissa_range[1])
+        + """(left);
+  uint"""
+        + str(exponent_width)
+        + """_t left_exponent;
+  left_exponent = """
+        + fp_t
+        + """_"""
+        + str(exponent_range[0])
+        + """_"""
+        + str(exponent_range[1])
+        + """(left);
+  uint1_t left_sign;
+  left_sign = """
+        + fp_t
+        + """_"""
+        + str(sign_index)
+        + """_"""
+        + str(sign_index)
+        + """(left);
+  
+  // Declare the output portions
+  uint"""
+        + str(mantissa_width)
+        + """_t z_mantissa;
+  uint"""
+        + str(exponent_width)
+        + """_t z_exponent;
+  uint1_t z_sign;
+  z_sign = left_sign;
+  z_exponent = 0;
+  // mult by pow2 with add to exponent
+  if(left_exponent != 0) // Zero times anything stays zero
+  {
+    z_exponent = left_exponent + right; 
+  }
+  z_mantissa = left_mantissa;
+  // Assemble output  
+  return float_uint"""
+        + str(exponent_width)
+        + "_uint"
+        + str(mantissa_width)
+        + """(z_sign, z_exponent, z_mantissa);
+}"""
+    )
+
+    # print "C CODE"
+    # print text
+
+    return text
+
+
+def GET_BIN_OP_SR_C_CODE(
+    partially_complete_logic_local_inst_name,
+    partially_complete_logic,
+    out_dir,
+    containing_func_logic,
+    parser_state,
+):
+    left_t = partially_complete_logic.wire_to_c_type[partially_complete_logic.inputs[0]]
+    right_t = partially_complete_logic.wire_to_c_type[
+        partially_complete_logic.inputs[1]
+    ]
+
+    # THIS CODE ASSUMES NON CONST/ is dumb to use as const
+    left_input_wire = (
+        partially_complete_logic_local_inst_name
+        + LOGIC.SUBMODULE_MARKER
+        + partially_complete_logic.inputs[0]
+    )
+    right_input_wire = (
+        partially_complete_logic_local_inst_name
+        + LOGIC.SUBMODULE_MARKER
+        + partially_complete_logic.inputs[1]
+    )
+    left_const_driving_wire = LOGIC.FIND_CONST_DRIVING_WIRE(
+        left_input_wire, containing_func_logic
+    )
+    right_const_driving_wire = LOGIC.FIND_CONST_DRIVING_WIRE(
+        right_input_wire, containing_func_logic
+    )
+
+    if VHDL.WIRES_ARE_INT_N(
+        [partially_complete_logic.inputs[0]], partially_complete_logic
+    ) or VHDL.WIRES_ARE_UINT_N(
+        [partially_complete_logic.inputs[0]], partially_complete_logic
+    ):
+        if right_const_driving_wire is not None:
+            print(
+                "SW defined constant shift right?",
+                partially_complete_logic.c_ast_node.coord,
+            )
+            sys.exit(-1)
+        return GET_BIN_OP_SR_INT_UINT_C_CODE(
+            partially_complete_logic, out_dir, containing_func_logic, parser_state
+        )
+    elif LOGIC.C_TYPES_ARE_FLOAT_TYPES([left_t]):
+        return GET_BIN_OP_SR_FLOAT_C_CODE(
+            partially_complete_logic, out_dir, containing_func_logic, parser_state
+        )
+    else:
+        print(
+            "GET_BIN_OP_SR_C_CODE what types!?",
+            partially_complete_logic.c_ast_node.coord,
+        )
+        sys.exit(-1)
+
+
+def GET_BIN_OP_SL_C_CODE(
+    partially_complete_logic_local_inst_name,
+    partially_complete_logic,
+    out_dir,
+    containing_func_logic,
+    parser_state,
+):
+    left_t = partially_complete_logic.wire_to_c_type[partially_complete_logic.inputs[0]]
+    right_t = partially_complete_logic.wire_to_c_type[
+        partially_complete_logic.inputs[1]
+    ]
+
+    # THIS CODE ASSUMES NON CONST/ is dumb to use as const
+    left_input_wire = (
+        partially_complete_logic_local_inst_name
+        + LOGIC.SUBMODULE_MARKER
+        + partially_complete_logic.inputs[0]
+    )
+    right_input_wire = (
+        partially_complete_logic_local_inst_name
+        + LOGIC.SUBMODULE_MARKER
+        + partially_complete_logic.inputs[1]
+    )
+    left_const_driving_wire = LOGIC.FIND_CONST_DRIVING_WIRE(
+        left_input_wire, containing_func_logic
+    )
+    right_const_driving_wire = LOGIC.FIND_CONST_DRIVING_WIRE(
+        right_input_wire, containing_func_logic
+    )
+
+    if VHDL.WIRES_ARE_INT_N(
+        [partially_complete_logic.inputs[0]], partially_complete_logic
+    ) or VHDL.WIRES_ARE_UINT_N(
+        [partially_complete_logic.inputs[0]], partially_complete_logic
+    ):
+        if right_const_driving_wire is not None:
+            print(
+                "SW defined constant shift left?",
+                partially_complete_logic.c_ast_node.coord,
+            )
+            sys.exit(-1)
+        return GET_BIN_OP_SL_INT_UINT_C_CODE(
+            partially_complete_logic, out_dir, containing_func_logic, parser_state
+        )
+    elif LOGIC.C_TYPES_ARE_FLOAT_TYPES([left_t]):
+        return GET_BIN_OP_SL_FLOAT_C_CODE(
+            partially_complete_logic, out_dir, containing_func_logic, parser_state
+        )
+    else:
+        print(
+            "GET_BIN_OP_SL_C_CODE what types!?",
+            partially_complete_logic.c_ast_node.coord,
+        )
+        sys.exit(-1)
+
+
+def GET_BIN_OP_PLUS_C_CODE(partially_complete_logic, out_dir):
+    # If one of inputs is signed int then other input will be bit extended to include positive sign bit
+    left_t = partially_complete_logic.wire_to_c_type[partially_complete_logic.inputs[0]]
+    right_t = partially_complete_logic.wire_to_c_type[
+        partially_complete_logic.inputs[1]
+    ]
+    if LOGIC.C_TYPES_ARE_FLOAT_TYPES([left_t, right_t]):
+        return GET_BIN_OP_PLUS_FLOAT_C_CODE(partially_complete_logic, out_dir)
+    else:
+        print("GET_BIN_OP_PLUS_C_CODE Only plus between float for now!")
+        sys.exit(-1)
+
+
+def GET_BIN_OP_MINUS_C_CODE(partially_complete_logic, out_dir):
+    # If one of inputs is signed int then other input will be bit extended to include positive sign bit
+    left_t = partially_complete_logic.wire_to_c_type[partially_complete_logic.inputs[0]]
+    right_t = partially_complete_logic.wire_to_c_type[
+        partially_complete_logic.inputs[1]
+    ]
+    if LOGIC.C_TYPES_ARE_FLOAT_TYPES([left_t, right_t]):
+        return GET_BIN_OP_MINUS_FLOAT_C_CODE(partially_complete_logic, out_dir)
+    else:
+        print("GET_BIN_OP_MINUS_C_CODE Only sub between float for now!")
+        sys.exit(-1)
+
+
+def GET_BIN_OP_MOD_C_CODE(partially_complete_logic, out_dir, parser_state):
+    left_t = partially_complete_logic.wire_to_c_type[partially_complete_logic.inputs[0]]
+    right_t = partially_complete_logic.wire_to_c_type[
+        partially_complete_logic.inputs[1]
+    ]
+    if VHDL.WIRES_ARE_INT_N(partially_complete_logic.inputs, partially_complete_logic):
+        return GET_BIN_OP_MOD_INT_N_C_CODE(
+            partially_complete_logic, out_dir, parser_state
+        )
+    elif VHDL.WIRES_ARE_UINT_N(
+        partially_complete_logic.inputs, partially_complete_logic
+    ):
+        return GET_BIN_OP_MOD_UINT_N_C_CODE(
+            partially_complete_logic, out_dir, parser_state
+        )
+    elif LOGIC.C_TYPES_ARE_FLOAT_TYPES([left_t, right_t]):
+        return GET_BIN_OP_MOD_FLOAT_N_C_CODE(partially_complete_logic, out_dir)
+    else:
+        raise Exception(f"Modulo between unknown types {left_t} % {right_t}?")
+
+
+def GET_BIN_OP_DIV_C_CODE(partially_complete_logic, out_dir, parser_state):
+    left_t = partially_complete_logic.wire_to_c_type[partially_complete_logic.inputs[0]]
+    right_t = partially_complete_logic.wire_to_c_type[
+        partially_complete_logic.inputs[1]
+    ]
+    if VHDL.WIRES_ARE_UINT_N(partially_complete_logic.inputs, partially_complete_logic):
+        return GET_BIN_OP_DIV_UINT_N_C_CODE(
+            partially_complete_logic, out_dir, parser_state
+        )
+    elif VHDL.WIRES_ARE_INT_N(
+        partially_complete_logic.inputs, partially_complete_logic
+    ):
+        return GET_BIN_OP_DIV_INT_N_C_CODE(
+            partially_complete_logic, out_dir, parser_state
+        )
+    elif LOGIC.C_TYPES_ARE_FLOAT_TYPES([left_t, right_t]):
+        return GET_BIN_OP_DIV_FLOAT_N_C_CODE(partially_complete_logic, out_dir)
+    else:
+        print("GET_BIN_OP_DIV_C_CODE Only div between uint and float for now!")
+        sys.exit(-1)
+
+
+def GET_BIN_OP_MULT_C_CODE(partially_complete_logic, out_dir, parser_state):
+    # If one of inputs is signed int then other input will be bit extended to include positive sign bit
+    # TODO signed mult
+    left_t = partially_complete_logic.wire_to_c_type[partially_complete_logic.inputs[0]]
+    right_t = partially_complete_logic.wire_to_c_type[
+        partially_complete_logic.inputs[1]
+    ]
+    if VHDL.WIRES_ARE_UINT_N(partially_complete_logic.inputs, partially_complete_logic):
+        return GET_BIN_OP_MULT_UINT_N_C_CODE(
+            partially_complete_logic, out_dir, parser_state
+        )
+    elif LOGIC.C_TYPES_ARE_FLOAT_TYPES([left_t, right_t]):
+        return GET_BIN_OP_MULT_FLOAT_N_C_CODE(partially_complete_logic, out_dir)
+    elif VHDL.WIRES_ARE_INT_N(
+        partially_complete_logic.inputs, partially_complete_logic
+    ):
+        return GET_BIN_OP_MULT_INT_N_C_CODE(
+            partially_complete_logic, out_dir, parser_state
+        )
+    else:
+        print("GET_BIN_OP_MULT_C_CODE Only mult between uint and float for now!")
+        sys.exit(-1)
+
+
+def GET_BIN_OP_PLUS_FLOAT_C_CODE(partially_complete_logic, out_dir):
+    left_t = partially_complete_logic.wire_to_c_type[partially_complete_logic.inputs[0]]
+    right_t = partially_complete_logic.wire_to_c_type[
+        partially_complete_logic.inputs[1]
+    ]
+    output_t = partially_complete_logic.wire_to_c_type[
+        partially_complete_logic.outputs[0]
+    ]
+    left_exp_width, left_mantissa_width = LOGIC.C_FLOAT_E_M_TYPE_TO_E_M(left_t)
+    right_exp_width, right_mantissa_width = LOGIC.C_FLOAT_E_M_TYPE_TO_E_M(left_t)
+    left_width = 1 + left_exp_width + left_mantissa_width
+    right_width = 1 + right_exp_width + right_mantissa_width
+
+    if not LOGIC.C_TYPES_ARE_FLOAT_TYPES(
+        [left_t, right_t, output_t]
+    ) or not LOGIC.C_FLOAT_TYPES_ARE_EQUAL([left_t, right_t, output_t]):
+        print(
+            """"left_t != "float" or  right_t != "float" output_t too  for plus""",
+            left_t,
+            right_t,
+        )
+        sys.exit(-1)
+    fp_t = output_t
+
+    ######## ARB WIDTH FLOATS
+    exponent_width, mantissa_width = LOGIC.C_FLOAT_E_M_TYPE_TO_E_M(fp_t)
+    mantissa_range = [mantissa_width - 1, 0]
+    mantissa_t_prefix = "uint" + str(mantissa_width)
+    mantissa_t = mantissa_t_prefix + "_t"
+    exponent_range = [mantissa_width + exponent_width - 1, mantissa_width]
+    exponent_t_prefix = "uint" + str(exponent_width)
+    exponent_t = exponent_t_prefix + "_t"
+    exponent_width_plus1 = exponent_width + 1
+    exponent_wide_t_prefix = "uint" + str(exponent_width_plus1)
+    exponent_wide_t = exponent_wide_t_prefix + "_t"
+    exponent_max = int(math.pow(2, exponent_width) - 1)
+    exponent_bias = int(math.pow(2, exponent_width - 1) - 1)
+    exponent_bias_t = "uint" + str(exponent_width - 1) + "_t"
+    sign_index = mantissa_width + exponent_width
+    sign_width = 1
+    sign_t_prefix = "uint" + str(sign_width)
+    sign_t = sign_t_prefix + "_t"
+    fp_t_width = 1 + exponent_width + mantissa_width
+
+    # Could pad up to make diff in exponents/max shifting amount = 255?
+    # Software 32b implementations pad with 6 zeros
+    pad = 0
+
+    mantissa_w_hidden_bit_width = mantissa_width + 1  # 24
+    mantissa_w_hidden_bit_sign_adj_width = mantissa_w_hidden_bit_width + 1  # 25
+    sum_mantissa_width = mantissa_w_hidden_bit_sign_adj_width + 1 + pad  # 26
+    leading_zeros_width = int(math.ceil(math.log(mantissa_width + 1, 2.0)))
+
+    text = """"""
+    text += (
+        """
+#include "uintN_t.h"
+#include "intN_t.h"
+#include "float_e_m_t.h"
+//#include "bit_manip.h"
+//#include "bit_math.h"
+
+// Float add
+// Adds are complicated
+"""
+        + output_t
+        + """ """
+        + partially_complete_logic.func_name
+        + """("""
+        + left_t
+        + """ left, """
+        + right_t
+        + """ right)
+{
+  // Get exponent for left and right
+  uint"""
+        + str(exponent_width)
+        + """_t left_exponent;
+  left_exponent = """
+        + fp_t
+        + """_"""
+        + str(exponent_range[0])
+        + """_"""
+        + str(exponent_range[1])
+        + """(left);
+  uint"""
+        + str(exponent_width)
+        + """_t right_exponent;
+  right_exponent = """
+        + fp_t
+        + """_"""
+        + str(exponent_range[0])
+        + """_"""
+        + str(exponent_range[1])
+        + """(right);
+    
+  """
+        + fp_t
+        + """ x;
+  """
+        + fp_t
+        + """ y;
+  // Step 1: Copy inputs so that left's exponent >= than right's.
+  //    Is this only needed for shift operation that takes unsigned only?
+  //    ALLOW SHIFT BY NEGATIVE?????
+  if ( right_exponent > left_exponent ) // Lazy switch to GT
+  {
+     x = right;  
+     y = left;
+  }
+  else
+  { 
+     x = left;
+     y = right;
+  }
+  
+  // Step 2: Break apart into S E M
+  // X
+  uint"""
+        + str(mantissa_width)
+        + """_t x_mantissa; 
+  x_mantissa = """
+        + fp_t
+        + """_"""
+        + str(mantissa_range[0])
+        + """_"""
+        + str(mantissa_range[1])
+        + """(x);
+  uint"""
+        + str(exponent_width)
+        + """_t x_exponent;
+  x_exponent = """
+        + fp_t
+        + """_"""
+        + str(exponent_range[0])
+        + """_"""
+        + str(exponent_range[1])
+        + """(x);
+  uint1_t x_sign;
+  x_sign = """
+        + fp_t
+        + """_"""
+        + str(sign_index)
+        + """_"""
+        + str(sign_index)
+        + """(x);
+  // Y
+  uint"""
+        + str(mantissa_width)
+        + """_t y_mantissa;
+  y_mantissa = """
+        + fp_t
+        + """_"""
+        + str(mantissa_range[0])
+        + """_"""
+        + str(mantissa_range[1])
+        + """(y);
+  uint"""
+        + str(exponent_width)
+        + """_t y_exponent;
+  y_exponent = """
+        + fp_t
+        + """_"""
+        + str(exponent_range[0])
+        + """_"""
+        + str(exponent_range[1])
+        + """(y);
+  uint1_t y_sign;
+  y_sign = """
+        + fp_t
+        + """_"""
+        + str(sign_index)
+        + """_"""
+        + str(sign_index)
+        + """(y);
+  
+  // Mantissa needs +3b wider
+  //  [sign][overflow][hidden][23 bit mantissa]
+  // Put 0's in overflow bit and sign bit
+  // Put a 1 hidden bit if exponent is non-zero.
+  // X
+  // Determine hidden bit
+  uint1_t x_hidden_bit;
+  if(x_exponent == 0) // lazy swith to ==
+  {
+    x_hidden_bit = 0;
+  }
+  else
+  {
+    x_hidden_bit = 1;
+  }
+  // Apply hidden bit
+  uint"""
+        + str(mantissa_w_hidden_bit_width)
+        + """_t x_mantissa_w_hidden_bit; 
+  x_mantissa_w_hidden_bit = uint1_uint"""
+        + str(mantissa_width)
+        + """(x_hidden_bit, x_mantissa);
+  // Y
+  // Determine hidden bit
+  uint1_t y_hidden_bit;
+  if(y_exponent == 0) // lazy swith to ==
+  {
+    y_hidden_bit = 0;
+  }
+  else
+  {
+    y_hidden_bit = 1;
+  }
+  // Apply hidden bit
+  uint"""
+        + str(mantissa_w_hidden_bit_width)
+        + """_t y_mantissa_w_hidden_bit; 
+  y_mantissa_w_hidden_bit = uint1_uint"""
+        + str(mantissa_width)
+        + """(y_hidden_bit, y_mantissa);
+
+  // Step 4: If necessary, negate mantissas (twos comp) such that add makes sense
+  // STEP 2.B moved here
+  // Make wider for twos comp/sign
+  int"""
+        + str(mantissa_w_hidden_bit_sign_adj_width)
+        + """_t x_mantissa_w_hidden_bit_sign_adj;
+  int"""
+        + str(mantissa_w_hidden_bit_sign_adj_width)
+        + """_t y_mantissa_w_hidden_bit_sign_adj;
+  if(x_sign) //if(x_sign == 1)
+  {
+    x_mantissa_w_hidden_bit_sign_adj = uint"""
+        + str(mantissa_w_hidden_bit_width)
+        + """_negate(x_mantissa_w_hidden_bit); //Returns +1 wider signed, int"""
+        + str(mantissa_w_hidden_bit_sign_adj_width)
+        + """t
+  }
+  else
+  {
+    x_mantissa_w_hidden_bit_sign_adj = x_mantissa_w_hidden_bit;
+  }
+  if(y_sign) // if(y_sign == 1)
+  {
+    y_mantissa_w_hidden_bit_sign_adj = uint"""
+        + str(mantissa_w_hidden_bit_width)
+        + """_negate(y_mantissa_w_hidden_bit);
+  }
+  else
+  {
+    y_mantissa_w_hidden_bit_sign_adj = y_mantissa_w_hidden_bit;
+  }
+"""
+    )
+    if pad > 0:
+        text += (
+            """
+  // Padd both x and y on right with zeros (shift left) such that 
+  // when y is shifted to the right it doesnt drop mantissa lsbs (as much)
+  int"""
+            + str(mantissa_w_hidden_bit_sign_adj_width + pad)
+            + """_t x_mantissa_w_hidden_bit_sign_adj_rpad = int"""
+            + str(mantissa_w_hidden_bit_sign_adj_width)
+            + """_uint"""
+            + str(pad)
+            + """(x_mantissa_w_hidden_bit_sign_adj, 0);
+  int"""
+            + str(mantissa_w_hidden_bit_sign_adj_width + pad)
+            + """_t y_mantissa_w_hidden_bit_sign_adj_rpad = int"""
+            + str(mantissa_w_hidden_bit_sign_adj_width)
+            + """_uint"""
+            + str(pad)
+            + """(y_mantissa_w_hidden_bit_sign_adj, 0);
+"""
+        )
+    else:
+        text += (
+            """
+  // No padding
+  int"""
+            + str(mantissa_w_hidden_bit_sign_adj_width)
+            + """_t x_mantissa_w_hidden_bit_sign_adj_rpad = x_mantissa_w_hidden_bit_sign_adj;
+  int"""
+            + str(mantissa_w_hidden_bit_sign_adj_width)
+            + """_t y_mantissa_w_hidden_bit_sign_adj_rpad = y_mantissa_w_hidden_bit_sign_adj;
+"""
+        )
+    text += (
+        """
+  // Step 3: Un-normalize Y (including hidden bit) so that xexp == yexp.
+  // Already swapped left/right based on exponent
+  // diff will be >= 0
+  uint"""
+        + str(exponent_width)
+        + """_t diff;
+  diff = x_exponent - y_exponent;
+  // Shift y by diff (bit manip pipelined function)
+  int"""
+        + str(mantissa_w_hidden_bit_sign_adj_width + pad)
+        + """_t y_mantissa_w_hidden_bit_sign_adj_rpad_unnormalized;
+  y_mantissa_w_hidden_bit_sign_adj_rpad_unnormalized = y_mantissa_w_hidden_bit_sign_adj_rpad >> diff;
+  
+  // Step 5: Compute sum 
+  int"""
+        + str(sum_mantissa_width)
+        + """_t sum_mantissa;
+  sum_mantissa = x_mantissa_w_hidden_bit_sign_adj_rpad + y_mantissa_w_hidden_bit_sign_adj_rpad_unnormalized;
+
+  // Step 6: Save sign flag and take absolute value of sum.
+  uint1_t sum_sign;
+  sum_sign = int"""
+        + str(sum_mantissa_width)
+        + """_"""
+        + str(sum_mantissa_width - 1)
+        + """_"""
+        + str(sum_mantissa_width - 1)
+        + """(sum_mantissa);
+  uint"""
+        + str(sum_mantissa_width - 1)
+        + """_t sum_mantissa_unsigned;
+  sum_mantissa_unsigned = int"""
+        + str(sum_mantissa_width)
+        + """_abs(sum_mantissa);
+
+  // Step 7: Normalize sum and exponent. (Three cases.)
+  uint1_t sum_overflow;
+  sum_overflow = uint"""
+        + str(sum_mantissa_width - 1)
+        + """_"""
+        + str(sum_mantissa_width - 2)
+        + """_"""
+        + str(sum_mantissa_width - 2)
+        + """(sum_mantissa_unsigned);
+  uint"""
+        + str(exponent_width)
+        + """_t sum_exponent_normalized;
+  uint"""
+        + str(mantissa_width)
+        + """_t sum_mantissa_unsigned_normalized;
+  if (sum_overflow) //if ( sum_overflow == 1 )
+  {
+     // Case 1: Sum overflow.
+     //         Right shift significand by 1 and increment exponent.
+     sum_exponent_normalized = x_exponent + 1;
+     sum_mantissa_unsigned_normalized = uint"""
+        + str(sum_mantissa_width - 1)
+        + """_"""
+        + str(sum_mantissa_width - 3)
+        + """_"""
+        + str(sum_mantissa_width - mantissa_width - 2)
+        + """(sum_mantissa_unsigned);
+  }
+  else if(sum_mantissa_unsigned == 0) // laxy switch to ==
+  {
+     //
+     // Case 3: Sum is zero.
+     sum_exponent_normalized = 0;
+     sum_mantissa_unsigned_normalized = 0;
+  }
+  else
+  {
+     // Case 2: Sum is nonzero and did not overflow.
+     // Dont waste zeros at start of mantissa
+     // Find position of first non-zero digit from left
+     // Know bit25(sign) and bit24(overflow) are not set
+     // Hidden bit is [23], can narrow down to 24b wide including hidden bit 
+     uint"""
+        + str(sum_mantissa_width - 2)
+        + """_t sum_mantissa_unsigned_narrow;
+     sum_mantissa_unsigned_narrow = sum_mantissa_unsigned;
+     uint"""
+        + str(leading_zeros_width)
+        + """_t leading_zeros; // width = ceil(log2(len(sumsig)))
+     leading_zeros = count0s_uint"""
+        + str(sum_mantissa_width - 2)
+        + """(sum_mantissa_unsigned_narrow); // Count from left/msbs downto, uintX_count0s counts from right
+     // NOT CHECKING xexp < adj
+     // Case 2b: Adjust significand and exponent.
+     sum_exponent_normalized = x_exponent - leading_zeros;
+     uint"""
+        + str(sum_mantissa_width - 2)
+        + """_t sum_mantissa_unsigned_normalized_rpad = sum_mantissa_unsigned_narrow << leading_zeros;
+     sum_mantissa_unsigned_normalized = uint"""
+        + str(sum_mantissa_width - 2)
+        + """_"""
+        + str(sum_mantissa_width - 4)
+        + """_"""
+        + str(sum_mantissa_width - mantissa_width - 3)
+        + """(sum_mantissa_unsigned_normalized_rpad);
+  }
+  
+  // Declare the output portions
+  uint"""
+        + str(mantissa_width)
+        + """_t z_mantissa;
+  uint"""
+        + str(exponent_width)
+        + """_t z_exponent;
+  uint1_t z_sign;
+  z_sign = sum_sign;
+  z_exponent = sum_exponent_normalized;
+  z_mantissa = sum_mantissa_unsigned_normalized;
+  // Assemble output  
+  return float_uint"""
+        + str(exponent_width)
+        + "_uint"
+        + str(mantissa_width)
+        + """(z_sign, z_exponent, z_mantissa);
+}"""
+    )
+
+    # print("C CODE")
+    # print(text)
+
+    return text
+
+
+def GET_BIN_OP_LT_LTE_C_CODE(partially_complete_logic, out_dir, op_str):
+    left_t = partially_complete_logic.wire_to_c_type[partially_complete_logic.inputs[0]]
+    right_t = partially_complete_logic.wire_to_c_type[
+        partially_complete_logic.inputs[1]
+    ]
+    if LOGIC.C_TYPES_ARE_FLOAT_TYPES([left_t, right_t]):
+        return GET_BIN_OP_LT_LTE_FLOAT_C_CODE(partially_complete_logic, out_dir, op_str)
+    elif VHDL.C_TYPE_IS_UINT_N(left_t) and VHDL.C_TYPE_IS_UINT_N(right_t):
+        return GET_BIN_OP_GT_GTE_LT_LTE_UINT_C_CODE(partially_complete_logic, op_str)
+    elif VHDL.C_TYPE_IS_INT_N(left_t) and VHDL.C_TYPE_IS_INT_N(right_t):
+        return GET_BIN_OP_GT_GTE_LT_LTE_INT_C_CODE(partially_complete_logic, op_str)
+    else:
+        raise Exception("GET_BIN_OP_LT_LTE_C_CODE for types!", [left_t, right_t])
+        sys.exit(-1)
+
+
+def GET_BIN_OP_LT_LTE_FLOAT_C_CODE(partially_complete_logic, out_dir, op_str):
+    left_t = partially_complete_logic.wire_to_c_type[partially_complete_logic.inputs[0]]
+    right_t = partially_complete_logic.wire_to_c_type[
+        partially_complete_logic.inputs[1]
+    ]
+    output_t = partially_complete_logic.wire_to_c_type[
+        partially_complete_logic.outputs[0]
+    ]
+
+    # Inputs must be float
+    if not LOGIC.C_FLOAT_TYPES_ARE_EQUAL(
+        [left_t, right_t]
+    ) or not LOGIC.C_TYPES_ARE_FLOAT_TYPES([left_t, right_t]):
+        print(""""left_t != "float" or  right_t != "float" for <= """)
+        sys.exit(-1)
+
+    # Output must be bool
+    if output_t != "uint1_t":
+        print("GET_BIN_OP_LT_LTE_FLOAT_C_CODE output_t != uint1_t")
+        sys.exit(-1)
+
+    fp_t = left_t
+
+    ######## ARB WIDTH FLOATS
+    exponent_width, mantissa_width = LOGIC.C_FLOAT_E_M_TYPE_TO_E_M(fp_t)
+    mantissa_range = [mantissa_width - 1, 0]
+    mantissa_t_prefix = "uint" + str(mantissa_width)
+    mantissa_t = mantissa_t_prefix + "_t"
+    exponent_range = [mantissa_width + exponent_width - 1, mantissa_width]
+    exponent_t_prefix = "uint" + str(exponent_width)
+    exponent_t = exponent_t_prefix + "_t"
+    exponent_width_plus1 = exponent_width + 1
+    exponent_wide_t_prefix = "uint" + str(exponent_width_plus1)
+    exponent_wide_t = exponent_wide_t_prefix + "_t"
+    exponent_max = int(math.pow(2, exponent_width) - 1)
+    exponent_bias = int(math.pow(2, exponent_width - 1) - 1)
+    exponent_bias_t = "uint" + str(exponent_width - 1) + "_t"
+    sign_index = mantissa_width + exponent_width
+    sign_width = 1
+    sign_t_prefix = "uint" + str(sign_width)
+    sign_t = sign_t_prefix + "_t"
+    fp_t_width = 1 + exponent_width + mantissa_width
+
+    abs_val_width = exponent_width + mantissa_width
+    abs_val_prefix = "uint" + str(abs_val_width)
+    abs_val_t = abs_val_prefix + "_t"
+
+    text = """"""
+    text += (
+        """
+#include "uintN_t.h"
+#include "intN_t.h"
+#include "bit_manip.h"
+#include "float_e_m_t.h"
+
+// Float LT/LTE std_logic_vector in C silly
+"""
+        + output_t
+        + """ """
+        + partially_complete_logic.func_name
+        + """("""
+        + left_t
+        + """ left, """
+        + right_t
+        + """ right)
+{
+  // LEFT
+  uint"""
+        + str(mantissa_width)
+        + """_t left_mantissa;  
+  left_mantissa = """
+        + fp_t
+        + """_"""
+        + str(mantissa_range[0])
+        + """_"""
+        + str(mantissa_range[1])
+        + """(left);
+  uint"""
+        + str(exponent_width)
+        + """_t left_exponent;
+  left_exponent = """
+        + fp_t
+        + """_"""
+        + str(exponent_range[0])
+        + """_"""
+        + str(exponent_range[1])
+        + """(left);
+  uint1_t left_sign;
+  left_sign = """
+        + fp_t
+        + """_"""
+        + str(sign_index)
+        + """_"""
+        + str(sign_index)
+        + """(left);
+  // RIGHT
+  uint"""
+        + str(mantissa_width)
+        + """_t right_mantissa;
+  right_mantissa = """
+        + fp_t
+        + """_"""
+        + str(mantissa_range[0])
+        + """_"""
+        + str(mantissa_range[1])
+        + """(right);
+  uint"""
+        + str(exponent_width)
+        + """_t right_exponent;
+  right_exponent = """
+        + fp_t
+        + """_"""
+        + str(exponent_range[0])
+        + """_"""
+        + str(exponent_range[1])
+        + """(right);
+  uint1_t right_sign;
+  right_sign = """
+        + fp_t
+        + """_"""
+        + str(sign_index)
+        + """_"""
+        + str(sign_index)
+        + """(right);
+  
+  // Do abs value compare by using exponent as msbs
+  //  (-1)^s    * m  *   2^(e - 127)
+  """
+        + abs_val_t
+        + """ left_abs;
+  left_abs = uint"""
+        + str(exponent_width)
+        + """_uint"""
+        + str(mantissa_width)
+        + """(left_exponent, left_mantissa);
+  """
+        + abs_val_t
+        + """ right_abs;
+  right_abs = uint"""
+        + str(exponent_width)
+        + """_uint"""
+        + str(mantissa_width)
+        + """(right_exponent, right_mantissa);"""
+    )
+
+    # Prepare the reversed operation for if both operands are negative
+    # ~~~ because youre a lazy bitch, I think
+    # if both neg then
+    # Switches LT->GT(=flip args LTE), LTE->GTE(flipped args GT)
+    if op_str == "<":
+        flipped_op_str = "<="
+    else:
+        # op str <=
+        flipped_op_str = "<"
+
+    text += (
+        """
+  // Adjust for sign
+  uint1_t rv;
+  uint1_t same_sign;
+  same_sign = left_sign == right_sign;
+  uint1_t pos_signs;
+  uint1_t neg_signs;
+  neg_signs = left_sign; // Only used if same sign
+  pos_signs = !left_sign; // Only used if same sign
+  if(same_sign & pos_signs)
+  {
+    rv = left_abs """
+        + op_str
+        + """ right_abs;
+  }
+  else if(same_sign & neg_signs)
+  {
+    // Switches LT->GT(=flip args LTE), LTE->GTE(flipped args LT)
+    rv = right_abs """
+        + flipped_op_str
+        + """ left_abs;
+  }
+  else
+  {
+    // NOT SAME SIGN so can never equal ( but op is LT or LTE so LT is important part)
+    // left must be neg to be LT (neg) right 
+    rv = left_sign; // left_sign=1, right_sign=0, left is neg, can never LT left so true
+  }
+
+  return rv;
+}"""
+    )
+
+    # print "C CODE"
+    # print text
+
+    return text
+
+
+def GET_BIN_OP_GT_GTE_C_CODE(partially_complete_logic, out_dir, op_str):
+    left_t = partially_complete_logic.wire_to_c_type[partially_complete_logic.inputs[0]]
+    right_t = partially_complete_logic.wire_to_c_type[
+        partially_complete_logic.inputs[1]
+    ]
+    if LOGIC.C_TYPES_ARE_FLOAT_TYPES([left_t, right_t]):
+        return GET_BIN_OP_GT_GTE_FLOAT_C_CODE(partially_complete_logic, out_dir, op_str)
+    elif VHDL.C_TYPE_IS_UINT_N(left_t) and VHDL.C_TYPE_IS_UINT_N(right_t):
+        return GET_BIN_OP_GT_GTE_LT_LTE_UINT_C_CODE(partially_complete_logic, op_str)
+    elif VHDL.C_TYPE_IS_INT_N(left_t) and VHDL.C_TYPE_IS_INT_N(right_t):
+        return GET_BIN_OP_GT_GTE_LT_LTE_INT_C_CODE(partially_complete_logic, op_str)
+    else:
+        raise Exception("GET_BIN_OP_GT_GTE_C_CODE for types!", [left_t, right_t])
+        sys.exit(-1)
+
+
+def GET_BIN_OP_GT_GTE_LT_LTE_INT_C_CODE(partially_complete_logic, op_str):
+    # implement using unsigned compare and signed logic
+    # Only for the shared bit range of left/right, extra upper bits handled extra
+    # Sign is included in extra bits compare
+    left_t = partially_complete_logic.wire_to_c_type[partially_complete_logic.inputs[0]]
+    right_t = partially_complete_logic.wire_to_c_type[
+        partially_complete_logic.inputs[1]
+    ]
+    output_t = partially_complete_logic.wire_to_c_type[
+        partially_complete_logic.outputs[0]
+    ]
+    left_width = VHDL.GET_WIDTH_FROM_C_N_BITS_INT_TYPE_STR(left_t)
+    right_width = VHDL.GET_WIDTH_FROM_C_N_BITS_INT_TYPE_STR(right_t)
+    max_width = max(left_width, right_width)
+    left_has_extra_bits = left_width > right_width
+    right_has_extra_bits = right_width > left_width
+    sign_bits = 1
+    extra_bits = 0
+    if left_has_extra_bits:
+        extra_bits = left_width - right_width
+    if right_has_extra_bits:
+        extra_bits = right_width - left_width
+    sign_bits += extra_bits
+
+    text = ""
+    text += (
+        """
+#include "uintN_t.h"
+#include "intN_t.h"
+"""
+        + output_t
+        + """ """
+        + partially_complete_logic.func_name
+        + """("""
+        + left_t
+        + """ left, """
+        + right_t
+        + """ right)
+{"""
+    )
+    text += f"""
+    // Sign extend as needed
+    uint1_t lsign = left({left_width-1},{left_width-1});
+    uint1_t rsign = right({right_width-1},{right_width-1});
+    int{max_width}_t lsigned = left;
+    int{max_width}_t rsigned = right;
+"""
+    if left_has_extra_bits:
+        text += f"""
+    uint{sign_bits}_t extra_sign_bits = lsigned >> {max_width-sign_bits};
+    uint{sign_bits}_t sign_ext_like_zero = rsigned >> {max_width-sign_bits}; // uint1_{sign_bits}(rsign);
+"""
+    else:  # right_has_extra_bits AND Default both single sign bits no extra bits
+        text += f"""
+    uint{sign_bits}_t extra_sign_bits = rsigned >> {max_width-sign_bits};
+    uint{sign_bits}_t sign_ext_like_zero = lsigned >> {max_width-sign_bits}; // uint1_{sign_bits}(lsign);
+"""
+    text += f"""
+    // unsigned at minimum width
+    uint{max_width-sign_bits}_t lunsigned = left;
+    uint{max_width-sign_bits}_t runsigned = right;
+    """
+
+    text += (
+        """
+    uint1_t rv;
+    if(extra_sign_bits==sign_ext_like_zero){
+        // Do unsigned compare
+        rv = lunsigned """
+        + op_str
+        + """ runsigned;
+    }else{
+"""
+    )
+    if op_str == ">=" or op_str == ">":
+        # // Sign difference
+        # // + > - true1 (!lsign, rsign)
+        # // - > + false0 (!lsign, rsign)
+        if left_has_extra_bits:
+            text += """        
+        // and or same sign left magnitude larger
+        // -LEFT > -right false  (!lsign,!rsign)
+        // LEFT > right true  (!lsign,!rsign)
+        rv = ~lsign;
+"""
+        elif right_has_extra_bits:
+            text += """        
+        // and or same sign right magnitude larger
+        // -left > -RIGHT true (lsign, rsign)
+        // left > RIGHT false (lsign, rsign)
+        rv = rsign;
+"""
+        else:
+            text += """
+        // Sign difference (picked sign without invert)
+        rv = rsign;
+"""
+    elif op_str == "<" or op_str == "<=":
+        # // Sign difference
+        # // + < - false0 (lsign, !rsign)
+        # // - < + true1 (lsign, !rsign)
+        if left_has_extra_bits:
+            text += """        
+        // and or same sign left magnitude larger
+        // -LEFT < -right true (lsign, rsign)
+        // LEFT < right false (lsign, rsign)
+        rv = lsign;
+"""
+        elif right_has_extra_bits:
+            text += """        
+        // and or same sign right magnitude larger
+        // -left < -RIGHT false (!lsign, !rsign)
+        // left < RIGHT true (!lsign, !rsign)
+        rv = ~rsign;
+"""
+        else:
+            text += """
+        // Sign difference (picked sign without invert)
+        rv = lsign;
+"""
+
+    text += """    }
+    return rv;  
+}"""
+
+    # print(text)
+
+    return text
+
+
+def GET_BIN_OP_GT_GTE_LT_LTE_UINT_C_CODE(partially_complete_logic, op_str):
+    left_t = partially_complete_logic.wire_to_c_type[partially_complete_logic.inputs[0]]
+    right_t = partially_complete_logic.wire_to_c_type[
+        partially_complete_logic.inputs[1]
+    ]
+    output_t = partially_complete_logic.wire_to_c_type[
+        partially_complete_logic.outputs[0]
+    ]
+    left_width = VHDL.GET_WIDTH_FROM_C_N_BITS_INT_TYPE_STR(left_t)
+    right_width = VHDL.GET_WIDTH_FROM_C_N_BITS_INT_TYPE_STR(right_t)
+    left_has_extra_bits = left_width > right_width
+    right_has_extra_bits = right_width > left_width
+    has_extra_bits = left_has_extra_bits or right_has_extra_bits
+    extra_bits = 0
+    if left_has_extra_bits:
+        extra_bits = left_width - right_width
+    if right_has_extra_bits:
+        extra_bits = right_width - left_width
+    left_sized_out_t_width = left_width + 1
+    left_sized_out_t = "int" + str(left_sized_out_t_width) + "_t"
+    left_t_signed = left_t
+    left_t_signed_width = left_width
+    if not VHDL.C_TYPE_IS_INT_N(left_t):
+        left_t_signed_width = left_width + 1
+        left_t_signed = "int" + str(left_t_signed_width) + "_t"
+        left_sized_out_t_width = left_t_signed_width
+        left_sized_out_t = left_t_signed
+    right_sized_out_t_width = right_width + 1
+    right_sized_out_t = "int" + str(right_sized_out_t_width) + "_t"
+    right_t_signed = right_t
+    right_t_signed_width = right_width
+    if not VHDL.C_TYPE_IS_INT_N(right_t):
+        right_t_signed_width = right_width + 1
+        right_t_signed = "int" + str(right_t_signed_width) + "_t"
+        right_sized_out_t_width = right_t_signed_width
+        right_sized_out_t = right_t_signed
+
+    max_width = max(left_width, right_width)
+    in_t = "int" + str(max_width + 1 - extra_bits) + "_t"
+    out_t_width = max_width + 1 - extra_bits
+    out_t = "int" + str(out_t_width) + "_t"
+
+    text = ""
+    text += (
+        """
+#include "uintN_t.h"
+#include "intN_t.h"
+//#include "bit_manip.h"
+"""
+        + output_t
+        + """ """
+        + partially_complete_logic.func_name
+        + """("""
+        + left_t
+        + """ left, """
+        + right_t
+        + """ right)
+{
+"""
+    )
+
+    text += f"""
+    // Bottom without any extra bits    
+    uint{max_width-extra_bits}_t left_bot = left;
+    uint{max_width-extra_bits}_t right_bot = right;
+"""
+    if has_extra_bits:
+        text += f"""    
+  uint{extra_bits}_t top;
+"""
+        if left_has_extra_bits:
+            text += f"""  top = left >> {left_width-extra_bits};
+"""
+        else:
+            text += f"""  top = right >> {right_width-extra_bits};
+"""
+    text += "    uint1_t rv;\n"
+
+    if has_extra_bits:
+        text += """  if(top==0){"""
+
+    text += """
+    // Subtractor based compare"""
+    if op_str == ">":
+        text += f"""
+    {out_t} sub = ({in_t})right_bot - left_bot;
+    uint1_t lt_zero = sub({out_t_width-1},{out_t_width-1});
+    rv = lt_zero;
+"""
+    elif op_str == ">=":
+        text += f"""
+    {out_t} sub = ({in_t})left_bot - right_bot;
+    uint1_t lt_zero = sub({out_t_width-1},{out_t_width-1});
+    rv = ~lt_zero;
+"""
+    elif op_str == "<":
+        text += f"""
+    {out_t} sub = ({in_t})left_bot - right_bot;
+    uint1_t lt_zero = sub({out_t_width-1},{out_t_width-1});
+    rv = lt_zero;
+"""
+    elif op_str == "<=":
+        text += f"""
+    {out_t} sub = ({in_t})right_bot - left_bot;
+    uint1_t lt_zero = sub({out_t_width-1},{out_t_width-1});
+    rv = ~lt_zero;
+"""
+
+    if left_has_extra_bits:
+        if op_str.startswith(">"):
+            text += """  }else{
+    // Left is large, GT/E is true
+    rv = 1;
+  }
+"""
+        if op_str.startswith("<"):
+            text += """  }else{
+    // Left is large, LT/E is false
+    rv = 0;
+  }
+"""
+    if right_has_extra_bits:
+        if op_str.startswith(">"):
+            text += """  }else{
+    // Right is large, GT/E is false
+    rv = 0;
+  }
+"""
+        if op_str.startswith("<"):
+            text += """  }else{
+    // Right is large, LT/E is true
+    rv = 1;
+  }
+"""
+
+    text += """
+  return rv;"""
+
+    text += """  
+}"""
+
+    # print(text)
+
+    return text
+
+
+# GT/GTE
+def GET_BIN_OP_GT_GTE_FLOAT_C_CODE(partially_complete_logic, out_dir, op_str):
+    left_t = partially_complete_logic.wire_to_c_type[partially_complete_logic.inputs[0]]
+    right_t = partially_complete_logic.wire_to_c_type[
+        partially_complete_logic.inputs[1]
+    ]
+    output_t = partially_complete_logic.wire_to_c_type[
+        partially_complete_logic.outputs[0]
+    ]
+    if not LOGIC.C_FLOAT_TYPES_ARE_EQUAL(
+        [left_t, right_t]
+    ) or not LOGIC.C_TYPES_ARE_FLOAT_TYPES([left_t, right_t]):
+        print(""""left_t != "float" or  right_t != "float" for >= """)
+        sys.exit(-1)
+    fp_t = left_t
+    # Output must be bool
+    if output_t != "uint1_t":
+        print("GET_BIN_OP_GT_GTE_FLOAT_C_CODE output_t != uint1_t")
+        sys.exit(-1)
+
+    fp_t = left_t
+
+    ######## ARB WIDTH FLOATS
+    exponent_width, mantissa_width = LOGIC.C_FLOAT_E_M_TYPE_TO_E_M(fp_t)
+    mantissa_range = [mantissa_width - 1, 0]
+    mantissa_t_prefix = "uint" + str(mantissa_width)
+    mantissa_t = mantissa_t_prefix + "_t"
+    exponent_range = [mantissa_width + exponent_width - 1, mantissa_width]
+    exponent_t_prefix = "uint" + str(exponent_width)
+    exponent_t = exponent_t_prefix + "_t"
+    exponent_width_plus1 = exponent_width + 1
+    exponent_wide_t_prefix = "uint" + str(exponent_width_plus1)
+    exponent_wide_t = exponent_wide_t_prefix + "_t"
+    exponent_max = int(math.pow(2, exponent_width) - 1)
+    exponent_bias = int(math.pow(2, exponent_width - 1) - 1)
+    exponent_bias_t = "uint" + str(exponent_width - 1) + "_t"
+    sign_index = mantissa_width + exponent_width
+    sign_width = 1
+    sign_t_prefix = "uint" + str(sign_width)
+    sign_t = sign_t_prefix + "_t"
+    fp_t_width = 1 + exponent_width + mantissa_width
+
+    abs_val_width = exponent_width + mantissa_width
+    abs_val_prefix = "uint" + str(abs_val_width)
+    abs_val_t = abs_val_prefix + "_t"
+
+    text = """"""
+    text += (
+        """
+#include "uintN_t.h"
+#include "intN_t.h"
+#include "bit_manip.h"
+#include "float_e_m_t.h"
+
+// Float GT/GTE std_logic_vector in C silly
+"""
+        + output_t
+        + """ """
+        + partially_complete_logic.func_name
+        + """("""
+        + left_t
+        + """ left, """
+        + right_t
+        + """ right)
+{
+  // LEFT
+  uint"""
+        + str(mantissa_width)
+        + """_t left_mantissa;  
+  left_mantissa = """
+        + fp_t
+        + """_"""
+        + str(mantissa_range[0])
+        + """_"""
+        + str(mantissa_range[1])
+        + """(left);
+  uint"""
+        + str(exponent_width)
+        + """_t left_exponent;
+  left_exponent = """
+        + fp_t
+        + """_"""
+        + str(exponent_range[0])
+        + """_"""
+        + str(exponent_range[1])
+        + """(left);
+  uint1_t left_sign;
+  left_sign = """
+        + fp_t
+        + """_"""
+        + str(sign_index)
+        + """_"""
+        + str(sign_index)
+        + """(left);
+  // RIGHT
+  uint"""
+        + str(mantissa_width)
+        + """_t right_mantissa;
+  right_mantissa = """
+        + fp_t
+        + """_"""
+        + str(mantissa_range[0])
+        + """_"""
+        + str(mantissa_range[1])
+        + """(right);
+  uint"""
+        + str(exponent_width)
+        + """_t right_exponent;
+  right_exponent = """
+        + fp_t
+        + """_"""
+        + str(exponent_range[0])
+        + """_"""
+        + str(exponent_range[1])
+        + """(right);
+  uint1_t right_sign;
+  right_sign = """
+        + fp_t
+        + """_"""
+        + str(sign_index)
+        + """_"""
+        + str(sign_index)
+        + """(right);
+  
+  // Do abs value compare by using exponent as msbs
+  //  (-1)^s    * m  *   2^(e - 127)
+  """
+        + abs_val_t
+        + """ left_abs;
+  left_abs = uint"""
+        + str(exponent_width)
+        + """_uint"""
+        + str(mantissa_width)
+        + """(left_exponent, left_mantissa);
+  """
+        + abs_val_t
+        + """ right_abs;
+  right_abs = uint"""
+        + str(exponent_width)
+        + """_uint"""
+        + str(mantissa_width)
+        + """(right_exponent, right_mantissa);"""
+    )
+
+    # if both neg then
+    # Switches GT->LT(=flip args GTE), GTE->LTE(flipped args GT)
+    if op_str == ">":
+        flipped_op_str = ">="
+    else:
+        # op str >=
+        flipped_op_str = ">"
+
+    text += (
+        """
+  // Adjust for sign
+  uint1_t rv;
+  uint1_t same_sign;
+  same_sign = left_sign == right_sign;
+  uint1_t pos_signs;
+  uint1_t neg_signs;
+  neg_signs = left_sign; // Only used if same sign
+  pos_signs = !left_sign; // Only used if same sign
+  if(same_sign & pos_signs)
+  {
+    rv = left_abs """
+        + op_str
+        + """ right_abs;
+  }
+  else if(same_sign & neg_signs)
+  {
+    // Switches GT->LT(=flip args GTE), GTE->LTE(flipped args GT)
+    rv = right_abs """
+        + flipped_op_str
+        + """ left_abs;
+  }
+  else
+  {
+    // NOT SAME SIGN so can never equal ( but op is GT or GTE so GT is important part)
+    // left must be pos to be GT (neg)right 
+    rv = right_sign; // left_sign=0, right_sign=1, right is neg, can never GT left so true
+  }
+
+  return rv;
+}"""
+    )
+
+    # print "C CODE"
+    # print text
+
+    return text
+
+
+def GET_BIN_OP_MINUS_FLOAT_C_CODE(partially_complete_logic, out_dir):
+    left_t = partially_complete_logic.wire_to_c_type[partially_complete_logic.inputs[0]]
+    right_t = partially_complete_logic.wire_to_c_type[
+        partially_complete_logic.inputs[1]
+    ]
+    output_t = partially_complete_logic.wire_to_c_type[
+        partially_complete_logic.outputs[0]
+    ]
+    if not LOGIC.C_FLOAT_TYPES_ARE_EQUAL(
+        [left_t, right_t, output_t]
+    ) or not LOGIC.C_TYPES_ARE_FLOAT_TYPES([left_t, right_t, output_t]):
+        print(""""left_t != "float" or  right_t != "float" output_t too  for minus""")
+        sys.exit(-1)
+    fp_t = output_t
+
+    ######## ARB WIDTH FLOATS
+    exponent_width, mantissa_width = LOGIC.C_FLOAT_E_M_TYPE_TO_E_M(fp_t)
+    mantissa_range = [mantissa_width - 1, 0]
+    mantissa_t_prefix = "uint" + str(mantissa_width)
+    mantissa_t = mantissa_t_prefix + "_t"
+    exponent_range = [mantissa_width + exponent_width - 1, mantissa_width]
+    exponent_t_prefix = "uint" + str(exponent_width)
+    exponent_t = exponent_t_prefix + "_t"
+    exponent_width_plus1 = exponent_width + 1
+    exponent_wide_t_prefix = "uint" + str(exponent_width_plus1)
+    exponent_wide_t = exponent_wide_t_prefix + "_t"
+    exponent_max = int(math.pow(2, exponent_width) - 1)
+    exponent_bias = int(math.pow(2, exponent_width - 1) - 1)
+    exponent_bias_t = "uint" + str(exponent_width - 1) + "_t"
+    sign_index = mantissa_width + exponent_width
+    sign_width = 1
+    sign_t_prefix = "uint" + str(sign_width)
+    sign_t = sign_t_prefix + "_t"
+    fp_t_width = 1 + exponent_width + mantissa_width
+
+    mantissa_w_hidden_bit_width = mantissa_width + 1  # 24
+    mantissa_w_hidden_bit_sign_adj_width = mantissa_w_hidden_bit_width + 1  # 25
+    sum_mantissa_width = mantissa_w_hidden_bit_sign_adj_width + 1  # 26
+    leading_zeros_width = int(math.ceil(math.log(mantissa_width + 1, 2.0)))
+
+    text = ""
+    text += (
+        """
+#include "uintN_t.h"
+#include "intN_t.h"
+#include "bit_manip.h"
+#include "bit_math.h"
+#include "float_e_m_t.h"
+
+// Float minus std_logic_vector in VHDL
+// Minus is as complicated as add - yeah, so just use add
+"""
+        + output_t
+        + """ """
+        + partially_complete_logic.func_name
+        + """("""
+        + left_t
+        + """ left, """
+        + right_t
+        + """ right)
+{
+  uint1_t right_sign;
+  right_sign = """
+        + fp_t
+        + """_"""
+        + str(sign_index)
+        + """_"""
+        + str(sign_index)
+        + """(right);
+  uint"""
+        + str(fp_t_width - 1)
+        + """_t right_everythingelse = """
+        + fp_t
+        + """_"""
+        + str(sign_index - 1)
+        + """_0(right);
+  uint"""
+        + str(fp_t_width)
+        + """_t negated_right_unsigned = uint1_uint"""
+        + str(fp_t_width - 1)
+        + """(!right_sign, right_everythingelse);
+  """
+        + fp_t
+        + """ negated_right = """
+        + fp_t
+        + """_uint"""
+        + str(fp_t_width)
+        + """(negated_right_unsigned);
+  return left + negated_right;
+}"""
+    )
+
+    # print "C CODE"
+    # print text
+
+    return text
+
+
+def GET_BIN_OP_MOD_FLOAT_N_C_CODE(partially_complete_logic, out_dir):
+    # So there was this guy here trying to figure out the floating point implementation for modulo
+    # Then the internet (of all people) chimes in and says modulo for floating point isn't actually part of standard C?
+    # And that there are various fmod implementations for math.h
+    # So me embracing the piece of shit (that I am) will implement mod in C too
+
+    left_t = partially_complete_logic.wire_to_c_type[partially_complete_logic.inputs[0]]
+    right_t = partially_complete_logic.wire_to_c_type[
+        partially_complete_logic.inputs[1]
+    ]
+    output_t = partially_complete_logic.wire_to_c_type[
+        partially_complete_logic.outputs[0]
+    ]
+    if left_t != right_t or not LOGIC.C_TYPES_ARE_FLOAT_TYPES(
+        [left_t, right_t, output_t]
+    ):
+        print(left_t, right_t, output_t)
+        print(""""left_t != "float" or  right_t != "float" output_t mod""")
+        sys.exit(-1)
+    fp_t = output_t
+
+    ######## ARB WIDTH FLOATS
+    exponent_width, mantissa_width = LOGIC.C_FLOAT_E_M_TYPE_TO_E_M(fp_t)
+    mantissa_range = [mantissa_width - 1, 0]
+    mantissa_t_prefix = "uint" + str(mantissa_width)
+    mantissa_t = mantissa_t_prefix + "_t"
+    exponent_range = [mantissa_width + exponent_width - 1, mantissa_width]
+    exponent_t_prefix = "uint" + str(exponent_width)
+    exponent_t = exponent_t_prefix + "_t"
+    exponent_width_plus1 = exponent_width + 1
+    exponent_wide_t_prefix = "uint" + str(exponent_width_plus1)
+    exponent_wide_t = exponent_wide_t_prefix + "_t"
+    exponent_max = int(math.pow(2, exponent_width) - 1)
+    exponent_bias = int(math.pow(2, exponent_width - 1) - 1)
+    exponent_bias_t = "uint" + str(exponent_width - 1) + "_t"
+    sign_index = mantissa_width + exponent_width
+    sign_width = 1
+    sign_t_prefix = "uint" + str(sign_width)
+    sign_t = sign_t_prefix + "_t"
+    fp_t_width = 1 + exponent_width + mantissa_width
+
+    text = ""
+
+    text += (
+        '''
+#include "uintN_t.h"
+#include "intN_t.h"
+#include "float_e_m_t.h"
+#include "'''
+        + LOGIC.BIT_MANIP_HEADER_FILE
+        + """"
+
+// Float div std_logic_vector in VHDL
+"""
+        + output_t
+        + """ """
+        + partially_complete_logic.func_name
+        + """("""
+        + left_t
+        + """ left, """
+        + right_t
+        + """ right)
+{
+  // Quotient
+  """
+        + fp_t
+        + """ q;
+  q = left / right;
+  
+  // Convert to int (floor?)
+  // float max value = 3.402823466*10^38
+  // log2(3.402823466*10^38) ~ 128 , int129
+  int129_t q_int;
+  q_int = q;
+  
+  // Partial quotient
+  """
+        + fp_t
+        + """ partial;
+  partial = ("""
+        + fp_t
+        + """)q_int * right;
+  
+  """
+        + fp_t
+        + """ remainder;
+  remainder = left - partial;
+  
+  return remainder;
+}
+"""
+    )
+
+    return text
+
+
+def GET_BIN_OP_DIV_FLOAT_N_C_CODE(partially_complete_logic, out_dir):
+    # Taking this directly from the 1 clock version VHDL from
+    """
+    -- Company: Instituto Superior Tecnico
+    -- Prof: Paulo Alexandre Crisostomo Lopes
+    -- paulo.lopes@inesc-id.pt
+    """
+    # Can improve in future
+    # Thanks man
+    left_t = partially_complete_logic.wire_to_c_type[partially_complete_logic.inputs[0]]
+    right_t = partially_complete_logic.wire_to_c_type[
+        partially_complete_logic.inputs[1]
+    ]
+    output_t = partially_complete_logic.wire_to_c_type[
+        partially_complete_logic.outputs[0]
+    ]
+    if not LOGIC.C_FLOAT_TYPES_ARE_EQUAL(
+        [left_t, right_t, output_t]
+    ) or not LOGIC.C_TYPES_ARE_FLOAT_TYPES([left_t, right_t, output_t]):
+        print(left_t, right_t, output_t)
+        print(""""left_t != "float" or  right_t != "float" output_t too div/mod""")
+        sys.exit(-1)
+    fp_t = output_t
+
+    ######## ARB WIDTH FLOATS
+    exponent_width, mantissa_width = LOGIC.C_FLOAT_E_M_TYPE_TO_E_M(fp_t)
+    mantissa_range = [mantissa_width - 1, 0]
+    mantissa_t_prefix = "uint" + str(mantissa_width)
+    mantissa_t = mantissa_t_prefix + "_t"
+    exponent_range = [mantissa_width + exponent_width - 1, mantissa_width]
+    exponent_t_prefix = "uint" + str(exponent_width)
+    exponent_t = exponent_t_prefix + "_t"
+    exponent_width_plus1 = exponent_width + 1
+    exponent_wide_t_prefix = "uint" + str(exponent_width_plus1)
+    exponent_wide_t = exponent_wide_t_prefix + "_t"
+    exponent_max = int(math.pow(2, exponent_width) - 1)
+    exponent_bias = int(math.pow(2, exponent_width - 1) - 1)
+    exponent_bias_t = "uint" + str(exponent_width - 1) + "_t"
+    sign_index = mantissa_width + exponent_width
+    sign_width = 1
+    sign_t_prefix = "uint" + str(sign_width)
+    sign_t = sign_t_prefix + "_t"
+    fp_t_width = 1 + exponent_width + mantissa_width
+
+    a_width = mantissa_width + 3
+    a_prefix = "uint" + str(a_width)
+    a_t = a_prefix + "_t"
+
+    remainder_width = mantissa_width + 2
+    remainder_prefix = "uint" + str(remainder_width)
+    remainder_t = remainder_prefix + "_t"
+
+    tmp_remainder_width = mantissa_width + 2
+    tmp_remainder_prefix = "uint" + str(tmp_remainder_width)
+    tmp_remainder_t = tmp_remainder_prefix + "_t"
+
+    exponent_aux_width = exponent_width + 1
+    exponent_aux_t_prefix = "uint" + str(exponent_aux_width)
+    exponent_aux_t = exponent_aux_t_prefix + "_t"
+
+    mantissa_w_extra_bit_width = mantissa_width + 2
+    mantissa_w_extra_bit_prefix = "uint" + str(mantissa_w_extra_bit_width)
+    mantissa_w_extra_bit_t = mantissa_w_extra_bit_prefix + "_t"
+
+    text = ""
+
+    text += (
+        '''
+#include "uintN_t.h"
+#include "'''
+        + LOGIC.BIT_MANIP_HEADER_FILE
+        + """"
+#include "float_e_m_t.h"
+
+// Float div std_logic_vector in VHDL
+"""
+        + output_t
+        + """ """
+        + partially_complete_logic.func_name
+        + """("""
+        + left_t
+        + """ left, """
+        + right_t
+        + """ right)
+{
+  // Get mantissa exponent and sign for both
+  // LEFT
+  """
+        + mantissa_t
+        + """ x_mantissa;
+  x_mantissa = """
+        + fp_t
+        + """_"""
+        + str(mantissa_range[0])
+        + """_"""
+        + str(mantissa_range[1])
+        + """(left);
+  """
+        + exponent_wide_t
+        + """ x_exponent_wide;
+  x_exponent_wide = """
+        + fp_t
+        + """_"""
+        + str(exponent_range[0])
+        + """_"""
+        + str(exponent_range[1])
+        + """(left);
+  """
+        + sign_t
+        + """ x_sign;
+  x_sign = """
+        + fp_t
+        + """_"""
+        + str(sign_index)
+        + """_"""
+        + str(sign_index)
+        + """(left);
+  // RIGHT
+  """
+        + mantissa_t
+        + """ y_mantissa;
+  y_mantissa = """
+        + fp_t
+        + """_"""
+        + str(mantissa_range[0])
+        + """_"""
+        + str(mantissa_range[1])
+        + """(right);
+  """
+        + exponent_wide_t
+        + """ y_exponent_wide;
+  y_exponent_wide = """
+        + fp_t
+        + """_"""
+        + str(exponent_range[0])
+        + """_"""
+        + str(exponent_range[1])
+        + """(right);
+  """
+        + sign_t
+        + """ y_sign;
+  y_sign = """
+        + fp_t
+        + """_"""
+        + str(sign_index)
+        + """_"""
+        + str(sign_index)
+        + """(right);
+  
+  // Delcare intermediates
+  """
+        + a_t
+        + """ a;
+  a = 0;
+  """
+        + remainder_t
+        + """ partial_remainder;
+  partial_remainder = 0;
+  """
+        + remainder_t
+        + """ tmp_remainder;
+  tmp_remainder = 0;
+  """
+        + exponent_aux_t
+        + """ exponent_aux;
+  exponent_aux = 0;
+  """
+        + mantissa_w_extra_bit_t
+        + """ x_mantissa_w_extra_bit;
+  x_mantissa_w_extra_bit = 0;
+  """
+        + mantissa_w_extra_bit_t
+        + """ y_mantissa_w_extra_bit;
+  y_mantissa_w_extra_bit = 0;
+  uint1_t a_i;
+  a_i = 0;
+  
+  // Mantissas with extra bit
+  x_mantissa_w_extra_bit = uint2_"""
+        + mantissa_t_prefix
+        + """(1,x_mantissa);
+  y_mantissa_w_extra_bit = uint2_"""
+        + mantissa_t_prefix
+        + """(1,y_mantissa);
+  
+  // BIAS CONST
+  """
+        + exponent_bias_t
+        + """ BIAS;
+  BIAS = """
+        + str(exponent_bias)
+        + """;
+  
+  // Declare the output portions
+  """
+        + mantissa_t
+        + """ z_mantissa;
+  """
+        + exponent_t
+        + """ z_exponent;
+  """
+        + sign_t
+        + """ z_sign;
+  
+  // Sign
+  z_sign = x_sign ^ y_sign;
+  
+  // Initial exponent sub and add bias
+  exponent_aux = x_exponent_wide - y_exponent_wide;
+  exponent_aux = exponent_aux + BIAS;
+  
+  // Divide unrolled since isnt simple unsigned div of mantissa
+  partial_remainder = x_mantissa_w_extra_bit;"""
+    )
+    for i in range(a_width - 1, -1, -1):
+        text += (
+            """
+  // Bit """
+            + str(i)
+            + """
+  /*
+      tmp_remainder := partial_remainder - y_mantissa_w_extra_bit;
+    if ( tmp_remainder(24)='0' ) then 
+      -- result is non negative: partial_remainder >= y_mantissa_w_extra_bit
+      -- note that tmp_remainder < 2 so bit 24 should be zero
+      a(i):='1';
+      partial_remainder := tmp_remainder;
+    else
+      a(i):='0'
+    end if;
+    partial_remainder := partial_remainder(23 downto 0) & '0'; -- sll
+  */
+  tmp_remainder = partial_remainder - y_mantissa_w_extra_bit;
+  if("""
+            + remainder_prefix
+            + """_"""
+            + str(remainder_width - 1)
+            + """_"""
+            + str(remainder_width - 1)
+            + """(tmp_remainder) == 0 )
+  {
+    // result is non negative: partial_remainder >= y_mantissa_w_extra_bit
+    // note that tmp_remainder < 2 so bit 24 should be zero
+    a_i = 1;
+    partial_remainder = tmp_remainder;
+  }
+  else
+  {
+    a_i = 0;
+    partial_remainder = partial_remainder; // No change
+  }
+  partial_remainder = """
+            + remainder_prefix
+            + """_uint1(partial_remainder, 0); // sll
+  
+  // Assign a(i)
+  a = """
+            + a_prefix
+            + """_uint1_"""
+            + str(i)
+            + """(a,a_i);
+  """
+        )
+
+    ###### DIV
+    text += (
+        """ 
+  /////////////////////
+  // END OF DIV LOOP FOR DIV
+  //////////////////////
+  
+  // NO ROUND
+  if("""
+        + a_prefix
+        + """_"""
+        + str(a_width - 1)
+        + """_"""
+        + str(a_width - 1)
+        + """(a)) //== 1)
+  {
+    z_mantissa = """
+        + a_prefix
+        + """_"""
+        + str(a_width - 2)
+        + """_2(a);
+    exponent_aux = exponent_aux; // No change
+  }
+  else
+  {
+    z_mantissa = """
+        + a_prefix
+        + """_"""
+        + str(a_width - 3)
+        + """_1(a);
+    exponent_aux = exponent_aux - 1;
+  }"""
+    )
+
+    text += (
+        """ 
+  z_exponent = """
+        + exponent_aux_t_prefix
+        + """_"""
+        + str(exponent_width - 1)
+        + """_0(exponent_aux); 
+  
+  // Assemble output
+  return float"""
+        + """_uint"""
+        + str(exponent_width)
+        + """_uint"""
+        + str(mantissa_width)
+        + """(z_sign, z_exponent, z_mantissa);
+}"""
+    )
+
+    # print "C CODE"
+    # print text
+
+    return text
+
+
+def GET_BIN_OP_MULT_FLOAT_N_C_CODE(partially_complete_logic, out_dir):
+    # Taking this directly from the 1 clock version VHDL from
+    """
+    -- Company: Instituto Superior Tecnico
+    -- Prof: Paulo Alexandre Crisostomo Lopes
+    -- paulo.lopes@inesc-id.pt
+    """
+    # Can improve in future
+    # Thanks man
+
+    left_t = partially_complete_logic.wire_to_c_type[partially_complete_logic.inputs[0]]
+    right_t = partially_complete_logic.wire_to_c_type[
+        partially_complete_logic.inputs[1]
+    ]
+    output_t = partially_complete_logic.wire_to_c_type[
+        partially_complete_logic.outputs[0]
+    ]
+    if not LOGIC.C_FLOAT_TYPES_ARE_EQUAL(
+        [left_t, right_t, output_t]
+    ) or not LOGIC.C_TYPES_ARE_FLOAT_TYPES([left_t, right_t, output_t]):
+        print(left_t, right_t, output_t)
+        print(""""left_t != "float" or  right_t != "float" output_t too""")
+        sys.exit(-1)
+    fp_t = output_t
+
+    ######## ARB WIDTH FLOATS
+    exponent_width, mantissa_width = LOGIC.C_FLOAT_E_M_TYPE_TO_E_M(fp_t)
+    mantissa_range = [mantissa_width - 1, 0]
+    mantissa_t_prefix = "uint" + str(mantissa_width)
+    mantissa_t = mantissa_t_prefix + "_t"
+    exponent_range = [mantissa_width + exponent_width - 1, mantissa_width]
+    exponent_t_prefix = "uint" + str(exponent_width)
+    exponent_t = exponent_t_prefix + "_t"
+    exponent_width_plus1 = exponent_width + 1
+    exponent_wide_t_prefix = "uint" + str(exponent_width_plus1)
+    exponent_wide_t = exponent_wide_t_prefix + "_t"
+    exponent_max = int(math.pow(2, exponent_width) - 1)
+    exponent_bias = int(math.pow(2, exponent_width - 1) - 1)
+    exponent_bias_t = "uint" + str(exponent_width - 1) + "_t"
+    sign_index = mantissa_width + exponent_width
+    sign_width = 1
+    sign_t_prefix = "uint" + str(sign_width)
+    sign_t = sign_t_prefix + "_t"
+    fp_t_width = 1 + exponent_width + mantissa_width
+
+    aux_width = 1
+    aux_t_prefix = "uint" + str(aux_width)
+    aux_t = aux_t_prefix + "_t"
+    aux2_width = (mantissa_width + 1) * 2  # 48 for fp32
+    aux2_t_prefix = "uint" + str(aux2_width)
+    aux2_t = aux2_t_prefix + "_t"
+    aux2_in_width = mantissa_width + 1
+    aux2_in_t_prefix = "uint" + str(aux2_in_width)
+    aux2_in_t = aux2_in_t_prefix + "_t"
+    exponent_sum_width = exponent_width + 1
+    exponent_sum_t_prefix = "uint" + str(exponent_sum_width)
+    exponent_sum_t = exponent_sum_t_prefix + "_t"
+    """
+  e_m_width = exponent_width + mantissa_width
+  e_m_t_prefix = "uint" + str(e_m_width)
+  e_m_t = e_m_t_prefix + "_t"
+  s_e_m_width = sign_width + e_m_width
+  s_e_m_t_prefix = "uint" + str(s_e_m_width)
+  s_e_m_t = s_e_m_t_prefix + "_t"
+  """
+
+    text = ""
+
+    text += (
+        '''
+#include "uintN_t.h"
+#include "'''
+        + LOGIC.BIT_MANIP_HEADER_FILE
+        + """"
+#include "float_e_m_t.h"
+
+// Float mult std_logic_vector in VHDL
+"""
+        + output_t
+        + """ """
+        + partially_complete_logic.func_name
+        + """("""
+        + left_t
+        + """ left, """
+        + right_t
+        + """ right)
+{
+  // Get mantissa exponent and sign for both
+  // LEFT
+  """
+        + mantissa_t
+        + """ x_mantissa;
+  x_mantissa = """
+        + fp_t
+        + """_"""
+        + str(mantissa_range[0])
+        + """_"""
+        + str(mantissa_range[1])
+        + """(left);
+  """
+        + exponent_wide_t
+        + """ x_exponent_wide;
+  x_exponent_wide = """
+        + fp_t
+        + """_"""
+        + str(exponent_range[0])
+        + """_"""
+        + str(exponent_range[1])
+        + """(left);
+  """
+        + sign_t
+        + """ x_sign;
+  x_sign = """
+        + fp_t
+        + """_"""
+        + str(sign_index)
+        + """_"""
+        + str(sign_index)
+        + """(left);
+  // RIGHT
+  """
+        + mantissa_t
+        + """ y_mantissa;
+  y_mantissa = """
+        + fp_t
+        + """_"""
+        + str(mantissa_range[0])
+        + """_"""
+        + str(mantissa_range[1])
+        + """(right);
+  """
+        + exponent_wide_t
+        + """ y_exponent_wide;
+  y_exponent_wide = """
+        + fp_t
+        + """_"""
+        + str(exponent_range[0])
+        + """_"""
+        + str(exponent_range[1])
+        + """(right);
+  """
+        + sign_t
+        + """ y_sign;
+  y_sign = """
+        + fp_t
+        + """_"""
+        + str(sign_index)
+        + """_"""
+        + str(sign_index)
+        + """(right);
+  
+  // Declare the output portions
+  """
+        + mantissa_t
+        + """ z_mantissa;
+  """
+        + exponent_t
+        + """ z_exponent;
+  """
+        + sign_t
+        + """ z_sign;
+  
+  // Sign
+  z_sign = x_sign ^ y_sign;
+  
+  // Multiplication with infinity = inf
+  if((x_exponent_wide=="""
+        + str(exponent_max)
+        + """) | (y_exponent_wide=="""
+        + str(exponent_max)
+        + """))
+  {
+    z_exponent = """
+        + str(exponent_max)
+        + """;
+    z_mantissa = 0;
+  }
+  // Multiplication with zero = zero
+  else if((x_exponent_wide==0) | (y_exponent_wide==0))
+  {
+    z_exponent = 0;
+    z_mantissa = 0;
+    z_sign = 0;
+  }
+  // Normal non zero|inf mult
+  else
+  {
+    // Delcare intermediates
+    """
+        + aux_t
+        + """ aux;
+    """
+        + aux2_in_t
+        + """ aux2_x;
+    """
+        + aux2_in_t
+        + """ aux2_y;
+    """
+        + aux2_t
+        + """ aux2;
+    """
+        + exponent_bias_t
+        + """ BIAS;
+    BIAS = """
+        + str(exponent_bias)
+        + """;
+    
+    aux2_x = uint1_"""
+        + mantissa_t_prefix
+        + """(1, x_mantissa);
+    aux2_y = uint1_"""
+        + mantissa_t_prefix
+        + """(1, y_mantissa);
+    aux2 =  aux2_x * aux2_y;
+    // args in Q23 result in Q46
+    aux = """
+        + aux2_t_prefix
+        + """_"""
+        + str(aux2_width - 1)
+        + """_"""
+        + str(aux2_width - 1)
+        + """(aux2);
+    if(aux) //if(aux == 1)
+    { 
+      // >=2, shift left and add one to exponent
+      // HACKY NO ROUNDING + aux2(23); // with round18
+      z_mantissa = """
+        + aux2_t_prefix
+        + """_"""
+        + str(aux2_width - 2)
+        + """_"""
+        + str(aux2_width - mantissa_width - 1)
+        + """(aux2); 
+    }
+    else
+    { 
+      // HACKY NO ROUNDING + aux2(22); // with rounding
+      z_mantissa = """
+        + aux2_t_prefix
+        + """_"""
+        + str(aux2_width - 3)
+        + """_"""
+        + str(aux2_width - mantissa_width - 2)
+        + """(aux2); 
+    }
+    
+    // calculate exponent in parts 
+    // do sequential unsigned adds and subs to avoid signed numbers for now
+    // X and Y exponent are already 1 bit wider than needed
+    // (0 & x_exponent) + (0 & y_exponent);
+    """
+        + exponent_sum_t
+        + """ exponent_sum = x_exponent_wide + y_exponent_wide;
+    exponent_sum = exponent_sum + aux;
+    exponent_sum = exponent_sum - BIAS;
+    
+    // HACKY NOT CHECKING
+    // if (exponent_sum(8)='1') then
+    z_exponent = """
+        + exponent_sum_t_prefix
+        + """_"""
+        + str(exponent_width - 1)
+        + """_0(exponent_sum);
+  }
+  
+  
+  // Assemble output
+  return float"""
+        + """_uint"""
+        + str(exponent_width)
+        + """_uint"""
+        + str(mantissa_width)
+        + """(z_sign, z_exponent, z_mantissa);
+}"""
+    )
+
+    # print("C CODE")
+    # print(text)
+
+    return text
+
+
+def GET_BIN_OP_SR_INT_UINT_C_CODE(
+    partially_complete_logic, out_dir, containing_func_logic, parser_state
+):
+    left_t = partially_complete_logic.wire_to_c_type[partially_complete_logic.inputs[0]]
+    left_prefix = left_t.replace("_t", "")
+    is_signed = VHDL.C_TYPE_IS_INT_N(left_t)
+    right_t = partially_complete_logic.wire_to_c_type[
+        partially_complete_logic.inputs[1]
+    ]
+    output_t = partially_complete_logic.wire_to_c_type[
+        partially_complete_logic.outputs[0]
+    ]
+    left_width = VHDL.GET_WIDTH_FROM_C_TYPE_STR(parser_state, left_t)
+    right_width = VHDL.GET_WIDTH_FROM_C_TYPE_STR(parser_state, right_t)
+    if VHDL.C_TYPE_IS_INT_N(right_t):
+        right_max_val = pow(2, right_width - 1) - 1
+        right_unsigned_width = right_width - 1
+    else:
+        right_max_val = pow(2, right_width) - 1
+        right_unsigned_width = right_width
+    output_width = VHDL.GET_WIDTH_FROM_C_TYPE_STR(parser_state, output_t)
+    output_prefix = output_t.replace("_t", "")
+
+    # TODO: FIX THIS
+    # SHIFT WIDTH IS TRUNCATED TO 2^log2(math.ceil(math.log(max_shift+1,2))) -1
+    # ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+    # TODO: Remove 1 LL
+    # return x0 << x1;  // First try 4 LLs  // write_pipe.return_output := write_pipe.left sll  to_integer(right(7 downto 0)); was 3 LLs
+
+    # Shift size is limited by width of left input
+    max_shift = left_width - 1
+    shift_bit_width = min(max_shift.bit_length(), right_unsigned_width)
+    needs_resize = right_max_val > (pow(2, shift_bit_width) - 1)
+    # Shift amount is resized
+    resized_prefix = "uint" + str(shift_bit_width)
+    resized_t = resized_prefix + "_t"
+
+    text = ""
+
+    text += (
+        '''
+#include "intN_t.h"  
+#include "uintN_t.h"
+#include "'''
+        + LOGIC.BIT_MANIP_HEADER_FILE
+        + """"
+
+// """
+        + str(left_width)
+        + """shifted right by maximum """
+        + str(max_shift)
+        + """b
+"""
+        + output_t
+        + """ """
+        + partially_complete_logic.func_name
+        + """("""
+        + left_t
+        + """ left, """
+        + right_t
+        + """ right)
+{
+  // Resize the shift amount (right)
+  """
+        + resized_t
+        + """ resized_shift_amount;
+  resized_shift_amount = right;
+  
+  // Output
+  """
+        + output_t
+        + """ rv;
+"""
+    )
+    if needs_resize:
+        text += (
+            """
+  // Check for oversized
+  if(right > """
+            + str(max_shift)
+            + """)
+  {
+    // Append sign bits on left and select rv from MSBs
+    uint1_t sign;
+"""
+        )
+        if is_signed:
+            text += (
+                """    sign = """
+                + left_prefix
+                + """_"""
+                + str(left_width - 1)
+                + """_"""
+                + str(left_width - 1)
+                + """(left);
+"""
+            )
+        else:
+            text += """    sign = 0;
+"""
+        text += "    // Big shift all sign bits\n"
+        text += "    rv = uint1_" + str(output_width) + "(sign);\n"
+        text += """
+  }
+  else
+  {
+"""
+    text += (
+        """
+    // Otherwise use Victor's muxes
+    """
+        + output_t
+        + """ v0 = left;
+"""
+    )
+    for b in range(0, shift_bit_width):
+        text += (
+            "    "
+            + output_t
+            + " v"
+            + str(b + 1)
+            + " = "
+            + output_prefix
+            + "_"
+            + str(b)
+            + "_"
+            + str(b)
+            + "(resized_shift_amount)"
+            + " ? (v"
+            + str(b)
+            + " >> "
+            + str(pow(2, b))
+            + ") : v"
+            + str(b)
+            + ";\n"
+        )
+
+    text += "    rv = v" + str(shift_bit_width) + ";\n"
+
+    if needs_resize:
+        text += """
+  }
+"""
+    text += """
+  return rv;
+}"""
+
+    # if is_signed:
+    # print("GET_BIN_OP_SR_UINT_C_CODE text")
+    # print(text)
+    #  sys.exit(-1)
+    return text
+
+
+# // 64B  First try 4 LLs  // write_pipe.return_output := write_pipe.left sll  to_integer(right(7 downto 0)); was 3 LLs
+# // 32B also 4 LLs?
+# // 128B 8 LLs
+def GET_BIN_OP_SL_INT_UINT_C_CODE(
+    partially_complete_logic, out_dir, containing_func_logic, parser_state
+):
+    left_t = partially_complete_logic.wire_to_c_type[partially_complete_logic.inputs[0]]
+    # is_signed = VHDL.C_TYPE_IS_INT_N(left_t)
+    right_t = partially_complete_logic.wire_to_c_type[
+        partially_complete_logic.inputs[1]
+    ]
+    output_t = partially_complete_logic.wire_to_c_type[
+        partially_complete_logic.outputs[0]
+    ]
+    left_width = VHDL.GET_WIDTH_FROM_C_TYPE_STR(parser_state, left_t)
+    right_width = VHDL.GET_WIDTH_FROM_C_TYPE_STR(parser_state, right_t)
+    if VHDL.C_TYPE_IS_INT_N(right_t):
+        right_max_val = pow(2, right_width - 1) - 1
+        right_unsigned_width = right_width - 1
+    else:
+        right_max_val = pow(2, right_width) - 1
+        right_unsigned_width = right_width
+    output_width = VHDL.GET_WIDTH_FROM_C_TYPE_STR(parser_state, output_t)
+    output_prefix = output_t.replace("_t", "")
+
+    # TODO: Remove 1 LL
+    # return x0 << x1;  // First try 4 LLs  // write_pipe.return_output := write_pipe.left sll  to_integer(right(7 downto 0)); was 3 LLs
+
+    # Shift size is limited by width of left input
+    max_shift = left_width - 1
+    shift_bit_width = min(max_shift.bit_length(), right_unsigned_width)
+    needs_resize = right_max_val > (pow(2, shift_bit_width) - 1)
+    # Shift amount is resized up if needed
+
+    resized_prefix = "uint" + str(shift_bit_width)
+    resized_t = resized_prefix + "_t"
+
+    text = ""
+
+    text += (
+        '''
+#include "intN_t.h"
+#include "uintN_t.h"
+#include "'''
+        + LOGIC.BIT_MANIP_HEADER_FILE
+        + """"
+
+// """
+        + str(left_width)
+        + """shifted left by maximum """
+        + str(max_shift)
+        + """b
+"""
+        + output_t
+        + """ """
+        + partially_complete_logic.func_name
+        + """("""
+        + left_t
+        + """ left, """
+        + right_t
+        + """ right)
+{
+  // Resize the shift amount (right)
+  """
+        + resized_t
+        + """ resized_shift_amount;
+  resized_shift_amount = right;
+"""
+    )
+    text += (
+        """
+  // Output
+  """
+        + output_t
+        + """ rv;
+"""
+    )
+    if needs_resize:
+        text += (
+            """
+  // Check for oversized
+  if(right > """
+            + str(max_shift)
+            + """)
+  {
+    // Big shift, all zeros
+    rv = 0;
+  }
+  else
+  {"""
+        )
+    text += (
+        """
+    // Otherwise use Victor's muxes
+    """
+        + output_t
+        + """ v0 = left;
+"""
+    )
+    for b in range(0, shift_bit_width):
+        text += (
+            "    "
+            + output_t
+            + " v"
+            + str(b + 1)
+            + " = "
+            + output_prefix
+            + "_"
+            + str(b)
+            + "_"
+            + str(b)
+            + "(resized_shift_amount)"
+            + " ? (v"
+            + str(b)
+            + " << "
+            + str(pow(2, b))
+            + ") : v"
+            + str(b)
+            + ";\n"
+        )
+
+    text += "    rv = v" + str(shift_bit_width) + ";\n"
+
+    if needs_resize:
+        text += """
+  }
+"""
+
+    text += """
+  return rv;
+}"""
+
+    # print("GET_BIN_OP_SL text")
+    # print(text)
+
+    return text
+
+
+def GET_BIN_OP_MULT_INT_N_C_CODE(partially_complete_logic, out_dir, parser_state):
+    left_t = partially_complete_logic.wire_to_c_type[partially_complete_logic.inputs[0]]
+    right_t = partially_complete_logic.wire_to_c_type[
+        partially_complete_logic.inputs[1]
+    ]
+    output_t = partially_complete_logic.wire_to_c_type[
+        partially_complete_logic.outputs[0]
+    ]
+    left_width = VHDL.GET_WIDTH_FROM_C_TYPE_STR(parser_state, left_t)
+    right_width = VHDL.GET_WIDTH_FROM_C_TYPE_STR(parser_state, right_t)
+    max_input_width = max(left_width, right_width)
+    resized_prefix = "uint" + str(max_input_width)
+    resized_t = resized_prefix + "_t"
+    output_width = VHDL.GET_WIDTH_FROM_C_TYPE_STR(parser_state, output_t)
+    output_prefix = "uint" + str(output_width)
+
+    # Temp try to reduce bit width?
+    # Output width is max =  left_width+right_width
+    # Actual max internal width is min out output width and max of input widths
+    # Does not include output width because of sign for signed mult???
+    # TODO: Check if can limit like UINT including output width
+    max_intermidate_bit_width = left_width + right_width
+
+    text = ""
+
+    # Generate abs path to uint headers
+    # top_dir = os.path.dirname(os.path.realpath(sys.argv[0]))
+    # uint_h ='''#include "''' + top_dir + '''/uintN_t.h"'''
+    # int_h ='''#include "''' + top_dir + '''/intN_t.h"'''
+
+    text += (
+        '''
+#include "intN_t.h"
+#include "uintN_t.h"
+#include "'''
+        + LOGIC.BIT_MANIP_HEADER_FILE
+        + """"
+
+// """
+        + str(left_width)
+        + """b x """
+        + str(right_width)
+        + """b mult
+"""
+        + output_t
+        + """ """
+        + partially_complete_logic.func_name
+        + """("""
+        + left_t
+        + """ left, """
+        + right_t
+        + """ right)
+{
+  // Resize
+  """
+        + resized_t
+        + """ left_resized;
+  left_resized = left;
+  """
+        + resized_t
+        + """ right_resized;
+  right_resized = right;
+  
+  // Left repeated bit unsigneds
+"""
+    )
+    for rb in range(0, max_input_width):
+        text += (
+            """ // BIT"""
+            + str(rb)
+            + """ REPEATED
+  // Select bit
+  uint1_t left"""
+            + str(rb)
+            + """_x1;
+  left"""
+            + str(rb)
+            + """_x1 = """
+            + resized_prefix
+            + """_"""
+            + str(rb)
+            + """_"""
+            + str(rb)
+            + """(left_resized);
+  // Dup
+  uint"""
+            + str(max_input_width)
+            + """_t  left"""
+            + str(rb)
+            + """_x"""
+            + str(max_input_width)
+            + """;
+  left"""
+            + str(rb)
+            + """_x"""
+            + str(max_input_width)
+            + """ = uint1_"""
+            + str(max_input_width)
+            + """(left"""
+            + str(rb)
+            + """_x1);
+"""
+        )
+
+    text += """
+  // Partial sums
+"""
+    for rb in range(0, max_input_width):
+        text += (
+            " "
+            + resized_t
+            + """ p"""
+            + str(rb)
+            + """;
+  p"""
+            + str(rb)
+            + """ = left"""
+            + str(rb)
+            + """_x"""
+            + str(max_input_width)
+            + """ & right_resized;
+"""
+        )
+
+    # Save types of shifted partial sum vars for ease later
+    var_2_type = {}
+
+    text += (
+        """
+  // Shifted partial sums
+  """
+        + resized_t
+        + """ p0_shifted;
+  p0_shifted = p0;
+"""
+    )
+    var_2_type["p0_shifted"] = resized_t
+    p_width = max_input_width
+    for p in range(1, max_input_width):
+        uintp_prefix = "uint" + str(p)
+        uintp_t = uintp_prefix + "_t"
+        # p_width_minus1 = p_width - 1
+        p_t_prefix = "uint" + str(p_width)
+        p_shifted_t = "uint" + str(p_width + p) + "_t"
+        p_shifted = """p""" + str(p) + """_shifted"""
+        var_2_type[p_shifted] = p_shifted_t
+        text += (
+            """ """
+            + uintp_t
+            + """ zero_x"""
+            + str(p)
+            + """;
+  zero_x"""
+            + str(p)
+            + """ = 0;
+  """
+            + p_shifted_t
+            + """ p"""
+            + str(p)
+            + """_shifted;
+  p"""
+            + str(p)
+            + """_shifted = """
+            + p_t_prefix
+            + """_"""
+            + uintp_prefix
+            + """(p"""
+            + str(p)
+            + """ ,zero_x"""
+            + str(p)
+            + """);
+"""
+        )
+
+    # Cap shifted partiual sums to max intermediate width
+    max_intermidate_prefix = "uint" + str(max_intermidate_bit_width)
+    max_intermidate_t = max_intermidate_prefix + "_t"
+
+    # Do Signed trick with inverted bits, already have shifted version in 'pN_shifted'
+    """
+                                                    1  ~p0[7]  p0[6]  p0[5]  p0[4]  p0[3]  p0[2]  p0[1]  p0[0]
+                                                ~p1[7] +p1[6] +p1[5] +p1[4] +p1[3] +p1[2] +p1[1] +p1[0]   0
+                                         ~p2[7] +p2[6] +p2[5] +p2[4] +p2[3] +p2[2] +p2[1] +p2[0]   0      0
+                                  ~p3[7] +p3[6] +p3[5] +p3[4] +p3[3] +p3[2] +p3[1] +p3[0]   0      0      0
+                           ~p4[7] +p4[6] +p4[5] +p4[4] +p4[3] +p4[2] +p4[1] +p4[0]   0      0      0      0
+                    ~p5[7] +p5[6] +p5[5] +p5[4] +p5[3] +p5[2] +p5[1] +p5[0]   0      0      0      0      0
+             ~p6[7] +p6[6] +p6[5] +p6[4] +p6[3] +p6[2] +p6[1] +p6[0]   0      0      0      0      0      0
+   1  +p7[7] ~p7[6] ~p7[5] ~p7[4] ~p7[3] ~p7[2] ~p7[1] ~p7[0]   0      0      0      0      0      0      0
+ ------------------------------------------------------------------------------------------------------------
+P[15]  P[14]  P[13]  P[12]  P[11]  P[10]   P[9]   P[8]   P[7]   P[6]   P[5]   P[4]   P[3]   P[2]   P[1]  P[0]
+  """
+
+    msb_prefix = "uint1"
+    msb_t = msb_prefix + "_t"
+    for p in range(0, max_input_width):
+        # Shifted p
+        p_shifted_width = p_width + p
+        p_shifted_prefix = "uint" + str(p_shifted_width)
+        p_shifted_t = "uint" + str(p_shifted_width) + "_t"
+        p_shifted = """p""" + str(p) + """_shifted"""
+
+        # Get msb
+        p_shifted_msb = p_shifted + "_msb"
+        text += (
+            """
+    
+  // P """
+            + str(p)
+            + """ adjusted
+  """
+            + msb_t
+            + """ """
+            + p_shifted_msb
+            + """;
+  """
+            + p_shifted_msb
+            + """ = """
+            + p_shifted_prefix
+            + """_"""
+            + str(p_shifted_width - 1)
+            + """_"""
+            + str(p_shifted_width - 1)
+            + """("""
+            + p_shifted
+            + """);"""
+        )
+
+        # First is special case
+        if p == 0:
+            # Get lower bits of shfited
+            lsbs_width = p_shifted_width - 1
+            lsbs_prefix = "uint" + str(lsbs_width)
+            lsbs_t = lsbs_prefix + "_t"
+            p_shifted_lsbs = p_shifted + "_lsbs"
+            text += (
+                """
+  // First is special case
+  """
+                + lsbs_t
+                + """ """
+                + p_shifted_lsbs
+                + """;
+  """
+                + p_shifted_lsbs
+                + """ = """
+                + p_shifted_prefix
+                + """_"""
+                + str(lsbs_width - 1)
+                + """_0("""
+                + p_shifted
+                + """);"""
+            )
+
+            # Invert msb
+            p_shifted_msb_neg = p_shifted_msb + "_neg"
+            text += (
+                """
+  """
+                + msb_t
+                + """ """
+                + p_shifted_msb_neg
+                + """;
+  """
+                + p_shifted_msb_neg
+                + """ = ~"""
+                + p_shifted_msb
+                + """;"""
+            )
+
+            # Concat negated msb and lsbs
+            p_shifted_neg_msb_and_lsbs_prefix_width = lsbs_width + 1
+            p_shifted_neg_msb_and_lsbs_prefix = "uint" + str(
+                p_shifted_neg_msb_and_lsbs_prefix_width
+            )
+            p_shifted_neg_msb_and_lsbs_t = p_shifted_neg_msb_and_lsbs_prefix + "_t"
+            p_shifted_neg_msb_and_lsbs = p_shifted + "_neg_msb_and_lsbs"
+            text += (
+                """
+  """
+                + p_shifted_neg_msb_and_lsbs_t
+                + """ """
+                + p_shifted_neg_msb_and_lsbs
+                + """;
+  """
+                + p_shifted_neg_msb_and_lsbs
+                + """ = """
+                + msb_prefix
+                + """_"""
+                + lsbs_prefix
+                + """("""
+                + p_shifted_msb_neg
+                + ""","""
+                + p_shifted_lsbs
+                + """);"""
+            )
+
+            # Adjusted result has 1 added as MSB
+            # 1  ~p0[7]  p0[6]  p0[5]  p0[4]  p0[3]  p0[2]  p0[1]  p0[0]
+            adj_width = p_shifted_width + 1
+            # Cap shifted partiual sums to max intermediate width
+            if adj_width > max_intermidate_bit_width:
+                adj_width = max_intermidate_bit_width
+            adj_width_prefix = "uint" + str(adj_width)
+            adj_t = adj_width_prefix + "_t"
+            p_shifted_adj = p_shifted + "_adj"
+            text += (
+                """
+  """
+                + adj_t
+                + """ """
+                + p_shifted_adj
+                + """;
+  """
+                + p_shifted_adj
+                + """ = uint1_"""
+                + p_shifted_neg_msb_and_lsbs_prefix
+                + """(1, """
+                + p_shifted_neg_msb_and_lsbs
+                + """);"""
+            )
+            var_2_type[p_shifted_adj] = adj_t
+
+        # End is special case
+        elif p == (max_input_width - 1):
+            # 1  +p7[7] ~p7[6] ~p7[5] ~p7[4] ~p7[3] ~p7[2] ~p7[1] ~p7[0]   0      0      0      0      0      0      0
+            # Get zeros
+            p_shifted_zeros_width = p
+            p_shifted_zeros_prefix = "uint" + str(p_shifted_zeros_width)
+            p_shifted_zeros_t = p_shifted_zeros_prefix + "_t"
+            p_shifted_zeros = p_shifted + "_zeros"
+            text += (
+                """
+  // End special case
+  """
+                + p_shifted_zeros_t
+                + """ """
+                + p_shifted_zeros
+                + """;
+  """
+                + p_shifted_zeros
+                + """ = """
+                + p_shifted_prefix
+                + """_"""
+                + str(p_shifted_zeros_width - 1)
+                + """_0("""
+                + p_shifted
+                + """);"""
+            )
+
+            # Get upper lsbs that arent zero
+            # DOES NOT INCLUDE MSB
+            p_shifted_upper_lsbs_width = p_width - 1
+            p_shifted_upper_lsbs_prefix = "uint" + str(p_shifted_upper_lsbs_width)
+            p_shifted_upper_lsbs_t = p_shifted_upper_lsbs_prefix + "_t"
+            p_shifted_upper_lsbs = p_shifted + "_upper_lsbs"
+            low = p_shifted_zeros_width
+            high = p_shifted_width - 2  # SKIP MSB
+            text += (
+                """
+  """
+                + p_shifted_upper_lsbs_t
+                + """ """
+                + p_shifted_upper_lsbs
+                + """;
+  """
+                + p_shifted_upper_lsbs
+                + """ = """
+                + p_shifted_prefix
+                + """_"""
+                + str(high)
+                + """_"""
+                + str(low)
+                + """("""
+                + p_shifted
+                + """);"""
+            )
+
+            # Invert upper lsbs
+            p_shifted_upper_lsbs_neg = p_shifted_upper_lsbs + "_neg"
+            text += (
+                """
+  """
+                + p_shifted_upper_lsbs_t
+                + """ """
+                + p_shifted_upper_lsbs_neg
+                + """;
+  """
+                + p_shifted_upper_lsbs_neg
+                + """ = ~"""
+                + p_shifted_upper_lsbs
+                + """;"""
+            )
+
+            # Concat zeros and negated upper lsbs
+            p_shifted_upper_lsbs_neg_and_zeros_width = (
+                p_shifted_upper_lsbs_width + p_shifted_zeros_width
+            )
+            p_shifted_upper_lsbs_neg_and_zeros_prefix = "uint" + str(
+                p_shifted_upper_lsbs_neg_and_zeros_width
+            )
+            p_shifted_upper_lsbs_neg_and_zeros_t = (
+                p_shifted_upper_lsbs_neg_and_zeros_prefix + "_t"
+            )
+            p_shifted_upper_lsbs_neg_and_zeros = p_shifted_upper_lsbs_neg + "_and_zeros"
+            text += (
+                """
+  """
+                + p_shifted_upper_lsbs_neg_and_zeros_t
+                + """ """
+                + p_shifted_upper_lsbs_neg_and_zeros
+                + """;
+  """
+                + p_shifted_upper_lsbs_neg_and_zeros
+                + """ = """
+                + p_shifted_upper_lsbs_prefix
+                + """_"""
+                + p_shifted_zeros_prefix
+                + """("""
+                + p_shifted_upper_lsbs_neg
+                + """, """
+                + p_shifted_zeros
+                + """);"""
+            )
+
+            # Concat msb
+            p_shifted_upper_lsbs_neg_and_zeros_w_msb_width = (
+                p_shifted_upper_lsbs_neg_and_zeros_width + 1
+            )
+            p_shifted_upper_lsbs_neg_and_zeros_w_msb_prefix = "uint" + str(
+                p_shifted_upper_lsbs_neg_and_zeros_w_msb_width
+            )
+            p_shifted_upper_lsbs_neg_and_zeros_w_msb_t = (
+                p_shifted_upper_lsbs_neg_and_zeros_w_msb_prefix + "_t"
+            )
+            p_shifted_upper_lsbs_neg_and_zeros_w_msb = (
+                p_shifted_upper_lsbs_neg_and_zeros + "_w_msb"
+            )
+            text += (
+                """
+  """
+                + p_shifted_upper_lsbs_neg_and_zeros_w_msb_t
+                + """ """
+                + p_shifted_upper_lsbs_neg_and_zeros_w_msb
+                + """;
+  """
+                + p_shifted_upper_lsbs_neg_and_zeros_w_msb
+                + """ = uint1_"""
+                + p_shifted_upper_lsbs_neg_and_zeros_prefix
+                + """("""
+                + p_shifted_msb
+                + """, """
+                + p_shifted_upper_lsbs_neg_and_zeros
+                + """);"""
+            )
+
+            # Concat 1 as MSB for adjusted result
+            adj_width = p_shifted_upper_lsbs_neg_and_zeros_w_msb_width + 1
+            # Cap shifted partiual sums to max intermediate width
+            if adj_width > max_intermidate_bit_width:
+                adj_width = max_intermidate_bit_width
+            adj_width_prefix = "uint" + str(adj_width)
+            adj_t = adj_width_prefix + "_t"
+            p_shifted_adj = p_shifted + "_adj"
+            text += (
+                """
+  """
+                + adj_t
+                + """ """
+                + p_shifted_adj
+                + """;
+  """
+                + p_shifted_adj
+                + """ = uint1_"""
+                + p_shifted_upper_lsbs_neg_and_zeros_w_msb_prefix
+                + """(1, """
+                + p_shifted_upper_lsbs_neg_and_zeros_w_msb
+                + """);"""
+            )
+            var_2_type[p_shifted_adj] = adj_t
+
+        # Mid is normal case (very similar to p==0)
+        else:
+            # Get lower bits of shfited
+            lsbs_width = p_shifted_width - 1
+            lsbs_prefix = "uint" + str(lsbs_width)
+            lsbs_t = lsbs_prefix + "_t"
+            p_shifted_lsbs = p_shifted + "_lsbs"
+            text += (
+                """
+  // Mid is normal case   
+  """
+                + lsbs_t
+                + """ """
+                + p_shifted_lsbs
+                + """;
+  """
+                + p_shifted_lsbs
+                + """ = """
+                + p_shifted_prefix
+                + """_"""
+                + str(lsbs_width - 1)
+                + """_0("""
+                + p_shifted
+                + """);"""
+            )
+
+            # Invert msb
+            p_shifted_msb_neg = p_shifted_msb + "_neg"
+            text += (
+                """
+  """
+                + msb_t
+                + """ """
+                + p_shifted_msb_neg
+                + """;
+  """
+                + p_shifted_msb_neg
+                + """ = ~"""
+                + p_shifted_msb
+                + """;"""
+            )
+
+            # Adjusted result has Concat negated msb and lsbs
+            adj_width = p_shifted_width
+            # Cap shifted partiual sums to max intermediate width
+            if adj_width > max_intermidate_bit_width:
+                adj_width = max_intermidate_bit_width
+            adj_width_prefix = "uint" + str(adj_width)
+            adj_t = adj_width_prefix + "_t"
+            p_shifted_adj = p_shifted + "_adj"
+            # ~p1[7] +p1[6] +p1[5] +p1[4] +p1[3] +p1[2] +p1[1] +p1[0]   0
+            text += (
+                """
+  """
+                + adj_t
+                + """ """
+                + p_shifted_adj
+                + """;
+  """
+                + p_shifted_adj
+                + """ = """
+                + msb_prefix
+                + """_"""
+                + lsbs_prefix
+                + """("""
+                + p_shifted_msb_neg
+                + ""","""
+                + p_shifted_lsbs
+                + """);"""
+            )
+            var_2_type[p_shifted_adj] = adj_t
+
+    # BINARY TREE SUM
+    layer_nodes = []
+    for p in range(0, max_input_width):
+        layer_nodes.append("p" + str(p) + "_shifted_adj")
+
+    layer = 0
+    node = 0
+
+    text += """
+  // Binary summation of partial sums
+"""
+
+    # DO
+    while True:
+        text += (
+            """
+  // Layer + """
+            + str(layer)
+            + """
+"""
+        )
+        node = 0
+        new_layer_nodes = []
+        # Write adds in pairs
+        # While 2 args to add
+        while len(layer_nodes) >= 2:
+            left_arg = layer_nodes.pop(0)
+            right_arg = layer_nodes.pop(0)
+            left_t = var_2_type[left_arg]
+            right_t = var_2_type[right_arg]
+            # Sum type is max width
+            left_width = int(
+                left_t.replace("uint", "").replace("int", "").replace("_t", "")
+            )
+            right_width = int(
+                right_t.replace("uint", "").replace("int", "").replace("_t", "")
+            )
+            max_width = max(left_width, right_width)
+            sum_width = max_width + 1
+
+            # Reduce sum width to max intermediate width
+            if sum_width > max_intermidate_bit_width:
+                sum_width = max_intermidate_bit_width
+
+            sum_t = "uint" + str(sum_width) + "_t"
+            sum_var = "sum_layer" + str(layer) + "_node" + str(node)
+            var_2_type[sum_var] = sum_t
+            text += (
+                """ """
+                + sum_t
+                + """ """
+                + sum_var
+                + """;
+  """
+                + sum_var
+                + """ = """
+                + left_arg
+                + " + "
+                + right_arg
+                + """;
+"""
+            )
+            # This sum node is on next layer
+            new_layer_nodes.append(sum_var)
+            node += 1
+
+        # Out of while loop
+        # < 2 nodes left to sum in this node
+        if len(layer_nodes) == 1:
+            # One node left
+            the_arg = layer_nodes.pop(0)
+            the_t = var_2_type[the_arg]
+            sum_t = the_t
+            sum_var = "sum_layer" + str(layer) + "_node" + str(node)
+            var_2_type[sum_var] = sum_t
+            text += (
+                """ // Odd node in layer
+  """
+                + sum_t
+                + """ """
+                + sum_var
+                + """;
+  """
+                + sum_var
+                + """ = """
+                + the_arg
+                + """;
+  """
+            )
+            # This sum node is on next layer
+            new_layer_nodes.append(sum_var)
+            node += 1
+
+        # WHILE
+        if len(new_layer_nodes) >= 2:
+            # Continue
+            layer_nodes = new_layer_nodes
+            layer += 1
+        else:
+            # DONE
+            break
+
+    # Done with outer layer while loop
+
+    # Do return
+    return_var = "sum_layer" + str(layer) + "_node" + str(node - 1)
+    return_t = var_2_type[return_var]
+    text += (
+        """
+  """
+        + "// Return"
+        + """
+  """
+        + return_t
+        + """ rv;
+  rv = """
+        + return_var
+        + """;
+  return rv;
+}
+"""
+    )
+
+    return text
+    # print text
+    # sys.exit(-1)
+
+
+def GET_BIN_OP_MULT_UINT_N_C_CODE(partially_complete_logic, out_dir, parser_state):
+    """
+     p0[7:0] = a[0] x b[7:0] = {8{a[0]}} & b[7:0]
+     p1[7:0] = a[1] x b[7:0] = {8{a[1]}} & b[7:0]
+     p2[7:0] = a[2] x b[7:0] = {8{a[2]}} & b[7:0]
+     p3[7:0] = a[3] x b[7:0] = {8{a[3]}} & b[7:0]
+     p4[7:0] = a[4] x b[7:0] = {8{a[4]}} & b[7:0]
+
+
+     p5[7:0] = a[5] x b[7:0] = {8{a[5]}} & b[7:0]
+     p6[7:0] = a[6] x b[7:0] = {8{a[6]}} & b[7:0]
+     p7[7:0] = a[7] x b[7:0] = {8{a[7]}} & b[7:0]
+    where {8{a[0]}} means repeating a[0] (the 0th bit of a) 8 times (Verilog notation).
+
+    To produce our product, we then need to add up all eight of our partial products, as shown here:
+
+                                                    p0[7] p0[6] p0[5] p0[4] p0[3] p0[2] p0[1] p0[0]
+                                            + p1[7] p1[6] p1[5] p1[4] p1[3] p1[2] p1[1] p1[0] 0
+                                      + p2[7] p2[6] p2[5] p2[4] p2[3] p2[2] p2[1] p2[0] 0     0
+                                + p3[7] p3[6] p3[5] p3[4] p3[3] p3[2] p3[1] p3[0] 0     0     0
+                          + p4[7] p4[6] p4[5] p4[4] p4[3] p4[2] p4[1] p4[0] 0     0     0     0
+                    + p5[7] p5[6] p5[5] p5[4] p5[3] p5[2] p5[1] p5[0] 0     0     0     0     0
+              + p6[7] p6[6] p6[5] p6[4] p6[3] p6[2] p6[1] p6[0] 0     0     0     0     0     0
+        + p7[7] p7[6] p7[5] p7[4] p7[3] p7[2] p7[1] p7[0] 0     0     0     0     0     0     0
+    -------------------------------------------------------------------------------------------
+    P[15] P[14] P[13] P[12] P[11] P[10]  P[9]  P[8]  P[7]  P[6]  P[5]  P[4]  P[3]  P[2]  P[1]  P[0]
+    """
+    # Need bit select
+    # Need bit concat
+    # Need bitwise AND
+    # Have sum already
+
+    left_t = partially_complete_logic.wire_to_c_type[partially_complete_logic.inputs[0]]
+    right_t = partially_complete_logic.wire_to_c_type[
+        partially_complete_logic.inputs[1]
+    ]
+    output_t = partially_complete_logic.wire_to_c_type[
+        partially_complete_logic.outputs[0]
+    ]
+    left_width = VHDL.GET_WIDTH_FROM_C_TYPE_STR(parser_state, left_t)
+    right_width = VHDL.GET_WIDTH_FROM_C_TYPE_STR(parser_state, right_t)
+    max_input_width = max(left_width, right_width)
+    resized_prefix = "uint" + str(max_input_width)
+    resized_t = resized_prefix + "_t"
+    output_width = VHDL.GET_WIDTH_FROM_C_TYPE_STR(parser_state, output_t)
+    output_prefix = "uint" + str(output_width)
+
+    # Temp try to reduce bit width?
+    # Output width is max =  left_width+right_width
+    # Actual max internal width is min out output width and ma xof input widths
+    max_intermidate_bit_width = min(output_width, left_width + right_width)
+
+    text = ""
+
+    # Generate abs path to uint headers
+    # top_dir = os.path.dirname(os.path.realpath(sys.argv[0]))
+    # uint_h ='''#include "''' + top_dir + '''/uintN_t.h"'''
+    # int_h ='''#include "''' + top_dir + '''/intN_t.h"'''
+
+    text += (
+        '''
+#include "uintN_t.h"
+#include "'''
+        + LOGIC.BIT_MANIP_HEADER_FILE
+        + """"
+
+// """
+        + str(left_width)
+        + """b x """
+        + str(right_width)
+        + """b mult
+"""
+        + output_t
+        + """ """
+        + partially_complete_logic.func_name
+        + """("""
+        + left_t
+        + """ left, """
+        + right_t
+        + """ right)
+{
+  // Resize
+  """
+        + resized_t
+        + """ left_resized;
+  left_resized = left;
+  """
+        + resized_t
+        + """ right_resized;
+  right_resized = right;
+  
+  // Left repeated bit unsigneds
+"""
+    )
+    for rb in range(0, max_input_width):
+        text += (
+            """ // BIT"""
+            + str(rb)
+            + """ REPEATED
+  // Select bit
+  uint1_t left"""
+            + str(rb)
+            + """_x1;
+  left"""
+            + str(rb)
+            + """_x1 = """
+            + resized_prefix
+            + """_"""
+            + str(rb)
+            + """_"""
+            + str(rb)
+            + """(left_resized);
+  // Dup
+  uint"""
+            + str(max_input_width)
+            + """_t  left"""
+            + str(rb)
+            + """_x"""
+            + str(max_input_width)
+            + """;
+  left"""
+            + str(rb)
+            + """_x"""
+            + str(max_input_width)
+            + """ = uint1_"""
+            + str(max_input_width)
+            + """(left"""
+            + str(rb)
+            + """_x1);
+"""
+        )
+
+    text += """
+  // Partial sums
+"""
+    for rb in range(0, max_input_width):
+        text += (
+            " "
+            + resized_t
+            + """ p"""
+            + str(rb)
+            + """;
+  p"""
+            + str(rb)
+            + """ = left"""
+            + str(rb)
+            + """_x"""
+            + str(max_input_width)
+            + """ & right_resized;
+"""
+        )
+    # Save types of vars for ease later
+    var_2_type = {}
+
+    # Cap shifted partiual sums to max intermediate width
+    max_intermidate_prefix = "uint" + str(max_intermidate_bit_width)
+    max_intermidate_t = max_intermidate_prefix + "_t"
+
+    text += (
+        """
+  // Shifted partial sums
+  """
+        + resized_t
+        + """ p0_shifted;
+  p0_shifted = p0;
+"""
+    )
+    var_2_type["p0_shifted"] = resized_t
+    for p in range(1, max_input_width):
+        uintp_prefix = "uint" + str(p)
+        uintp_t = uintp_prefix + "_t"
+        p_width = max_input_width
+        # p_width_minus1 = p_width - 1
+        p_t_prefix = "uint" + str(p_width)
+
+        p_shifted_width = p_width + p
+        # Cap shifted partiual sums to max intermediate width
+        if p_shifted_width > max_intermidate_bit_width:
+            p_shifted_width = max_intermidate_bit_width
+        p_shifted_t = "uint" + str(p_shifted_width) + "_t"
+
+        p_shifted = """p""" + str(p) + """_shifted"""
+        var_2_type[p_shifted] = p_shifted_t
+
+        text += (
+            """ """
+            + uintp_t
+            + """ zero_x"""
+            + str(p)
+            + """;
+  zero_x"""
+            + str(p)
+            + """ = 0;
+  """
+            + p_shifted_t
+            + """ p"""
+            + str(p)
+            + """_shifted;
+  p"""
+            + str(p)
+            + """_shifted = """
+            + p_t_prefix
+            + """_"""
+            + uintp_prefix
+            + """(p"""
+            + str(p)
+            + """ ,zero_x"""
+            + str(p)
+            + """);
+"""
+        )
+
+    layer_nodes = []
+    for p in range(0, max_input_width):
+        layer_nodes.append("p" + str(p) + "_shifted")
+
+    layer = 0
+    node = 0
+
+    text += """
+  // Binary summation of partial sums
+"""
+
+    # DO
+    while True:
+        text += (
+            """
+  // Layer + """
+            + str(layer)
+            + """
+"""
+        )
+        node = 0
+        new_layer_nodes = []
+        # Write adds in pairs
+        # While 2 args to add
+        while len(layer_nodes) >= 2:
+            left_arg = layer_nodes.pop(0)
+            right_arg = layer_nodes.pop(0)
+            left_t = var_2_type[left_arg]
+            right_t = var_2_type[right_arg]
+            # Sum type is max width
+            left_width = int(
+                left_t.replace("uint", "").replace("int", "").replace("_t", "")
+            )
+            right_width = int(
+                right_t.replace("uint", "").replace("int", "").replace("_t", "")
+            )
+            max_width = max(left_width, right_width)
+            sum_width = max_width + 1
+
+            # Reduce sum width to max intermediate width
+            if sum_width > max_intermidate_bit_width:
+                sum_width = max_intermidate_bit_width
+
+            sum_t = "uint" + str(sum_width) + "_t"
+            sum_var = "sum_layer" + str(layer) + "_node" + str(node)
+            var_2_type[sum_var] = sum_t
+            text += (
+                """ """
+                + sum_t
+                + """ """
+                + sum_var
+                + """;
+  """
+                + sum_var
+                + """ = """
+                + left_arg
+                + " + "
+                + right_arg
+                + """;
+"""
+            )
+            # This sum node is on next layer
+            new_layer_nodes.append(sum_var)
+            node += 1
+
+        # Out of while loop
+        # < 2 nodes left to sum in this node
+        if len(layer_nodes) == 1:
+            # One node left
+            the_arg = layer_nodes.pop(0)
+            the_t = var_2_type[the_arg]
+            sum_t = the_t
+            sum_var = "sum_layer" + str(layer) + "_node" + str(node)
+            var_2_type[sum_var] = sum_t
+            text += (
+                """ // Odd node in layer
+  """
+                + sum_t
+                + """ """
+                + sum_var
+                + """;
+  """
+                + sum_var
+                + """ = """
+                + the_arg
+                + """;
+  """
+            )
+            # This sum node is on next layer
+            new_layer_nodes.append(sum_var)
+            node += 1
+
+        # WHILE
+        if len(new_layer_nodes) >= 2:
+            # Continue
+            layer_nodes = new_layer_nodes
+            layer += 1
+        else:
+            # DONE
+            break
+
+    # Done with outer layer while loop
+
+    # Do return
+    return_var = "sum_layer" + str(layer) + "_node" + str(node - 1)
+    return_t = var_2_type[return_var]
+    text += (
+        """
+  """
+        + "// Return"
+        + """
+  """
+        + return_t
+        + """ rv;
+  rv = """
+        + return_var
+        + """;
+  return rv;
+}
+"""
+    )
+
+    return text
+    # print text
+    # sys.exit(-1)
+
+
+# 128 LLs in own code
+# 192 lls as VHDL
+# TODO: Is this bad/broken? test edge cases
+def GET_BIN_OP_DIV_UINT_N_C_CODE(partially_complete_logic, out_dir, parser_state):
+    left_t = partially_complete_logic.wire_to_c_type[partially_complete_logic.inputs[0]]
+    right_t = partially_complete_logic.wire_to_c_type[
+        partially_complete_logic.inputs[1]
+    ]
+    output_t = partially_complete_logic.wire_to_c_type[
+        partially_complete_logic.outputs[0]
+    ]
+    left_width = VHDL.GET_WIDTH_FROM_C_TYPE_STR(parser_state, left_t)
+    right_width = VHDL.GET_WIDTH_FROM_C_TYPE_STR(parser_state, right_t)
+    max_input_width = max(left_width, right_width)
+    resized_prefix = "uint" + str(max_input_width)
+    resized_t = resized_prefix + "_t"
+    output_width = VHDL.GET_WIDTH_FROM_C_TYPE_STR(parser_state, output_t)
+    output_prefix = "uint" + str(output_width)
+
+    text = ""
+
+    text += (
+        '''
+#include "uintN_t.h"
+#include "'''
+        + LOGIC.BIT_MANIP_HEADER_FILE
+        + """"
+
+// """
+        + str(left_width)
+        + """b / """
+        + str(right_width)
+        + """b div
+"""
+        + output_t
+        + """ """
+        + partially_complete_logic.func_name
+        + """("""
+        + left_t
+        + """ left, """
+        + right_t
+        + """ right)
+{
+  // Resize
+  """
+        + resized_t
+        + """ left_resized;
+  left_resized = left;
+  """
+        + resized_t
+        + """ right_resized;
+  right_resized = right;
+  
+  // Output
+  """
+        + resized_t
+        + """ output;
+  output = 0;
+  // Remainder
+  """
+        + resized_t
+        + """ remainder;
+  remainder = 0;
+  uint1_t new_remainder0; 
+  
+
+  /*
+  UNROLL THIS
+  remainder := 0
+  -- Where n is number of bits in left           
+  for i := n - 1 .. 0 do     
+    -- Left-shift remainder by 1 bit     
+    remainder := remainder << 1
+    -- Set the least-significant bit of remainder
+    -- equal to bit i of the numerator
+    remainder(0) := left(i)       
+    if remainder >= right then
+      remainder := remainder - right
+      output(i) := 1
+    end
+  end 
+  */
+  """
+    )
+
+    for i in range(max_input_width - 1, -1, -1):
+        text += (
+            """
+  // Bit """
+            + str(i)
+            + """
+  new_remainder0 = """
+            + resized_prefix
+            + """_"""
+            + str(i)
+            + """_"""
+            + str(i)
+            + """(left);
+  remainder = """
+            + resized_prefix
+            + """_uint1(remainder, new_remainder0);       
+  if(remainder >= right)
+  {
+    remainder = remainder - right;
+    // Set output(i)=1
+    output = """
+            + output_prefix
+            + """_uint1_"""
+            + str(i)
+            + """(output, 1);
+  }"""
+        )
+
+    text += """
+  return output;
+}"""
+
+    # print(text)
+    # sys.exit(-1)
+
+    return text
+
+
+# TODO something better than copying DIV code?
+def GET_BIN_OP_MOD_UINT_N_C_CODE(partially_complete_logic, out_dir, parser_state):
+    left_t = partially_complete_logic.wire_to_c_type[partially_complete_logic.inputs[0]]
+    right_t = partially_complete_logic.wire_to_c_type[
+        partially_complete_logic.inputs[1]
+    ]
+    output_t = partially_complete_logic.wire_to_c_type[
+        partially_complete_logic.outputs[0]
+    ]
+    left_width = VHDL.GET_WIDTH_FROM_C_TYPE_STR(parser_state, left_t)
+    right_width = VHDL.GET_WIDTH_FROM_C_TYPE_STR(parser_state, right_t)
+    max_input_width = max(left_width, right_width)
+    resized_prefix = "uint" + str(max_input_width)
+    resized_t = resized_prefix + "_t"
+    output_width = VHDL.GET_WIDTH_FROM_C_TYPE_STR(parser_state, output_t)
+    output_prefix = "uint" + str(output_width)
+
+    text = ""
+
+    text += (
+        '''
+#include "uintN_t.h"
+#include "'''
+        + LOGIC.BIT_MANIP_HEADER_FILE
+        + """"
+
+// """
+        + str(left_width)
+        + """b % """
+        + str(right_width)
+        + """b mod
+"""
+        + output_t
+        + """ """
+        + partially_complete_logic.func_name
+        + """("""
+        + left_t
+        + """ left, """
+        + right_t
+        + """ right)
+{
+  // Resize
+  """
+        + resized_t
+        + """ left_resized;
+  left_resized = left;
+  """
+        + resized_t
+        + """ right_resized;
+  right_resized = right;
+  
+  // Output
+  """
+        + resized_t
+        + """ output;
+  output = 0;
+  // Remainder
+  """
+        + resized_t
+        + """ remainder;
+  remainder = 0;
+  uint1_t new_remainder0; 
+  
+
+  /*
+  UNROLL THIS
+  remainder := 0
+  -- Where n is number of bits in left           
+  for i := n - 1 .. 0 do     
+    -- Left-shift remainder by 1 bit     
+    remainder := remainder << 1
+    -- Set the least-significant bit of remainder
+    -- equal to bit i of the numerator
+    remainder(0) := left(i)       
+    if remainder >= right then
+      remainder := remainder - right
+      output(i) := 1
+    end
+  end 
+  */
+  """
+    )
+
+    for i in range(max_input_width - 1, -1, -1):
+        text += (
+            """
+  // Bit """
+            + str(i)
+            + """
+  new_remainder0 = """
+            + resized_prefix
+            + """_"""
+            + str(i)
+            + """_"""
+            + str(i)
+            + """(left);
+  remainder = """
+            + resized_prefix
+            + """_uint1(remainder, new_remainder0);       
+  if(remainder >= right)
+  {
+    remainder = remainder - right;
+    // Set output(i)=1
+    output = """
+            + output_prefix
+            + """_uint1_"""
+            + str(i)
+            + """(output, 1);
+  }"""
+        )
+
+    text += """
+  return remainder;
+}"""
+
+    # print(text)
+    # sys.exit(-1)
+
+    return text
+
+
+# TODO do something better than absolute value uint division and sign correction?
+def GET_BIN_OP_DIV_INT_N_C_CODE(partially_complete_logic, out_dir, parser_state):
+    left_t = partially_complete_logic.wire_to_c_type[partially_complete_logic.inputs[0]]
+    right_t = partially_complete_logic.wire_to_c_type[
+        partially_complete_logic.inputs[1]
+    ]
+    output_t = partially_complete_logic.wire_to_c_type[
+        partially_complete_logic.outputs[0]
+    ]
+    left_width = VHDL.GET_WIDTH_FROM_C_TYPE_STR(parser_state, left_t)
+    right_width = VHDL.GET_WIDTH_FROM_C_TYPE_STR(parser_state, right_t)
+    max_input_width = max(left_width, right_width)
+    resized_prefix = "int" + str(max_input_width)
+    unsigned_resized_prefix = "u" + resized_prefix  # "uint" + str(max_input_width-1)
+    resized_t = resized_prefix + "_t"
+    unsigned_resized_t = unsigned_resized_prefix + "_t"
+    output_width = VHDL.GET_WIDTH_FROM_C_TYPE_STR(parser_state, output_t)
+    output_prefix = "int" + str(output_width)
+
+    text = ""
+
+    text += (
+        '''
+#include "intN_t.h"
+#include "uintN_t.h"
+#include "'''
+        + LOGIC.BIT_MANIP_HEADER_FILE
+        + """"
+
+// """
+        + str(left_width)
+        + """b / """
+        + str(right_width)
+        + """b div
+"""
+        + output_t
+        + """ """
+        + partially_complete_logic.func_name
+        + """("""
+        + left_t
+        + """ left, """
+        + right_t
+        + """ right)
+{
+  
+  // Record sign bits
+  uint1_t l_signed = """
+        + resized_prefix
+        + "_"
+        + str(left_width - 1)
+        + """_"""
+        + str(left_width - 1)
+        + """(left);
+  uint1_t r_signed = """
+        + resized_prefix
+        + "_"
+        + str(right_width - 1)
+        + """_"""
+        + str(right_width - 1)
+        + """(right);
+
+  // Resize to unsigned values of same width 
+  """
+        + unsigned_resized_t
+        + """ left_resized = """
+        + resized_prefix
+        + """_abs(left);
+  """
+        + unsigned_resized_t
+        + """ right_resized = """
+        + resized_prefix
+        + """_abs(right);
+
+  // Do div on uints
+  """
+        + unsigned_resized_t
+        + """ unsigned_result = left_resized / right_resized;
+
+  // Adjust sign
+  """
+        + output_t
+        + """ output = unsigned_result;
+  if(l_signed ^ r_signed)
+  {
+    output = -unsigned_result;
+  }
+
+  return output;
+}"""
+    )
+
+    # print(text)
+    # sys.exit(-1)
+
+    return text
+
+
+# TODO is the sign fixing here right for signed modulo?
+def GET_BIN_OP_MOD_INT_N_C_CODE(partially_complete_logic, out_dir, parser_state):
+    left_t = partially_complete_logic.wire_to_c_type[partially_complete_logic.inputs[0]]
+    right_t = partially_complete_logic.wire_to_c_type[
+        partially_complete_logic.inputs[1]
+    ]
+    output_t = partially_complete_logic.wire_to_c_type[
+        partially_complete_logic.outputs[0]
+    ]
+    left_width = VHDL.GET_WIDTH_FROM_C_TYPE_STR(parser_state, left_t)
+    right_width = VHDL.GET_WIDTH_FROM_C_TYPE_STR(parser_state, right_t)
+    max_input_width = max(left_width, right_width)
+    resized_prefix = "int" + str(max_input_width)
+    unsigned_resized_prefix = "u" + resized_prefix  # "uint" + str(max_input_width-1)
+    resized_t = resized_prefix + "_t"
+    unsigned_resized_t = unsigned_resized_prefix + "_t"
+    output_width = VHDL.GET_WIDTH_FROM_C_TYPE_STR(parser_state, output_t)
+    output_prefix = "int" + str(output_width)
+
+    text = ""
+
+    text += (
+        '''
+#include "intN_t.h"
+#include "uintN_t.h"
+#include "'''
+        + LOGIC.BIT_MANIP_HEADER_FILE
+        + """"
+
+// """
+        + str(left_width)
+        + """b % """
+        + str(right_width)
+        + """b mod
+"""
+        + output_t
+        + """ """
+        + partially_complete_logic.func_name
+        + """("""
+        + left_t
+        + """ left, """
+        + right_t
+        + """ right)
+{
+  
+  // Record sign bits
+  uint1_t l_signed = """
+        + resized_prefix
+        + "_"
+        + str(left_width - 1)
+        + """_"""
+        + str(left_width - 1)
+        + """(left);
+  uint1_t r_signed = """
+        + resized_prefix
+        + "_"
+        + str(right_width - 1)
+        + """_"""
+        + str(right_width - 1)
+        + """(right);
+
+  // Resize to unsigned values of same width 
+  """
+        + unsigned_resized_t
+        + """ left_resized = """
+        + resized_prefix
+        + """_abs(left);
+  """
+        + unsigned_resized_t
+        + """ right_resized = """
+        + resized_prefix
+        + """_abs(right);
+
+  // Do mod on uints
+  """
+        + unsigned_resized_t
+        + """ unsigned_result = left_resized % right_resized;
+
+  // Adjust sign
+  """
+        + output_t
+        + """ output = unsigned_result;
+  if(l_signed ^ r_signed)
+  {
+    output = -unsigned_result;
+  }
+
+  return output;
+}"""
+    )
+
+    # print(text)
+    # sys.exit(-1)
+
+    return text
+

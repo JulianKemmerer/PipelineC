@@ -1,11 +1,10 @@
 import os
 import sys
 
-import C_TO_LOGIC
 import SYN
 import VHDL
 import OPEN_TOOLS
-from utilities import GET_TOOL_PATH
+from utilities import GET_SHELL_CMD_OUTPUT, GET_TOOL_PATH
 
 TOOL_EXE = "diamondc"
 # Default to env if there
@@ -177,7 +176,7 @@ prj_strgy set_value -strategy Strategy1 lse_vhdl2008=True
         # Execute the command
         syn_imp_bash_cmd = DIAMOND_PATH + " " + tcl_path
         print("Running:", log_path, flush=True)
-        C_TO_LOGIC.GET_SHELL_CMD_OUTPUT(syn_imp_bash_cmd, cwd=output_directory)
+        GET_SHELL_CMD_OUTPUT(syn_imp_bash_cmd, cwd=output_directory)
 
         f = open(log_path, "r", errors="replace")
         log_text = f.read()

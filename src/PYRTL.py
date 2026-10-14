@@ -3,10 +3,10 @@ import os
 import importlib.util
 import sys
 
-import C_TO_LOGIC
 import OPEN_TOOLS
 import SYN
 import VHDL
+from utilities import GET_SHELL_CMD_OUTPUT
 
 # Set to roughly match latchup.app sky130 synth results...
 TECH_IN_NM = 20  # Why does decreasing nm get lower fmax?
@@ -42,11 +42,11 @@ def NO_TIMING_PATHS_ERROR_TEXT(log_path):
 
 def IS_INSTALLED():
     try:
-        C_TO_LOGIC.GET_SHELL_CMD_OUTPUT('python3 -c "import pyrtl"')
+        GET_SHELL_CMD_OUTPUT('python3 -c "import pyrtl"')
     except:
         return False
     try:
-        C_TO_LOGIC.GET_SHELL_CMD_OUTPUT('python3 -c "import pyparsing"')
+        GET_SHELL_CMD_OUTPUT('python3 -c "import pyparsing"')
     except:
         return False
     return True
@@ -306,7 +306,7 @@ python3 {py_file} &>> {log_file_name}
         syn_imp_bash_cmd = "bash " + sh_file
         print("Running:", log_path, flush=True)
         try:
-            C_TO_LOGIC.GET_SHELL_CMD_OUTPUT(syn_imp_bash_cmd, cwd=output_directory)
+            GET_SHELL_CMD_OUTPUT(syn_imp_bash_cmd, cwd=output_directory)
         except Exception:
             _RAISE_IF_NO_TIMING_PATHS(log_path)
             raise

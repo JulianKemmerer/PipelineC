@@ -1,10 +1,9 @@
 import os
 import sys
 
-import C_TO_LOGIC
 import SYN
 import VHDL
-from utilities import GET_TOOL_PATH, REPO_ABS_DIR
+from utilities import GET_SHELL_CMD_OUTPUT, GET_TOOL_PATH, REPO_ABS_DIR
 
 TOOL_EXE = "quartus_sh"
 # Default to env if there
@@ -441,7 +440,7 @@ project_close
         # Execute the command
         syn_imp_bash_cmd = "bash " + sh_file
         print("Running Quartus:", sh_path, flush=True)
-        C_TO_LOGIC.GET_SHELL_CMD_OUTPUT(syn_imp_bash_cmd, cwd=output_directory)
+        GET_SHELL_CMD_OUTPUT(syn_imp_bash_cmd, cwd=output_directory)
         f = open(log_path, "r")
         log_text = f.read()
         f.close()

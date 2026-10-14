@@ -102,10 +102,6 @@ def _compiler_module(name):
 
 
 def _cad_tool_paths():
-    # OPEN_TOOLS participates in the legacy compiler import cycle.  Enter it
-    # through C_TO_LOGIC, matching DEVICE_MODELS.IS_INSTALLED, so attributes
-    # used by VERILATOR/OPEN_TOOLS exist before those modules inspect them.
-    _compiler_module("C_TO_LOGIC")
     open_tools = _compiler_module("OPEN_TOOLS")
     return {
         "yosys": Path(open_tools.YOSYS_BIN_PATH) / "yosys",
@@ -975,6 +971,7 @@ def _repo_state():
 def _compiler_source_records():
     paths = [
         "src/pypelinec",
+        "src/LOGIC.py",
         "src/C_TO_LOGIC.py",
         "src/SYN.py",
         "src/SWEEP.py",

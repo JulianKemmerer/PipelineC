@@ -13,7 +13,7 @@ well-formed frame of the right length that loads the wrong values into the
 wrong registers.
 
 So `pypelinec` generates the host's copy instead. Old C-based PipelineC did the
-same thing for C hosts -- `SW_LIB.py`'s
+same thing for C hosts -- `C_TO_LOGIC.py`'s
 GEN_POST_PREPROCESS_WITH_NONFUNCDEFS_TYPE_BYTES_HEADERS emitted `<T>_to_bytes` /
 `bytes_to_<T>` headers into the output directory. This is that, in Python.
 

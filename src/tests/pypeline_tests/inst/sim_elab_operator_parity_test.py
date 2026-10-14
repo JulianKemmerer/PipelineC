@@ -4,7 +4,7 @@
 
 Three things are pinned here, each of which was broken:
 
-1. Unary `-` on an integer widens by one bit and becomes signed. SW_LIB's
+1. Unary `-` on an integer widens by one bit and becomes signed. C_TO_LOGIC's
    GET_UNARY_OP_NEGATE_INT_UINT_C_CODE (`result_t = "int" + str(in_width+1)
    + "_t"`) is the authority; PY_TO_LOGIC._elab_unary and the library's
    make_soft_negate both follow it. SimVal.__neg__ used to mask back into the
@@ -462,7 +462,7 @@ def test_global_generic_registration_is_still_memoized():
 def test_literal_ctype_rules_agree_between_sim_and_elaboration():
     """pypeline._infer_literal_ctype and PY_TO_LOGIC._infer_const_ctype are
     duplicate implementations of one rule. They agree today only because
-    C_TO_LOGIC.BOOL_C_TYPE happens to be "uint1_t"; nothing asserted it."""
+    LOGIC.BOOL_C_TYPE happens to be "uint1_t"; nothing asserted it."""
     values = [0, 1, 2, 3, 7, 8, 255, 256, 65535, 1 << 31, -1, -2, -128, -129, -(1 << 31)]
     for v in values:
         sim_t = PL._infer_literal_ctype(v)

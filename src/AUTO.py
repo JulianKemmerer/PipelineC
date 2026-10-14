@@ -23,7 +23,7 @@ import copy
 import hashlib
 import json
 
-import C_TO_LOGIC
+import LOGIC
 import SYN
 
 MAX_CANDIDATES = 96
@@ -1169,27 +1169,27 @@ def _split_array_ctype(ctype_str: str):
 
 # Entity-name operator token -> Python binary operator source text.
 _BIN_OP_SRC = {
-    C_TO_LOGIC.BIN_OP_PLUS_NAME: "+",
-    C_TO_LOGIC.BIN_OP_MINUS_NAME: "-",
-    C_TO_LOGIC.BIN_OP_INFERRED_MULT_NAME: "*",
-    C_TO_LOGIC.BIN_OP_MULT_NAME: "*",
-    C_TO_LOGIC.BIN_OP_DIV_NAME: "/",
-    C_TO_LOGIC.BIN_OP_MOD_NAME: "%",
-    C_TO_LOGIC.BIN_OP_AND_NAME: "&",
-    C_TO_LOGIC.BIN_OP_OR_NAME: "|",
-    C_TO_LOGIC.BIN_OP_XOR_NAME: "^",
-    C_TO_LOGIC.BIN_OP_GT_NAME: ">",
-    C_TO_LOGIC.BIN_OP_GTE_NAME: ">=",
-    C_TO_LOGIC.BIN_OP_LT_NAME: "<",
-    C_TO_LOGIC.BIN_OP_LTE_NAME: "<=",
-    C_TO_LOGIC.BIN_OP_EQ_NAME: "==",
-    C_TO_LOGIC.BIN_OP_NEQ_NAME: "!=",
+    LOGIC.BIN_OP_PLUS_NAME: "+",
+    LOGIC.BIN_OP_MINUS_NAME: "-",
+    LOGIC.BIN_OP_INFERRED_MULT_NAME: "*",
+    LOGIC.BIN_OP_MULT_NAME: "*",
+    LOGIC.BIN_OP_DIV_NAME: "/",
+    LOGIC.BIN_OP_MOD_NAME: "%",
+    LOGIC.BIN_OP_AND_NAME: "&",
+    LOGIC.BIN_OP_OR_NAME: "|",
+    LOGIC.BIN_OP_XOR_NAME: "^",
+    LOGIC.BIN_OP_GT_NAME: ">",
+    LOGIC.BIN_OP_GTE_NAME: ">=",
+    LOGIC.BIN_OP_LT_NAME: "<",
+    LOGIC.BIN_OP_LTE_NAME: "<=",
+    LOGIC.BIN_OP_EQ_NAME: "==",
+    LOGIC.BIN_OP_NEQ_NAME: "!=",
 }
 
 
 _UNARY_OP_SRC = {
-    C_TO_LOGIC.UNARY_OP_NOT_NAME: "~",
-    C_TO_LOGIC.UNARY_OP_NEGATE_NAME: "-",
+    LOGIC.UNARY_OP_NOT_NAME: "~",
+    LOGIC.UNARY_OP_NEGATE_NAME: "-",
 }
 
 
@@ -1213,7 +1213,7 @@ def DECODE_OP(logic, inst, entity, parser_state):
     #                 `return my_struct_t(a=..., b=...)` elaborates to. Each
     #                 port carries one piece, and the per-port ref tokens say
     #                 where that piece belongs.
-    if entity.startswith(C_TO_LOGIC.CONST_REF_RD_FUNC_NAME_PREFIX):
+    if entity.startswith(LOGIC.CONST_REF_RD_FUNC_NAME_PREFIX):
         out_toks = logic.ref_submodule_instance_to_ref_toks.get(inst)
         if not out_toks:
             raise AutoError(
@@ -1239,21 +1239,21 @@ def DECODE_OP(logic, inst, entity, parser_state):
 
     # Constant-amount shift: x << 3 / x >> 3, entity CONST_SL_3_int16_t
     for op_name, py_op in (
-        (C_TO_LOGIC.BIN_OP_SL_NAME, "<<"),
-        (C_TO_LOGIC.BIN_OP_SR_NAME, ">>"),
+        (LOGIC.BIN_OP_SL_NAME, "<<"),
+        (LOGIC.BIN_OP_SR_NAME, ">>"),
     ):
-        prefix = f"{C_TO_LOGIC.CONST_PREFIX}{op_name}_"
+        prefix = f"{LOGIC.CONST_PREFIX}{op_name}_"
         if entity.startswith(prefix):
             amount = entity[len(prefix) :].split("_")[0]
             if amount.isdigit():
                 return {"kind": "shift", "op": py_op, "amount": int(amount)}
 
     # Multiplexer from an if / conditional expression: ports (cond, iftrue, iffalse)
-    if entity.startswith(C_TO_LOGIC.MUX_LOGIC_NAME + "_"):
+    if entity.startswith(LOGIC.MUX_LOGIC_NAME + "_"):
         return {"kind": "mux"}
 
     # Binary operator: BIN_OP_<OP>_<ltype>_<rtype>
-    bin_prefix = C_TO_LOGIC.BIN_OP_LOGIC_NAME_PREFIX + "_"
+    bin_prefix = LOGIC.BIN_OP_LOGIC_NAME_PREFIX + "_"
     if entity.startswith(bin_prefix):
         rest = entity[len(bin_prefix) :]
         # Longest match first so e.g. INFERRED_MULT is not read as a shorter op.
@@ -1262,7 +1262,7 @@ def DECODE_OP(logic, inst, entity, parser_state):
                 return {"kind": "binop", "op": _BIN_OP_SRC[op_name]}
 
     # Unary operator: UNARY_OP_<OP>_<type>
-    un_prefix = C_TO_LOGIC.UNARY_OP_LOGIC_NAME_PREFIX + "_"
+    un_prefix = LOGIC.UNARY_OP_LOGIC_NAME_PREFIX + "_"
     if entity.startswith(un_prefix):
         rest = entity[len(un_prefix) :]
         for op_name in sorted(_UNARY_OP_SRC, key=len, reverse=True):
@@ -1324,10 +1324,10 @@ def _trace_operand(logic, port_wire):
                 f"{logic.func_name!r}"
             )
         seen.add(driver)
-        if C_TO_LOGIC.SUBMODULE_MARKER in driver:
-            inst = driver.rsplit(C_TO_LOGIC.SUBMODULE_MARKER, 1)[0]
+        if LOGIC.SUBMODULE_MARKER in driver:
+            inst = driver.rsplit(LOGIC.SUBMODULE_MARKER, 1)[0]
             return ["node", inst], _clean_cast_chain(chain, port_type)
-        if C_TO_LOGIC.WIRE_IS_CONSTANT(driver):
+        if LOGIC.WIRE_IS_CONSTANT(driver):
             return ["const", driver], _clean_cast_chain(chain, port_type)
         if driver in logic.inputs:
             # Named, not positional: a descended function may have several
@@ -1505,20 +1505,20 @@ def _heuristic_leaf_delay_du(entity, logic):
         return 0  # genuine wiring: field reads, constant shifts, bit assigns
     widths = [_ctype_width(logic.wire_to_c_type.get(p)) for p in logic.inputs] or [1]
     w = max(widths)
-    if entity.startswith(C_TO_LOGIC.BIN_OP_LOGIC_NAME_PREFIX + "_"):
-        rest = entity[len(C_TO_LOGIC.BIN_OP_LOGIC_NAME_PREFIX) + 1 :]
+    if entity.startswith(LOGIC.BIN_OP_LOGIC_NAME_PREFIX + "_"):
+        rest = entity[len(LOGIC.BIN_OP_LOGIC_NAME_PREFIX) + 1 :]
         if rest.startswith(
             (
-                C_TO_LOGIC.BIN_OP_AND_NAME + "_",
-                C_TO_LOGIC.BIN_OP_OR_NAME + "_",
-                C_TO_LOGIC.BIN_OP_XOR_NAME + "_",
+                LOGIC.BIN_OP_AND_NAME + "_",
+                LOGIC.BIN_OP_OR_NAME + "_",
+                LOGIC.BIN_OP_XOR_NAME + "_",
             )
         ):
             return 1  # one gate, regardless of width (bit-parallel)
         if rest.startswith(
             (
-                C_TO_LOGIC.BIN_OP_MULT_NAME + "_",
-                C_TO_LOGIC.BIN_OP_INFERRED_MULT_NAME + "_",
+                LOGIC.BIN_OP_MULT_NAME + "_",
+                LOGIC.BIN_OP_INFERRED_MULT_NAME + "_",
             )
         ):
             return max(2, int(4 * log2(max(2, w))))
@@ -1748,7 +1748,7 @@ def _RESOLVE_BUILTIN_SUBMODULES(parser_state, entity, _seen=None):
     for inst, sub_entity in logic.submodule_instances.items():
         if sub_entity not in parser_state.FuncLogicLookupTable:
             try:
-                sub_logic = C_TO_LOGIC.BUILD_C_BUILT_IN_SUBMODULE_FUNC_LOGIC(
+                sub_logic = LOGIC.BUILD_C_BUILT_IN_SUBMODULE_FUNC_LOGIC(
                     logic, inst, parser_state
                 )
             except Exception:
@@ -1777,10 +1777,10 @@ def _open_target(parser_state, entity, logic):
     if not _is_decomposable(parser_state, soft, soft_logic):
         return None, None
     if logic is not None:
-        ret = C_TO_LOGIC.RETURN_WIRE_NAME
+        ret = LOGIC.RETURN_WIRE_NAME
         if soft_logic.wire_to_c_type.get(ret) != logic.wire_to_c_type.get(ret):
             return None, None
-        ce = C_TO_LOGIC.CLOCK_ENABLE_NAME
+        ce = LOGIC.CLOCK_ENABLE_NAME
         if len([i for i in soft_logic.inputs if i != ce]) != len(
             [i for i in logic.inputs if i != ce]
         ):
@@ -1824,12 +1824,12 @@ def BUILD_DAG(parser_state, func_entity, delays, budget_du, opened=()):
         opened=frozenset(opened),
     )
     logic = parser_state.FuncLogicLookupTable[func_entity]
-    output_ref, output_casts = _trace_operand(logic, C_TO_LOGIC.RETURN_WIRE_NAME)
+    output_ref, output_casts = _trace_operand(logic, LOGIC.RETURN_WIRE_NAME)
     return {
         "nodes": nodes,
         "output": output_ref,
         "output_casts": output_casts,
-        "out_type": logic.wire_to_c_type.get(C_TO_LOGIC.RETURN_WIRE_NAME),
+        "out_type": logic.wire_to_c_type.get(LOGIC.RETURN_WIRE_NAME),
         # Entities the depth cap stopped AUTO_FSM from descending into further
         # (see _MAX_DESCEND_DEPTH) -- diagnostic only, read by
         # DESCRIBE_SCHEDULE's AT FLOOR text, never consulted by scheduling.
@@ -1884,7 +1884,7 @@ def _build_dag_level(
         )
 
     for inst, sub_entity in logic.submodule_instances.items():
-        if C_TO_LOGIC.CLOCK_ENABLE_NAME in inst:
+        if LOGIC.CLOCK_ENABLE_NAME in inst:
             # Clock-enable plumbing (TRUE_CLOCK_ENABLE_mux / FALSE_...), added
             # to a Logic by the backend when it gates submodules inside an `if`.
             # Not a data operation, and it only appears on passes where that
@@ -1907,13 +1907,13 @@ def _build_dag_level(
         port_names = [
             p
             for p in logic.submodule_instance_to_input_port_names.get(inst, [])
-            if p != C_TO_LOGIC.CLOCK_ENABLE_NAME
+            if p != LOGIC.CLOCK_ENABLE_NAME
         ]
         operands = []
         casts = []
         port_types = []
         for port in port_names:
-            port_wire = f"{inst}{C_TO_LOGIC.SUBMODULE_MARKER}{port}"
+            port_wire = f"{inst}{LOGIC.SUBMODULE_MARKER}{port}"
             ref, cast_chain = _trace_operand(logic, port_wire)
             operands.append(_prefix_ref(ref, prefix, _parent_call_id(prefix)))
             casts.append(cast_chain)
@@ -1943,7 +1943,7 @@ def _build_dag_level(
             # fatal: fall back to keeping the operation atomic, which the
             # scheduler will report as a floor. Child nodes are built into a
             # scratch dict so a failed attempt leaves nothing behind.
-            child_prefix = node_id + C_TO_LOGIC.SUBMODULE_MARKER
+            child_prefix = node_id + LOGIC.SUBMODULE_MARKER
             child_nodes = {}
             try:
                 _build_dag_level(
@@ -1958,7 +1958,7 @@ def _build_dag_level(
                     opened,
                 )
                 child_out_ref, child_out_casts = _trace_operand(
-                    open_logic, C_TO_LOGIC.RETURN_WIRE_NAME
+                    open_logic, LOGIC.RETURN_WIRE_NAME
                 )
             except AutoError:
                 child_nodes = None
@@ -1978,7 +1978,7 @@ def _build_dag_level(
                     "casts": casts,
                     "port_types": port_types,
                     "out_type": sub_logic.wire_to_c_type.get(
-                        C_TO_LOGIC.RETURN_WIRE_NAME
+                        LOGIC.RETURN_WIRE_NAME
                     ),
                     # How to reach the descended body's result, and how the
                     # body's own input maps back onto this call's operands.
@@ -1991,7 +1991,7 @@ def _build_dag_level(
                     "inlined_inputs": [
                         i
                         for i in open_logic.inputs
-                        if i != C_TO_LOGIC.CLOCK_ENABLE_NAME
+                        if i != LOGIC.CLOCK_ENABLE_NAME
                     ],
                 }
                 continue
@@ -2006,7 +2006,7 @@ def _build_dag_level(
             "casts": casts,
             "port_types": port_types,
             "out_type": logic.wire_to_c_type.get(
-                f"{inst}{C_TO_LOGIC.SUBMODULE_MARKER}{C_TO_LOGIC.RETURN_WIRE_NAME}"
+                f"{inst}{LOGIC.SUBMODULE_MARKER}{LOGIC.RETURN_WIRE_NAME}"
             ),
         }
 
@@ -2014,7 +2014,7 @@ def _build_dag_level(
 def _parent_call_id(prefix):
     """The descended call whose body a prefixed node belongs to: the prefix is
     that call's node id plus the submodule marker."""
-    return prefix[: -len(C_TO_LOGIC.SUBMODULE_MARKER)] if prefix else ""
+    return prefix[: -len(LOGIC.SUBMODULE_MARKER)] if prefix else ""
 
 
 def _prefix_ref(ref, prefix, node_id):
@@ -2120,50 +2120,50 @@ def _leaf_area(entity, logic):
     w = max(widths)
     pair = widths[0] * widths[1] if len(widths) >= 2 else w * w
 
-    if entity.startswith(C_TO_LOGIC.BIN_OP_LOGIC_NAME_PREFIX + "_"):
-        rest = entity[len(C_TO_LOGIC.BIN_OP_LOGIC_NAME_PREFIX) + 1 :]
+    if entity.startswith(LOGIC.BIN_OP_LOGIC_NAME_PREFIX + "_"):
+        rest = entity[len(LOGIC.BIN_OP_LOGIC_NAME_PREFIX) + 1 :]
         for op_name in sorted(_BIN_OP_SRC, key=len, reverse=True):
             if not rest.startswith(op_name + "_"):
                 continue
             if op_name in (
-                C_TO_LOGIC.BIN_OP_MULT_NAME,
-                C_TO_LOGIC.BIN_OP_INFERRED_MULT_NAME,
+                LOGIC.BIN_OP_MULT_NAME,
+                LOGIC.BIN_OP_INFERRED_MULT_NAME,
             ):
                 return pair * AREA_PER_BIT_PAIR_MULT
-            if op_name in (C_TO_LOGIC.BIN_OP_DIV_NAME, C_TO_LOGIC.BIN_OP_MOD_NAME):
+            if op_name in (LOGIC.BIN_OP_DIV_NAME, LOGIC.BIN_OP_MOD_NAME):
                 return pair * AREA_PER_BIT_PAIR_DIV
             if op_name in (
-                C_TO_LOGIC.BIN_OP_AND_NAME,
-                C_TO_LOGIC.BIN_OP_OR_NAME,
-                C_TO_LOGIC.BIN_OP_XOR_NAME,
+                LOGIC.BIN_OP_AND_NAME,
+                LOGIC.BIN_OP_OR_NAME,
+                LOGIC.BIN_OP_XOR_NAME,
             ):
                 return w * AREA_PER_BIT_BITWISE
-            if op_name in (C_TO_LOGIC.BIN_OP_SL_NAME, C_TO_LOGIC.BIN_OP_SR_NAME):
+            if op_name in (LOGIC.BIN_OP_SL_NAME, LOGIC.BIN_OP_SR_NAME):
                 return w * AREA_PER_BIT_SHIFT_VAR
             if op_name in (
-                C_TO_LOGIC.BIN_OP_PLUS_NAME,
-                C_TO_LOGIC.BIN_OP_MINUS_NAME,
+                LOGIC.BIN_OP_PLUS_NAME,
+                LOGIC.BIN_OP_MINUS_NAME,
             ):
                 return w * AREA_PER_BIT_ADD
             return w * AREA_PER_BIT_CMP
-    if entity.startswith(C_TO_LOGIC.UNARY_OP_LOGIC_NAME_PREFIX + "_"):
-        rest = entity[len(C_TO_LOGIC.UNARY_OP_LOGIC_NAME_PREFIX) + 1 :]
-        if rest.startswith(C_TO_LOGIC.UNARY_OP_NOT_NAME + "_"):
+    if entity.startswith(LOGIC.UNARY_OP_LOGIC_NAME_PREFIX + "_"):
+        rest = entity[len(LOGIC.UNARY_OP_LOGIC_NAME_PREFIX) + 1 :]
+        if rest.startswith(LOGIC.UNARY_OP_NOT_NAME + "_"):
             return w * AREA_PER_BIT_BITWISE
         return w * AREA_PER_BIT_ADD
-    if entity.startswith(C_TO_LOGIC.MUX_LOGIC_NAME + "_"):
-        return _ctype_width(logic.wire_to_c_type.get(C_TO_LOGIC.RETURN_WIRE_NAME)) * (
+    if entity.startswith(LOGIC.MUX_LOGIC_NAME + "_"):
+        return _ctype_width(logic.wire_to_c_type.get(LOGIC.RETURN_WIRE_NAME)) * (
             AREA_PER_BIT_MUX
         )
-    if entity.startswith(C_TO_LOGIC.CONST_PREFIX) or entity.startswith(
-        C_TO_LOGIC.CONST_REF_RD_FUNC_NAME_PREFIX
+    if entity.startswith(LOGIC.CONST_PREFIX) or entity.startswith(
+        LOGIC.CONST_REF_RD_FUNC_NAME_PREFIX
     ):
         return 0.0  # constant shifts and field reads are wiring
     if getattr(logic, "is_new_style_bit_manip", False):
         return 0.0  # bit_assign / concat / rotate: wiring
-    if entity.startswith(C_TO_LOGIC.VAR_REF_RD_FUNC_NAME_PREFIX):
+    if entity.startswith(LOGIC.VAR_REF_RD_FUNC_NAME_PREFIX):
         # A variable array index: a balanced mux tree over the array.
-        out_w = _ctype_width(logic.wire_to_c_type.get(C_TO_LOGIC.RETURN_WIRE_NAME))
+        out_w = _ctype_width(logic.wire_to_c_type.get(LOGIC.RETURN_WIRE_NAME))
         in_w = max(widths)
         n = max(2, in_w // max(1, out_w))
         return out_w * (n - 1) * AREA_PER_BIT_MUX
@@ -2576,10 +2576,10 @@ class _GraphCodegen:
     def _render_const(self, wire_name):
         """A literal operand, recovered from the constant wire's name (the
         compiler encodes the literal text there; see
-        C_TO_LOGIC.GET_VAL_STR_FROM_CONST_WIRE)."""
+        LOGIC.GET_VAL_STR_FROM_CONST_WIRE)."""
         logic = self.parser_state.FuncLogicLookupTable.get(self.func_entity)
         try:
-            val = C_TO_LOGIC.GET_VAL_STR_FROM_CONST_WIRE(
+            val = LOGIC.GET_VAL_STR_FROM_CONST_WIRE(
                 wire_name, logic, self.parser_state
             )
         except Exception as e:

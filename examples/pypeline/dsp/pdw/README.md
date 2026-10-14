@@ -1290,12 +1290,16 @@ Everything here tests *this example project*, not the Pypeline DSP library —
 whose own unit tests live in `src/tests/pypeline_tests/inst/` (`cordic_test.py`,
 `lut_atan2_test.py`, `lut_nco_test.py`, `log2_db_test.py`, `magnitude_test.py`, ...). That is why these files stay next to
 the design; one under `inst/` would need a `sys.path` hack back into this
-directory to import it. They are registered in
-`src/tests/pypeline_tests/native_sim_tests.py`. Measurement, reset and end-to-end
-entries run with both angle methods. Candidate/frequency alignment tests also
-run both methods with independently scheduled responses and no detector latency
-attribute. Measurement tests force either log
-converter to take longer than atan2, checking every field and PRI alignment.
+directory to import it.
+
+Only `pdw_tb.py` is part of the compiler's `run_all.py` suite
+(`src/tests/pypeline_tests/native_sim_tests.py`), with the default ROM atan2. The
+block-level tests and the synthesis checks below are run by hand after changing a
+block. The measurement, reset and alignment tests take `PDW_ATAN2_METHOD=cordic|rom`
+(default `rom`) from the environment; run them with both. Candidate/frequency alignment
+tests use independently scheduled responses and no detector latency attribute.
+Measurement tests force either log converter to take longer than atan2, checking every
+field and PRI alignment.
 The DSP tests cover automatic/manual ROM modes and unequal table latencies;
 `self_check_dsp_rom_test.py` and `lut_atan2_test.py` provide native/GHDL parity,
 including bubbles, clock-enable pauses and in-flight reset drain. `valid_join_test.py`
@@ -1305,18 +1309,38 @@ latency reads during construction. The generator reset bench also has native/GHD
 parity, checking old FIFO contents cannot leak during refill. RAM backend, mapping and selected-plan
 coverage belongs in the [test-suite RAM section](../../../../docs/pypeline_TESTS.md#ram-coverage).
 
-```
-python3 src/tests/pypeline_tests/run_all.py -k pdw
-python3 src/tests/pypeline_tests/run_all.py -k pulse
-```
-
-There is **one** whole-top testbench source, `pdw_tb.py`. `pdw_tb_rom` runs it
-with the default ROM atan2; the entry named `pdw_tb` runs it with CORDIC atan2.
-Both use the same stimulus, golden model and checks. To run only the default
-whole-top native simulation:
+From the repository root:
 
 ```sh
-python3 src/tests/pypeline_tests/run_all.py --category native_sim --test pdw_tb_rom -j 1
+# sim_call and host-side tests
+for method in rom cordic; do
+  for t in pulse_measure_test pdw_reset_test pulse_extract_alignment_test; do
+    PDW_ATAN2_METHOD=$method python3 examples/pypeline/dsp/pdw/$t.py || break 2
+  done
+done
+for t in pdw_ctrl_test pdw_alarm_test pdw_verify_test airt_pdw_replay_test airt_pdw_host_test; do
+  python3 examples/pypeline/dsp/pdw/$t.py || break
+done
+# Block testbenches
+python3 src/pypelinec examples/pypeline/dsp/pdw/pulse_gen_tb.py --sim --comb --run 600
+python3 src/pypelinec examples/pypeline/dsp/pdw/pulse_detect_tb.py --sim --comb --run 500
+for method in rom cordic; do
+  python3 src/pypelinec examples/pypeline/dsp/pdw/pulse_extract_tb.py --sim --comb --run 800 \
+    -D "PDW_ATAN2_METHOD=$method"
+done
+# The generator bench, native vs GHDL cycle by cycle
+python3 src/pypeline_sim_debug.py examples/pypeline/dsp/pdw/pulse_gen_tb.py --sim --comb \
+  --run 600 --out_dir /tmp/pdw-pulse-gen-debug
+```
+
+There is **one** whole-top testbench source, `pdw_tb.py`, and it is the `run_all.py`
+entry `pdw_tb`. It runs the default ROM atan2; add `-D PDW_ATAN2_METHOD=cordic` to
+check CORDIC with the same stimulus, golden model and checks:
+
+```sh
+python3 src/tests/pypeline_tests/run_all.py --test pdw_tb -j 1
+python3 src/pypelinec examples/pypeline/dsp/pdw/pdw_tb.py --sim --comb --run all \
+  -D PDW_ATAN2_METHOD=cordic
 ```
 
 `airt_pdw_host_test.py` exercises clock selection, activation failures, RF
@@ -1335,7 +1359,8 @@ It complements the capture-file replay tests, which do not execute `run()`.
 | `top.py` | Everything composed: all seven AXIS ports, both record serializers, the control deserializer, the broadcast interlock and the seven-input reset OR |
 
 These are not redundant with the native-sim testbenches: native sim never emits
-VHDL, so it cannot catch anything Vivado rejects. Several real bugs here were
+VHDL, so it cannot catch anything Vivado rejects. None of them is in `run_all.py`;
+build them by hand (below) after changing a block. Several real bugs here were
 only ever visible at this level — see
 [the guide's limitations table](../../../../docs/pypeline_guide.md#limitations--not-yet-supported).
 

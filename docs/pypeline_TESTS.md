@@ -88,8 +88,7 @@ is to run one design on *every* backend.
 - **`vivado`, for Vivado-specific behavior and target checks.** This covers
   MULTI_CYCLE path constraints (`AUTO_MULTI_CYCLE.GET_MCP_PATH_CONSTRAINTS`
   supports only Vivado), automatic RAM inference and selected-plan replay,
-  and the PDW synth tops' AIR7310 Block RAM and 125 MHz checks on
-  `xc7a200tffg1156-2`. Use a part with a committed cache
+  and Xilinx board examples. Use a part with a committed cache
   (`xc7a35ticsg324-1l`, `xc7a100tcsg324-1`, `xc7a200tffg1156-2`); a part without
   one re-characterizes every leaf on every run.
 - **`pyrtl`, only for PyRTL-specific behavior.** Two tests use it:
@@ -118,7 +117,7 @@ How a test picks its tool:
   registration appends `common.SYN_TOOL_ARGS[tool]`, which is uniformly
   `--syn_tool <tool>` now that the flag accepts every backend, so design files
   stay tool-neutral. A design may still set its own `PART` (board examples keep
-  their board part, the PDW tops keep theirs) as long as that part selects the
+  their board part) as long as that part selects the
   same tool the entry names.
 - **`native_vs_vhdl_sim_tests.py`** builds its non-`--comb` entries under
   sky130 (`NON_COMB_SYN_TOOL`, passed as `--syn_tool device_models`). `--comb`
@@ -425,8 +424,9 @@ OpenXC7 bundle, found through `OPENXC7` or the `OPENXC7_PATH` default in
 factory specialization, fixed-latency metadata across repeated elaboration, serial
 and parallel composition, bypass alignment, conditional enables, dynamic array
 reads/writes, initialization, reset and convergence. Its subprocess gate tests
-forbid importing the pipeline model in untagged `--comb` CLI builds and also
-forbid the elaborator in direct native runs, covering arithmetic, registers,
+forbid preparing the pipeline model (`PY_TO_LOGIC.PREPARE_PIPELINE_LATENCY_SIM`) in
+untagged `--comb` CLI builds and forbid importing the elaborator at all in direct native
+runs, covering arithmetic, registers,
 AUTO_PIPELINE and AUTO_FSM. Unrelated roots, zero-cycle declarations and
 direct calls to tagged bodies also forbid model preparation.
 Alternating live roots check that shared helper models retain separate state.
@@ -458,7 +458,7 @@ See [Port types](PY_TO_LOGIC_DESIGN.md#specialised-functions) in PY_TO_LOGIC_DES
 that contain an integer compare. It runs as a plain Python process, because
 `pypelinec` and `pypeline_sim.py` register the default soft operators before the
 design loads and so never showed the bug. Before the fix, the live-root elaboration had
-no lowering for `>`, fell through to the SW_LIB C path, and crashed on the unset
+no lowering for `>`, fell through to the C front end's C-code-generation path, and crashed on the unset
 `SYN_OUTPUT_DIRECTORY`. The test covers:
 - a stateful caller, and a pure caller whose compare runs inside the aligned graph,
   both with a signed operand only a signed compare gets right;
@@ -467,7 +467,7 @@ no lowering for `>`, fell through to the SW_LIB C path, and crashed on the unset
 - a design's own matcher registration outranking the defaults;
 - an operator pinned to `INFERRED` hitting the armed `PYPELINE_NO_SW_LIB_GUARD`.
 
-See [Default replacements for SW_LIB-only operators](pypeline_DESIGN.md#default-replacements-for-sw_lib-only-operators).
+See [Default replacements for C-generated operators](pypeline_DESIGN.md#default-replacements-for-c-generated-operators).
 
 **Known issue: a wire-only `@pipeline_latency` body.**
 `pipeline_latency_wire_body_design.py` (known_issues) declares `@pipeline_latency(1)`
@@ -1467,7 +1467,7 @@ category by submitting it ahead of everything, including the Vivado entries
 (`common.run_tests`). Two tests set it: `pdw_tb` (`native_sim`, the longest in
 the suite: ~523 ms/cycle over 7323 cycles alone since native sim executes
 matcher-registered soft operators by default, ~9000 s projected under `-j 5`,
-so it also carries its own 4-hour `timeout`) and `auto_fsm_unit_test` (`unit`,
+so it has no timeout, `common.NO_TIMEOUT_S`; it ends itself) and `auto_fsm_unit_test` (`unit`,
 358 s, in the category submitted last). Set it from a measured duration and record that
 duration at the registration; the sort is stable, so nothing else moves.
 

@@ -3,6 +3,7 @@ import sys
 import os
 
 import C_TO_LOGIC
+import LOGIC
 from pycparser import c_ast, c_generator
 
 # FSM funcs cant be main functions
@@ -556,7 +557,7 @@ def STATE_GROUP_TO_C_CODE(
 
         # Return?
         if state_info.return_node is not None:
-            output_maybe_func_and_tok = C_TO_LOGIC.RETURN_WIRE_NAME + "_FSM"
+            output_maybe_func_and_tok = LOGIC.RETURN_WIRE_NAME + "_FSM"
             if state_info.sub_func_name is not None:
                 if state_info.sub_func_name in single_inst_flow_ctrl_func_call_names:
                     # Single inst
@@ -564,7 +565,7 @@ def STATE_GROUP_TO_C_CODE(
                 else:
                     # Regular inline subroutine return
                     output_maybe_func_and_tok = (
-                        state_info.sub_func_name + "_" + C_TO_LOGIC.RETURN_WIRE_NAME
+                        state_info.sub_func_name + "_" + LOGIC.RETURN_WIRE_NAME
                     )
             text += (
                 "    "
@@ -671,7 +672,7 @@ def STATE_GROUP_TO_C_CODE(
             )
             text += (
                 "    "
-                + C_TO_LOGIC.RETURN_WIRE_NAME
+                + LOGIC.RETURN_WIRE_NAME
                 + FSM_EXT
                 + " = "
                 + yield_arg_code
@@ -707,7 +708,7 @@ def STATE_GROUP_TO_C_CODE(
             )
             text += (
                 "    "
-                + C_TO_LOGIC.RETURN_WIRE_NAME
+                + LOGIC.RETURN_WIRE_NAME
                 + FSM_EXT
                 + " = "
                 + inout_arg_code
@@ -862,8 +863,8 @@ typedef struct """
     )
     for input_port in fsm_logic.inputs:
         c_type = fsm_logic.wire_to_c_type[input_port]
-        if C_TO_LOGIC.C_TYPE_IS_ARRAY(c_type):
-            elem_t, dims = C_TO_LOGIC.C_ARRAY_TYPE_TO_ELEM_TYPE_AND_DIMS(c_type)
+        if LOGIC.C_TYPE_IS_ARRAY(c_type):
+            elem_t, dims = LOGIC.C_ARRAY_TYPE_TO_ELEM_TYPE_AND_DIMS(c_type)
             text += "  " + elem_t + " " + input_port
             for dim in dims:
                 text += "[" + str(dim) + "]"
@@ -884,8 +885,8 @@ typedef struct """
     )
     for output_port in fsm_logic.outputs:
         c_type = fsm_logic.wire_to_c_type[output_port]
-        if C_TO_LOGIC.C_TYPE_IS_ARRAY(c_type):
-            elem_t, dims = C_TO_LOGIC.C_ARRAY_TYPE_TO_ELEM_TYPE_AND_DIMS(c_type)
+        if LOGIC.C_TYPE_IS_ARRAY(c_type):
+            elem_t, dims = LOGIC.C_ARRAY_TYPE_TO_ELEM_TYPE_AND_DIMS(c_type)
             text += "  " + elem_t + " " + output_port
             for dim in dims:
                 text += "[" + str(dim) + "]"
@@ -929,8 +930,8 @@ typedef struct """
     )
     for input_port in fsm_logic.inputs:
         c_type = fsm_logic.wire_to_c_type[input_port]
-        if C_TO_LOGIC.C_TYPE_IS_ARRAY(c_type):
-            elem_t, dims = C_TO_LOGIC.C_ARRAY_TYPE_TO_ELEM_TYPE_AND_DIMS(c_type)
+        if LOGIC.C_TYPE_IS_ARRAY(c_type):
+            elem_t, dims = LOGIC.C_ARRAY_TYPE_TO_ELEM_TYPE_AND_DIMS(c_type)
             text += "  " + "static " + elem_t + " " + input_port
             for dim in dims:
                 text += "[" + str(dim) + "]"
@@ -941,8 +942,8 @@ typedef struct """
 """
     for output_port in fsm_logic.outputs:
         c_type = fsm_logic.wire_to_c_type[output_port]
-        if C_TO_LOGIC.C_TYPE_IS_ARRAY(c_type):
-            elem_t, dims = C_TO_LOGIC.C_ARRAY_TYPE_TO_ELEM_TYPE_AND_DIMS(c_type)
+        if LOGIC.C_TYPE_IS_ARRAY(c_type):
+            elem_t, dims = LOGIC.C_ARRAY_TYPE_TO_ELEM_TYPE_AND_DIMS(c_type)
             text += "  " + "static " + elem_t + " " + output_port + FSM_EXT
             for dim in dims:
                 text += "[" + str(dim) + "]"
@@ -990,8 +991,8 @@ typedef struct """
             sub_func_name = sub_func_local_decl_to_func[local_decl]
             var_name = sub_func_name + "_" + var_name
         # Text for array or not and init
-        if C_TO_LOGIC.C_TYPE_IS_ARRAY(c_type):
-            elem_t, dims = C_TO_LOGIC.C_ARRAY_TYPE_TO_ELEM_TYPE_AND_DIMS(c_type)
+        if LOGIC.C_TYPE_IS_ARRAY(c_type):
+            elem_t, dims = LOGIC.C_ARRAY_TYPE_TO_ELEM_TYPE_AND_DIMS(c_type)
             text += "  " + "static " + elem_t + " " + var_name
             for dim in dims:
                 text += "[" + str(dim) + "]"
@@ -1039,8 +1040,8 @@ typedef struct """
                     sub_input_port
                 ]
                 # Text for array or not and init
-                if C_TO_LOGIC.C_TYPE_IS_ARRAY(sub_input_port_c_type):
-                    elem_t, dims = C_TO_LOGIC.C_ARRAY_TYPE_TO_ELEM_TYPE_AND_DIMS(
+                if LOGIC.C_TYPE_IS_ARRAY(sub_input_port_c_type):
+                    elem_t, dims = LOGIC.C_ARRAY_TYPE_TO_ELEM_TYPE_AND_DIMS(
                         sub_input_port_c_type
                     )
                     text += (
@@ -1065,9 +1066,9 @@ typedef struct """
                     )
                 text += ";\n"
             # Return val
-            if C_TO_LOGIC.RETURN_WIRE_NAME in flow_ctrl_func_logic.wire_to_c_type:
+            if LOGIC.RETURN_WIRE_NAME in flow_ctrl_func_logic.wire_to_c_type:
                 sub_out_port_c_type = flow_ctrl_func_logic.wire_to_c_type[
-                    C_TO_LOGIC.RETURN_WIRE_NAME
+                    LOGIC.RETURN_WIRE_NAME
                 ]
                 text += (
                     "  static "
@@ -1075,7 +1076,7 @@ typedef struct """
                     + " "
                     + flow_ctrl_func_name
                     + "_"
-                    + C_TO_LOGIC.RETURN_WIRE_NAME
+                    + LOGIC.RETURN_WIRE_NAME
                     + ";\n"
                 )
             # Return state
@@ -1192,7 +1193,7 @@ typedef struct """
         text += (
             """
     fsm_o.return_output = """
-            + C_TO_LOGIC.RETURN_WIRE_NAME
+            + LOGIC.RETURN_WIRE_NAME
             + FSM_EXT
             + """;"""
         )

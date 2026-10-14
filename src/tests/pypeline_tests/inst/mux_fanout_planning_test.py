@@ -33,7 +33,7 @@ import sys
 
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), "../../../"))
 
-import C_TO_LOGIC
+import LOGIC
 import PY_TO_LOGIC
 import RAW_VHDL
 import SWEEP
@@ -94,7 +94,7 @@ def _fixture():
     parser_state = _parse_redundant_cut_design()
     main_inst = list(parser_state.main_mhz.keys())[0]
     main_logic = parser_state.LogicInstLookupTable[main_inst]
-    marker = C_TO_LOGIC.SUBMODULE_MARKER
+    marker = LOGIC.SUBMODULE_MARKER
     adder_locals = [
         local
         for local, func in main_logic.submodule_instances.items()
@@ -204,7 +204,7 @@ def test_placement_inside_an_auto_pipeline_region_is_not_dropped():
     # each such region's own latency back in.
     parser_state = PY_TO_LOGIC.PARSE_FILE(_STREAM_PIPELINE_DESIGN_PATH)
     main_inst = list(parser_state.main_mhz.keys())[0]
-    marker = C_TO_LOGIC.SUBMODULE_MARKER
+    marker = LOGIC.SUBMODULE_MARKER
     region_inst = next(
         inst_name + marker + local_sub
         for inst_name, logic in parser_state.LogicInstLookupTable.items()

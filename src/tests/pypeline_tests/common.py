@@ -161,6 +161,8 @@ DEFAULT_CATEGORY_TIMEOUT_S = dict(
     **{category: 7200 for category in SYN_TOOL_CATEGORIES},
 )
 FALLBACK_TIMEOUT_S = 7200
+# A Test timeout that never fires: the longest test (pdw_tb) and --no_timeout
+NO_TIMEOUT_S = 10**9
 
 _TOOL_WHICH_CACHE = {}
 
@@ -524,7 +526,7 @@ def filter_tests(tests: list, args) -> list:
             print(f"Error: -k {args.k!r} matched no tests", file=sys.stderr)
             sys.exit(1)
     if getattr(args, "no_timeout", False):
-        tests = [dataclasses.replace(t, timeout=10**9) for t in tests]
+        tests = [dataclasses.replace(t, timeout=NO_TIMEOUT_S) for t in tests]
     elif getattr(args, "timeout", None) is not None:
         tests = [dataclasses.replace(t, timeout=args.timeout) for t in tests]
     return tests

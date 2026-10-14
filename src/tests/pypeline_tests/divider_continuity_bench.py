@@ -72,7 +72,7 @@ BASELINE_HIGH_FMAX_MHZ = 221.944
 FMAX_NOISE_FRAC = 0.01
 MID_GAIN_FRAC = 0.10
 
-# C_TO_LOGIC.py's duplicate-instance-collapsing pass emits a coordinate
+# LOGIC.py's duplicate-instance-collapsing pass emits a coordinate
 # fragment (e.g. ``_py_l34_l35_``) that is now sorted deterministically, so
 # two builds of the same source always spell it the same way. The trailing
 # per-build content hash (``_DUPLICATE_abcd``) is unrelated to physical

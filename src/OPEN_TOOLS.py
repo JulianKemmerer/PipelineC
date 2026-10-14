@@ -3,10 +3,9 @@ import shlex
 import subprocess
 import sys
 
-import C_TO_LOGIC
 import SYN
 import VHDL
-from utilities import GET_TOOL_PATH
+from utilities import GET_SHELL_CMD_OUTPUT, GET_TOOL_PATH
 
 # Tool names
 YOSYS_EXE = "yosys"
@@ -1023,7 +1022,7 @@ export GHDL_PREFIX="""
         # Execute the command
         syn_imp_bash_cmd = "bash " + sh_file
         print("Running:", log_path, flush=True)
-        C_TO_LOGIC.GET_SHELL_CMD_OUTPUT(syn_imp_bash_cmd, cwd=output_directory)
+        GET_SHELL_CMD_OUTPUT(syn_imp_bash_cmd, cwd=output_directory)
         f = open(log_path, "r")
         log_text = f.read()
         f.close()
@@ -1142,7 +1141,7 @@ def RENDER_FINAL_TOP_VERILOG(multimain_timing_params, parser_state):
     # Run command
     bash_cmd = f"bash {sh_path}"
     print("Conversion script:", sh_path, flush=True)
-    log_text = C_TO_LOGIC.GET_SHELL_CMD_OUTPUT(bash_cmd, cwd=output_dir)
+    log_text = GET_SHELL_CMD_OUTPUT(bash_cmd, cwd=output_dir)
     # print(log_text)
     print(f"Top level Verilog file: {out_file}", flush=True)
 

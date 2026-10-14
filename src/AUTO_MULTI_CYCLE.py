@@ -10,7 +10,7 @@ import math
 import re
 import sys
 
-import C_TO_LOGIC
+import LOGIC
 import SYN
 import VHDL
 import VIVADO
@@ -67,14 +67,14 @@ def GET_MCP_CELL_PATHS(inst_name, top_inst, top_path, parser_state):
     the XDC writer and the sweep's timing-report-to-AUTO_MULTI_CYCLE matching."""
     rv = []
     # Determine partial hierarchy path being synthesized
-    top_inst_tok = top_inst + C_TO_LOGIC.SUBMODULE_MARKER
+    top_inst_tok = top_inst + LOGIC.SUBMODULE_MARKER
     if inst_name == top_inst:
         partial_inst_name = ""
     elif inst_name.startswith(top_inst_tok):
         partial_inst_name = inst_name[len(top_inst_tok) :]
-    partial_inst_name = partial_inst_name.strip(C_TO_LOGIC.SUBMODULE_MARKER)
+    partial_inst_name = partial_inst_name.strip(LOGIC.SUBMODULE_MARKER)
     partial_inst_path = ""
-    toks = partial_inst_name.split(C_TO_LOGIC.SUBMODULE_MARKER)
+    toks = partial_inst_name.split(LOGIC.SUBMODULE_MARKER)
     for tok in toks:
         partial_inst_path += VHDL.WIRE_TO_VHDL_NAME(tok, parser_state) + "/"
     partial_inst_path = partial_inst_path.strip("/")
@@ -185,7 +185,7 @@ class AutoMultiCycleGroup:
 
     def __init__(self, key, constraint):
         self.key = key
-        self.constraint = constraint  # C_TO_LOGIC.AutoMultiCycleConstraint
+        self.constraint = constraint  # LOGIC.AutoMultiCycleConstraint
         self.paths = []  # (inst, start_reg, end_reg)
 
     def label(self):
@@ -244,7 +244,7 @@ def _DSP_IN_COMBINATIONAL_MCP(source, holder, holder_path, parser_state, tpl):
         if child is None:
             break
         relative = relative.split("/", 1)[1]
-        current += C_TO_LOGIC.SUBMODULE_MARKER + child
+        current += LOGIC.SUBMODULE_MARKER + child
     if current == holder:
         return False
     logic = parser_state.LogicInstLookupTable[current]
@@ -269,10 +269,10 @@ def CHECK_MCP_TIMING_REPORT(timing_report, parser_state, multimain_timing_params
     )
     for inst in mcp_insts:
         if top_inst is not None and inst != top_inst and not inst.startswith(
-            top_inst + C_TO_LOGIC.SUBMODULE_MARKER
+            top_inst + LOGIC.SUBMODULE_MARKER
         ):
             continue
-        root = top_inst or C_TO_LOGIC.RECURSIVE_FIND_MAIN_FUNC_FROM_INST(inst, parser_state)
+        root = top_inst or LOGIC.RECURSIVE_FIND_MAIN_FUNC_FROM_INST(inst, parser_state)
         root_logic = parser_state.LogicInstLookupTable[root]
         top_path = VHDL.GET_ENTITY_NAME(root, root_logic, tpl, parser_state)
         for tup, start, end, auto in GET_MCP_CELL_PATHS(inst, root, top_path, parser_state):
@@ -337,7 +337,7 @@ def AUTO_MULTI_CYCLE_GROUP_FOR_PATH_REPORT(
         ):
             continue
         for inst in sorted({path[0] for path in group.paths}):
-            main_func = C_TO_LOGIC.RECURSIVE_FIND_MAIN_FUNC_FROM_INST(
+            main_func = LOGIC.RECURSIVE_FIND_MAIN_FUNC_FROM_INST(
                 inst, parser_state
             )
             main_logic = parser_state.LogicInstLookupTable[main_func]
@@ -455,8 +455,8 @@ def MCP_SHAPE(group, parser_state, function_digest=None):
                 result = ("register", wire, kind)
             elif wire in logic.wire_driven_by:
                 result = ("wire", kind, wire_shape(logic.wire_driven_by[wire]))
-            elif C_TO_LOGIC.SUBMODULE_MARKER in wire:
-                local, port = wire.rsplit(C_TO_LOGIC.SUBMODULE_MARKER, 1)
+            elif LOGIC.SUBMODULE_MARKER in wire:
+                local, port = wire.rsplit(LOGIC.SUBMODULE_MARKER, 1)
                 child = logic.submodule_instances.get(local)
                 if child is None:
                     result = ("leaf", wire, kind)
@@ -468,7 +468,7 @@ def MCP_SHAPE(group, parser_state, function_digest=None):
                         port,
                         kind,
                         tuple(
-                            wire_shape(local + C_TO_LOGIC.SUBMODULE_MARKER + i)
+                            wire_shape(local + LOGIC.SUBMODULE_MARKER + i)
                             for i in inputs
                         ),
                     )
@@ -511,7 +511,7 @@ def REMEMBER_ISOLATED_REPORTS(report, parser_state, params, top_inst):
         delays = []
         for inst, start_name, end_name in group.paths:
             if inst != top_inst and not inst.startswith(
-                top_inst + C_TO_LOGIC.SUBMODULE_MARKER
+                top_inst + LOGIC.SUBMODULE_MARKER
             ):
                 continue
             for tup, start, end, auto in GET_MCP_CELL_PATHS(
@@ -601,7 +601,7 @@ def SEED_COUNTS(parser_state, params):
         raw = ISOLATED_MCP_EVIDENCE.get((key, shape))
         goals = [
             SYN.GET_TARGET_MHZ(
-                C_TO_LOGIC.RECURSIVE_FIND_MAIN_FUNC_FROM_INST(i, parser_state),
+                LOGIC.RECURSIVE_FIND_MAIN_FUNC_FROM_INST(i, parser_state),
                 parser_state,
             )
             for i, _, _ in group.paths
