@@ -61,6 +61,7 @@ class FakeLogic:
         uses_nonvolatile_state_regs=False,
         submodule_instances=None,
         is_new_style_bit_manip=False,
+        is_c_built_in=False,
     ):
         self.func_name = func_name
         self._can_have_added_latency = can_have_added_latency
@@ -69,11 +70,12 @@ class FakeLogic:
         self.submodule_instances = dict(submodule_instances or {})
         # WHY_NOT_SLICEABLE / LOGIC_IS_ZERO_DELAY mirror fields
         self.is_new_style_bit_manip = is_new_style_bit_manip
-        self.is_c_built_in = False
+        self.is_c_built_in = is_c_built_in
         self.is_clock_crossing = False
         self.is_vhdl_func = False
         self.is_vhdl_expr = False
         self.vhdl_module_text = None
+        self.state_regs = {}
 
     def CAN_HAVE_ADDED_LATENCY(self, _parser_state):
         return self._can_have_added_latency
@@ -403,11 +405,13 @@ def test_unsliceable_wrapper_defers_to_a_deeper_sliceable_func():
                 feedback_vars=["early_out_ready"],
                 is_new_style_bit_manip=True,
             ),
+            # Its built-in adder leaf is what makes it sliceable.
             FakeLogic(
                 "helper_shared",
                 can_have_added_latency=True,
-                submodule_instances={},
+                submodule_instances={"add": "BIN_OP_PLUS_uint8_t_uint8_t"},
             ),
+            FakeLogic("BIN_OP_PLUS_uint8_t_uint8_t", is_c_built_in=True),
         ],
     )
     ranked = SWEEP.RANK_PATH_FUNC_CANDIDATES(path_report, plan, ps)

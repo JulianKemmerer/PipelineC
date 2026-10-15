@@ -958,6 +958,19 @@ cast, a constant index, `Wire`/`Input`/`Output` connections, nested `@wires`, a 
 
 With the check disabled, all seven rejection cases fail.
 
+## Wiring-only leaf coverage
+
+`wiring_only_leaf_zero_delay_test.py` (`elab_introspect`) parses one small temp design
+in-process and calls `SYN.LOGIC_IS_ZERO_DELAY` on its untagged functions:
+- **Zero delay:** a sign-extension helper whose body is only a cast, and a function that
+  only returns a constant (issue #288). Neither has a submodule. Timing the first on
+  Gowin measured the register-to-register floor and let the planned sweep put a
+  bit-internal cut inside it (issue #373).
+- **Still timed:** a function with a `Reg` and no submodules, and a function with an
+  adder, along with the adder's own built-in leaf.
+
+Without the rule, both zero-delay cases fail.
+
 ## Conditional import coverage
 
 `conditional_import_test.py` (`elab_introspect`) covers design modules chosen by

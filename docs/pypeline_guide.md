@@ -5507,9 +5507,12 @@ tags do not turn an undeclared raw-VHDL pipeline into a fixed user pipeline.
 Some functions don't synthesise to any real logic — they just rearrange bits: packing a
 struct into a byte array, splitting an integer into its individual bits and wiring them
 out to separate ports, casting one same-width type to another. There's no gate delay to
-estimate for logic like that, but by default the synthesiser doesn't know that, and will
-spend time measuring or estimating a path delay through it anyway. `@wires` tells it not
-to bother — equivalent to PipelineC's `#pragma FUNC_WIRES <func_name>`.
+estimate for logic like that. A function with no registers whose body uses no operators
+at all (only casts, bit slices, concatenation, constant shifts or constants) is
+recognized as wires automatically. `@wires` states it explicitly for any function —
+equivalent to PipelineC's `#pragma FUNC_WIRES <func_name>` — so the synthesiser never
+spends time measuring or estimating a path delay through it, and elaboration checks
+the claim.
 
 ```python
 from pypeline import wires, struct, uint8_t

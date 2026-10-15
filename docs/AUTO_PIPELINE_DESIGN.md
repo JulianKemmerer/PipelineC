@@ -162,6 +162,9 @@ Registers physically exist in two forms:
    - `SPLIT_KIND_NONE` (bit-manip/cast/const-shift/const-ref): no
      stage-dependent behavior at all; in practice unreachable since
      `LOGIC_IS_ZERO_DELAY` already excludes these from ever getting cuts.
+     That includes a stateless user function with no submodules, such as a
+     helper whose body is only a cast: it is a leaf of this kind too, and is
+     never timed.
 2. **IO regs** — `_has_input_regs/_has_output_regs` add boundary registers.
    Typed `instance_input` and `instance_output` placements lower directly to
    the selected child boundary. They do not manufacture fractional cuts in

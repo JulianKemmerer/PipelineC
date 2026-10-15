@@ -158,6 +158,15 @@ def get_tests() -> list:
             cmd=[INST_DIR / "wires_contract_test.py"],
         )
     )
+    # A stateless user function with no submodules is only wiring and never
+    # timed (issue #373); one with a Reg or an operator still is.
+    tests.append(
+        Test(
+            name="wiring_only_leaf_zero_delay_test",
+            category="elab_introspect",
+            cmd=[INST_DIR / "wiring_only_leaf_zero_delay_test.py"],
+        )
+    )
     # Calls PY_TO_LOGIC.PARSE_FILE twice in one process (what the
     # AUTO_PIPELINE pin-and-confirm driver loop does) and compares the
     # resulting parser_states -- guards the sys.modules eviction and
