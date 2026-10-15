@@ -1,5 +1,8 @@
 #!/usr/bin/env python3
-"""Sky130: all-MAIN replay, cross-goal/store reuse, stale pieces and partial failure."""
+"""Sky130: all-MAIN replay, cross-goal/store reuse, stale pieces and partial failure.
+
+Measured runtime: about 14 min warm, 25 min with concurrent cold-cache builds.
+"""
 import argparse
 import json
 import os
@@ -59,15 +62,15 @@ def main():
     expect("0 new run(s)" in again and "from the store" in again, "same-goal rebuild synthesized new inputs")
     expect("AUTO_PIPELINE Pass 2" not in again, "replay needed pass 2")
     # Different out_dir, same library key/store: G1 starts G2, and beats cold G2.
-    warm, profile = build(sub("g2"), "--syn_cache", store, "-D", "LATENCY_MEMORY_GOAL=55")
+    warm, profile = build(sub("g2"), "--syn_cache", store, "-D", "LATENCY_MEMORY_GOAL=110")
     expect(f"core: starts at {depth} (latency memory (store)" in warm, "lower-goal piece was not served")
-    expect("50 MHz goal" in warm and "Replaying MAIN" not in warm, "lower goal MAIN replayed")
+    expect("100 MHz goal" in warm and "Replaying MAIN" not in warm, "lower goal MAIN replayed")
     expect(profile["entries"][0]["latency"] >= depth, "higher-goal build went below its remembered depth floor")
-    cold, _ = build(sub("g2_cold"), "--no_latency_memory", "-D", "LATENCY_MEMORY_GOAL=55")
+    cold, _ = build(sub("g2_cold"), "--no_latency_memory", "-D", "LATENCY_MEMORY_GOAL=110")
     expect(full_syntheses(warm) < full_syntheses(cold), "warm G2 did not reduce full syntheses")
     # A store containing only G2 must not seed G1.
     high_store = sub("high_store")
-    build(sub("high"), "--syn_cache", high_store, "-D", "LATENCY_MEMORY_GOAL=55")
+    build(sub("high"), "--syn_cache", high_store, "-D", "LATENCY_MEMORY_GOAL=110")
     lower, _ = build(sub("lower"), "--syn_cache", high_store)
     expect("core: starts at" not in lower and "Replaying MAIN" not in lower, "higher goal piece used at lower goal")
     before = open(os.path.join(sub("g1"), "latency_memory.json")).read()

@@ -15,6 +15,14 @@ from common import INST_DIR, Test, main
 
 def get_tests() -> list:
     tests = []
+    # Wrapper suffixes can exceed the body-name budget; select the emitted name.
+    tests.append(
+        Test(
+            name="isolated_top_name_test",
+            category="unit",
+            cmd=[INST_DIR / "isolated_top_name_test.py"],
+        )
+    )
     # Single-object factory results, callable return metadata, caches and ops bundles.
     tests.append(
         Test(
@@ -38,6 +46,23 @@ def get_tests() -> list:
             name="added_latency_context_test",
             category="unit",
             cmd=[INST_DIR / "added_latency_context_test.py"],
+        )
+    )
+    # Cold scheduling: only pipeline hierarchy, required primitives and MCP endpoints.
+    tests.append(
+        Test(
+            name="synthesis_scope_test",
+            category="unit",
+            cmd=[INST_DIR / "synthesis_scope_test.py"],
+        )
+    )
+    # Failed trims test fresh locks/MCP repairs; later opaque paths still refine.
+    # Flattened device-model paths must retain multi-MAIN timing feedback.
+    tests.append(
+        Test(
+            name="sweep_refinement_recovery_test",
+            category="unit",
+            cmd=[INST_DIR / "sweep_refinement_recovery_test.py"],
         )
     )
     # Native pipelined-region model of global wires: own-read view, delayed

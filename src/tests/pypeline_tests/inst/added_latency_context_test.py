@@ -31,7 +31,11 @@ def _state():
             if not logic.submodule_instances:
                 logic.delay = 0 if SYN.LOGIC_IS_ZERO_DELAY(logic, ps) else 10
         with patch.object(SYN, "HIER_SYN_MODE", "prim"):
-            ordered = SYN.RECURSIVE_GET_FUNCS_FOR_PATH_DELAYS(list(ps.main_mhz), ps)
+            # This placement fixture assigns modeled widths to every caller,
+            # including the deliberately blocked paths under test.
+            ordered, _, _ = SYN.COLLECT_PATH_DELAY_REQUIREMENTS(
+                ps, root_func_names=ps.FuncLogicLookupTable
+            )
         SYN.ESTIMATE_HIER_PATH_DELAYS(
             [f for f in ordered if ps.FuncLogicLookupTable[f].submodule_instances], ps, quiet=True
         )
@@ -57,7 +61,7 @@ def _under(inst, root):
 def _plans(ps):
     plans = [SWEEP.MainSweepPlan(main, 80.0) for main in sorted(ps.main_mhz)]
     for plan in plans:
-        plan.subtrees = SWEEP.COLLECT_CUT_SUBTREES(plan.main_inst, ps)
+        plan.subtrees = AP.COLLECT_CUT_SUBTREES(plan.main_inst, ps)
     return plans
 
 
@@ -152,6 +156,24 @@ def test_per_main_targets_and_all_boundary_strategies():
             assert scheduled == set(logic.submodule_instances), (holder, scheduled)
 
 
+def test_new_concrete_lock_invalidates_the_old_failing_cut_bound():
+    ps = _state()
+    plan = _plans(ps)[0]
+    plan.last_failing_total_cuts = 5
+    with patch.object(SWEEP, "DO_COARSE_THROUGHPUT_SWEEP", side_effect=_coarse), patch.object(SYN, "MEASURE_DELAYS"):
+        assert SWEEP.RUN_HOTSPOT_MINISWEEP(_func(ps, "helper"), plan, ps)
+    assert plan.locked
+    assert plan.last_failing_total_cuts is None
+
+
+def test_boundary_policy_change_invalidates_the_old_failing_cut_bound():
+    ps = _state()
+    plan = _locked_plans(ps)[0]
+    plan.last_failing_total_cuts = 5
+    assert SWEEP.SET_MINISWEEP_BOUNDARY_STRATEGY(plan, _func(ps, "helper"), "both", ps)
+    assert plan.last_failing_total_cuts is None
+
+
 def test_guards_reject_before_mutating():
     ps = _state()
     holders = _holders(ps)
@@ -242,25 +264,14 @@ def test_seeding_exact_and_renamed_paths():
 
 
 def test_holder_rebuilt_for_a_new_count_reuses_its_datapath_evidence():
-    """A cycle-count change rebuilds an AUTO_MULTI_CYCLE holder (its handshake
-    compares against .latency + 1) without changing the launch-to-capture
-    cone. WireGuard re-synthesized such holders for ~17 min per pass. With
-    isolated evidence for the same MCP_SHAPE, characterization derives the
-    per-cycle delay instead; without it, the holder is synthesized. An
-    earlier run of exactly the rebuilt holder (SYN.STORED_MEASUREMENT) beats
-    the derivation."""
+    """Count-only rebuilds reuse endpoint evidence, never a geometry scalar."""
     import pypeline
 
     synthesized = []
-    stored = set()
-
     def fake_syn(inst, logic, ps, tpl, *a, **k):
-        if logic.func_name in stored:
-            # An earlier result: read, not run
-            return SimpleNamespace(path_reports={"clk": SimpleNamespace(path_delay_ns=5.0)})
         SYN.REUSE_ONLY_MISS()  # the backend contract: a lookup never runs
         synthesized.append(logic.func_name)
-        return logic.func_name
+        return SimpleNamespace(path_reports={})
 
     def fake_measured(logic, report, ps):
         logic.delay = 50
@@ -268,12 +279,7 @@ def test_holder_rebuilt_for_a_new_count_reuses_its_datapath_evidence():
 
     def characterize(count):
         synthesized.clear()
-        # A --syn_cache store is where a fresh output directory finds an
-        # earlier run (without one, a lookup needs a log already in the
-        # function's own directory); fake_syn stands in for its contents
-        store = "<store>" if stored else None
-        with tempfile.TemporaryDirectory() as out, patch.object(SYN, "SYN_OUTPUT_DIRECTORY", out), \
-                patch.object(SYN, "SYNTHESIS_STORE_DIR", store):
+        with tempfile.TemporaryDirectory() as out, patch.object(SYN, "SYN_OUTPUT_DIRECTORY", out):
             pypeline.SET_AUTO_MULTI_CYCLE_LATENCY_CACHE({} if count is None else {key: count})
             try:
                 ps = PY_TO_LOGIC.PARSE_FILE(str(Path(__file__).with_name("added_latency_context_design.py")))
@@ -281,6 +287,7 @@ def test_holder_rebuilt_for_a_new_count_reuses_its_datapath_evidence():
                 pypeline.SET_AUTO_MULTI_CYCLE_LATENCY_CACHE({})
             with patch.object(SYN, "SYN_TOOL", SimpleNamespace(SYN_AND_REPORT_TIMING=fake_syn, __name__="FAKE")), \
                     patch.object(SYN, "PART_SET_TOOL", lambda *a, **k: None), \
+                    patch.object(SYN, "TOOL_DOES_PNR", lambda: False), \
                     patch.object(SYN, "WRITE_BLACK_BOX_FILES", lambda *a, **k: None), \
                     patch.object(SYN, "GET_CACHED_PATH_DELAY", lambda *a: None), \
                     patch.object(SYN, "GET_NUM_PROCESSES", lambda: 1), \
@@ -301,14 +308,7 @@ def test_holder_rebuilt_for_a_new_count_reuses_its_datapath_evidence():
         assert holder3.func_name != holder1.func_name  # rebuilt for the count
         assert shape3 == shape1  # same datapath cone
         assert holder3.func_name not in synthesized, synthesized
-        assert holder3.delay == int(10.0 * SYN.DELAY_UNIT_MULT), holder3.delay
-        # An earlier run of this exact holder: its measurement, not the derivation
-        stored.add(holder3.func_name)
-        _ps, holder, _shape = characterize(3)
-        stored.clear()
-        assert holder.func_name == holder3.func_name
-        assert holder.func_name not in synthesized, synthesized
-        assert holder.delay == 50, holder.delay  # fake_measured's, not 10 ns derived
+        assert holder3.delay is None  # It is outside every pipeline landscape.
         # A different shape (no evidence) is synthesized again.
         MCP.ISOLATED_MCP_EVIDENCE.clear()
         _ps, holder, _shape = characterize(3)
@@ -317,7 +317,7 @@ def test_holder_rebuilt_for_a_new_count_reuses_its_datapath_evidence():
 
 def test_jobs_cap_covers_mcp_characterization():
     """-j N bounds every synthesis pool. Pre-pipelining characterization of
-    both MCP holders and the AUTO_PIPELINE side shares one pool: -j 1 runs one
+    automatic MCP evidence and the AUTO_PIPELINE side shares one pool: -j 1 runs one
     backend process at a time, -j 3 overlaps them (so the probe can see
     concurrency). Every compiler ThreadPool is sized by GET_NUM_PROCESSES, and
     an invalid count stops pypelinec before it parses or creates anything."""
@@ -339,7 +339,7 @@ def test_jobs_cap_covers_mcp_characterization():
         time.sleep(0.05)
         with lock:
             active[0] -= 1
-        return logic.func_name
+        return SimpleNamespace(path_reports={})
 
     def fake_measured(logic, report, ps):
         logic.delay = 50
@@ -354,6 +354,7 @@ def test_jobs_cap_covers_mcp_characterization():
             ps = PY_TO_LOGIC.PARSE_FILE(str(Path(__file__).with_name("added_latency_context_design.py")))
             with patch.object(SYN, "SYN_TOOL", SimpleNamespace(SYN_AND_REPORT_TIMING=fake_syn, __name__="FAKE")), \
                     patch.object(SYN, "PART_SET_TOOL", lambda *a, **k: None), \
+                    patch.object(SYN, "TOOL_DOES_PNR", lambda: False), \
                     patch.object(SYN, "WRITE_BLACK_BOX_FILES", lambda *a, **k: None), \
                     patch.object(SYN, "GET_CACHED_PATH_DELAY", lambda *a: None), \
                     patch.object(SYN, "NUM_PROCESSES", jobs), \
@@ -363,9 +364,11 @@ def test_jobs_cap_covers_mcp_characterization():
         return ps
 
     ps = characterize(1)
-    holders = {logic.func_name for logic in _holders(ps).values()}
-    assert len(holders) == 2, holders
+    holders = {logic.func_name for logic in _holders(ps).values() if logic.auto_multi_cycle_tuples}
+    assert len(holders) == 1, holders
     assert holders <= set(synthesized), (holders, synthesized)
+    assert all(logic.func_name not in synthesized for logic in _holders(ps).values()
+               if not logic.auto_multi_cycle_tuples)
     assert len(set(synthesized) - holders) >= 2, synthesized
     assert peak[0] == 1, f"-j 1 ran {peak[0]} syntheses at once"
     characterize(3)
@@ -416,7 +419,10 @@ def test_gap_planning_and_coarse_slicing():
         assert landscape is not None
         assert all(_under(p.inst_path, tagged) for p in landscape.candidates)
         own = [seg for seg in landscape.segments if not _under(seg.inst_path, tagged)]
-        assert own and all(seg.kind == SWEEP.Segment.ATOMIC and seg.reason == "inside_state_regs_container" and seg.hard for seg in own)
+        assert own and all(seg.kind == SWEEP.Segment.ATOMIC and seg.reason == "inside_state_regs_container" for seg in own)
+        # The helper width is estimated; the primitive XOR is known. Both
+        # block placement here, but only the known width can give a hard floor.
+        assert all(seg.hard == (seg.func_name != _func(ps, "helper")) for seg in own)
         # Try all delay offsets from MAIN; bookkeeping may accumulate but no
         # physical register is allowed in the untagged bridge/helper logic.
         pm = AP.GET_ZERO_ADDED_CLKS_PIPELINE_MAP(plan.main_inst, ps.LogicInstLookupTable[plan.main_inst], ps)

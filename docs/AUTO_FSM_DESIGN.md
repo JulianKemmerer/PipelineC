@@ -412,11 +412,11 @@ driver's repeated re-elaborations, and — because the callable identity is stab
 too — reverse-lookupable in `pypeline_entity_callables` to find the delay that
 was measured for it.
 
-**It gets measured.** A generated FSM holds state, so SYN treats it as one
-atomic span and never looks inside it (`FUNC_PATH_DELAY_IS_ESTIMABLE`). That is
-right for the FSM's own fmax number and wrong for its multiplexers, so
+**It gets measured.** A generated FSM holds state, so its placement geometry
+is estimated from its children. Its operand muxes are independent scheduler
+consumers, so
 `AUTO_FSM._REGISTER_MUX_ENTITIES` and `AUTO_FSM._AUTO_FSM_MUX_ENTITIES` name these few
-entities and `ADD_PATH_DELAY_TO_LOOKUP` collects them for measurement in their
+entities and scoped characterization collects them for measurement in their
 own right. They are small — one 3-to-8-way mux per shared unit input port — so
 this is a handful of quick synthesis runs, not a meaningful build cost.
 **The entity AUTO_FSM measures is the entity AUTO_FSM instantiates.**
@@ -768,36 +768,32 @@ capped (`MAX_SCHEDULE_PASSES`).
 
 ### 3.5 Delay measurement
 
-Three hooks decide *which* functions get delays. The first two live in
-`AUTO_FSM.py` and are consulted by `SYN.py`'s delay collection
-([`SYN_DESIGN.md`](SYN_DESIGN.md#5-delay-model-leaf-only-synthesis-with-estimates));
-`DEL_AUTO_FSM_SUBTREE_CACHE` resets the first one's cache from `SYN.DEL_ALL_CACHES`.
+AUTO_FSM is an independent delay consumer in
+`SYN.COLLECT_PATH_DELAY_REQUIREMENTS`
+([SYN_DESIGN.md](SYN_DESIGN.md#5-scoped-synthesis-and-delay-estimates)).
+A stateful caller does not require a pipeline landscape for its scheduler to
+receive operation delays.
 
-- **`FUNC_SUBTREE_HAS_AUTO_FSM`**, consulted alongside
-  `AUTO_PIPELINE.FUNC_SUBTREE_HAS_AUTO_PIPELINE` in
-  `SYN.FUNC_PATH_DELAY_IS_ESTIMABLE` — a stateful container holding an AUTO_FSM
-  call site must have its subtree delays resolved. Without this, a stateful MAIN
-  with no AUTO_PIPELINE anywhere is an atomic span and *nothing inside it* is ever
-  measured, so the scheduler would see zero delays everywhere and put the whole
-  function in one state. (Only ever true on the bootstrap pass: once scheduled,
-  the tag lives on the calling function while the FSM entity below it is
-  correctly treated as an atomic span, whose one whole-module synthesis measures
-  its register-to-register path — i.e. its worst state, exactly the number
-  timing attribution needs.)
-- **`_AUTO_FSM_MUX_ENTITIES`**, folded into `SYN.ADD_PATH_DELAY_TO_LOOKUP`'s
-  list of functions to synthesize. A generated FSM is an atomic span, which is
-  right for its fmax number and wrong for its operand multiplexers, whose real
-  delay is the most load-bearing input to how finely to share. Those few
-  entities — one 3-to-8-way multiplexer per shared unit input port — are
-  therefore measured in their own right, a handful of quick runs. Each run is
-  reused whenever its inputs are identical (the output directory's logs, or
-  the `--syn_cache` store).
-- **`parser_state.func_force_estimated`** — the bootstrap passthrough looks
-  exactly like a measurement frontier (fully combinational, inside a stateful
-  caller) and would get one whole-blob synthesis of precisely the giant parallel
-  logic the user asked *not* to build. For a float64 polynomial that does not
-  finish in reasonable time. Nothing needs that number; the scheduler works from
-  the individual operations underneath, which are measured and cached as usual.
+- **Operation roots:** each `sub_inst_to_auto_fsm_key` call contributes its
+  dependency subtree. The scheduler composes measured primitive delays and
+  eligible combinational measurements. Generated stateful FSMs remain
+  estimated atomic spans; full-design reports check their real register paths.
+  Selected functional-unit entities in `tag.schedule["fus"]` also remain
+  independent roots after the FSM replaces its pure function. This calibrates
+  optimized/narrowed units before the next scheduling pass; treating them as
+  ordinary stateful surroundings can change the timing budget's inputs between
+  a tightening trial and the rebuilt schedule.
+- **`_AUTO_FSM_MUX_ENTITIES`:** registered operand muxes remain explicit
+  calibration consumers, independently of the surrounding stateful hierarchy.
+  Their reports inform schedule sharing and area search. Identical tool inputs
+  reuse output-directory or synthesis-store reports.
+- **`parser_state.func_force_estimated`:** the bootstrap passthrough resembles
+  a combinational frontier but must stay estimated. Synthesizing the giant
+  parallel body would measure hardware the scheduler was asked to share.
+  Its operation dependencies still receive calibration.
+
+`FUNC_SUBTREE_HAS_AUTO_FSM` remains available to identify scheduling hierarchy;
+`DEL_AUTO_FSM_SUBTREE_CACHE` resets its cache through `SYN.DEL_ALL_CACHES`.
 
 ### 3.6 Simulation
 
@@ -1331,8 +1327,8 @@ at least 3"*.
 | `auto_fsm_min_area_verify_test.py` | synth | the search actually MOVES on a design built to reward moving, the move is smaller in real yosys cells, and no alternative point of the search space (built via `--auto_fsm_open` / `--auto_fsm_unshare`) is smaller still |
 | `auto_fsm_real_area_compare_test.py` | build_report | same question under `--syn_tool device_models`, judged by real `Measured area:` rather than yosys cells: real-µm²-ranked vs `--auto_fsm_abstract_area` vs `--auto_fsm_no_area_sweep`, all three built; pins the 25k µm² v7 structural ceiling and beats the lowest committed AUTO_PIPELINE/latchup.app divider area; plus AUTO_FSM's own allocated-storage bit count against the build's real sequential cell count (the register-fidelity question §3.8 raises explicitly) |
 | `auto_fsm_max_latency_test.py` | synth | a meetable `max_latency` is met by unsharing; an unmeetable one fails the build naming the latency actually needed |
-| `auto_fsm_timing_iter_test.py` | build_report (sky130) | a critical path inside an FSM is found and fixed by rescheduling (`auto_fsm_timing_iter_design.py`: narrow inputs, so the states, not the input-capture fanout, set the critical path) |
-| `auto_fsm_tighten_stall_test.py` | build_report (sky130) | the other half: when rescheduling cannot move the critical path (sky130, 110 MHz, a path the state count cannot change), the driver stops after the first tightened build with no fmax gain, prints why, never produces a 0-op schedule, and exits nonzero within a timeout |
+| `auto_fsm_timing_iter_test.py` | build_report (sky130) | a critical path inside an FSM is found and fixed by rescheduling (`auto_fsm_timing_iter_design.py`: narrow inputs, so the states, not the input-capture fanout, set the critical path); checks each pass's full-design timing in sweep history |
+| `auto_fsm_tighten_stall_test.py` | build_report (sky130) | the other half: when rescheduling cannot move the critical path (sky130, 110 MHz, a path the state count cannot change), the driver stops after the first tightened build with no fmax gain in its full-design timing records, prints why, never produces a 0-op schedule, and exits nonzero within a timeout |
 | `auto_fsm_ctl_compare_test.py` | synth | the constant-table control path is not bigger than the comparator chains it replaced, and the donut FSM still meets the clock goal that v2 misses |
 | `double_parse_file_test.py` | elab | re-parsing an AUTO_FSM design is reproducible |
 

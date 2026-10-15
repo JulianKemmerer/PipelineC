@@ -222,12 +222,12 @@ parser.add_argument(
 )
 parser.add_argument(
     "--full_hier_syn",
-    help="Synthesize every level of the function hierarchy individually to collect path delays before pipelining (old behavior). Default is to only synthesize raw HDL leaf functions and estimate hierarchical function delays from their pipeline maps (with automatic fallback to real synthesis when estimates prove inaccurate).",
+    help="Measure every hierarchy level individually before pipelining instead of estimating hierarchy delays. Opaque vhdl() text still starts at zero estimated delay.",
     action="store_true",
 )
 parser.add_argument(
     "--no_hier_syn",
-    help="Opposite of --full_hier_syn: never synthesize any hierarchical module (including MAINs and stateful atomic spans) -- only true primitive leaf functions are ever synthesized. Everything else is estimated from submodule delays, unless an earlier run synthesized it (see --no_stored_measurements). Fastest possible pre-pipelining delay collection, especially with a warm cache/delay, but gives up the automatic estimate-was-inaccurate fallback to real synthesis: a stalled sweep stops at its best result instead of measuring for real.",
+    help="Estimate hierarchy delays from required primitive measurements and disable hierarchical fallback. Automatic multi-cycle and FSM decisions still receive required measurements; opaque vhdl() text starts at zero.",
     action="store_true",
 )
 parser.add_argument(

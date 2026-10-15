@@ -26,6 +26,7 @@ the worst state got shorter, the first build missed the clock while the last
 one met it, and the exit code is 0.
 """
 import argparse
+import json
 import os
 import re
 import subprocess
@@ -100,21 +101,22 @@ def main():
 
     # The point of the whole exercise: the first attempt missed the clock and a
     # later one made it, without the user changing anything.
-    checks = re.findall(
-        r"^\[sweep\] \S+ synthesized as written \(standalone check\): "
-        r"([\d.]+) MHz vs ([\d.]+) MHz goal - (PASS|FAIL)",
-        out,
-        re.M,
-    )
+    # Planless MAINs use the full-design report; no isolated MAIN run is needed.
+    with open(os.path.join(out_dir, "top", "sweep_history.json")) as f:
+        iterations = json.load(f)["mains"]["auto_fsm_timing_iter_top"]["iterations"]
+    checks = [
+        (r["achieved_mhz"], r["goal_mhz"], r["met"])
+        for r in iterations if r["action"] == "as_written"
+    ]
     if len(checks) < 2:
         fail(f"expected a timing check per pass, got {checks!r}")
-    if checks[0][2] != "FAIL":
+    if checks[0][2] is not False or checks[0][0] >= checks[0][1]:
         fail(
             f"the first (deliberately over-packed) schedule was supposed to miss "
             f"timing but passed at {checks[0][0]} MHz -- retune "
             f"START_BUDGET_SCALE or the design's clock goal"
         )
-    if checks[-1][2] != "PASS":
+    if checks[-1][2] is not True or checks[-1][0] < checks[-1][1]:
         fail(f"the final schedule still misses timing: {checks[-1]}")
     if "ERROR: TIMING NOT MET" in out:
         fail("final build still does not meet timing")

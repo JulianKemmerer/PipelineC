@@ -2,8 +2,8 @@
 # Design for sweep_planless_test.py (not registered as a test itself):
 # the MAIN is a stateful (Reg) function with no AUTO_PIPELINE regions -
 # nothing auto-pipelining can help - but unlike sweep_unpipelinable_design.py
-# the clock goal is easily met as written. The sweep must run ONE standalone
-# whole-module synthesis so the user sees the as-written PASS, without
+# the clock goal is easily met as written. The sweep must use ONE
+# full-design timing report so the user sees the as-written PASS, without
 # storing the reported critical path as the func's delay value.
 import sys, os
 

@@ -2845,6 +2845,12 @@ AUTO_COMB_AREA_OPT ignores delay; AUTO_COMB_DELAY_OPT ignores area except to bre
 `max_latency=`, while FSM accepts `max_latency=`. Default FSM area search also
 considers AUTO_COMB_AREA_OPT's choices and delay-ranked AUTO_COMB_DELAY_OPT finalists, comparing complete FSM area.
 
+By default, the compiler measures logic needed for automatic pipelining and
+multi-cycle decisions, and estimates surrounding stateful functions. Opaque
+`vhdl()` text, such as a VHDL FIFO, starts with zero estimated delay; it is
+measured separately only if a failing path needs better timing data there.
+Whole-design synthesis checks timing and fit. No extra flag is needed.
+
 Rules shared by the AUTO tags:
 
 - **Construct the tag once, eagerly, as plain Python** (at module level or at a factory
@@ -2945,7 +2951,7 @@ AUTO_PIPELINE(some_func, start_latency=2, max_latency=5)  # guess and limit toge
 - **`start_latency=S` is a starting guess.** Timing-driven implementation starts with
   `S` registers, may add more when timing fails, and may remove unnecessary registers
   after timing is met. Past the first iteration the search is the same as for an
-  untagged call site, including the measured mini-sweep of a repeated helper inside
+  AUTO_PIPELINE without a hint, including the measured mini-sweep of a repeated helper inside
   it, so a hint can save iterations but never changes where the search can go. Its bootstrap elaboration reads `.latency == S`; plain source
   simulation and non-automatic elaboration read 0 until an implemented latency is
   supplied.
@@ -2965,6 +2971,11 @@ The rules for these arguments:
     which also passes on `name=`;
   - the DSP factories (`make_fir`, `make_fir_decim`, `make_fir_interp`,
     `make_dc_block`, `make_moving_avg`, `make_magnitude`).
+
+With a clock goal, a function that can be pipelined and contains no further
+AUTO_PIPELINE calls gets its register positions planned from its own logic.
+Surrounding stateful control logic does not set those positions. A starting hint
+changes the first register count while keeping that same placement behavior.
 
 #### Naming a latency group: `name=`
 

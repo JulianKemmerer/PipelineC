@@ -354,9 +354,9 @@ synthesis tool needed. How: [VHDL_DESIGN.md](VHDL_DESIGN.md).
 The synthesis tool comes from `PART()`/`SYN_TOOL()` in the source or `--part`/
 `--syn_tool` (see [Synthesis backends and target selection](#synthesis-backends-and-target-selection)).
 With none selected, PyRTL's software delay model stands in. `pypelinec` runs the tool on
-pieces of the design to learn how long each operation takes, then on the whole design,
-and reads the achieved frequency of each clock and the slowest path from its timing
-report. Delays of built-in and library operations are cached per part and tool under
+required primitives and combinational pipeline frontiers to learn their delays,
+then on the whole design, and reads the achieved frequency of each clock and the
+slowest path from its timing report. Delays of built-in and library operations are cached per part and tool under
 `cache/delay/`, so most builds reuse earlier measurements instead of running the tool.
 `--comb` stops after one whole-design timing check, ex. for
 [counter.py](../examples/pypeline/counter.py) on the pico-ice's iCE40
@@ -407,18 +407,19 @@ registers, misses timing, and the 26-register result from iteration 3 is kept:
 **Multi-cycle paths.** The test design
 [auto_multi_cycle_sweep_design.py](../src/tests/pypeline_tests/inst/auto_multi_cycle_sweep_design.py)
 puts a 16-round add/xor mixing chain behind `make_stream_auto_multi_cycle`, with a 100 MHz
-goal on an Artix-7 with Vivado. As written the chain only reaches 17.69 MHz, so the
-multi-cycle count is raised from 1 to 6 cycles, the design is elaborated again with 6, and
-a confirmation run passes:
+goal on an Artix-7 with Vivado. The compiler measures its launch-to-capture
+path (~56.5 ns, too slow for one 10 ns cycle), raises the multi-cycle count from
+1 to 6 cycles, elaborates the design again with 6, and a confirmation run passes:
 
 ```
-[sweep] auto_multi_cycle_sweep_main synthesized as written (standalone check): 17.69 MHz vs 100.00 MHz goal - FAIL: ...
-[sweep] AUTO_MULTI_CYCLE stream.stream_multi_cycle.make_stream_auto_multi_cycle_line137_0: isolated endpoints ~56.528 ns raw; provisional seed 1->6
+Synthesizing function: func_mcp_func_pypeline_design_mix_latency_None_start_latency_None_max_latency_None_sbfe6553020cb [stream_multi_cycle.py:163] (AUTO_MULTI_CYCLE endpoint evidence)
 ...
-[sweep] AUTO_MULTI_CYCLE stream.stream_multi_cycle.make_stream_auto_multi_cycle_line137_0 (unconstrained): 6 cycle(s) constrained on 1 multi-cycle path(s)
+[sweep] AUTO_MULTI_CYCLE stream.stream_multi_cycle.make_stream_auto_multi_cycle_line145_0: isolated endpoints ~56.528 ns raw; provisional seed 1->6
+...
+[sweep] AUTO_MULTI_CYCLE stream.stream_multi_cycle.make_stream_auto_multi_cycle_line145_0 (unconstrained): 6 cycle(s) constrained on 1 multi-cycle path(s)
 ...
 ================== AUTO_PIPELINE Pass 2: Re-elaborating with Discovered Latencies ================================
-AUTO_MULTI_CYCLE stream.stream_multi_cycle.make_stream_auto_multi_cycle_line137_0: 6 cycles
+AUTO_MULTI_CYCLE stream.stream_multi_cycle.make_stream_auto_multi_cycle_line145_0: 6 cycles
 ...
 Running confirmation synthesis with pipelining pinned from the previous pass...
 ...
@@ -1139,8 +1140,8 @@ timing-params caches, etc.), instead of a freshly generated default directory.
 | *(no mode flag)* | Run the planned timing-driven pipeline sweep for each eligible `@MAIN` with a clock goal |
 | `--comb` | Keep the design combinational and run one timing characterization per clock |
 | `--no_synth` | Generate combinational HDL without invoking a synthesis backend |
-| `--full_hier_syn` | Measure every hierarchy level rather than estimating hierarchy from measured leaves |
-| `--no_hier_syn` | Measure primitive leaves only; fastest warm-cache path, but disables fallback when hierarchy estimates are inaccurate |
+| `--full_hier_syn` | Measure every hierarchy level individually instead of estimating its delay. Opaque `vhdl()` text still starts at zero. |
+| `--no_hier_syn` | Estimate hierarchy delays from primitive measurements and disable hierarchical fallback. Automatic multi-cycle and FSM decisions still receive required measurements. |
 | `--no_stored_measurements` | Estimate hierarchy delays and areas even when this `--out_dir` or the `--syn_cache` store holds an earlier synthesis of the same exact inputs (by default such a measurement replaces the estimate) |
 | `--latency_hints FILE` | Starting latencies for AUTO_PIPELINE / AUTO_MULTI_CYCLE tags, by tag key (a named tag's key is its name): a `latency_profile.json` from an earlier build, or `{"AUTO_PIPELINE": {key: N}, "AUTO_MULTI_CYCLE": {key: N}}`. Each is a start, like `start_latency=`. Repeatable; a matching remembered result takes precedence |
 | `--no_latency_memory` | Neither use nor update the results earlier builds verified (`latency_memory.json` and the `--syn_cache` store's pieces); `latency_profile.json` is still written and hints still apply |

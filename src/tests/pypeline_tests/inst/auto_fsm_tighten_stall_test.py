@@ -17,6 +17,7 @@ the message), never prints a 0-op schedule, reports the unmet goal with a
 nonzero exit, and finishes inside the subprocess timeout.
 """
 import argparse
+import json
 import os
 import re
 import subprocess
@@ -116,13 +117,14 @@ def main():
             f"expected exactly 2 schedule passes (first build, one tightened "
             f"build that shows no gain), got {len(passes)}"
         )
-    checks = re.findall(
-        r"^\[sweep\] \S+ synthesized as written \(standalone check\): "
-        r"([\d.]+) MHz vs ([\d.]+) MHz goal - (PASS|FAIL)",
-        out,
-        re.M,
-    )
-    if len(checks) != 2 or any(c[2] != "FAIL" for c in checks):
+    # Each schedule is checked in the full design, without a standalone MAIN run.
+    with open(os.path.join(out_dir, "build", "top", "sweep_history.json")) as f:
+        iterations = json.load(f)["mains"]["auto_fsm_tighten_top"]["iterations"]
+    checks = [
+        (r["achieved_mhz"], r["goal_mhz"], r["met"])
+        for r in iterations if r["action"] == "as_written"
+    ]
+    if len(checks) != 2 or any(c[2] is not False or c[0] >= c[1] for c in checks):
         fail(
             f"expected two failing timing checks (this goal is unreachable), "
             f"got {checks!r} -- if the delay model moved, retune GOAL_MHZ"

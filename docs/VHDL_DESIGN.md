@@ -190,6 +190,13 @@ nested payload/callable descriptions. Bases have a 192-character budget and comp
 identifiers a 240-character budget, with whole-token shortening and explicit naming
 digests. Timing suffixes remain separate and retain the semantics described above.
 
+Isolated wrapper names are normalized again after appending `_top`: the suffix
+can take an otherwise valid body name past the composed budget.
+`WRITE_LOGIC_TOP` uses that normalized name for the declaration, architecture
+and filename, and `GET_TOP_ENTITY_NAME` returns the same name to synthesis.
+The body entity's name is unchanged. Classic C naming remains unchanged when
+no emission registry is present.
+
 `GET_ENTITY_NAME` and `WIRE_TO_VHDL_NAME` consult the optional registry.
 `RENDER_TEXT` applies the same mapping at every VHDL file-write boundary, so record
 references, array types, conversion functions, entity ports and process-local wires

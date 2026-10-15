@@ -24,6 +24,7 @@ class FakeLogic:
         self.wire_driven_by = {}
         self.wire_drives = {}
         self.mcp_tuples = set()
+        self.vhdl_module_text = None
 
     def CAN_HAVE_ADDED_LATENCY(self, _parser_state):
         return True
@@ -37,6 +38,10 @@ class FakeParserState:
         }
         self.func_fixed_latency = {}
         self.func_marked_no_add_io_regs = set()
+        # Scripted fixtures provide complete modeled delays without characterization.
+        self.path_delay_funcs = list(self.FuncLogicLookupTable)
+        self.path_delay_measure_funcs = set(self.FuncLogicLookupTable)
+        self.path_delay_frontier_funcs = set(self.FuncLogicLookupTable)
 
 
 def _landscape():

@@ -2846,6 +2846,9 @@ class ParserState:
         # Elaborated to instances
         self.LogicInstLookupTable = {}  # dict[inst_name]=Logic()  (^ same logic object as above)
         self.FuncToInstances = {}  # dict[func_name]=set([instance, name, usages, of , func)
+        self.path_delay_funcs = None  # Full-parse delay dependencies in bottom-up order.
+        self.path_delay_measure_funcs = None  # Hierarchy eligible for geometry measurements.
+        self.path_delay_frontier_funcs = None  # Combinational geometry measurement frontiers.
 
         # Pragma info
         self.main_mhz = {}  # dict[main_inst_name]=mhz # Any inst name can be used
@@ -2913,6 +2916,9 @@ class ParserState:
             rv.LogicInstLookupTable[inst_name] = rv_func_logic
 
         rv.FuncToInstances = copy.deepcopy(self.FuncToInstances)
+        rv.path_delay_funcs = copy.deepcopy(self.path_delay_funcs)
+        rv.path_delay_measure_funcs = copy.deepcopy(self.path_delay_measure_funcs)
+        rv.path_delay_frontier_funcs = copy.deepcopy(self.path_delay_frontier_funcs)
 
         rv.existing_logic = None
         if self.existing_logic is not None:

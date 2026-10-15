@@ -1,12 +1,10 @@
 #!/usr/bin/env python3
-# Planned throughput sweep test (g): planless mains get an "as written" check.
+# Planned throughput sweep test (g): planless mains use full-design evidence.
 # Runs pypelinec on sweep_planless_design.py (a stateful MAIN with no
 # AUTO_PIPELINE regions and an easily met 1 MHz goal) and asserts:
 #  - the planning-time warning still tells the user nothing is cuttable
-#  - the main gets ONE standalone whole-module synthesis and the new
-#    "synthesized as written (standalone check) ... PASS" line
-#  - the reported critical path is NOT stored as the func's delay
-#    (no measured-delay print for the main func)
+#  - no redundant standalone whole-module synthesis is scheduled
+#  - no measured delay is assigned to the stateful main
 #  - timing is met in context: exit 0, one full-design characterization syn
 #  - sweep_history.json carries the main's final as-written verdict
 import argparse
@@ -47,16 +45,8 @@ def main():
     as_written_syns = len(
         re.findall(r"Synthesizing function: \S+ \(as-written timing check\)", out)
     )
-    if as_written_syns != 1:
-        print(f"FAIL: expected 1 as-written check synthesis, saw {as_written_syns}")
-        sys.exit(1)
-    m = re.search(
-        r"\[sweep\] sweep_planless_main synthesized as written "
-        r"\(standalone check\): \S+ MHz vs 1\.00 MHz goal - PASS",
-        out,
-    )
-    if not m:
-        print("FAIL: no as-written standalone check PASS line for the main")
+    if as_written_syns != 0:
+        print(f"FAIL: expected no standalone as-written synthesis, saw {as_written_syns}")
         sys.exit(1)
     if "Function: sweep_planless_main measured path delay" in out:
         print(
@@ -68,7 +58,7 @@ def main():
         print("FAIL: unexpected TIMING NOT MET error block")
         sys.exit(1)
     full_syn_runs = len(re.findall(r"Running syn w timing params", out))
-    if full_syn_runs > MAX_FULL_SYN_RUNS:
+    if full_syn_runs != MAX_FULL_SYN_RUNS:
         print(
             f"FAIL: {full_syn_runs} full design synthesis runs (max {MAX_FULL_SYN_RUNS}) - nothing to sweep, should characterize once and stop"
         )
@@ -88,7 +78,7 @@ def main():
     if not (
         final.get("met") is True
         and final.get("source") == "as_written"
-        and final.get("standalone_mhz")
+        and final.get("standalone_mhz") is None
         and final.get("auto_pipelined") is False
     ):
         print(f"FAIL: wrong sweep_history.json final record for the main: {final}")

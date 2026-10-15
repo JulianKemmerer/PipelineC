@@ -231,145 +231,131 @@ uses this to tell a MAIN that owns a path from one it only crosses
 ([`SWEEP_DESIGN.md` §3](SWEEP_DESIGN.md#3-the-refinement-loop)).
 
 
-## 5. Delay model: leaf-only synthesis with estimates
+## 5. Scoped synthesis and delay estimates
 
-`ADD_PATH_DELAY_TO_LOOKUP` can synthesize **every** function individually —
-adder, foo, bar, and MAIN each get a syn run — because composing delays from
-children can be too inaccurate for some designs. This mode is
-`--full_hier_syn` (`HIER_SYN_MODE == "full"`).
+`ADD_PATH_DELAY_TO_LOOKUP` resolves delays for actual planning consumers.
+The default (`HIER_SYN_MODE == "leaf"`) measures required primitives and
+combinational pipeline frontiers, then estimates inspectable surrounding
+hierarchy from its children. It does not characterize every used function.
 
-There is also a third, opposite mode: `--no_hier_syn`
-(`HIER_SYN_MODE == "prim"`) synthesizes **only** true primitive leaves (funcs
-with no submodules) and estimates every hierarchical module above them,
-including MAINs and stateful atomic spans that `"leaf"` mode would otherwise
-give one whole-module synthesis run. An earlier run of a module's exact inputs
-still replaces its estimate, since reading one synthesizes nothing
-([§6](#stored-measurements)). It also disables `MEASURE_DELAYS` for
-any hierarchical func, so the automatic "estimate proved inaccurate, measure
-for real" fallback described below never fires -- a `--no_hier_syn` sweep
-that stalls stops at its best result instead. Meant for fast iteration on
-designs where even the measurement frontier's syn runs (e.g. a slow
-combinational MAIN) are too expensive; pairs well with `--no_sweep`.
+### Consumers and caller context
 
-Note the one place `"prim"` can do *more* work than `"leaf"`: because every
-hierarchical module is now estimated, `_FUNC_NEEDS_SUBMODULE_DELAYS` must
-descend into stateful spans that `"leaf"` mode covered with a single
-whole-module run, collecting every `BIN_OP` leaf underneath them. Those leaves
-are small and disk-cacheable, but on a *cold* `cache/delay` a state-heavy
-design can trade one big synthesis run for many small ones.
+`AUTO_PIPELINE.COLLECT_CUT_SUBTREES` is shared with the sweep.
+`COLLECT_PIPELINE_DELAY_REQUIREMENTS` follows those roots with the same
+absorbing-caller rules as landscape construction: a direct AUTO_PIPELINE tag
+starts an eligible region, while an untagged helper inside a stateful caller
+cannot acquire added latency. A deeper tag permits traversal toward itself,
+not registers in intervening callers.
+Only MAINs with an active clock goal contribute unconstrained sweep roots.
+Explicit latency regions and seeds remain geometry consumers under goal-less MAINs.
+Eligible terminal AUTO_PIPELINE tags with a clock goal have their own placement
+regions even without hints. Those regions are planned and locked before their
+containing landscapes, keeping stateful surroundings out of their internal geometry.
 
-**Area rides the same leaf-synthesis path, sky130 only.** Every leaf syn run
-under `DEVICE_MODELS` measures real µm² for free from the same mapped
-netlist it already STAs, cached to `cache/area/` alongside
-`cache/delay/` (own version, so an STA-only cache bump can't invalidate it and
-vice versa). A `--no_hier_syn`
-build therefore leaves every touched leaf area-cached as a side effect, even
-though `--no_hier_syn` disables the delay estimate-vs-measure fallback.
-`SYN.WRITE_AREA_ESTIMATE_FILE` prints one `Estimated area: ...` line (cheap,
-hierarchy-summed from that cache; a function a synthesis run measured counts
-that measurement instead, see [§6](#stored-measurements)) next to the existing
-`Estimated register usage: ...` line, and any real whole-design confirmation/sweep synthesis
-additionally prints the exact `Measured area: ...` from its own mapped
-netlist. See `docs/DEVICE_MODELS_DESIGN.md`'s area section for the full
-model, its accuracy, and its known limits.
+`SYN.COLLECT_PATH_DELAY_REQUIREMENTS` returns three collections:
+`path_delay_funcs` (bottom-up dependencies), `path_delay_measure_funcs`
+(eligible combinational hierarchy), and `path_delay_frontier_funcs`
+(the outermost eligible fully combinational subtrees). `ParserState` declares
+them as `None`; only unrooted `ADD_PATH_DELAY_TO_LOOKUP` stores the full scope.
+Rooted fixed-latency characterization keeps its collections local. Measurement
+and refinement raise if the full scope is uninitialized. Collection memoizes
+instance/caller contexts, unions independent consumers, then orders dependencies
+once. The legacy recursive walk serves only explicit `--full_hier_syn`.
+These collections also
+bound fallback and hotspot delay measurements. Shared functions need one delay
+measurement when at least one call is eligible; that does not authorize added
+registers at their blocked call sites.
 
-Default (`HIER_SYN_MODE == "leaf"`): only functions whose delay *genuinely
-requires* synthesis get a run:
+A landscape needs widths for atomic surroundings as well as cuttable logic.
+Their inspectable children are collected recursively for estimates, down to
+true primitives. Entirely unrelated MAINs and controller subtrees outside
+these dependencies receive no geometry jobs. Explicit `root_func_names`
+select independent consumers for fixed-latency placement. AUTO_FSM operation
+roots and registered operand muxes are also independent consumers, even if no
+pipeline landscape enters their stateful caller. After scheduling, the selected
+functional-unit entities (`tag.schedule["fus"]`) remain explicit roots: narrowing
+can introduce different operators from the bootstrap function. Their through-delay
+measurements calibrate subsequent schedules without measuring the stateful FSM.
 
-- raw HDL leaves (adders, muxes, raw VHDL text modules, ...), heavily
-  disk-cached across builds;
-- hierarchical *comb* functions with no sliceable path to raw leaves;
-- the **measurement frontier**: topmost *fully-combinational* funcs (see
-  below).
+### Measurements and estimates
 
-**MAINs are not force-synthesized.** A fully-comb main IS the measurement
-frontier and gets measured there; a main with state anywhere below is always
-estimated — its whole-design zero-clk critical path (which includes the
-regions about to be pipelined, and internal reg-involved paths) feeds no
-planning decision, and would waste a near-whole-design syn run on a number
-that isn't the right quantity anyway (an internal critical path, not the
-input-to-output through-delay dataflow slicing geometry needs).
-`--coarse` measures its main lazily when needed (estimate used if the main
-has state below).
+The default synthesis jobs are:
 
-**Modules with Reg/Feedback state in their subtree** (recursive —
-`FUNC_SUBTREE_HAS_STATE`): a per-module synthesis run of such a module
-reports its *internal critical path* (often register-to-register, possibly
-deep inside a nested FSM) — a different quantity than the *input-to-output
-through-delay* that dataflow slicing geometry needs. Only a fully
-combinational subtree guarantees measured == through-delay. So stateful
-modules split by whether slicing descends through them
-(`FUNC_SUBTREE_HAS_AUTO_PIPELINE`):
+- **Required true primitives:** leaf operators such as adds and muxes emitted
+  by `RAW_VHDL.py`, including the operators inside generated array helpers.
+  Missing primitive measurements are collected on a cold cache.
+- **Combinational pipeline frontiers:** the largest eligible subtrees without
+  Reg/Feedback state anywhere below. Their measured through-delays calibrate
+  the relative geometry derived from children. A fully combinational MAIN can
+  itself be such a frontier.
+- **AUTO_MULTI_CYCLE endpoint evidence:** automatic holders with missing
+  evidence for their current datapath shape get a targeted report for count
+  selection. This is separate from geometry and never assigns the holder's
+  internal critical path or cycle-normalized delay to `Logic.delay`.
 
-- **on the estimate chain** (an AUTO_PIPELINE tag somewhere below — e.g. a
-  dataflow core containing tagged stream pipelines): **estimated** from
-  submodule delays, never synthesized per-module — tagging `logic.delay`
-  with an inner critical path would poison the parent landscape.
-  `MEASURE_DELAYS` also refuses to touch them.
-- **not on the chain** (plain FSMs, glue, FIFO wrappers): they are atomic
-  spans — slicing never enters, only their span *width* matters. They get
-  **one whole-module synthesis at this topmost point and nothing inside
-  them is ever synthesized or estimated** (their interior delays feed no
-  decision — synthesizing every `BIN_OP` inside an FSM would be pure
-  waste).
+Inspectable hierarchy with state anywhere below stays **estimated**, whether
+or not a pipeline tag lies inside it. Its standalone report can describe an
+internal register path rather than the input-to-output span placement needs.
+Combinational helpers blocked by their callers also stay estimated. Generated
+`VAR_REF_RD` and `VAR_REF_ASSIGN` helpers with children are hierarchy, not
+primitives: their geometry comes from their underlying muxes and operators.
 
-The design-level fmax cap stateful modules impose is real, but it shows up
-empirically in full-design timing reports (and stops the sweep via the
-empirical floor), not in the geometry model.
+Opaque user `vhdl()` text, including raw-text FIFOs, starts at **zero estimated
+delay**. It gets no standalone geometry job during initial characterization,
+even in explicit full-hierarchy mode or with an earlier cached measurement.
+This is an unknown placement width, not a claim about physical timing or
+declared pipeline latency. Its HDL and state remain in whole-design synthesis.
 
-**There are no exceptions**: nothing with state in its subtree is ever
-synthesized per-module — a subtree root like wireguard's `encrypt_dataflow`
-(Reg/Feedback in its FIFOs/interlocks) is estimated, not measured.
-Calibration comes instead from the **measurement frontier**
-(`FUNC_IS_TOPMOST_COMB`): the topmost fully-combinational funcs — the
-largest subtrees with no Reg/Feedback anywhere inside, where measured ==
-input→output through-delay *by construction* — each get one real synthesis
-run in the presynth wave. Estimates above the frontier are built from those
-measured totals (plus measured atomic spans), so first plans stay at the
-fewest-stages guess; interior comb funcs below the frontier stay estimated,
-and the landscape rescales their relative geometry into the measured
-frontier total.
+`ESTIMATE_HIER_PATH_DELAYS` composes zero-clock pipeline-map critical paths
+bottom-up and marks `delay_is_estimated`. It never writes estimates to the
+measured delay cache. A zero-only wrapper around an estimated child remains
+estimated too, so a later opaque-text measurement propagates through it.
+Usable existing measurements can replace estimates
+without new synthesis ([stored measurements](#stored-measurements)), but an
+inspectable stateful report is not usable through-delay evidence.
 
-Hierarchical functions on the pipelining path are **estimated** instead:
-`delay = zero-clk pipeline map total` (the critical topological path through
-already-known child delays), marked `logic.delay_is_estimated`, never
-written to the disk cache. That is, unless an earlier run synthesized the same
-exact inputs: that measurement is used instead, in every mode
-([§6 Stored measurements](#stored-measurements)). Estimates over-estimate badly — they can't see
-cross-boundary synthesis optimizations (wireguard: leaf-sum 1128 ns vs
-~150 ns synthesized, mostly collapsed carry chains).
+Stateful surroundings can have pessimistic estimated widths. Those widths
+guide placement; they do not establish hard timing floors. Whole-design
+synthesis checks actual state and control paths, and remains the authority
+for timing, capacity, and stopping decisions. Planless MAINs use that same
+full-design evidence instead of redundant standalone as-written checks.
 
-That inflation is why the **measurement frontier** exists: the topmost
-fully-comb funcs are measured so the estimated totals above them are
-realistic. The landscape keeps estimated geometry (*where* delay lives,
-relatively) while measured frontier totals calibrate *how many* cuts — the
-first plan is the fewest-stages guess (`~real_delay / target_period`), which
-typically just misses timing, and stages are added from synthesis feedback.
-Under-pipelining and iterating up is the default; over-pipelining to meet
-timing fast is what makes people distrust HLS tools.
+### Fallback and explicit modes
 
-**Estimates are never allowed to be why a sweep fails** (in the default
-`"leaf"` and `"full"` modes):
-- `MEASURE_DELAYS(funcs)` really synthesizes given functions and replaces
-  their estimates (invalidating stale pipeline-map caches);
-- the refinement loop calls it automatically when it runs out of ideas while
-  estimates are still in play (streamsoc: `Falling back to full hierarchy
-  synthesis: replacing 21 estimated delays with measured results...` — after
-  which sample_power's plan shrank from 25 cuts to 14 and still met timing);
-- `--full_hier_syn` forces the synthesize-everything behavior up front.
+If a default sweep stalls with eligible combinational estimates still in play,
+`MEASURE_DELAYS` replaces those estimates with real measurements, invalidates
+pipeline maps, and re-estimates their dependants. It refuses stateful hierarchy,
+blocked-only helpers, and functions outside the collected consumers. It returns
+the changed function set; only an actual model change warrants another plan.
+Hotspot characterization obeys the same eligibility rules. Opaque text is
+excluded from broad fallback and hotspot descendant calibration. A stalled
+default sweep may refine it only when a failing path's endpoint or cell names
+identify that text within the plan's geometry dependencies
+(`OPAQUE_PATH_DELAY_REFINEMENTS`). `MEASURE_DELAYS(..., refine_opaque=True)`
+then replaces its zero estimate and re-estimates ancestors. Other opaque text
+stays at zero. An internal path measured this way remains placement guidance;
+whole-design evidence still determines physical timing and stopping decisions.
+Fallback records attempted functions, so a later failing path can request a new
+opaque refinement after combinational fallback has run. Untried opaque candidates
+on the current scoped path postpone soft-floor and plateau stops until refinement
+is attempted; a no-op attempt does not add iterations.
 
-`--no_hier_syn` (`HIER_SYN_MODE == "prim"`) deliberately gives this guarantee
-up: the fallback is gated on `HIER_SYN_MODE == "leaf"` exactly, so it never
-fires in `"prim"` mode, and `MEASURE_DELAYS` itself refuses to (re-)synthesize
-any func with submodules there. A `--no_hier_syn` sweep that stalls on
-estimate-driven cut placement stops at its best result instead of measuring
-for real -- the tradeoff for never paying for a hierarchical syn run.
+`--no_hier_syn` (`"prim"`) uses the same consumers and primitive dependencies,
+but skips combinational frontier measurements and hierarchical fallback.
+Required AUTO_MCP endpoint evidence and AUTO_FSM calibration remain independent
+consumers. A stalled estimate-based sweep stops at its best measured result.
 
+`--full_hier_syn` (`"full"`) retains the broad legacy hierarchy characterization
+and standalone as-written diagnostics, with opaque text still initially zero.
+It is an explicit diagnostic mode;
+its internal-path measurements are not the default geometry policy.
 
-Two more hooks decide *which* functions get delays, for AUTO_FSM's scheduler
-(`AUTO_FSM.FUNC_SUBTREE_HAS_AUTO_FSM`, `AUTO_FSM._AUTO_FSM_MUX_ENTITIES`, and
-`parser_state.func_force_estimated`); see
-[`AUTO_FSM_DESIGN.md`](AUTO_FSM_DESIGN.md#35-delay-measurement).
+**Area rides the same primitive-synthesis path, sky130 only.** DEVICE_MODELS
+measures combinational area from the mapped netlist and caches it separately
+from delay. `WRITE_AREA_ESTIMATE_FILE` composes estimates from these results;
+whole-design synthesis prints actual mapped area. See
+[DEVICE_MODELS_DESIGN.md](DEVICE_MODELS_DESIGN.md) for the area model and limits.
+
 
 ## 6. Caches
 
@@ -529,16 +515,14 @@ several share. Examples: WireGuard's per-profile build directories, a fresh
 
 An earlier run of a function's exact inputs is a measurement, so a build uses it
 wherever it would otherwise estimate (`STORED_MEASUREMENT`):
-- **A hierarchical function's delay**, which "leaf" and "prim" mode derive from its
-  submodules (§5). Only when the run measured what the estimate stands for
-  (`STORED_DELAY_IS_USABLE`):
-  - a fully combinational subtree's run is its through delay;
-  - an atomic span's run is what "leaf" mode synthesizes anyway.
-
-  A stateful module on the estimate chain stays estimated, because its run reports an
-  internal critical path.
-- **A multi-cycle holder's per-cycle delay**, otherwise derived from isolated MCP
-  evidence (`AUTO_MULTI_CYCLE.HOLDER_DELAY_FROM_EVIDENCE`).
+- **A hierarchical function's delay**, which default and primitive-only modes
+  derive from children (§5). `STORED_DELAY_IS_USABLE` accepts through-delays of
+  fully combinational hierarchy and required primitive calibration.
+  Inspectable stateful hierarchy stays estimated: its internal critical path
+  measures a different quantity. Opaque text bypasses stored scalar delays at
+  initialization; path-directed fallback can reuse its exact synthesis inputs.
+- **AUTO_MCP endpoint evidence**, retained by datapath shape for count selection,
+  separately from scalar geometry ([AUTO_MULTI_CYCLE_DESIGN.md](AUTO_MULTI_CYCLE_DESIGN.md)).
 - **Area, sky130 only** (`MEASURED_AREA`). In `GET_ESTIMATED_COMBINATIONAL_AREA` (the
   `Estimated area:` line) and `AUTO.ESTIMATE_ENTITY_AREA` (AUTO_FSM schedule pricing):
   - a measured function counts its combinational cell area instead of its leaves' sum;
@@ -716,8 +700,8 @@ observation, `fit_status` is `unknown`.
 | `-j N` / `--jobs N` | cap synthesis runs in flight (default `config/num_processes.cfg`). Really a memory knob -- see §4 |
 | `--comb` | no pipelining; one synthesis run reporting combinational fmax per clock |
 | `--no_synth` | like `--comb`, without synthesis: just write the combinational HDL |
-| `--full_hier_syn` | synthesize every hierarchy level for path delays (no estimates) |
-| `--no_hier_syn` | opposite of `--full_hier_syn`: never synthesize any hierarchical module (incl. MAINs, stateful atomic spans) -- only true primitive leaves are synthesized, everything else estimated (or read from an earlier run, §6). Gives up the automatic estimate-was-inaccurate fallback to real synthesis. |
+| `--full_hier_syn` | synthesize every hierarchy level for path delays; opaque `vhdl()` text starts at zero estimated delay |
+| `--no_hier_syn` | Collect geometry from required primitive operators; opaque `vhdl()` text starts at zero. Skip combinational frontier measurements and hierarchical fallback. AUTO_MCP endpoint evidence and AUTO_FSM calibration remain independent consumers. Usable stored measurements can still replace estimates (§6). |
 | `--no_stored_measurements` | estimate delays and areas as if no earlier run existed: don't use an earlier synthesis of the same exact inputs from the output directory or the `--syn_cache` store in place of an estimate (§6) |
 | `--mux_delay_by_width` / `--no_mux_delay_by_width` | force width-keyed or collapsed MUX delay-cache entries |
 | `--syn_cache DIR` | share synthesis results between output directories through the store DIR (§6) |

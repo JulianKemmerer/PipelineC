@@ -130,8 +130,8 @@ def get_tests() -> list:
             needs_out_dir=True,
         )
     )
-    # Full-sweep build of stream_auto_pipeline_test.py plus assertions on the
-    # AUTO_PIPELINE .latency pin-and-confirm loop (pass 2 runs, discovers a
+    # Full-sweep stream_auto_pipeline_test.py at 100 MHz, requiring pipelining.
+    # Assert the AUTO_PIPELINE .latency pin-and-confirm loop (pass 2 discovers a
     # real >0 latency, one seeded confirmation syn passes with no fallback
     # sweep and no pass 3, harvested latency appears in sweep_history.json).
     tests.append(
@@ -142,7 +142,8 @@ def get_tests() -> list:
             needs_out_dir=True,
         )
     )
-    # Latency memory end to end (sky130, 5-13 min by cache warmth): a same-goal rebuild replays
+    # Latency memory end to end (sky130, measured 14 min warm; 25 min cold/concurrent):
+    # a same-goal rebuild replays
     # every MAIN in one store-hit confirmation; a lower-goal store piece starts
     # a higher goal in another output directory, a higher-goal one is ignored;
     # --no_latency_memory, hints, an edited callee's stale piece, and a failing

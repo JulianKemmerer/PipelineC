@@ -402,7 +402,7 @@ def test_scripted_shared_clock_freezes_unimplicated_and_skips_noops():
                     "FUNC_HAS_HIER_ALLOWING_ADDED_LATENCY_TO_RAW_VHDL",
                     lambda *a: True,
                 ),
-                (SWEEP, "COLLECT_CUT_SUBTREES", lambda m, p: [m]),
+                (AUTO_PIPELINE, "COLLECT_CUT_SUBTREES", lambda m, p: [m]),
                 (SWEEP, "BUILD_SLICE_LANDSCAPE", landscape),
                 (SWEEP, "PLAN_PIPELINE_PLACEMENTS", lambda *a, **k: ([], [])),
                 (
@@ -548,7 +548,7 @@ def test_mcp_only_confirmation_repairs_all_groups_in_one_feedback_round():
                 lambda *a: set(),
             ),
             (AUTO_PIPELINE, "WRITE_ALL_NON_ZERO_CLK_VHDL_FILES", noop),
-            (SWEEP, "COLLECT_CUT_SUBTREES", lambda *a: []),
+            (AUTO_PIPELINE, "COLLECT_CUT_SUBTREES", lambda *a: []),
             (SWEEP, "RECORD_CONFIRMATION_RESULTS", noop),
             (SWEEP, "SYNTHESIS_OBSERVATIONS", []),
             (
@@ -768,7 +768,7 @@ def _scripted_sweep_patches(backend, fresh, extra=()):
         (AUTO_PIPELINE, "WRITE_ALL_NON_ZERO_CLK_VHDL_FILES", noop),
         (AUTO_PIPELINE, "INVALIDATE_MODIFIED_INST_ANCESTOR_CACHES", lambda *a: set()),
         (AUTO_PIPELINE, "CHECK_AUTO_PIPELINE_CONSTRAINTS_REALIZED", noop),
-        (SWEEP, "COLLECT_CUT_SUBTREES", lambda m, p: [m]),
+        (AUTO_PIPELINE, "COLLECT_CUT_SUBTREES", lambda m, p: [m]),
         (SWEEP, "BUILD_SLICE_LANDSCAPE", landscape),
         (SWEEP, "PLAN_PIPELINE_PLACEMENTS", lambda *a, **k: ([], [])),
         (SWEEP, "RESOLVE_PIPELINABLE_HOTSPOT", lambda path, plan, ps: (None, None, "")),
@@ -939,7 +939,7 @@ def test_mcp_confirmation_repair_is_bounded():
             (VHDL, "WRITE_MULTIMAIN_TOP", noop),
             (AUTO_PIPELINE, "INVALIDATE_MODIFIED_INST_ANCESTOR_CACHES", lambda *a: set()),
             (AUTO_PIPELINE, "WRITE_ALL_NON_ZERO_CLK_VHDL_FILES", noop),
-            (SWEEP, "COLLECT_CUT_SUBTREES", lambda *a: []),
+            (AUTO_PIPELINE, "COLLECT_CUT_SUBTREES", lambda *a: []),
             (SWEEP, "RECORD_CONFIRMATION_RESULTS", noop),
             (SWEEP, "SYNTHESIS_OBSERVATIONS", []),
             (SWEEP, "GET_MAIN_INSTS_FOR_PATH_REPORT", lambda p, *a: {"a"}),
@@ -1196,7 +1196,7 @@ def test_pipelined_confirmation_failure_preserves_unaffected_mains():
             (AUTO_PIPELINE, "INVALIDATE_MODIFIED_INST_ANCESTOR_CACHES", lambda *a: set()),
             (AUTO_PIPELINE, "WRITE_ALL_NON_ZERO_CLK_VHDL_FILES", noop),
             # Both MAINs are pipelined (a fallback sweep can replan them)
-            (SWEEP, "COLLECT_CUT_SUBTREES", lambda m, p: [m]),
+            (AUTO_PIPELINE, "COLLECT_CUT_SUBTREES", lambda m, p: [m]),
             (SWEEP, "SUMMARIZE_SUBTREE_PIPELINE", lambda *a: (False, [], 0)),
             (SWEEP, "RECORD_CONFIRMATION_RESULTS", noop),
             (SWEEP, "SYNTHESIS_OBSERVATIONS", []),
@@ -1246,7 +1246,7 @@ def test_confirmation_skipped_when_mcp_seed_changes_consumed_count():
                 (VHDL, "WRITE_MULTIMAIN_TOP", noop),
                 (AUTO_PIPELINE, "INVALIDATE_MODIFIED_INST_ANCESTOR_CACHES", lambda *a: set()),
                 (AUTO_PIPELINE, "WRITE_ALL_NON_ZERO_CLK_VHDL_FILES", noop),
-                (SWEEP, "COLLECT_CUT_SUBTREES", lambda *a: []),
+                (AUTO_PIPELINE, "COLLECT_CUT_SUBTREES", lambda *a: []),
                 (SWEEP, "RECORD_CONFIRMATION_RESULTS", noop),
                 (SWEEP, "SYNTHESIS_OBSERVATIONS", []),
                 (SWEEP, "GET_MAIN_INSTS_FOR_PATH_REPORT", lambda p, *a: {"a"}),
@@ -1264,7 +1264,8 @@ def test_confirmation_skipped_when_mcp_seed_changes_consumed_count():
     assert run({"k": 3}) == (True, 1)
 
 
-def _run_trim_sweep(stage_delays_by_cuts, effort=2, uncut_delay=None):
+def _run_trim_sweep(stage_delays_by_cuts, effort=2, uncut_delay=None, initial_cuts=4,
+                    report_hook=None, extra_patches=()):
     """Script stage delays independently of cut count, with a second uncut
     subtree in the same MAIN. Use real path attribution over both landscapes.
     Only the planner/lowering and backend are replaced; trimming, retention,
@@ -1301,7 +1302,7 @@ def _run_trim_sweep(stage_delays_by_cuts, effort=2, uncut_delay=None):
         if view.subtree_root_inst == side:
             return [], []
         # Give the real loop distinct candidates at successively lower budgets.
-        n = max(1, min(4, round(4 * view.budget_units_for_period(10.0) / budget)))
+        n = max(0, min(initial_cuts, round(initial_cuts * view.budget_units_for_period(10.0) / budget)))
         cuts = [round(20 * (i + 1) / (n + 1)) for i in range(n)]
         return cuts, [SimpleNamespace(axis_unit=c, to_dict=lambda c=c: {"axis_unit": c}) for c in cuts]
 
@@ -1319,15 +1320,17 @@ def _run_trim_sweep(stage_delays_by_cuts, effort=2, uncut_delay=None):
         reports = [path("a", max(stage_delays_by_cuts[n]), pair="pipe/pipe_op")]
         if uncut_delay is not None:
             reports.append(path("a", uncut_delay, pair="side/side_op"))
+        if report_hook is not None:
+            report_hook(n, params_, reports)
         return reports
 
-    backend = ScriptedBackend(rule)
+    backend = ScriptedBackend(rule, multiple=report_hook is not None)
     params = SimpleNamespace(TimingParamsLookupTable=fresh(ps), auto_multi_cycle_ncycles={})
     with tempfile.TemporaryDirectory() as out, ExitStack() as stack:
         extra = [
             (SYN, "SYN_OUTPUT_DIRECTORY", out),
             (SWEEP, "PIPELINE_MIN_EFFORT", effort),
-            (SWEEP, "COLLECT_CUT_SUBTREES", lambda *a: [pipe, side]),
+            (AUTO_PIPELINE, "COLLECT_CUT_SUBTREES", lambda *a: [pipe, side]),
             (SWEEP, "BUILD_SLICE_LANDSCAPE", landscape),
             (SWEEP, "PLAN_PIPELINE_PLACEMENTS", placements),
             (SWEEP, "CHUNK_SELECTED_MUX_OUTPUT_BANKS", lambda placed, *a: placed),
@@ -1341,14 +1344,14 @@ def _run_trim_sweep(stage_delays_by_cuts, effort=2, uncut_delay=None):
             (AUTO_PIPELINE.TimingParams, "GET_TOTAL_LATENCY", lambda self, ps_, t: sum(
                 len(t[i]._slices) for i in t if i == self.inst_name or i.startswith(self.inst_name + marker))),
         ]
-        for obj, key, value in _scripted_sweep_patches(backend, fresh, extra):
+        for obj, key, value in _scripted_sweep_patches(backend, fresh, extra + list(extra_patches)):
             stack.enter_context(patch.object(obj, key, value))
         result = SWEEP.DO_PLANNED_THROUGHPUT_SWEEP(ps, params)
         signature = SWEEP.IMPLEMENTATION_SIGNATURE(ps, result)
     assert not result.sweep_timing_failures, result.sweep_timing_failures
     retained_cuts = len(result.TimingParamsLookupTable[pipe]._slices)
     # Restoration must use the actual passing implementation, not just its count.
-    assert signature == backend.calls[observed_cuts.index(retained_cuts)]
+    assert signature in [sig for n, sig in zip(observed_cuts, backend.calls) if n == retained_cuts]
     return observed_cuts, retained_cuts
 
 
@@ -1373,6 +1376,80 @@ def test_trim_failed_probe_restores_passing_implementation():
 
 def test_trim_zero_effort_accepts_first_passing_implementation():
     assert _run_trim_sweep({4: [9.95, 2, 2, 2, 2]}, effort=0) == ([4], 4)
+
+
+def test_trim_probes_removing_the_last_optional_cut():
+    stages = {1: [9.95, 2], 0: [9.95]}
+    assert _run_trim_sweep(stages, initial_cuts=1) == ([1, 0], 0)
+
+
+def test_trim_failed_zero_cut_probe_restores_the_passing_registers():
+    stages = {1: [9.95, 2], 0: [11.95]}
+    assert _run_trim_sweep(stages, initial_cuts=1) == ([1, 0], 1)
+
+
+def test_infinite_budget_needs_no_optional_cut_before_an_atomic_tail():
+    view = SWEEP.SliceLandscape("a", 20, 0.1)
+    view.segments = [
+        SWEEP.Segment("a____op", "op", 0, 10, SWEEP.Segment.SLICEABLE),
+        SWEEP.Segment("a____tail", "tail", 10, 20, SWEEP.Segment.ATOMIC),
+    ]
+    view.finalize({})
+    assert SWEEP.PLAN_CUTS(view, float("inf")) == []
+
+
+def test_infinite_budget_retains_required_placement_units():
+    view = SWEEP.SliceLandscape("a", 20, 0.1)
+    view.segments = [
+        SWEEP.Segment("a____op1", "op1", 0, 6, SWEEP.Segment.SLICEABLE_1LL),
+        SWEEP.Segment("a____op2", "op2", 6, 13, SWEEP.Segment.SLICEABLE_1LL),
+        SWEEP.Segment("a____op3", "op3", 13, 20, SWEEP.Segment.SLICEABLE_1LL),
+    ]
+    view.finalize({})
+    assert SWEEP.PLAN_CUTS(view, float("inf"), required_units={5, 12}) == [5, 12]
+
+
+def test_zero_density_trim_preserves_fixed_latency_region_count():
+    region = SimpleNamespace(constraint=SimpleNamespace(is_fixed=lambda: True, latency=2))
+    assert AUTO_PIPELINE._AUTO_PIPELINE_REGION_COUNT(region, 10.0, 1.0, zero_cut_probe=True) == (2, False)
+
+
+def test_zero_density_trim_removes_optional_region_cuts():
+    view = SWEEP.SliceLandscape("a", 20, 0.1)
+    view.segments = [SWEEP.Segment("a____op", "op", 0, 20, SWEEP.Segment.SLICEABLE)]
+    view.finalize({})
+    region = SimpleNamespace(
+        constraint=SimpleNamespace(is_fixed=lambda: False, max_latency=None),
+        landscape=view, start_pending=False, scale=1.0,
+    )
+    assert AUTO_PIPELINE._AUTO_PIPELINE_REGION_COUNT(region, 10.0, 1.0, zero_cut_probe=True) == (0, False)
+
+
+def test_unresolved_region_keeps_zero_cut_probe_during_mcp_repair():
+    from unittest.mock import patch
+
+    region = AUTO_PIPELINE.AutoPipelineRegion(
+        "a", SWEEP.LOGIC.AutoPipelineLatency(max_latency=3), None, "core"
+    )
+    region.count = 0
+    view = SWEEP.SliceLandscape("a", 20, 0.1)
+    view.segments = [SWEEP.Segment("a____op", "op", 0, 20, SWEEP.Segment.SLICEABLE)]
+    view.finalize({})
+    lowered_counts = []
+
+    def lower(region, count, ps, tpl, *args, **kwargs):
+        lowered_counts.append(count)
+        return tpl
+
+    with patch.object(SWEEP, "BUILD_SLICE_LANDSCAPE", return_value=view), patch.object(
+        AUTO_PIPELINE, "_ENFORCE_ONE_AUTO_PIPELINE_REGION", side_effect=lower
+    ):
+        AUTO_PIPELINE.ENFORCE_AUTO_PIPELINE_REGIONS(
+            [region], None, {}, period_ns=10.0, zero_cut_probe=True, unresolved=True
+        )
+    # An unrelated MCP count may need another iteration before the trim can
+    # finish. Keep testing the zero-cut implementation in that iteration.
+    assert lowered_counts == [0], lowered_counts
 
 
 def test_replayed_plan_keeps_the_landscape_its_cuts_came_from():
@@ -1459,10 +1536,11 @@ def test_fresh_concrete_candidate_is_tried_before_measured_fallback():
 
     measured = []
 
-    def measure(funcs, ps_):
+    def measure(funcs, ps_, refine_opaque=False):
         measured.append(list(funcs))
         for f in funcs:
             ps_.FuncLogicLookupTable[f].delay_is_estimated = False
+        return set(funcs)
 
     def rule(ps_, params):
         locked = len(params.TimingParamsLookupTable[child]._slices) > 0
@@ -1474,6 +1552,9 @@ def test_fresh_concrete_candidate_is_tried_before_measured_fallback():
         extra = [
             (SYN, "SYN_OUTPUT_DIRECTORY", out),
             (SYN, "MEASURE_DELAYS", measure),
+            # Scheduling policy is covered by synthesis_scope_test; this
+            # scripted fixture tests when an eligible fallback is attempted.
+            (SYN, "PATH_DELAY_IS_MEASURABLE", lambda l, ps_: l is helper),
             (SYN, "HIER_SYN_MODE", "leaf"),
             (SWEEP, "RUN_HOTSPOT_MINISWEEP", mini),
             (SWEEP, "RESOLVE_PIPELINABLE_HOTSPOT", lambda p_, plan, ps_: ("h_a", None, "")),

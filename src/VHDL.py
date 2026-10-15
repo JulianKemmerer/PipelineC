@@ -1987,10 +1987,12 @@ def WRITE_LOGIC_TOP(
         inst_name, Logic, TimingParamsLookupTable, parser_state
     )
 
-    if not is_final_top:
-        filename = entity_name + "_top.vhd"
-    else:
-        filename = Logic.func_name + ".vhd"
+    # Appending the wrapper suffix can exceed the identifier budget even
+    # when the body name fits. Select, declare and name its file consistently.
+    top_entity_name = EMITTED_NAME(
+        entity_name + "_top" if not is_final_top else Logic.func_name, parser_state
+    )
+    filename = top_entity_name + ".vhd"
 
     rv = ""
     rv += "library ieee;" + "\n"
@@ -2002,10 +2004,7 @@ def WRITE_LOGIC_TOP(
         # Include clock cross types
         rv += "use work.global_wires_pkg.all;\n"
 
-    if not is_final_top:
-        rv += "entity " + entity_name + "_top is" + "\n"
-    else:
-        rv += "entity " + Logic.func_name + " is" + "\n"
+    rv += "entity " + top_entity_name + " is" + "\n"
 
     rv += "port(" + "\n"
     rv += " clk : in std_logic;" + "\n"
@@ -2044,15 +2043,8 @@ def WRITE_LOGIC_TOP(
     rv = rv.strip("\n").strip(";")
     rv += ");" + "\n"
 
-    if not is_final_top:
-        rv += "end " + entity_name + "_top;" + "\n"
-    else:
-        rv += "end " + Logic.func_name + ";" + "\n"
-
-    if not is_final_top:
-        rv += "architecture arch of " + entity_name + "_top is" + "\n"
-    else:
-        rv += "architecture arch of " + Logic.func_name + " is" + "\n"
+    rv += "end " + top_entity_name + ";" + "\n"
+    rv += "architecture arch of " + top_entity_name + " is" + "\n"
 
     # Dont touch IO
     if not is_final_top:
@@ -6484,7 +6476,7 @@ def GET_TOP_ENTITY_NAME(
             # Entity and file name
             top_entity_name = SYN.TOP_LEVEL_MODULE + hash_ext
 
-    return top_entity_name
+    return EMITTED_NAME(top_entity_name, parser_state)
 
 
 # FUCK? Really need to pull latency calculation out of pipeline map and file names and wtf help

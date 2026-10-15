@@ -6,7 +6,7 @@ planned sweep (a static delay model, the "slice landscape", plus synthesis
 feedback attribution), the coarse sweep, the seeded confirm-or-sweep used by
 the `.latency` pin-and-confirm loop, hotspot mini-sweeps, and
 sweep_history.json. Feature-specific feedback lives with its feature:
-AUTO_PIPELINE.py (constrained regions), AUTO_MULTI_CYCLE.py (cycle counts),
+AUTO_PIPELINE.py (independent tag regions), AUTO_MULTI_CYCLE.py (cycle counts),
 AUTO_FSM.py (schedule-and-confirm).
 
 Terminology (see docs/SWEEP_DESIGN.md):
@@ -244,7 +244,8 @@ def WHY_NOT_SLICEABLE(logic, parser_state):
 # not a guaranteed fmax ceiling (the wireguard append_auth_tag case: 31 ns
 # module delay yet the design met 12.5 ns). Hard floors are pure comb spans
 # no register can ever land in (raw VHDL text leaves, comb logic trapped
-# inside a stateful container between its registers).
+# inside a stateful container between its registers). Estimated widths are
+# always soft, regardless of their reason.
 #
 # "mux_packed_bank" (a SPLIT_KIND_MUX_BITS leaf's SLICEABLE_1LL span) is
 # soft for a different reason than the others: it is not stateful, but its
@@ -1098,35 +1099,6 @@ class SliceLandscape:
         return 1000.0 / self.hard_floor_ns
 
 
-def COLLECT_CUT_SUBTREES(main_inst, parser_state):
-    """Maximal sliceable subtrees reachable from a main func: the main itself
-    if pure comb, otherwise regions reached through AUTO_PIPELINE tagged call
-    sites under stateful containers."""
-    subtrees = []
-
-    def rec(inst, logic, absorbing):
-        if absorbing and logic.CAN_HAVE_ADDED_LATENCY(parser_state):
-            if AUTO_PIPELINE.FUNC_HAS_HIER_ALLOWING_ADDED_LATENCY_TO_RAW_VHDL(
-                logic.func_name, parser_state
-            ):
-                subtrees.append(inst)
-            return
-        # Stateful container: descend only through auto-pipeline tagged paths
-        for sub_inst_local in logic.submodule_instances:
-            if logic.SUB_HAS_AUTO_PIPELINE_IN_HIER(sub_inst_local, parser_state):
-                sub_func = logic.submodule_instances[sub_inst_local]
-                sub_logic = parser_state.FuncLogicLookupTable[sub_func]
-                rec(
-                    inst + LOGIC.SUBMODULE_MARKER + sub_inst_local,
-                    sub_logic,
-                    sub_inst_local in getattr(logic, "sub_inst_to_auto_pipeline_latency", {}),
-                )
-
-    main_logic = parser_state.LogicInstLookupTable[main_inst]
-    rec(main_inst, main_logic, True)
-    return subtrees
-
-
 def BUILD_SLICE_LANDSCAPE(
     subtree_root_inst, parser_state, TimingParamsLookupTable, func_delay_scale
 ):
@@ -1312,6 +1284,10 @@ def BUILD_SLICE_LANDSCAPE(
                     child_blocker,
                 )
                 continue
+            # An estimated atomic width guides placement, but cannot prove a
+            # hard timing floor (including comb helpers in blocked callers).
+            if sub_logic.delay_is_estimated:
+                seg.hard = False
             # A scalar delay for a stateful MCP wrapper mixes cycle-normalized
             # data paths with single-cycle control. It cannot bound stage Fmax.
             seg.adjustable_mcp = any(getattr(parser_state.FuncLogicLookupTable[name], "auto_multi_cycle_tuples", None)
@@ -1558,6 +1534,10 @@ def PLAN_CUTS(landscape, budget_units, required_units=None):
                 f"Required cut unit {u} is not a legal typed placement in "
                 f"{landscape.subtree_root_inst}"
             )
+    if budget_units == math.inf:
+        # A zero-density trim probes no optional registers, including before
+        # an atomic tail. Explicit placements remain part of the contract.
+        return sorted(required_units)
     budget = max(budget_units, 0.5)
 
     cuts = _GREEDY_CUTS(landscape, budget, required_units)
@@ -3009,7 +2989,7 @@ def MAIN_PIPELINE_DEPTH(main_inst, parser_state, TimingParamsLookupTable):
     TimingParamsLookupTable. Shared by the printed depth summary and the
     sweep_history.json final record so the two can never disagree. A main
     with nothing cuttable returns no subtrees and zero slices."""
-    subtrees = COLLECT_CUT_SUBTREES(main_inst, parser_state)
+    subtrees = AUTO_PIPELINE.COLLECT_CUT_SUBTREES(main_inst, parser_state)
     if len(subtrees) == 0:
         return subtrees, 0, {}, 0
     monolithic, regions, total_stages = SUMMARIZE_SUBTREE_PIPELINE(
@@ -4908,11 +4888,12 @@ class MainSweepPlan:
         self.last_achieved_mhz = None  # most recent eval (met or not)
         self.last_worst_path = None  # path_report behind last_achieved_mhz
         self.same_mhz_count = 0
-        # Cut-count history for minimality: largest total cut count known to
-        # FAIL timing, and the total planned this iteration
+        # Minimality's failing bound counts optional cuts under the current
+        # lock/boundary policy; fixed latency regions are not trimmable.
         self.last_failing_total_cuts = None
         self.prev_total_cuts = None
         self.trim_pending = False  # probing fewer cuts after having met
+        self.zero_cut_probe = False  # omit optional cuts during a zero-cut trim
         # A failed physical schedule may have a cheaper same-depth neighbor.
         # Keep this separate from the delay-scale feedback so the neighbor is
         # synthesized before the next denser landscape plan.
@@ -4931,8 +4912,8 @@ class MainSweepPlan:
         # func auto-pipelining cannot subdivide
         self.unpipelinable_blame = None
         self.history = []  # dicts for sweep_history.json
-        # Constrained AUTO_PIPELINE regions under this main (see
-        # ENFORCE_AUTO_PIPELINE_REGIONS); empty for unconstrained designs
+        # Independent AUTO_PIPELINE regions under this main (see
+        # ENFORCE_AUTO_PIPELINE_REGIONS), including clock-driven plain tags.
         self.regions = []
         self.auto_pipeline_limit_blame = None
         # Set when an AUTO_MULTI_CYCLE multi-cycle path that can't take more cycles
@@ -5025,7 +5006,7 @@ def RANK_PATH_FUNC_CANDIDATES(path_report, plan, parser_state):
             continue
         for seg in landscape.segments:
             candidates |= seg.ancestor_funcs
-    # Constrained AUTO_PIPELINE regions are locked, so their interiors appear
+    # Independent AUTO_PIPELINE regions are locked, so their interiors appear
     # in no subtree landscape: their own landscapes supply the candidates,
     # and a region root is a meaningful attribution (the path is inside it).
     region_root_funcs = set()
@@ -5105,6 +5086,39 @@ def ATTRIBUTE_PATH_TO_FUNC(path_report, plan, parser_state):
     ranked = RANK_PATH_FUNC_CANDIDATES(path_report, plan, parser_state)
     best = ranked[0] if len(ranked) > 0 else None
     return best, _PATH_REPORT_STAGE_INFO(path_report)
+
+
+def OPAQUE_PATH_DELAY_REFINEMENTS(path_report, plan, parser_state):
+    """Zero-width text on this failing path, including omitted landscape spans.
+
+    A stalled plan may need a better width here. Unrelated opaque modules and
+    text outside this plan's geometry consumers remain at their zero estimate.
+    """
+    if SYN.HIER_SYN_MODE != "leaf":
+        return set()
+    if parser_state.path_delay_funcs is None:
+        raise RuntimeError("Initialize delay scope with ADD_PATH_DELAY_TO_LOOKUP before refinement")
+    candidates = set()
+    roots = list(plan.subtrees) + [r.inst for r in getattr(plan, "regions", ())]
+    for root in roots:
+        for func in SUBTREE_FUNCTIONS(root, parser_state):
+            logic = parser_state.FuncLogicLookupTable[func]
+            if (
+                logic.vhdl_module_text is not None
+                and logic.delay_is_estimated
+                and SYN.PATH_DELAY_IS_MEASURABLE(
+                    logic, parser_state, refine_opaque=True
+                )
+                and (
+                    ATTRIBUTION_BASIS(path_report, func) is not None
+                    or ATTRIBUTION_BASIS(
+                        path_report, VHDL.EMITTED_NAME(func, parser_state)
+                    )
+                    is not None
+                )
+            ):
+                candidates.add(func)
+    return candidates
 
 
 def WHY_HOTSPOT_NOT_PIPELINABLE(func_name, parser_state, plan=None):
@@ -5478,6 +5492,9 @@ def SET_MINISWEEP_BOUNDARY_STRATEGY(plan, hotspot_func, strategy, parser_state):
         ],
     }
     plan.mini_sweep_boundary_diagnostics[hotspot_func] = diagnostics
+    # A failing count before a new interior lock or boundary policy says
+    # nothing about the smaller residual cut count around that new hardware.
+    plan.last_failing_total_cuts = None
     return True
 
 
@@ -5999,9 +6016,15 @@ def GET_MAIN_INSTS_FOR_PATH_REPORT(path_report, parser_state, multimain_timing_p
             "Assuming all clock domains had critical paths..."
         )
         return set(all_main_insts)
-    return SYN.GET_MAIN_INSTS_FROM_PATH_REPORT(
+    main_insts = SYN.GET_MAIN_INSTS_FROM_PATH_REPORT(
         path_report, parser_state, multimain_timing_params.TimingParamsLookupTable
     )
+    # sky130 STA may report only flattened Yosys cell names ($auto/$abc).
+    # Those are real endpoints without MAIN attribution, not evidence that
+    # the path is outside every MAIN. Keep its measured failure as feedback.
+    if not main_insts and SYN.SYN_TOOL is SYN.DEVICE_MODELS:
+        return set(all_main_insts)
+    return main_insts
 
 
 def PATH_MAIN_ROLES(path_report, parser_state, multimain_timing_params):
@@ -6312,13 +6335,11 @@ def PRINT_FLOOR_REPORT(plan, parser_state):
 
 
 def RUN_AS_WRITTEN_CHECKS(goal_mains, parser_state):
-    """Planless goal-having mains (nothing auto-pipelining can help) still get
-    one standalone whole-module synthesis so the user can see whether the
-    module meets timing as written. The reported number is NOT stored as the
-    func's delay: a stateful module's report is an internal critical path,
-    not the input-to-output through-delay that estimates must use (see the
-    measurement frontier rule). Informational only - the in-context
-    full-design timing reports decide pass/fail for the build."""
+    """Optional standalone diagnostics for planless mains in full hierarchy mode.
+
+    Default sweeps use the required full-design reports for their verdicts.
+    This diagnostic never assigns the reported internal path to geometry.
+    """
     results = {}  # main inst -> standalone MHz
     if len(goal_mains) == 0:
         return results
@@ -6398,7 +6419,7 @@ def DO_PLANNED_THROUGHPUT_SWEEP(parser_state, multimain_timing_params):
         target_mhz = SYN.GET_TARGET_MHZ(main_inst, parser_state)
         if target_mhz is None:
             continue
-        subtrees = COLLECT_CUT_SUBTREES(main_inst, parser_state)
+        subtrees = AUTO_PIPELINE.COLLECT_CUT_SUBTREES(main_inst, parser_state)
         if len(subtrees) == 0:
             main_logic = parser_state.LogicInstLookupTable[main_inst]
             # A zero-delay main (FUNC_WIRES rewiring, bit manipulation, clock
@@ -6420,25 +6441,20 @@ def DO_PLANNED_THROUGHPUT_SWEEP(parser_state, multimain_timing_params):
         plan.subtrees = subtrees
         plans[main_inst] = plan
 
-    # One standalone synthesis each so the user sees whether "as written"
-    # holds - result is informational and never stored as the func's delay.
-    # --no_sweep skips this too: it is purely informational, not needed to
-    # produce the first planned guess.
-    as_written_mhz = {}
-    if not NO_SWEEP:
-        as_written_mhz = RUN_AS_WRITTEN_CHECKS(planless_goal_mains, parser_state)
+    # Full-design reports verify planless MAINs. Only explicit full-hierarchy
+    # characterization retains the additional informational standalone checks.
+    as_written_mhz = (
+        RUN_AS_WRITTEN_CHECKS(planless_goal_mains, parser_state)
+        if not NO_SWEEP and SYN.HIER_SYN_MODE == "full" else {}
+    )
 
     # NOTE on budget calibration: cut counts are anchored to reality by the
-    # "measurement frontier" in the presynth wave (SYN.FUNC_IS_TOPMOST_COMB):
-    # the topmost fully-combinational funcs get one real synthesis run each,
-    # so the estimated delays of everything above them (stateful containers,
-    # subtree roots, mains - which are NEVER synthesized per-module, their
-    # synthesized number would be an internal critical path, not an
-    # input-to-output through delay) are built from measured totals. No
-    # subtree-root synthesis happens here.
+    # eligible combinational frontiers collected in the presynth wave.
+    # Surrounding stateful hierarchy and blocked-only helpers stay estimated;
+    # no new subtree-root geometry synthesis happens here.
 
-    # Constrained AUTO_PIPELINE call sites belong to the plan of the main they
-    # sit under; those under goal-less mains are still enforced (no period).
+    # Independent AUTO_PIPELINE call sites belong to their owning MAIN's plan.
+    # Explicit constraints/seeds under goal-less MAINs still apply (no period).
     planless_regions = []
     for region in AUTO_PIPELINE.COLLECT_AUTO_PIPELINE_REGIONS(parser_state):
         owner = next(
@@ -6474,7 +6490,7 @@ def DO_PLANNED_THROUGHPUT_SWEEP(parser_state, multimain_timing_params):
     best_iter_records = None
     met_snapshot_iter_records = None
     final_iter_records = None
-    measured_fallback_done = False
+    fallback_attempted_funcs = set()  # Measurements already tried by this sweep.
     iteration = 0
     # main_inst -> (curr_mhz, met, target_mhz) for goal-having mains with no
     # plan (nothing cuttable) - their failing reports must still fail the build
@@ -6536,9 +6552,9 @@ def DO_PLANNED_THROUGHPUT_SWEEP(parser_state, multimain_timing_params):
         tpl = AUTO_PIPELINE.GET_ZERO_ADDED_CLKS_TIMING_PARAMS_LOOKUP(parser_state)
         for plan in plans.values():
             tpl = APPLY_LOCKS(plan, parser_state, tpl)
-        # Constrained AUTO_PIPELINE regions (latency= / start_latency= /
-        # max_latency=) are planned, lowered, verified and locked on their
-        # own before any containing landscape is built.
+        # Eligible clock-driven tags and explicit constrained/seeded regions
+        # are planned, lowered, verified and locked on their own before any
+        # containing landscape is built.
         try:
             for plan in plans.values():
                 if plan.regions and (plan.needs_replan or plan.trim_pending):
@@ -6549,6 +6565,7 @@ def DO_PLANNED_THROUGHPUT_SWEEP(parser_state, multimain_timing_params):
                         func_delay_scale=plan.func_delay_scale,
                         period_ns=plan.target_period_ns,
                         global_scale=plan.global_scale,
+                        zero_cut_probe=plan.zero_cut_probe,
                         unresolved=(
                             not plan.met_timing
                             and plan.stopped_reason is None
@@ -6639,6 +6656,7 @@ def DO_PLANNED_THROUGHPUT_SWEEP(parser_state, multimain_timing_params):
                     budget = (
                         landscape.budget_units_for_period(plan.target_period_ns)
                         / plan.global_scale
+                        if not plan.zero_cut_probe else math.inf
                     )
                     fixed = plan.fixed_placements.get(subtree_root, ())
                     if plan.placement_mode == "replace":
@@ -6963,6 +6981,7 @@ def DO_PLANNED_THROUGHPUT_SWEEP(parser_state, multimain_timing_params):
         # (fresh concrete lock, boundary policy, same-depth refinement): their
         # repeated MHz is not stagnation yet - that candidate is observed first.
         new_candidate_plans = set()
+        opaque_refinements = set()  # Text evidenced on failing geometry paths only.
         # main inst -> {path evidence key: failing path this MAIN only crosses}
         crossings = {}
         # plan main inst -> worst achieved/target ratio of its own paths
@@ -7063,6 +7082,7 @@ def DO_PLANNED_THROUGHPUT_SWEEP(parser_state, multimain_timing_params):
                     mcp_failed_plans.add(main_inst)
                     plan.last_achieved_mhz = curr_mhz
                     plan.trim_pending = False
+                    plan.zero_cut_probe = False
                     plan.met_timing = False
                     if changed:
                         plan.stopped_reason = None
@@ -7148,6 +7168,7 @@ def DO_PLANNED_THROUGHPUT_SWEEP(parser_state, multimain_timing_params):
                 plan.last_achieved_mhz = curr_mhz
                 plan.last_worst_path = path_report
                 plan.trim_pending = False
+                plan.zero_cut_probe = False
                 total_cuts = PLAN_TOTAL_CUTS(plan)
                 latency = tpl[main_inst].GET_TOTAL_LATENCY(parser_state, tpl)
                 deepest = GET_SUBTREE_PIPELINE_STAGES(plan, tpl, parser_state)
@@ -7163,6 +7184,11 @@ def DO_PLANNED_THROUGHPUT_SWEEP(parser_state, multimain_timing_params):
                     predicted_ns = max(predicted_ns, region.predicted_ns)
                 # Attribution sees only this MAIN's names (SCOPED_PATH_REPORT)
                 scoped_path = SCOPED_PATH_REPORT(path_report, main_inst, roles)
+                path_opaque_refinements = (
+                    OPAQUE_PATH_DELAY_REFINEMENTS(scoped_path, plan, parser_state)
+                    if not met else set()
+                )
+                opaque_refinements.update(path_opaque_refinements)
                 hotspot_func = None
                 hotspot_basis = None
                 stage_info = ""
@@ -7174,11 +7200,12 @@ def DO_PLANNED_THROUGHPUT_SWEEP(parser_state, multimain_timing_params):
                     plan.met_timing = False
                     # Record largest known-failing cut count (for minimality
                     # bisection after timing is met)
+                    failing_cuts = PLAN_TRIMMABLE_CUTS(plan)
                     if (
                         plan.last_failing_total_cuts is None
-                        or total_cuts > plan.last_failing_total_cuts
+                        or failing_cuts > plan.last_failing_total_cuts
                     ):
-                        plan.last_failing_total_cuts = total_cuts
+                        plan.last_failing_total_cuts = failing_cuts
                     # Same result twice in a row? (relative tolerance: 1% of
                     # the target - e.g. 62.92 vs 62.99 MHz IS the same result)
                     if (
@@ -7200,13 +7227,16 @@ def DO_PLANNED_THROUGHPUT_SWEEP(parser_state, multimain_timing_params):
                     # ladder's escalation - fallback, minisweep - broke
                     # identical plateaus before). Only stop at a soft floor
                     # once no estimates are in play.
-                    any_estimates_in_play = any(
+                    any_estimates_in_play = bool(
+                        path_opaque_refinements - fallback_attempted_funcs
+                    ) or any(
                         l.delay_is_estimated
-                        for l in parser_state.FuncLogicLookupTable.values()
+                        and f not in fallback_attempted_funcs
+                        and SYN.PATH_DELAY_IS_MEASURABLE(l, parser_state)
+                        for f, l in parser_state.FuncLogicLookupTable.items()
                     )
                     delays_measured = (
-                        measured_fallback_done
-                        or not any_estimates_in_play
+                        not any_estimates_in_play
                         # "prim" mode: estimates are always in play and
                         # never measured for real -- treat as if the
                         # fallback already ran so the sweep can still
@@ -7803,7 +7833,7 @@ def DO_PLANNED_THROUGHPUT_SWEEP(parser_state, multimain_timing_params):
                     ):
                         continue
                     met_cuts = PLAN_TRIMMABLE_CUTS(p)
-                    if met_cuts <= 1:
+                    if met_cuts == 0:
                         continue
                     if p.last_failing_total_cuts is None:
                         # Never seen failing - minimality unproven, probe down
@@ -7813,7 +7843,7 @@ def DO_PLANNED_THROUGHPUT_SWEEP(parser_state, multimain_timing_params):
                         desired = (met_cuts + p.last_failing_total_cuts) // 2
                     else:
                         continue  # minimal within one cut - proven
-                    if desired <= 0 or desired >= met_cuts:
+                    if desired < 0 or desired >= met_cuts:
                         continue
                     # A worst-stage measurement and a cut count do not bound
                     # timing after trimming: stages can be uneven, and the
@@ -7827,7 +7857,9 @@ def DO_PLANNED_THROUGHPUT_SWEEP(parser_state, multimain_timing_params):
                     trim_iters_used += 1
                     for p, met_cuts, desired in trim_candidates:
                         # cuts scale ~linearly with global_scale
-                        p.global_scale *= desired / float(met_cuts)
+                        p.zero_cut_probe = desired == 0
+                        if not p.zero_cut_probe:
+                            p.global_scale *= desired / float(met_cuts)
                         p.met_timing = False  # must re-prove at fewer cuts
                         p.trim_pending = True
                         print(
@@ -7839,12 +7871,14 @@ def DO_PLANNED_THROUGHPUT_SWEEP(parser_state, multimain_timing_params):
                     continue
                 print("Met timing...", flush=True)
             break
-        # A trim attempt overshot (previously-met plan now failing): restore
-        # the fewest-stage met result and finish
+        # Restore a failed trim only after testing any fresh concrete lock or
+        # refinement discovered by its feedback. Otherwise a compact measured
+        # helper can be discarded without ever reaching whole-design synthesis.
         if (
             met_snapshot_tpl is not None
             and trim_iters_used > 0
             and not auto_multi_cycle_changed
+            and not new_candidate_plans
         ):
             print(
                 f"[sweep] Trim attempt failed timing; restoring met result with {met_snapshot_cuts} cuts...",
@@ -7889,37 +7923,42 @@ def DO_PLANNED_THROUGHPUT_SWEEP(parser_state, multimain_timing_params):
             for m, p in plans.items()
         )
         if synthesis_attempts >= synthesis_budget or not made_change or fmax_stagnant:
-            # Automatic fallback: if estimates are still in play, measure for
-            # real once and keep sweeping - an estimate must never be the
-            # reason the sweep fails
-            if not measured_fallback_done and SYN.HIER_SYN_MODE == "leaf":
-                estimated_funcs = [
+            # Automatic fallback: measure eligible estimates (and opaque text
+            # on failing paths) not yet tried by this sweep, then keep
+            # sweeping - an estimate must never be the reason the sweep fails
+            if SYN.HIER_SYN_MODE == "leaf":
+                estimated_funcs = {
                     f
                     for f, l in parser_state.FuncLogicLookupTable.items()
-                    if l.delay_is_estimated
-                ]
+                    if l.delay_is_estimated and SYN.PATH_DELAY_IS_MEASURABLE(l, parser_state)
+                }
+                estimated_funcs.update(opaque_refinements)
+                estimated_funcs.difference_update(fallback_attempted_funcs)
                 if len(estimated_funcs) > 0:
                     print(
-                        "[sweep] Falling back to full hierarchy synthesis: replacing "
+                        "[sweep] Measuring eligible pipeline geometry: replacing "
                         f"{len(estimated_funcs)} estimated delays with measured results...",
                         flush=True,
                     )
-                    SYN.MEASURE_DELAYS(estimated_funcs, parser_state)
-                    measured_fallback_done = True
+                    changed = SYN.MEASURE_DELAYS(
+                        sorted(estimated_funcs), parser_state,
+                        refine_opaque=bool(opaque_refinements),
+                    )
+                    fallback_attempted_funcs.update(estimated_funcs)
                     # Fresh signal: the delay model changed, stagnation
                     # bookkeeping no longer applies. plateau_window_start is
                     # deliberately kept: already-synthesized fmax results
                     # are real regardless of the model that planned them.
-                    for p in plans.values():
-                        p.same_mhz_count = 0
-                        p.last_mhz = None
-                    # Grant at least two more iterations to replan with the
-                    # measured (no longer estimated) delays
-                    synthesis_budget = max(synthesis_budget, synthesis_attempts + 2)
-                    continue
+                    if changed:
+                        for p in plans.values():
+                            p.same_mhz_count = 0
+                            p.last_mhz = None
+                        # An actual model change warrants another plan.
+                        synthesis_budget = max(synthesis_budget, synthesis_attempts + 2)
+                        continue
             if not (synthesis_attempts >= synthesis_budget or not made_change):
-                # Only stagnation brought us here and the fallback already
-                # ran - keep iterating within the normal budget
+                # Only stagnation brought us here and no untried measurement
+                # remains - keep iterating within the normal budget
                 continue
             for plan in plans.values():
                 if not plan.met_timing and plan.stopped_reason is None:
@@ -8208,7 +8247,7 @@ def DO_SEEDED_CONFIRM_OR_SWEEP(parser_state, multimain_timing_params):
         main_logic = parser_state.LogicInstLookupTable[main_inst]
         if SYN.LOGIC_IS_ZERO_DELAY(main_logic, parser_state, allow_none_delay=True):
             continue
-        subtrees = COLLECT_CUT_SUBTREES(main_inst, parser_state)
+        subtrees = AUTO_PIPELINE.COLLECT_CUT_SUBTREES(main_inst, parser_state)
         if len(subtrees) == 0:
             continue
         _monolithic, _regions, total_stages = SUMMARIZE_SUBTREE_PIPELINE(
@@ -8305,7 +8344,7 @@ def DO_SEEDED_CONFIRM_OR_SWEEP(parser_state, multimain_timing_params):
         return multimain_timing_params, True
     if not failed_non_mcp:
         return multimain_timing_params, False
-    if not any(COLLECT_CUT_SUBTREES(m, parser_state) for m in failed_non_mcp):
+    if not any(AUTO_PIPELINE.COLLECT_CUT_SUBTREES(m, parser_state) for m in failed_non_mcp):
         # Only MAINs with nothing auto-pipelining can change failed: a
         # fallback sweep could not change their paths either
         print(

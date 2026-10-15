@@ -43,6 +43,7 @@ more small modules (one per lookup table) than v2 -- so leaving it in would
 report a design that got smaller as if it had grown.
 """
 import argparse
+import json
 import os
 import re
 import subprocess
@@ -160,15 +161,15 @@ def check_timing(base):
         os.path.join(base, "donut_v3"),
         ["--auto_fsm_ctl", "v3"],
     )
-    m = re.search(
-        r"synthesized as written \(standalone check\): "
-        r"([\d.]+) MHz vs ([\d.]+) MHz goal - (PASS|FAIL)",
-        out,
-    )
-    if not m:
+    history_paths = re.findall(r"^\[sweep\] History: (.+)$", out, re.M)
+    if not history_paths:
         print(out[-4000:])
-        fail("the donut build did not report an as-written timing check")
-    got, goal, verdict = float(m.group(1)), float(m.group(2)), m.group(3)
+        fail("the donut build did not report its full-design sweep history")
+    with open(history_paths[-1]) as f:
+        main = json.load(f)["mains"]["auto_fsm_donut_update"]
+    final = main["final"]
+    got, goal = final["achieved_mhz"], main["goal_mhz"]
+    verdict = "PASS" if final["met"] is True else "FAIL"
     print()
     print("=== AUTO_FSM control path (vga donut update, at its clock goal) ===")
     print(f"  v3: {got:.2f} MHz vs {goal:.2f} MHz goal - {verdict}")

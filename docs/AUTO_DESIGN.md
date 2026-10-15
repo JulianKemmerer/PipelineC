@@ -134,6 +134,8 @@ cache ever sees. `_mux_delay_du` prices an n-way operand mux: measured when the
 mux entity exists (`_mux_callable` / `_mux_entity`,
 `include/pypeline/operators/auto_fsm_mux.py`), else a measurement remembered
 from an earlier pass, else `MUX_BASE_DU + MUX_PER_LEVEL_DU * ceil(log2 n)`.
+The current pass's mux measurements are explicit AUTO_FSM consumers collected
+by `SYN.COLLECT_PATH_DELAY_REQUIREMENTS`, independently of stateful callers.
 
 **`TimingModel`** is the read-only timing objective for whole graphs. It walks
 longest dependency paths — serial operations add, parallel branches take the

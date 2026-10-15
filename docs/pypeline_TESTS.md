@@ -313,7 +313,12 @@ stage delays: a smaller pipeline can pass despite little timing margin when
 stages are uneven or the worst path is in an unchanged subtree. The tests also
 verify the probe budget, zero-effort behavior, and restoration of the actual
 passing implementation after a failed probe. A cut-count ratio is not a
-frequency bound. It also reparses a real latency-sized hierarchy with renamed
+frequency bound. The tests include removing the last optional cut, restoring
+the passing registers after a failed zero-cut probe, retaining required
+placements and fixed region counts during explicit zero-cut probes, and clearing obsolete
+failure bounds when helper locks or boundary policies change. Zero-cut probes
+also remain unchanged while independent MCP feedback repairs cycle counts.
+It also reparses a real latency-sized hierarchy with renamed
 callers and additional replicas: every core must keep the same concrete timing
 parameters, entity hash and depth. Its reporting cases keep estimated ceilings
 distinct from timing verdicts and aggregate confirmation paths once per MAIN.
@@ -321,6 +326,45 @@ The capacity case includes the verbatim WireGuard warning: 960 DSPs requested,
 740 available, while the mapped table caps at 740.
 `floor_and_bits_cap_unit_test.py` requires path evidence before a hard-floor
 stop.
+
+`synthesis_scope_test.py` (`unit`) elaborates `synthesis_scope_design.py` with a
+cold mocked backend and runs no vendor tools. It checks required primitive
+dependencies, zero initial opaque-text delays without cached scalar lookups,
+path-directed opaque fallback, estimated generated bank helpers and stateful
+surroundings, shared eligible/blocked callers, combinational MAIN frontiers,
+goal-less combinational MAINs and unseeded tags without jobs, goal-less fixed
+latency consumers, independent unseeded clock-driven tag regions, actual tag
+placements unchanged when surrounding stateful estimates change,
+scoped fallback and no-op fallback, estimated atomic floors, separate automatic
+MCP endpoint evidence, and explicit primitive-only/full-hierarchy modes.
+It also checks declared scope initialization, an error before initialization,
+rooted fixed-latency characterization preserving full-parse scope, and independent
+scope collections in a copied ParserState. A scheduled AUTO_FSM's selected
+functional units remain independent delay consumers after replacing the original
+function, including optimized operations absent from the bootstrap circuit.
+
+`sweep_refinement_recovery_test.py` (`unit`) uses the real sweep feedback and
+fallback loop with scripted timing. A failed zero-cut trim concurrent with MCP
+count repair must return to positive cuts without repeating the zero-cut
+implementation. A later opaque failing path must be measured after combinational
+fallback, before a floor/plateau or iteration-limit stop can discard that refinement.
+A newly measured helper lock discovered during a failed trim must reach whole-design
+synthesis before restoration. Flattened sky130 endpoints must still implicate MAINs;
+an unmatched cell name must not silently turn a measured timing failure into success.
+
+`sweep_planless_test.py` and `sweep_unpipelinable_test.py` (`build_report`) check
+met and unmet goals on stateful MAINs with nothing to pipeline. Both require
+one full-design synthesis and no redundant standalone as-written job. Their
+final history records agree with the full-design timing and exit status;
+`standalone_mhz` remains null by default.
+
+`isolated_top_name_test.py` (`unit`) checks that the backend's selected
+isolated top, emitted filename and actual entity declaration agree after
+emission naming, including when appending `_top` exceeds the body-name budget.
+It uses `isolated_top_name_design.py` and writes a real wrapper without vendor
+tools. The wrapper suffix is normalized before choosing either the file or
+synthesis top, preventing `Synth 8-439: module ... not found` on long bank
+helpers and enum comparators.
 
 `sweep_cross_main_test.py` (`unit`) covers multi-MAIN feedback. Its evidence is
 the real clock-worst path of the WireGuard shared 70 MHz build: a testbench
@@ -352,9 +396,10 @@ FSMs.
 `added_latency_context_test.py` also runs path-delay characterization on two
 real parses at different AUTO_MULTI_CYCLE counts: the rebuilt holder keeps its
 `MCP_SHAPE` and reuses isolated evidence instead of being synthesized, while a
-holder without evidence is synthesized. The same characterization, with a
-fake backend that counts concurrent runs, checks the `-j` cap: both MCP
-holders and the AUTO_PIPELINE side go through one pool, `-j 1` never runs two
+holder without matching endpoint evidence is synthesized. Fixed-count holders receive
+no isolated count-selection job. The same characterization, with a
+fake backend that counts concurrent runs, checks the `-j` cap: automatic endpoint evidence
+and the AUTO_PIPELINE side go through one pool, `-j 1` never runs two
 at once and `-j 3` does overlap. It also requires every compiler `ThreadPool`
 to be sized by `SYN.GET_NUM_PROCESSES()`, and `--jobs 0` / `--jobs -2` to exit
 before parsing or creating the output directory.
@@ -537,8 +582,9 @@ from a different angle:
   (`auto_pipeline_region_minisweep_design.py`: quarter rounds written in series on a
   shared state, each word through only two of them) is built untagged and with
   `start_latency=1`. Both must mini-sweep and lock the repeated `step` helper and
-  build the same depth in at most 3 syntheses. Before the fix, the hinted build
-  reached twice the depth in 5.
+  build the same depth in at most five whole-design checks, including two optional
+  trim probes. Final history must retain all six locks and a measured passing
+  frequency. Before the fix, the hinted build reached twice the depth in five.
 - `auto_pipeline_c_pragma_test.py` (build_report_device_models): C `#pragma AUTOPIPELINE N` under
   `--comb`.
 - `self_check_fixed_auto_pipeline_test.py` (both native_vs_vhdl categories): compares
@@ -574,6 +620,9 @@ The latency memory and `--latency_hints` (see
   - an AUTO_MULTI_CYCLE whose datapath size depends on an AUTO_PIPELINE depth
     resolves in two memory re-parses.
 - **`latency_memory_build_test.py` (build_report_device_models, sky130):**
+  the stream fixture uses 100 and 110 MHz goals so the cold build must pipeline
+  the core and resize its latency-dependent FIFO. Measured runtime is about
+  14 minutes warm, 25 minutes alongside concurrent cold-cache builds;
   1. a same-goal rebuild replays every MAIN in one confirmation, with no new
      syntheses and no pass 2;
   2. a lower-goal piece from the store starts a higher-goal build in another output
@@ -837,7 +886,8 @@ The remaining global wire tests:
   own wire before and after writing it. Native sim used to refuse two written wires,
   and its write collector read stale values.
 - `global_wire_pipeline_instance_test` (`build_report_device_models`, needs GHDL):
-  - The cocotb/GHDL self-check of `global_wire_pipeline_instance_design.py` shows
+  - Fixed-latency placement selects `device_models` explicitly. The cocotb/GHDL
+    self-check of `global_wire_pipeline_instance_design.py` shows
     per-instance timing: a helper at stage 0 and at stage 2 sees `g` from different
     cycles, a `VOLATILE` read happens at its consumer's stage, and a `VOLATILE` write
     is driven immediately.

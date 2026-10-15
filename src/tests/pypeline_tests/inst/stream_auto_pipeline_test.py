@@ -16,7 +16,7 @@ sys.path.insert(
         "pypeline",
     ),
 )
-from pypeline import MAIN, hw_func, uint1_t, uint8_t, sim_call, sim_reset
+from pypeline import MAIN, hw_func, param, uint1_t, uint8_t, sim_call, sim_reset
 
 from stream.stream import make_stream_interface
 from stream.stream_auto_pipeline import make_stream_auto_pipeline
@@ -31,7 +31,7 @@ uint8_stream_intrf = make_stream_interface(uint8_t)
 stream_auto_pipeline = make_stream_auto_pipeline(div_inv)
 
 
-@MAIN(50.0)
+@MAIN(param("STREAM_AUTO_PIPELINE_TEST_MHZ", 50.0, type=float))
 def stream_auto_pipeline_test_top(
     stream_in_if: uint8_stream_intrf.fwd_t, stream_out_if: uint8_stream_intrf.fb_t
 ) -> stream_auto_pipeline.return_t:

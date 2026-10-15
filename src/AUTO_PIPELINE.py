@@ -3688,6 +3688,99 @@ def BUILD_AND_WRITE_COARSE_SLICED_TIMING_PARAMS(
     return TimingParamsLookupTable
 
 
+def COLLECT_CUT_SUBTREES(main_inst, parser_state):
+    """Maximal subtrees whose callers can absorb compiler-added latency."""
+    subtrees = []
+
+    def rec(inst, logic, absorbing):
+        if absorbing and logic.CAN_HAVE_ADDED_LATENCY(parser_state):
+            if FUNC_HAS_HIER_ALLOWING_ADDED_LATENCY_TO_RAW_VHDL(
+                logic.func_name, parser_state
+            ):
+                subtrees.append(inst)
+            return
+        for local, func in logic.submodule_instances.items():
+            if logic.SUB_HAS_AUTO_PIPELINE_IN_HIER(local, parser_state):
+                rec(
+                    inst + LOGIC.SUBMODULE_MARKER + local,
+                    parser_state.FuncLogicLookupTable[func],
+                    local in logic.sub_inst_to_auto_pipeline_latency,
+                )
+
+    rec(main_inst, parser_state.LogicInstLookupTable[main_inst], True)
+    return subtrees
+
+
+def COLLECT_PIPELINE_DELAY_REQUIREMENTS(parser_state, root_func_names=None):
+    """Geometry dependency roots, measurable hierarchy, and its frontier sets.
+
+    Atomic surroundings need estimates, not standalone hierarchy measurements.
+    Their primitive dependencies are included without authorizing added latency.
+    Explicit roots are independent consumers (fixed-latency regions or AUTO_FSM).
+    """
+    needed, eligible, frontier = set(), set(), set()
+    visited = set()
+
+    def rec(inst, absorbing, is_root=False, parent_has_state=False):
+        logic = parser_state.LogicInstLookupTable[inst]
+        needed.add(logic.func_name)
+        needed.update(logic.submodule_instances.values())
+        has_state = SYN.FUNC_SUBTREE_HAS_STATE(logic.func_name, parser_state)
+        if absorbing and not has_state:
+            eligible.add(logic.func_name)
+            if is_root or parent_has_state:
+                frontier.add(logic.func_name)
+        context = (inst, absorbing)
+        if context in visited:
+            return
+        visited.add(context)
+        for local, func in logic.submodule_instances.items():
+            child = parser_state.FuncLogicLookupTable[func]
+            if SYN.LOGIC_IS_ZERO_DELAY(child, parser_state, allow_none_delay=True):
+                continue
+            can = child.CAN_HAVE_ADDED_LATENCY(parser_state)
+            tagged = local in logic.sub_inst_to_auto_pipeline_latency
+            child_absorbing = can and (absorbing or tagged)
+            child_inst = inst + LOGIC.SUBMODULE_MARKER + local
+            if child_absorbing and not SYN.FUNC_SUBTREE_HAS_STATE(func, parser_state):
+                eligible.add(func)
+                if has_state:
+                    frontier.add(func)
+            if (
+                child.submodule_instances
+                and child.vhdl_module_text is None
+                and (
+                    logic.SUB_HAS_AUTO_PIPELINE_IN_HIER(local, parser_state)
+                    or (absorbing and can)
+                )
+            ):
+                rec(child_inst, child_absorbing, parent_has_state=has_state)
+
+    if root_func_names is None:
+        for main in parser_state.main_mhz:
+            if SYN.GET_TARGET_MHZ(main, parser_state, allow_no_syn_tool=True) is None:
+                continue
+            for inst in COLLECT_CUT_SUBTREES(main, parser_state):
+                rec(inst, ADDED_LATENCY_BLOCKER(inst, parser_state) is None, True)
+        # Goal-less MAINs still enforce explicit latency constraints and seeds.
+        for region in COLLECT_AUTO_PIPELINE_REGIONS(parser_state):
+            rec(region.inst, ADDED_LATENCY_BLOCKER(region.inst, parser_state) is None, True)
+    else:
+        for func in sorted(root_func_names):
+            instances = parser_state.FuncToInstances.get(func, ())
+            if instances:
+                inst = sorted(instances)[0]
+                rec(
+                    inst,
+                    parser_state.LogicInstLookupTable[inst].CAN_HAVE_ADDED_LATENCY(
+                        parser_state
+                    ),
+                    True,
+                )
+
+    return needed, eligible, frontier
+
+
 def FUNC_HAS_HIER_ALLOWING_ADDED_LATENCY_TO_RAW_VHDL(func_name, parser_state):
     # Immediate yes if is raw HDL with no submodules and is sliceable, has delay
     func_logic = parser_state.FuncLogicLookupTable[func_name]
@@ -3994,9 +4087,10 @@ def WRITE_0_ADDED_CLKS_INIT_FILES(parser_state):
 
 
 # ─────────────────────────────────────────────
-# Constrained AUTO_PIPELINE regions (latency= / start_latency= / max_latency=)
+# Independent AUTO_PIPELINE placement regions
 #
-# Each constrained call site is a cut subtree of its own. The sweep's planner
+# Each eligible terminal tag with a clock goal, and each constrained/seeded
+# call site, is a placement domain of its own. The sweep's planner
 # (SWEEP.py) plans its cuts like any other subtree; the functions here enforce
 # the call site's count on that plan, feed timing failures back to the region,
 # and snapshot/restore region state with the sweep's best/met results.
@@ -4013,7 +4107,7 @@ class AutoPipelineLatencyInfeasible(Exception):
 
 
 class AutoPipelineRegion:
-    """One instance of a constrained AUTO_PIPELINE call site.
+    """One independently planned AUTO_PIPELINE call site.
 
     The region is latency-decoupled from its container (GET_SUBMODULE_LATENCY
     reports tagged instances as 0), so it is planned on its own landscape,
@@ -4061,21 +4155,28 @@ class AutoPipelineRegion:
 
 
 def COLLECT_AUTO_PIPELINE_REGIONS(parser_state, scope_inst=None, fixed_only=False):
-    """Every instance of a constrained AUTO_PIPELINE call site (optionally only
-    those at/under scope_inst, or only fixed latency=N ones), sorted. A tag
-    with a starting latency from a hint or the latency memory is a start-only
-    region too (AutoPipelineLatency.is_region). Empty for designs with neither,
-    which keeps every region code path off."""
+    """Independent AUTO_PIPELINE placement domains, sorted by instance.
+
+    Explicit constraints/seeds always contribute. Eligible terminal tags also
+    contribute under a MAIN with a clock goal, even without a starting hint:
+    surrounding stateful geometry must not choose their internal registers.
+    """
     marker = LOGIC.SUBMODULE_MARKER
     regions = []
     for inst_name in sorted(parser_state.LogicInstLookupTable):
         logic = parser_state.LogicInstLookupTable[inst_name]
         for local_sub in sorted(logic.sub_inst_to_auto_pipeline_latency):
             constraint = logic.sub_inst_to_auto_pipeline_latency[local_sub]
-            if constraint is None or not constraint.is_region():
+            if constraint is None:
                 continue
             if fixed_only and not constraint.is_fixed():
                 continue
+            if not constraint.is_region():
+                main = inst_name.split(marker, 1)[0]
+                if main not in parser_state.main_mhz or SYN.GET_TARGET_MHZ(
+                    main, parser_state, allow_no_syn_tool=True
+                ) is None:
+                    continue
             sub_inst = inst_name + marker + local_sub
             sub_logic = parser_state.LogicInstLookupTable.get(sub_inst)
             if sub_logic is None:
@@ -4084,10 +4185,8 @@ def COLLECT_AUTO_PIPELINE_REGIONS(parser_state, scope_inst=None, fixed_only=Fals
                 sub_logic.CAN_HAVE_ADDED_LATENCY(parser_state)
                 and not FUNC_SUBTREE_HAS_AUTO_PIPELINE(sub_logic.func_name, parser_state)
             ):
-                # Only a seed made this a region: a callee that can't take
-                # registers, or holds another AUTO_PIPELINE (which a constrained
-                # call site may not, see PY_TO_LOGIC's constraint validation),
-                # stays as unconstrained as its source says
+                # Such a callee cannot be an independent sliceable region.
+                # Keep traversing toward its eligible inner tags instead.
                 continue
             if scope_inst is not None and not (
                 sub_inst == scope_inst or sub_inst.startswith(scope_inst + marker)
@@ -4226,7 +4325,7 @@ def AUTO_PIPELINE_LATENCY_INFEASIBLE_MESSAGE(region, realized, tried, parser_sta
     )
 
 
-def _AUTO_PIPELINE_REGION_COUNT(region, period_ns, global_scale):
+def _AUTO_PIPELINE_REGION_COUNT(region, period_ns, global_scale, zero_cut_probe=False):
     """(register count to plan, calibrate region.scale to it?) before nudges."""
     import SWEEP
 
@@ -4251,9 +4350,12 @@ def _AUTO_PIPELINE_REGION_COUNT(region, period_ns, global_scale):
         count = constraint.start()
         calibrate = True
     else:
-        budget = region.landscape.budget_units_for_period(period_ns) / (
-            global_scale * region.scale
-        )
+        if zero_cut_probe:
+            budget = math.inf
+        else:
+            budget = region.landscape.budget_units_for_period(period_ns) / (
+                global_scale * region.scale
+            )
         count = len(SWEEP.PLAN_PIPELINE_PLACEMENTS(region.landscape, budget)[0])
         calibrate = False
     if cap is not None and count > cap:
@@ -4376,8 +4478,9 @@ def ENFORCE_AUTO_PIPELINE_REGIONS(
     global_scale=1.0,
     unresolved=False,
     trim_pending=False,
+    zero_cut_probe=False,
 ):
-    """Plan, lower, verify and lock every constrained AUTO_PIPELINE region.
+    """Plan, lower, verify and lock every independent AUTO_PIPELINE region.
 
     Register count per region group:
       - latency=N: N, always;
@@ -4414,11 +4517,13 @@ def ENFORCE_AUTO_PIPELINE_REGIONS(
                 region.inst, parser_state, tpl, func_delay_scale
             )
         count, calibrate = _AUTO_PIPELINE_REGION_COUNT(
-            members[0], period_ns, global_scale
+            members[0], period_ns, global_scale, zero_cut_probe
         )
         decisions.append([members, count, calibrate])
     unchanged = all(d[0][0].count is not None and d[0][0].count == d[1] for d in decisions)
-    if unchanged and (unresolved or trim_pending):
+    if unchanged and (unresolved or trim_pending) and not zero_cut_probe:
+        # A zero-cut probe keeps its planned count: do not add an unsolicited
+        # register or calibrate a positive count against an infinite budget.
         if trim_pending:
             movable = [
                 d
@@ -4508,7 +4613,7 @@ def PLAN_REGION_CUTS(plan):
 
 
 def REGION_FOR_HOTSPOT(hotspot_func, plan, parser_state):
-    """The constrained region group every in-plan instance of hotspot_func
+    """The region group every in-plan instance of hotspot_func
     lies inside, else None."""
     if not plan.regions:
         return None

@@ -2,6 +2,7 @@
 # AUTO_PIPELINE .latency pin-and-confirm end-to-end test.
 # Runs pypelinec (full sweep, no --comb) on stream_auto_pipeline_test.py -- whose
 # make_stream_auto_pipeline reads AUTO_PIPELINE(...).latency to size its FIFO --
+# at 100 MHz, above its measured unpipelined ~58 MHz, so latency must change,
 # and asserts the driver's pin-and-confirm loop:
 #  - pass 1 discovers a real (>0) latency for the AUTO_PIPELINE'd core
 #  - pass 2 re-elaborates with it, seeds the previous pipelining, and runs a
@@ -33,7 +34,8 @@ def main():
     parser.add_argument("--out_dir", default=None)
     args = parser.parse_args()
 
-    cmd = [sys.executable, PYPELINEC, DESIGN, "--syn_tool", "device_models", "-j", "1"]
+    cmd = [sys.executable, PYPELINEC, DESIGN, "--syn_tool", "device_models", "-j", "1",
+           "-D", "STREAM_AUTO_PIPELINE_TEST_MHZ=100"]
     if args.out_dir:
         cmd += ["--out_dir", args.out_dir]
     print("Running:", " ".join(cmd), flush=True)

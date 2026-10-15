@@ -78,6 +78,9 @@ def _state(tree, goals):
         FuncToInstances={},
         clk_cross_var_info={},
         part="scripted",
+        path_delay_funcs=list({l.func_name for l in insts.values()}),
+        path_delay_measure_funcs={l.func_name for l in insts.values()},
+        path_delay_frontier_funcs={l.func_name for l in insts.values()},
     )
     for inst, logic in insts.items():
         ps.FuncToInstances.setdefault(logic.func_name, set()).add(inst)
@@ -371,7 +374,7 @@ def _scripted_run(ps, rule, planned, extra=(), multiple=True):
             [
                 (SYN, "SYN_OUTPUT_DIRECTORY", out),
                 (VHDL, "GET_ENTITY_NAME", lambda inst, logic, tpl, ps_: inst),
-                (SWEEP, "COLLECT_CUT_SUBTREES", lambda m, p: [m] if m in helper else []),
+                (AUTO_PIPELINE, "COLLECT_CUT_SUBTREES", lambda m, p: [m] if m in helper else []),
                 (SWEEP, "RUN_HOTSPOT_MINISWEEP", mini),
                 (SWEEP, "SWEEP_HISTORY", history),
                 (
@@ -559,7 +562,7 @@ def test_confirmation_keeps_crossed_mains_and_skips_unhelpful_fallback():
                 (VHDL, "GET_ENTITY_NAME", lambda inst, logic, tpl, ps_: inst),
                 (AUTO_PIPELINE, "INVALIDATE_MODIFIED_INST_ANCESTOR_CACHES", lambda *a: set()),
                 (AUTO_PIPELINE, "WRITE_ALL_NON_ZERO_CLK_VHDL_FILES", noop),
-                (SWEEP, "COLLECT_CUT_SUBTREES", lambda m, p: [m] if m in ("a", "b") else []),
+                (AUTO_PIPELINE, "COLLECT_CUT_SUBTREES", lambda m, p: [m] if m in ("a", "b") else []),
                 (SWEEP, "SUMMARIZE_SUBTREE_PIPELINE", lambda *a: (False, [], 0)),
                 (SWEEP, "RECORD_CONFIRMATION_RESULTS", noop),
                 (SWEEP, "SYNTHESIS_OBSERVATIONS", []),
@@ -639,16 +642,17 @@ def test_lock_rules_for_regions():
 
 def test_try_minisweep_streak_and_budget():
     plan = SWEEP.MainSweepPlan("a", 100)
+    ps = _state({"a": ("a", False)}, {"a": 100})
     calls = []
     with patch.object(SWEEP, "RUN_HOTSPOT_MINISWEEP", lambda f, p, ps: calls.append(f) or True):
-        assert not SWEEP.TRY_HOTSPOT_MINISWEEP("h", plan, None)  # streak 1
-        assert not SWEEP.TRY_HOTSPOT_MINISWEEP("g", plan, None)  # resets h
-        assert not SWEEP.TRY_HOTSPOT_MINISWEEP("h", plan, None)
-        assert SWEEP.TRY_HOTSPOT_MINISWEEP("h", plan, None)  # second in a row
+        assert not SWEEP.TRY_HOTSPOT_MINISWEEP("h", plan, ps)  # streak 1
+        assert not SWEEP.TRY_HOTSPOT_MINISWEEP("g", plan, ps)  # resets h
+        assert not SWEEP.TRY_HOTSPOT_MINISWEEP("h", plan, ps)
+        assert SWEEP.TRY_HOTSPOT_MINISWEEP("h", plan, ps)  # second in a row
         assert plan.hotspot_streak["h"] == 0 and plan.minisweeps_used == 1
         plan.minisweeps_used = SWEEP.MAX_MINISWEEPS
-        assert not SWEEP.TRY_HOTSPOT_MINISWEEP("g", plan, None)
-        assert not SWEEP.TRY_HOTSPOT_MINISWEEP("g", plan, None)  # budget spent
+        assert not SWEEP.TRY_HOTSPOT_MINISWEEP("g", plan, ps)
+        assert not SWEEP.TRY_HOTSPOT_MINISWEEP("g", plan, ps)  # budget spent
     assert calls == ["h"], calls
 
 

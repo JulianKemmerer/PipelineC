@@ -64,7 +64,7 @@ def harvested(out):
 
 def final_xdc_counts(out_dir):
     """Multi-cycle counts in the build's final top-level constraints (per-module
-    syn runs, e.g. the planless as-written check, write their own clock.xdc
+    syn runs, e.g. isolated MCP endpoint checks, write their own clock.xdc
     under the module's directory -- not the result)."""
     with open(os.path.join(out_dir, "clocks.xdc")) as f:
         return {int(n) for n in re.findall(r"set_multicycle_path (\d+) -setup ", f.read())}

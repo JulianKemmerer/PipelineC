@@ -1,10 +1,11 @@
 #!/usr/bin/env python3
 # start_latency= is only a starting guess: a constrained AUTO_PIPELINE region
-# must reach the same pipeline the untagged call site does. Builds
-# auto_pipeline_region_minisweep_design.py (sky130, 120 MHz) twice -- untagged,
+# must reach the same pipeline the unseeded call site does. Builds
+# auto_pipeline_region_minisweep_design.py (sky130, 120 MHz) twice -- unseeded,
 # then start_latency=1 -- and asserts both:
 #  - take the measured mini-sweep of the repeated `step` helper and lock it,
-#  - meet timing with the same total depth, in at most 3 full syntheses.
+#  - meet timing with the same total depth, in at most 5 full syntheses,
+#    including two optional trim probes; retain all six locks in final history.
 # Then four latency-memory builds sharing one --syn_cache store:
 #  - a baseline that records the `step` lock;
 #  - a same-goal rebuild in a fresh output directory: the MAIN replays in one
@@ -31,7 +32,8 @@ THIS_DIR = os.path.dirname(os.path.abspath(__file__))
 PYPELINEC = os.path.join(THIS_DIR, "../../../pypelinec")
 DESIGN = os.path.join(THIS_DIR, "auto_pipeline_region_minisweep_design.py")
 PARAM = "AUTO_PIPELINE_REGION_MINISWEEP_START_LATENCY"
-MAX_FULL_SYN_RUNS = 3
+# Three search/lock checks plus the default two post-met trim probes.
+MAX_FULL_SYN_RUNS = 5
 
 
 def fail(msg):
@@ -72,9 +74,14 @@ def build(out_dir, start_latency, extra=(), memory=False, reused=False, hint=Fal
     depth = int(m.group(1))
     if out_dir:
         with open(os.path.join(out_dir, "top", "sweep_history.json")) as f:
-            final = json.load(f)["mains"]["region_minisweep_main"]["final"]
+            main_history = json.load(f)["mains"]["region_minisweep_main"]
+        final = main_history["final"]
         if final["met"] is not True or final["slices_built"] != depth:
             fail(f"{label}: history final {final} disagrees with depth {depth}")
+        if final["locked_instances"] != 6:
+            fail(f"{label}: the measured helper locks were discarded: {final}")
+        if final["achieved_mhz"] < main_history["goal_mhz"]:
+            fail(f"{label}: the retained full-design measurement misses timing: {final}")
     if hint:
         if "Applying mini-sweep hint for step" not in out:
             fail("a lower-goal lock did not become a mini-sweep hint")

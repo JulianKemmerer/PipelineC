@@ -115,21 +115,23 @@ Unmapped hierarchy is left unclassified rather than guessed.
    initially taken from elaboration. `SEED_COUNTS` then uses valid isolated
    endpoint reports for all groups, before the first sweep or pinned confirmation.
    `requirement - slack` is raw effective launch-to-capture time, including timing
-   overhead; the cached scalar `Logic.delay` is per-cycle and is never used alone
-   to seed a group. The seed is `ceil(raw / goal_period)`, respecting fixed counts,
+   overhead; scalar geometry `Logic.delay` is never used to seed a group. The seed is `ceil(raw / goal_period)`, respecting fixed counts,
    user starts and caps. Missing endpoint evidence leaves the elaborated count.
    In a pin-and-confirm pass, a seed that changes a count the elaboration
    consumed skips that pass's confirmation synthesis: the handshake reads
    `.latency`, so the driver re-elaborates with the seeded count and confirms
    that hardware instead ([AUTO_PIPELINE_DESIGN.md](AUTO_PIPELINE_DESIGN.md)).
-   The rebuilt holder is not re-synthesized during that pass's path-delay
-   characterization when every multi-cycle path it owns already has evidence
-   for its current `MCP_SHAPE`. Only the handshake's compare constant changed,
-   so `HOLDER_DELAY_FROM_EVIDENCE` gives raw delay / elaborated count, which is
-   what synthesis reports per cycle. For WireGuard's 5-lane Poly1305 MAC holders
-   (Vivado 2019.2, xc7a200t) that is 67.5 ns / 4 against a measured 16.8 ns, and
-   skipping their re-synthesis saves about 17 minutes per pass. A new shape, or
-   a holder with fixed (non-tag) paths, is still synthesized.
+   `MEASURE_REQUIRED_ENDPOINTS` schedules missing automatic holder reports in
+   the same bounded pool as primitive calibration. Fixed-count holders need
+   no isolated count-selection run. Evidence is keyed by group and `MCP_SHAPE`:
+   count-only handshake changes reuse the datapath report, while a changed
+   datapath needs fresh evidence. The helper records endpoint evidence only;
+   it never converts raw delay / count into the holder's scalar `Logic.delay`.
+   Inspectable stateful holders surrounding a pipeline landscape keep their
+   primitive-derived geometry estimates. Actual control-path timing is checked
+   in the full design.
+   Vivado records endpoint-qualified evidence before returning its report;
+   the scheduling helper waits for completion without recording it a second time.
 2. **Matching.** For each report, `AUTO_MULTI_CYCLE_GROUP_FOR_PATH_REPORT` matches the report's
    start/end register cells against the XDC globs (`[*]` → `\[[^/]*\]`), excludes
    non-D destination pins, and requires

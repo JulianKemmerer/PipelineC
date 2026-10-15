@@ -189,6 +189,26 @@ combinational even when the same helper is pipelined at another call site.
 before `WRITE_ALL_NON_ZERO_CLK_VHDL_FILES` emits anything, including restored,
 seeded, fixed-only, and final builds; non-leaf bookkeeping slices are ignored.
 
+Delay characterization uses the same caller rules. `COLLECT_CUT_SUBTREES`
+serves both sweep planning and `COLLECT_PIPELINE_DELAY_REQUIREMENTS`, which
+collects geometry dependencies, eligible combinational hierarchy and its
+measurement frontier. Stateful surroundings and blocked-only helpers use
+primitive-derived estimates. Shared helpers can contribute one valid measured
+through-delay without receiving registers at blocked call sites. Independent
+fixed-latency roots are collected explicitly; automatic MCP endpoint evidence
+is recorded separately from placement geometry. Opaque `vhdl()` text remains
+a dependency with zero initial estimated width, without descending into its
+hidden implementation. Only path-directed sweep fallback can measure that width.
+Unconstrained roots require an active MAIN clock goal; explicit latency regions
+and seeds also contribute roots when their MAIN has no clock goal.
+During post-met trimming, `zero_cut_probe` gives optional regions an infinite
+stage budget and no optional cuts. Fixed latency regions retain their exact
+counts; the sweep confirms the smaller implementation before keeping it.
+The probe does not change the tuned `global_scale`. Timing feedback clears the
+probe along with `trim_pending`, so an MCP count repair cannot strand later
+replans at zero cuts. Region-count nudges are suppressed only while probing.
+
+
 **A module's latency is not its slice count.** A module's total latency is
 its own leaf slices *plus* the summed latencies of its submodule instances,
 so an entity named `foo_25CLK` can legitimately carry only 8 slices of its
@@ -592,8 +612,11 @@ see [`pypeline_sim_DESIGN.md`](pypeline_sim_DESIGN.md)'s "Pipelined native sim" 
 `AUTO_PIPELINE(func, latency=N)`, `start_latency=S` and `max_latency=M` record a
 `LOGIC.AutoPipelineLatency` for each tagged instance, in
 `Logic.sub_inst_to_auto_pipeline_latency`. C's `#pragma AUTOPIPELINE N` records a fixed
-N the same way. Unconstrained tags, the default, take none of the paths below, so
-designs without constraints plan, name and build exactly as before.
+N the same way. Eligible unconstrained tags under a MAIN with a clock goal also
+use the independent region planner below, without a prescribed starting count.
+An unconstrained callee is eligible when it can absorb added latency and contains
+no further AUTO_PIPELINE tags. Otherwise traversal continues toward eligible
+inner tags. Unseeded unconstrained tags under goal-less MAINs need no planning.
 
 Some library wrappers own exactly one core AUTO_PIPELINE and accept the same keyword-only
 arguments:
@@ -610,7 +633,9 @@ core tag's `.latency`. That is S during a sweep build's bootstrap with
 
 **Planned sweep (`ENFORCE_AUTO_PIPELINE_REGIONS`).** A tagged instance is
 latency-decoupled from its container (`GET_SUBMODULE_LATENCY` reports it as 0), so each
-constrained instance is treated as its own *region*. Every iteration, right after
+eligible instance is treated as its own *region*, with or without a starting hint.
+This keeps surrounding stateful delays out of the tag's placement geometry. Every
+iteration, right after
 `SWEEP.APPLY_LOCKS` and before any cut-subtree landscape is built, each region goes through:
 1. its own `SWEEP.BUILD_SLICE_LANDSCAPE`;
 2. choosing a register count K;
@@ -638,11 +663,13 @@ delay axis, and the container can't count the region's latency.
     `region.scale` is calibrated so that unchanged knobs keep reproducing S. A
     region whose landscape already holds mini-sweep locks (`Segment.LOCKED`,
     e.g. carried into a later pass) skips this bootstrap: S more cuts on top
-    of the locks would over-pipeline it. A seed also makes an unconstrained tag a
-    start-only region (`AutoPipelineLatency.is_region`), as if it had that
-    `start_latency=`. The exceptions are a callee that holds another AUTO_PIPELINE
-    or can't take added latency, which `COLLECT_AUTO_PIPELINE_REGIONS` leaves as
-    unconstrained as its source. The driver selects matching callee-subtree digests,
+    of the locks would over-pipeline it. A seed gives an unconstrained tag a
+    starting count (`AutoPipelineLatency.is_region` reports constraints or seeds),
+    as if it had that `start_latency=`. Clock-driven eligible tags are collected
+    even when this predicate is false, so a hint changes the initial count rather
+    than whether the tag has its own landscape. A callee that holds another
+    AUTO_PIPELINE or can't take added latency remains outside the independent
+    region planner. The driver selects matching callee-subtree digests,
     part and tool at the current goal or highest lower goal before the final parse
     ([SWEEP_DESIGN.md §5](SWEEP_DESIGN.md#5-latency-memory)). In pass 2 and later
     the harvested cache supersedes the seed (`constraint.seed` is `None`), so every
@@ -755,9 +782,9 @@ for the full coverage list. The ones that exercise this module end to end
 
 | test | proves |
 |---|---|
-| `auto_pipeline_latency_test.py` | end-to-end factory design (`make_stream_auto_pipeline`) through the full sweep **plus** the §5 pin-and-confirm loop: pass 2 runs, harvested `.latency` > 0, the seeded confirmation synthesis passes with no fallback sweep, the loop settles within the pass cap, and `sweep_history.json` `final` records come from the confirmation run |
+| `auto_pipeline_latency_test.py` | end-to-end factory design (`make_stream_auto_pipeline`) at 100 MHz, above its unpipelined speed, through the full sweep **plus** the §5 pin-and-confirm loop: pass 2 runs, harvested `.latency` > 0, the seeded confirmation synthesis passes with no fallback sweep, the loop settles within the pass cap, and `sweep_history.json` `final` records come from the confirmation run |
 | `auto_pipeline_constraints_test.py` | §6 constrained regions: `latency=2` / `start_latency=1` call sites built with exactly 2 / 1 registers and pass 2 skipped; a `max_latency=1` cap stops an unreachable goal promptly, naming the cap, then `TIMING NOT MET`; `make_stream_auto_pipeline(..., start_latency=1)` sizes its bootstrap FIFO from the hint, settles in one sweep iteration and skips pass 2 when the hint matches, and grows past a too-small hint (pass 2 resizes the FIFO) |
-| `auto_pipeline_region_minisweep_test.py` | `start_latency=1` is only a starting guess: a ChaCha-shaped chain of a repeated helper (quarter rounds written in series on a shared state) takes the same mini-sweep lock and reaches the same depth (11) in at most 3 syntheses, with and without the hint (before the fix the hinted build reached 22 in 5) |
+| `auto_pipeline_region_minisweep_test.py` | `start_latency=1` is only a starting guess: a ChaCha-shaped chain of a repeated helper (quarter rounds written in series on a shared state) takes the same mini-sweep lock and reaches the same depth (11) in at most five whole-design checks including two optional trim probes, with and without the hint; final history retains six locks and measured passing timing (before the fix the hinted build reached 22 in five) |
 | `auto_pipeline_c_pragma_test.py` | C `#pragma AUTOPIPELINE 2` is a fixed latency, built with exactly 2 clocks even by a `--comb` build |
 | `sweep_fsm_auto_pipeline_test.py` | Reg-FSM main + AUTO_PIPELINE region: the cut subtree is the tagged child, the FSM's latency stays 0 |
 | `sweep_float32_test.py` (registered once per backend, **every** `--syn_tool`) | a plain auto-pipelined float32 adder MAIN sweeps to its goal on every synthesis backend, not just sky130 -- see [pypeline_TESTS.md](pypeline_TESTS.md#per-syn_tool-sweep-coverage) |

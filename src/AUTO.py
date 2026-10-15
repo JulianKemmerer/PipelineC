@@ -1068,8 +1068,8 @@ def _mux_delay_du(parser_state, types, ctype, n, snapshot):
     Preference order, and the reason for it:
       1. MEASURED this pass -- the mux is a real entity instantiated inside the
          generated FSM, and SYN measures it like any other combinational leaf
-         (see RECURSIVE_GET_FUNCS_FOR_PATH_DELAYS' auto_fsm_measure_entities
-         hook). This is the number the user asked for: measured, not modelled.
+         (SYN.COLLECT_PATH_DELAY_REQUIREMENTS includes AUTO_FSM's registered
+         mux consumers). This is measured rather than modelled.
       2. Measured on an earlier pass, carried in the previous schedule's
          snapshot -- later passes rebuild the design with the FSM in place, so
          a shape that is no longer instantiated is no longer measured.

@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-# AUTO_PIPELINE latency constraints end-to-end (full planned sweep, PyRTL):
+# AUTO_PIPELINE latency constraints end-to-end (four device-model sweep builds):
 #  (a) auto_pipeline_constraints_design.py -- latency=2 and start_latency=1
 #      call sites are built with exactly 2 and 1 registers, and because the
 #      design's .latency reads already equal what was built, the driver skips

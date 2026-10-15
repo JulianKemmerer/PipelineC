@@ -48,6 +48,7 @@ def main():
     hw_out, hw_rc = _run(
         [
             sys.executable, PYPELINEC, HW_DESIGN,
+            "--syn_tool", "device_models",
             "--sim", "--comb", "--cocotb", "--ghdl", "--run", "all",
             "--out_dir", os.path.join(out_dir, "hw"),
         ]

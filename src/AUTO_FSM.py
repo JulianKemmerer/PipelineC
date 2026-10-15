@@ -3321,9 +3321,9 @@ def BUILD_PASSTHROUGH_FUNC(tag):
 
     Its job is to put the real function -- and therefore every operation inside
     it -- into the design, so SYN.ADD_PATH_DELAY_TO_LOOKUP measures/estimates
-    the per-operation delays the scheduler needs. Being fully combinational also
-    makes this wrapper a measurement frontier (SYN.FUNC_IS_TOPMOST_COMB) inside
-    the stateful function that calls it, which is what calibrates those delays.
+    the per-operation delays the scheduler needs. The wrapper itself is forced
+    estimated; the tagged operation roots and registered operand muxes are
+    independent consumers in SYN.COLLECT_PATH_DELAY_REQUIREMENTS.
     """
     from pypeline import hw_func
 
@@ -4181,10 +4181,10 @@ class _Codegen(AUTO._GraphCodegen):
 
     def _note_mux_entity(self, t, n):
         """Remember that this FSM instantiates an operand mux of this shape, so
-        SYN measures it as its own combinational leaf rather than folding it
-        into the FSM's one whole-module timing number. Measured once, cached on
-        disk, and read straight back by the next schedule's mux delay lookup --
-        the loop that replaces v1's flat MUX_PENALTY_DU guess."""
+        SYN calibrates it independently of the estimated stateful FSM span.
+        Measured once, cached on disk, and read straight back by the next
+        schedule's mux delay lookup -- the loop that replaces v1's flat
+        MUX_PENALTY_DU guess."""
         self.mux_shapes.append((t, n))
 
 
@@ -4192,13 +4192,10 @@ def _REGISTER_MUX_ENTITIES(parser_state, mux_shapes):
     """Mark the operand mux hw_funcs this FSM instantiates as things SYN should
     measure in their own right.
 
-    Needed because a generated FSM holds state, and SYN deliberately treats a
-    stateful module as ONE atomic span: it synthesizes the whole module for its
-    register-to-register path and never looks inside (see
-    SYN.FUNC_PATH_DELAY_IS_ESTIMABLE). That is right for the FSM's own fmax
-    number, but it would leave the multiplexers -- the one thing whose cost the
-    area search most needs to know honestly -- permanently unmeasured. This
-    names them so RECURSIVE_GET_FUNCS_FOR_PATH_DELAYS collects them anyway.
+    A generated FSM holds state and is estimated as an atomic span. Its
+    operand muxes remain independent calibration consumers for the scheduler
+    and area search. Naming them lets COLLECT_PATH_DELAY_REQUIREMENTS resolve
+    their delays even when no AUTO_PIPELINE landscape visits the FSM.
 
     Records the live callables, not entity names: the names are only assigned
     when the generated source is elaborated, which has not happened yet at code
@@ -4259,9 +4256,8 @@ def BUILD_AUTO_FSM_FUNC(tag, parser_state, elaborator=None):
             AUTO_COMB_OPT.prepare(tag.func, parser_state, elaborator, strict=False)
             AUTO_COMB_OPT.prepare(tag.func, parser_state, elaborator, strict=False, objective="delay")
         fn = BUILD_PASSTHROUGH_FUNC(tag)
-        # Never synthesize the passthrough itself -- see the matching note in
-        # SYN.FUNC_PATH_DELAY_IS_ESTIMABLE. It exists to make the tagged
-        # function's operations visible to delay measurement, not to be built.
+        # Keep the passthrough estimated during scoped characterization. It
+        # makes the tagged function's operations visible to delay measurement.
         forced = getattr(parser_state, "func_force_estimated", None)
         if forced is None:
             forced = set()
@@ -4336,10 +4332,8 @@ def DEL_AUTO_FSM_SUBTREE_CACHE():
 def _AUTO_FSM_MUX_ENTITIES(parser_state):
     # Operand multiplexers inside generated AUTO_FSM state machines.
     #
-    # A generated FSM holds state, so it is an ATOMIC SPAN here: one
-    # whole-module synthesis for its register-to-register path, and nothing
-    # inside it is measured (see FUNC_PATH_DELAY_IS_ESTIMABLE). That is right
-    # for its fmax number and wrong for its multiplexers, whose real delay is
+    # A generated FSM holds state, so its geometry stays estimated. Its muxes
+    # are independent scheduler consumers whose real delay is
     # the single most load-bearing input to AUTO_FSM's decision about HOW FINELY
     # to share -- the thing v1 had to guess at with a flat constant. So these
     # few entities are collected for measurement in their own right. They are
@@ -4374,14 +4368,14 @@ def FUNC_SUBTREE_HAS_AUTO_FSM(func_name, parser_state):
     # AUTO_PIPELINE ones do, though for a different consumer: not the slicer, but
     # AUTO_FSM's scheduler, which decides how many operations fit in one state
     # from the per-operation delays measured/estimated here. Without this, a
-    # stateful MAIN containing an AUTO_FSM would be an atomic span and NOTHING
-    # inside it would ever be measured (see FUNC_PATH_DELAY_IS_ESTIMABLE).
+    # stateful MAIN containing an AUTO_FSM would otherwise have no delay
+    # consumer. COLLECT_PATH_DELAY_REQUIREMENTS explicitly includes its
+    # operation roots and registered operand muxes.
     #
-    # Note this is only ever true on the bootstrap pass, where the call site is
-    # still the combinational passthrough. Once scheduled, the tag lives on the
-    # calling func while the generated FSM entity below it holds state and is
-    # correctly treated as an atomic span -- one whole-module synthesis whose
-    # measured register-to-register path IS its worst state's delay.
+    # On the bootstrap pass the call site points at a combinational passthrough.
+    # Once scheduled, the tag remains on the caller and points at the generated
+    # stateful FSM, whose geometry is estimated. Full-design synthesis checks
+    # its register paths; selected units remain independent delay consumers.
     if func_name in _FUNC_SUBTREE_HAS_AUTO_FSM_cache:
         return _FUNC_SUBTREE_HAS_AUTO_FSM_cache[func_name]
     logic = parser_state.FuncLogicLookupTable[func_name]

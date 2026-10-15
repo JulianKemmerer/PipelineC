@@ -114,6 +114,13 @@ parser_state.clk_cross_var_info         # var name -> LOGIC.ClkCrossVarInfo
 `FuncLogicLookupTable` holds one `Logic()` per unique function definition.
 `LogicInstLookupTable` holds one entry per call-site instance.
 
+`path_delay_funcs`, `path_delay_measure_funcs` and `path_delay_frontier_funcs`
+are declared as `None` until unrooted `SYN.ADD_PATH_DELAY_TO_LOOKUP` fills the
+full parse's ordered dependencies, eligible hierarchy and measurement frontiers.
+Measurement/refinement requires that explicit initialization. Rooted fixed-latency
+characterization uses local collections without replacing the full-parse scope.
+`ParserState.DEEPCOPY` copies these collections independently.
+
 `ParserState.__init__` ends with a block of fields only the C front end fills and reads
 (`c_file_ast`, `global_consts`, `func_to_local_state_regs`, `func_to_local_variables`,
 `PrimFuncLogicLookupTable`, `func_mult_style`, `io_pairs`, and the generated-header

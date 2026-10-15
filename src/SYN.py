@@ -134,17 +134,13 @@ PIN_CONSTRAINTS_FILE = None  # Pin constraints file to use
 DELAY_UNIT_MULT = 10.0  # Timing is reported in nanoseconds. Multiplier to convert that time into integer units (nanosecs, tenths, hundreds of nanosecs)
 INF_MHZ = 1000  # Impossible timing goal
 # Pre-pipelining path delay collection mode:
-#  "leaf" = only synthesize raw HDL leaf funcs and topmost untagged stateful
-#           modules (atomic spans); hierarchical funcs on the pipelining path
-#           get delay estimated from their zero clock pipeline map (see
-#           FUNC_PATH_DELAY_IS_ESTIMABLE and docs/SYN_DESIGN.md).
+#  "leaf" = measure primitives and combinational pipeline frontiers; estimate
+#           surrounding hierarchy from its primitive dependencies.
 #  "full" = old behavior, synthesize every level of hierarchy individually
 #           including MAINs (--full_hier_syn cmd line flag).
-#  "prim" = opposite of "full": only true primitive leaves (no submodules)
-#           are ever synthesized. Every hierarchical module, including
-#           MAINs and stateful atomic spans, is estimated from submodule
-#           delays (--no_hier_syn cmd line flag). Gives up the automatic
-#           estimate-was-inaccurate fallback to real synthesis.
+#  "prim" = required true leaves only for geometry; estimate
+#           inspectable hierarchy, without hierarchical fallback
+#           (--no_hier_syn). Independent MCP/FSM consumers remain enabled.
 HIER_SYN_MODE = "leaf"
 # Before estimating a delay or an area, use an earlier run's synthesis of the
 # same exact inputs when the output directory or the --syn_cache store holds
@@ -726,15 +722,11 @@ def WRITE_CLK_CONSTRAINTS_FILE(multimain_timing_params, parser_state, inst_name=
 def DEL_ALL_CACHES():
     # Clear all caches after parsing is done
     global _FUNC_SUBTREE_HAS_STATE_cache
-    global _FUNC_TO_INSTANTIATING_FUNCS_cache
-    global _FUNC_IS_TOPMOST_COMB_cache
     import AUTO_PIPELINE
 
     import AUTO_FSM
 
     _FUNC_SUBTREE_HAS_STATE_cache = {}
-    _FUNC_TO_INSTANTIATING_FUNCS_cache = None
-    _FUNC_IS_TOPMOST_COMB_cache = {}
     AUTO_PIPELINE.DEL_PIPELINE_CACHES()
     AUTO_FSM.DEL_AUTO_FSM_SUBTREE_CACHE()
 
@@ -1775,7 +1767,10 @@ def LOGIC_IS_ZERO_DELAY(logic, parser_state, allow_none_delay=False):
                         return False
                     else:
                         raise Exception("Wtf none to check delay?")
-                if submodule_logic.delay > 0:
+                if submodule_logic.delay > 0 or submodule_logic.delay_is_estimated:
+                    # Zero estimated width (e.g. opaque text) is not proof of
+                    # zero delay. Keep its ancestors estimated so fallback can
+                    # propagate a later measurement through zero-only wrappers.
                     return False
             return True
 
@@ -2604,21 +2599,14 @@ def SYNTHESIS_REUSE_SUMMARY_LINE():
 
 
 def _FUNC_NEEDS_SUBMODULE_DELAYS(func_name, parser_state):
-    # Whose subtree delays must be resolved? Funcs with a sliceable path to
-    # raw HDL (pipelining candidates) and funcs whose own delay is derived
-    # from submodules (estimated - notably stateful Reg/Feedback containers,
-    # which are never synthesized per-module, see FUNC_PATH_DELAY_IS_ESTIMABLE)
+    """Legacy descent predicate used only by --full_hier_syn."""
     import AUTO_PIPELINE
 
-    if AUTO_PIPELINE.FUNC_HAS_HIER_ALLOWING_ADDED_LATENCY_TO_RAW_VHDL(func_name, parser_state):
-        return True
-    logic = parser_state.FuncLogicLookupTable[func_name]
-    return HIER_SYN_MODE != "full" and FUNC_PATH_DELAY_IS_ESTIMABLE(
-        logic, parser_state
-    )
+    return AUTO_PIPELINE.FUNC_HAS_HIER_ALLOWING_ADDED_LATENCY_TO_RAW_VHDL(func_name, parser_state)
 
 
 def RECURSIVE_GET_FUNCS_FOR_PATH_DELAYS(func_names, parser_state):
+    """Legacy hierarchy characterization walk, used only by --full_hier_syn."""
     funcs_to_synth = []
     for func_name in func_names:
         if _FUNC_NEEDS_SUBMODULE_DELAYS(func_name, parser_state):
@@ -2640,66 +2628,89 @@ def RECURSIVE_GET_FUNCS_FOR_PATH_DELAYS(func_names, parser_state):
                     funcs_to_synth.append(sub_func_name)
             if func_name not in funcs_to_synth:
                 funcs_to_synth.append(func_name)
-        # Old (full) mode: always synthesize main funcs too (their delay
-        # seeded coarse sweep guesses). Leaf mode does not force this:
-        # sliceable mains are cut subtree roots measured on demand by the
-        # sweep's budget anchor, and a stateful main's whole-design zero clk
-        # critical path (including regions about to be pipelined) feeds no
-        # decision - synthesizing it wastes a near-whole-design run and its
-        # number reads as a bogus "Design likely limited to X MHz" report
+        # Explicit full-hierarchy diagnostics include MAINs as well.
         if func_name in parser_state.main_mhz.keys() and HIER_SYN_MODE == "full":
             if func_name not in funcs_to_synth:
                 funcs_to_synth.append(func_name)
     return funcs_to_synth
 
 
-_FUNC_TO_INSTANTIATING_FUNCS_cache = None
+def COLLECT_PATH_DELAY_REQUIREMENTS(parser_state, root_func_names=None):
+    """Collect actual geometry consumers and their primitive dependencies.
 
+    Returns ordered dependencies and the two eligibility/frontier sets without
+    mutating ParserState. ADD_PATH_DELAY_TO_LOOKUP owns the full-parse scope.
+    AUTO_FSM's scheduler and operand muxes are independent timing consumers.
+    """
+    import AUTO_FSM
+    import AUTO_PIPELINE
 
-def _GET_FUNC_TO_INSTANTIATING_FUNCS(parser_state):
-    # Reverse map: func name -> set of func names that instantiate it
-    global _FUNC_TO_INSTANTIATING_FUNCS_cache
-    if _FUNC_TO_INSTANTIATING_FUNCS_cache is None:
-        rv = {}
-        for func_name, logic in parser_state.FuncLogicLookupTable.items():
-            for sub_func_name in logic.submodule_instances.values():
-                if sub_func_name not in rv:
-                    rv[sub_func_name] = set()
-                rv[sub_func_name].add(func_name)
-        _FUNC_TO_INSTANTIATING_FUNCS_cache = rv
-    return _FUNC_TO_INSTANTIATING_FUNCS_cache
-
-
-_FUNC_IS_TOPMOST_COMB_cache = {}
-
-
-def FUNC_IS_TOPMOST_COMB(func_name, parser_state):
-    # The "measurement frontier": the largest fully-combinational subtrees.
-    # A func with no Reg/Feedback anywhere below it, instantiated by a func
-    # that DOES have state in its subtree (or being a main itself). Only for
-    # such modules does a per-module synthesis run measure the input to
-    # output through-delay (nothing internal to hide a path in) - so these
-    # are the modules that get real synthesis to calibrate the estimated
-    # delays of everything above them.
-    if func_name in _FUNC_IS_TOPMOST_COMB_cache:
-        return _FUNC_IS_TOPMOST_COMB_cache[func_name]
-    logic = parser_state.FuncLogicLookupTable[func_name]
-    rv = False
-    if (
-        len(logic.submodule_instances) > 0
-        and logic.vhdl_module_text is None
-        and func_name not in parser_state.func_marked_blackbox
-        and not FUNC_SUBTREE_HAS_STATE(func_name, parser_state)
-    ):
-        if func_name in parser_state.main_mhz:
-            rv = True
-        else:
-            parents = _GET_FUNC_TO_INSTANTIATING_FUNCS(parser_state).get(
-                func_name, set()
+    needed, eligible, frontier = AUTO_PIPELINE.COLLECT_PIPELINE_DELAY_REQUIREMENTS(
+        parser_state, root_func_names
+    )
+    if root_func_names is None:
+        extra_roots = set(AUTO_FSM._AUTO_FSM_MUX_ENTITIES(parser_state))
+        for logic in list(parser_state.FuncLogicLookupTable.values()):
+            extra_roots.update(
+                logic.submodule_instances[local]
+                for local in getattr(logic, "sub_inst_to_auto_fsm_key", {})
             )
-            rv = any(FUNC_SUBTREE_HAS_STATE(p, parser_state) for p in parents)
-    _FUNC_IS_TOPMOST_COMB_cache[func_name] = rv
-    return rv
+        # A scheduled FSM's selected units can differ from the bootstrap
+        # operations (e.g. narrowed adders). They still inform rescheduling;
+        # their stateful caller must not hide their through-delay frontier.
+        for tag in AUTO_FSM.GET_TAGS(parser_state).values():
+            if tag.schedule is not None:
+                extra_roots.update(tag.schedule["fus"].values())
+        if extra_roots:
+            extra, extra_eligible, extra_frontier = (
+                AUTO_PIPELINE.COLLECT_PIPELINE_DELAY_REQUIREMENTS(parser_state, extra_roots)
+            )
+            needed.update(extra)
+            eligible.update(extra_eligible)
+            frontier.update(extra_frontier)
+    result, seen = [], set()
+
+    def visit(func):
+        if func in seen:
+            return
+        seen.add(func)
+        logic = parser_state.FuncLogicLookupTable[func]
+        if logic.vhdl_module_text is None:
+            for child in logic.submodule_instances.values():
+                visit(child)
+        result.append(func)
+
+    for func in sorted(needed):
+        visit(func)
+    return result, eligible, frontier
+
+
+def PATH_DELAY_IS_PRIMITIVE(logic):
+    """Actual operator leaves, not opaque vhdl() text or generated hierarchy."""
+    return not logic.submodule_instances and logic.vhdl_module_text is None
+
+
+def PATH_DELAY_IS_MEASURABLE(logic, parser_state, refine_opaque=False):
+    """Whether a delay consumer permits a new standalone measurement."""
+    if any(scope is None for scope in (
+        parser_state.path_delay_funcs, parser_state.path_delay_measure_funcs,
+        parser_state.path_delay_frontier_funcs,
+    )):
+        raise RuntimeError("Initialize delay scope with ADD_PATH_DELAY_TO_LOOKUP before measurement")
+    if logic.func_name not in parser_state.path_delay_funcs:
+        return False
+    if logic.vhdl_module_text is not None:
+        # Unknown text starts with zero geometry. Only a failing path through
+        # this region can justify its standalone fallback measurement.
+        return refine_opaque and HIER_SYN_MODE == "leaf"
+    if PATH_DELAY_IS_PRIMITIVE(logic):
+        return True
+    return (
+        HIER_SYN_MODE != "prim"
+        and logic.func_name in parser_state.path_delay_measure_funcs
+        and not FUNC_SUBTREE_HAS_STATE(logic.func_name, parser_state)
+        and logic.func_name not in getattr(parser_state, "func_force_estimated", ())
+    )
 
 
 _FUNC_SUBTREE_HAS_STATE_cache = {}
@@ -2725,16 +2736,10 @@ def FUNC_SUBTREE_HAS_STATE(func_name, parser_state):
     return rv
 
 
-def FUNC_PATH_DELAY_IS_ESTIMABLE(logic, parser_state):
+def FUNC_PATH_DELAY_IS_ESTIMABLE(logic, parser_state, frontier_funcs):
     # Can this func's path delay be derived from its submodule delays
     # (zero clock pipeline map) instead of a real synthesis run?
-    import AUTO_PIPELINE
-
-    import AUTO_FSM
-
-    if len(logic.submodule_instances) == 0:
-        return False
-    if logic.vhdl_module_text is not None:
+    if logic.vhdl_module_text is not None or PATH_DELAY_IS_PRIMITIVE(logic):
         return False
     if logic.func_name in parser_state.func_marked_blackbox:
         return False
@@ -2749,45 +2754,11 @@ def FUNC_PATH_DELAY_IS_ESTIMABLE(logic, parser_state):
     # underneath, which are measured and cached as usual.
     if logic.func_name in getattr(parser_state, "func_force_estimated", ()):
         return True
-    # Modules with Reg/Feedback state anywhere in their subtree: a
-    # per-module synthesis run reports the module's internal critical path
-    # (often register to register, possibly deep inside a nested FSM) - a
-    # different quantity than the input to output through-delay that
-    # dataflow slicing geometry needs. Only a fully combinational subtree
-    # guarantees measured == through delay. So:
-    # - stateful modules ON the estimate chain (an AUTO_PIPELINE tag
-    #   somewhere below - slicing descends through them, ex. a dataflow
-    #   core containing tagged stream pipelines) are ESTIMATED from their
-    #   submodule delays, never synthesized;
-    # - stateful modules NOT on the chain are atomic spans: slicing never
-    #   enters them and only their span width is needed, so they get ONE
-    #   whole-module synthesis at this topmost point and NOTHING inside
-    #   them is synthesized or estimated (their interior delays feed no
-    #   decision).
-    if FUNC_SUBTREE_HAS_STATE(logic.func_name, parser_state):
-        # "prim" mode: never synthesize any hierarchical module, stateful
-        # or not -- estimate everything above true primitive leaves.
-        if HIER_SYN_MODE == "prim":
-            return True
-        return AUTO_PIPELINE.FUNC_SUBTREE_HAS_AUTO_PIPELINE(
-            logic.func_name, parser_state
-        ) or AUTO_FSM.FUNC_SUBTREE_HAS_AUTO_FSM(logic.func_name, parser_state)
-    # Fully combinational subtree from here down
-    if FUNC_IS_TOPMOST_COMB(logic.func_name, parser_state):
-        # The measurement frontier: this func gets ONE real synthesis run -
-        # its measured input-to-output through delay calibrates the
-        # estimated delays of everything above it (the "budget anchor" that
-        # keeps first plans at the fewest-stages guess). Interior comb funcs
-        # below stay estimated; the landscape rescales their relative
-        # geometry into this measured total.
-        # "prim" mode skips even this: no hierarchical module is ever
-        # synthesized, including the measurement frontier.
-        return HIER_SYN_MODE == "prim"
-    if not AUTO_PIPELINE.FUNC_HAS_HIER_ALLOWING_ADDED_LATENCY_TO_RAW_VHDL(
-        logic.func_name, parser_state
-    ):
-        return False
-    return True
+    # Internal register paths are not through-delays. Surrounding stateful
+    # hierarchy and blocked combinational helpers use primitive estimates.
+    if HIER_SYN_MODE == "prim" or FUNC_SUBTREE_HAS_STATE(logic.func_name, parser_state):
+        return True
+    return logic.func_name not in frontier_funcs
 
 
 def SET_MEASURED_DELAY_FROM_REPORT(logic, parsed_timing_report, parser_state):
@@ -2891,6 +2862,9 @@ def ESTIMATE_HIER_PATH_DELAYS(funcs_to_estimate, parser_state, quiet=False):
 
     for logic_func_name in funcs_to_estimate:
         logic = parser_state.FuncLogicLookupTable[logic_func_name]
+        if logic.vhdl_module_text is not None:
+            # Its zero estimate has no inspectable pipeline map to compose.
+            continue
         if logic_func_name not in parser_state.FuncToInstances:
             continue
         inst_name = list(parser_state.FuncToInstances[logic_func_name])[0]
@@ -2991,22 +2965,14 @@ def STORED_DELAY_IS_USABLE(logic, parser_state):
     """Whether an earlier run of this function measured the delay a build would
     otherwise estimate for it.
 
-    A fully combinational subtree's run measures its input-to-output through
-    delay. A stateful module that slicing never enters (an atomic span) gets
-    one whole-module run in "leaf" mode anyway, so its stored run is the number
-    "prim" mode would estimate. A stateful module on the estimate chain is
-    the exception: its run reports an internal critical path, a different
-    quantity (see FUNC_PATH_DELAY_IS_ESTIMABLE).
+    Fully combinational reports measure through-delay. Inspectable stateful
+    hierarchy reports internal register paths instead and stays estimated.
+    Opaque vhdl() text starts at zero even with a warm measurement cache;
+    only path-directed fallback may replace that estimate.
     """
-    import AUTO_PIPELINE
-
-    import AUTO_FSM
-
-    if not FUNC_SUBTREE_HAS_STATE(logic.func_name, parser_state):
-        return True
-    return not (
-        AUTO_PIPELINE.FUNC_SUBTREE_HAS_AUTO_PIPELINE(logic.func_name, parser_state)
-        or AUTO_FSM.FUNC_SUBTREE_HAS_AUTO_FSM(logic.func_name, parser_state)
+    return logic.vhdl_module_text is None and (
+        PATH_DELAY_IS_PRIMITIVE(logic)
+        or not FUNC_SUBTREE_HAS_STATE(logic.func_name, parser_state)
     )
 
 
@@ -3051,34 +3017,28 @@ def MEASURED_AREA(logic, parser_state):
     return measured
 
 
-def MEASURE_DELAYS(func_names, parser_state):
+def MEASURE_DELAYS(func_names, parser_state, refine_opaque=False):
     # Fallback from estimated to measured delays: really synthesize the given
     # funcs (estimates only guide slice placement - when they prove inaccurate,
     # ex. because of optimizations that only happen in synthesis, the only way
     # to get the true delay is to synthesize, not estimate harder).
     # Afterwards re-estimates any still-estimated ancestor funcs with the new
     # measured child delays and invalidates stale pipeline map caches.
-    # Funcs with Reg/Feedback anywhere below are skipped - NO exceptions:
-    # their synthesized number is an internal critical path, not the
-    # through-delay geometry needs (see FUNC_PATH_DELAY_IS_ESTIMABLE);
-    # callers fall back to the estimated delay.
+    # Shared consumer/caller rules exclude inspectable stateful hierarchy
+    # and blocked-only helpers. Opaque text is opt-in for a path-directed
+    # refinement, never a reason to characterize every FIFO during fallback.
     import AUTO_PIPELINE
 
     funcs_to_measure = []
     for func_name in func_names:
         logic = parser_state.FuncLogicLookupTable[func_name]
-        if len(logic.submodule_instances) > 0 and (
-            HIER_SYN_MODE == "prim"
-            or FUNC_SUBTREE_HAS_STATE(func_name, parser_state)
-        ):
-            # "prim" mode: no hierarchical module is ever (re-)synthesized,
-            # only true primitive leaves -- callers fall back to the estimate.
+        if not PATH_DELAY_IS_MEASURABLE(logic, parser_state, refine_opaque):
             continue
         if logic.delay is None or logic.delay_is_estimated:
             if func_name in parser_state.FuncToInstances:
                 funcs_to_measure.append(func_name)
     if len(funcs_to_measure) == 0:
-        return
+        return set()
     print(
         "Replacing estimated delays with measured synthesis results for:",
         ", ".join(funcs_to_measure),
@@ -3110,15 +3070,16 @@ def MEASURE_DELAYS(func_names, parser_state):
     # Pipeline maps built from the old estimated delays are stale now
     AUTO_PIPELINE._GET_ZERO_ADDED_CLKS_PIPELINE_MAP_cache.clear()
     # Re-estimate remaining estimated funcs bottom up with updated child delays
-    all_funcs_ordered = RECURSIVE_GET_FUNCS_FOR_PATH_DELAYS(
-        parser_state.main_mhz.keys(), parser_state
-    )
+    all_funcs_ordered = parser_state.path_delay_funcs
     still_estimated = [
         f
         for f in all_funcs_ordered
         if parser_state.FuncLogicLookupTable[f].delay_is_estimated
     ]
     ESTIMATE_HIER_PATH_DELAYS(still_estimated, parser_state, quiet=True)
+    my_thread_pool.close()
+    my_thread_pool.join()
+    return set(funcs_to_measure)
 
 
 def ADD_PATH_DELAY_TO_LOOKUP(parser_state, root_func_names=None):
@@ -3147,7 +3108,14 @@ def ADD_PATH_DELAY_TO_LOOKUP(parser_state, root_func_names=None):
     WRITE_BLACK_BOX_FILES(parser_state, multimain_timing_params, False)
 
     # Get the functions that need to be synthed for path delay
-    if root_func_names is not None:
+    requirements = COLLECT_PATH_DELAY_REQUIREMENTS(parser_state, root_func_names)
+    if root_func_names is None:
+        (parser_state.path_delay_funcs, parser_state.path_delay_measure_funcs,
+         parser_state.path_delay_frontier_funcs) = requirements
+    if HIER_SYN_MODE != "full":
+        funcs_to_synth = requirements[0]
+        _auto_fsm_muxes = []
+    elif root_func_names is not None:
         funcs_to_synth = []
         for func_name in RECURSIVE_GET_FUNCS_FOR_PATH_DELAYS(
             root_func_names, parser_state
@@ -3195,6 +3163,17 @@ def ADD_PATH_DELAY_TO_LOOKUP(parser_state, root_func_names=None):
         if logic_func_name in parser_state.FuncToInstances:
             inst_name = list(parser_state.FuncToInstances[logic_func_name])[0]
 
+        if logic.vhdl_module_text is not None:
+            # vhdl() text has no input-to-output model. Start with zero
+            # geometry, bypassing cached/stored scalar delays in every mode.
+            # Preserve a measurement made by targeted fallback in this parse.
+            if logic.delay is None:
+                logic.delay = 0
+                logic.delay_is_estimated = True
+                _SET_LOGIC_DELAY_COMPONENTS(logic, None)
+            func_names_done_so_far.add(logic_func_name)
+            continue
+
         # Try to model the path delay
         modeled_path_delay = None
         if DEVICE_MODELS.part_supported(parser_state.part):
@@ -3204,6 +3183,8 @@ def ADD_PATH_DELAY_TO_LOOKUP(parser_state, root_func_names=None):
                 modeled_path_delay = DEVICE_MODELS.estimate_int_timing(op, widths)
         # Try to get cached path delay
         cached_path_delay = GET_CACHED_PATH_DELAY(logic, parser_state)
+        if not STORED_DELAY_IS_USABLE(logic, parser_state):
+            cached_path_delay = None
         cached_delay_components = None
         if cached_path_delay is not None:
             cached_delay_components = GET_CACHED_PATH_DELAY_COMPONENTS(
@@ -3261,27 +3242,10 @@ def ADD_PATH_DELAY_TO_LOOKUP(parser_state, root_func_names=None):
             logic.delay = 0
             _SET_LOGIC_DELAY_COMPONENTS(logic, None)
 
-        # A multi-cycle holder rebuilt only for a new cycle count: its
-        # datapath was already synthesized (see HOLDER_DELAY_FROM_EVIDENCE)
-        if logic.delay is None:
-            derived = AUTO_MULTI_CYCLE.HOLDER_DELAY_FROM_EVIDENCE(logic, parser_state)
-            # An earlier run of exactly this holder beats the derivation
-            if derived is not None and not SET_STORED_DELAY(
-                logic, parser_state, inst_name, TimingParamsLookupTable
-            ):
-                logic.delay = max(1, int(derived * DELAY_UNIT_MULT))
-                logic.delay_is_estimated = False
-                _SET_LOGIC_DELAY_COMPONENTS(logic, None)
-                print(
-                    f"Function: {logic.func_name} delay ~{derived:.3f} ns per cycle from isolated "
-                    "multi-cycle evidence of the same datapath (not re-synthesized)",
-                    flush=True,
-                )
-
         # Prepare for syn to determine
         if logic.delay is None:
             if HIER_SYN_MODE != "full" and FUNC_PATH_DELAY_IS_ESTIMABLE(
-                logic, parser_state
+                logic, parser_state, requirements[2]
             ):
                 # Hierarchical func on the pipelining path: derive delay from
                 # submodule delays after leaf syn results are in (see below).
@@ -3379,6 +3343,12 @@ def ADD_PATH_DELAY_TO_LOOKUP(parser_state, root_func_names=None):
     # All real syn results are in at this point; bottom up order resolves
     # estimated children before estimated parents.
     ESTIMATE_HIER_PATH_DELAYS(funcs_to_estimate, parser_state)
+    if root_func_names is None:
+        AUTO_MULTI_CYCLE.MEASURE_REQUIRED_ENDPOINTS(
+            parser_state, TimingParamsLookupTable, my_thread_pool
+        )
+    my_thread_pool.close()
+    my_thread_pool.join()
 
     # Write out final pictures requiring all delays in hierarchy to be computed above
     for logic_func_name in funcs_to_synth:

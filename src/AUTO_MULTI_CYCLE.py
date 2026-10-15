@@ -542,39 +542,40 @@ def REMEMBER_ISOLATED_REPORTS(report, parser_state, params, top_inst):
             ISOLATED_MCP_EVIDENCE[key] = max(delays + [ISOLATED_MCP_EVIDENCE.get(key, 0.0)])
 
 
-def HOLDER_DELAY_FROM_EVIDENCE(logic, parser_state):
-    """Per-cycle delay (ns) of a multi-cycle holder, from isolated endpoint
-    evidence of its exact datapath, or None.
+def MEASURE_REQUIRED_ENDPOINTS(parser_state, timing_params, pool):
+    """Characterize missing AUTO_MCP datapaths without assigning geometry delays.
 
-    A cycle-count change rebuilds the holder (its handshake compares against
-    .latency + 1), so characterization would synthesize the same
-    launch-to-capture cone again: about 17 minutes per pass for WireGuard's
-    5-lane MAC prologue and epilogue. MCP_SHAPE fingerprints that cone, so when
-    every multi-cycle path the holder owns has evidence for its current shape,
-    raw delay / elaborated count is what synthesis would report (for example,
-    67.5 ns / 4 against a measured 16.8 ns). Holders with fixed (non-tag)
-    multi-cycle paths, or with a shape never synthesized, return None.
+    Fixed paths need no count selection. A count-only handshake change keeps
+    the same datapath evidence, while a resized datapath needs a fresh report.
+    The caller's pool bounds primitive and endpoint jobs by the same -j limit.
+    Vivado's backend records endpoint-qualified evidence before returning.
     """
-    tuples = getattr(logic, "auto_multi_cycle_tuples", None)
-    if not logic.mcp_tuples or not tuples:
-        return None
-    groups = None
-    worst = None
-    for ncycles, start, end in logic.mcp_tuples:
-        constraint = tuples.get((start, end))
-        if constraint is None:
-            return None
-        if groups is None:
-            groups = COLLECT_AUTO_MULTI_CYCLE_GROUPS(parser_state)
-        group = groups.get(constraint.key)
-        if group is None:
-            return None
-        raw = ISOLATED_MCP_EVIDENCE.get((constraint.key, MCP_SHAPE(group, parser_state)))
-        if raw is None:
-            return None
-        per_cycle = raw / max(1, int(ncycles))
-        worst = per_cycle if worst is None else max(worst, per_cycle)
-    return worst
+    holders = {}
+    for group in COLLECT_AUTO_MULTI_CYCLE_GROUPS(parser_state).values():
+        if group.constraint.is_fixed():
+            continue
+        if (group.key, MCP_SHAPE(group, parser_state)) in ISOLATED_MCP_EVIDENCE:
+            continue
+        for inst, _start, _end in group.paths:
+            logic = parser_state.LogicInstLookupTable[inst]
+            holders.setdefault(logic.func_name, inst)
+    if not holders:
+        return
+    jobs = {}
+    for func, inst in sorted(holders.items()):
+        logic = parser_state.LogicInstLookupTable[inst]
+        print(
+            "Synthesizing function:",
+            func + SYN.FUNC_SRC_LOC_STR(parser_state, func),
+            "(AUTO_MULTI_CYCLE endpoint evidence)",
+            flush=True,
+        )
+        jobs[inst] = pool.apply_async(
+            SYN.SYN_TOOL.SYN_AND_REPORT_TIMING,
+            (inst, logic, parser_state, timing_params),
+        )
+    for job in jobs.values():
+        job.get()
 
 
 def SEED_COUNTS(parser_state, params):
