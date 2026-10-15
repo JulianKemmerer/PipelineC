@@ -11,13 +11,13 @@ Usage:
 
     data_t = make_fixed_t(1, 15)               # Q1.15 samples
     coeff_t = make_fixed_t(2, 14)              # Q2.14 coefficients
-    fir, fir_t = make_fir(
+    fir = make_fir(
         [0.25, 0.5, 0.5, 0.25], coeff_t, data_t,
         out_t=data_t, rounding="round_half_even", overflow="saturate",
     )
 
     @MAIN(100.0)
-    def top(stream_in_if: fir.in_fwd_t, stream_out_if: fir.out_fb_t) -> fir_t:
+    def top(stream_in_if: fir.in_fwd_t, stream_out_if: fir.out_fb_t) -> fir.return_t:
         return fir(stream_in_if, stream_out_if)
 """
 
@@ -67,7 +67,7 @@ def make_fir(
     start_latency=None,
     max_latency=None,
 ):
-    """Build a single-rate streaming FIR filter. Returns (fir, fir_t).
+    """Build a single-rate streaming FIR filter. Returns fir, with its complete return type at fir.return_t.
 
     coeffs:    list of float taps (quantized to coeff_t here, after scaling by
                `gain`) or already-quantized raw ints (then gain must be 1).
@@ -107,7 +107,7 @@ def make_fir(
     coeffs_q = _quantize_arg_coeffs(coeffs, coeff_t, gain)
     n_taps = len(coeffs_q)
 
-    fir_core, out_t_actual, accum_t = make_fir_core(
+    fir_core = make_fir_core(
         coeffs_q,
         data_t,
         coeff_t,
@@ -118,11 +118,13 @@ def make_fir(
         skip_zero_taps=skip_zero_taps,
     )
 
+    accum_t = fir_core.accum_t
+
     win_t = data_t[n_taps]
     in_intrf = make_stream_interface(data_t)
 
     if handshake == "elastic":
-        sp_func, sp_t = make_stream_auto_pipeline(
+        sp_func = make_stream_auto_pipeline(
             fir_core,
             latency=latency,
             start_latency=start_latency,
@@ -165,7 +167,7 @@ def make_fir(
         # (that one is for the elastic branch, where it pairs with in_intrf.fb_t).
         in_stream_t = make_stream_t(data_t)
         win_stream_t = make_stream_t(win_t)
-        out_stream_t = make_stream_t(out_t_actual)
+        out_stream_t = make_stream_t(fir_core.return_t)
         fir_t = out_stream_t
 
         # Thread valid through the auto-pipeline alongside the data (the
@@ -177,7 +179,7 @@ def make_fir(
             rv.valid = x.valid
             return rv
 
-        fir_core_ap, _fir_core_ap_call = _auto_pipeline_with_io_regs(
+        fir_core_ap = _auto_pipeline_with_io_regs(
             fir_core_stream,
             has_input_reg=True,
             has_output_reg=True,
@@ -185,6 +187,7 @@ def make_fir(
             start_latency=start_latency,
             max_latency=max_latency,
         )
+        _fir_core_ap_call = fir_core_ap.auto_pipeline
 
         @hw_func
         def fir(in_stream: in_stream_t) -> out_stream_t:
@@ -209,7 +212,7 @@ def make_fir(
     fir.coeffs_q = coeffs_q
     fir.data_t = data_t
     fir.coeff_t = coeff_t
-    fir.out_t = out_t_actual
+    fir.out_t = fir_core.return_t
     fir.accum_t = accum_t
     fir.full_precision = out_t is None
     fir.rounding = rounding
@@ -227,4 +230,4 @@ def make_fir(
     fir.out_fb_t = sp_func.out_intrf.fb_t if handshake == "elastic" else None
     fir.in_intrf = in_intrf
     fir.out_intrf = sp_func.out_intrf if handshake == "elastic" else None
-    return fir, fir_t
+    return fir

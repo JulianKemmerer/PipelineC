@@ -40,7 +40,7 @@ from dsp.fir_tb import make_fir_tb, quantize_samples, sine, white_noise
 data_t = make_fixed_t(1, 7)
 coeff_t = make_fixed_t(2, 6)
 
-fir_e, fir_e_t = make_fir(
+fir_e = make_fir(
     [0.25, 0.5, 0.5, 0.25],
     coeff_t,
     data_t,
@@ -48,10 +48,11 @@ fir_e, fir_e_t = make_fir(
     rounding="round_half_even",
     overflow="saturate",
 )
+
 stim_e = quantize_samples(sine(80, 4), data_t)
 tb_e = make_fir_tb(fir_e, stim_e, ready_pattern="random", name="fir_elastic")
 
-fir_v, fir_v_t = make_fir(
+fir_v = make_fir(
     [-0.03125, 0.0, 0.28125, 0.5, 0.28125, 0.0, -0.03125],
     coeff_t,
     data_t,
@@ -60,6 +61,7 @@ fir_v, fir_v_t = make_fir(
     overflow="saturate",
     handshake="valid_only",
 )
+
 stim_v = quantize_samples(white_noise(80, random.Random(42)), data_t)
 tb_v = make_fir_tb(fir_v, stim_v, name="fir_valid_only")
 

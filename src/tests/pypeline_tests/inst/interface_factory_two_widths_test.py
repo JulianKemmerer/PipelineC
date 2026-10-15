@@ -34,37 +34,39 @@ from axi.axis import (
 
 axis4_intrf = make_axis_interface(4)
 axis8_intrf = make_axis_interface(8)
-bcast4, bcast4_t = make_axis_broadcast_interlock(axis4_intrf, 2)
-bcast8, bcast8_t = make_axis_broadcast_interlock(axis8_intrf, 2)
+bcast4 = make_axis_broadcast_interlock(axis4_intrf, 2)
+
+bcast8 = make_axis_broadcast_interlock(axis8_intrf, 2)
 
 
 @MAIN
 def bcast4_top(
     axis_in_if: axis4_intrf.fwd_t, axis_out_if: axis4_intrf.fb_t[2]
-) -> bcast4_t:
+) -> bcast4.return_t:
     return bcast4(axis_in_if, axis_out_if)
 
 
 @MAIN
 def bcast8_top(
     axis_in_if: axis8_intrf.fwd_t, axis_out_if: axis8_intrf.fb_t[2]
-) -> bcast8_t:
+) -> bcast8.return_t:
     return bcast8(axis_in_if, axis_out_if)
 
 
-skid4, skid4_t = make_axis_skid_buffer(axis4_intrf)
-skid8, skid8_t = make_axis_skid_buffer(axis8_intrf)
+skid4 = make_axis_skid_buffer(axis4_intrf)
+
+skid8 = make_axis_skid_buffer(axis8_intrf)
 
 
 @MAIN
 def skid4_top(
     stream_in_if: axis4_intrf.fwd_t, stream_out_if: axis4_intrf.fb_t
-) -> skid4_t:
+) -> skid4.return_t:
     return skid4(stream_in_if, stream_out_if)
 
 
 @MAIN
 def skid8_top(
     stream_in_if: axis8_intrf.fwd_t, stream_out_if: axis8_intrf.fb_t
-) -> skid8_t:
+) -> skid8.return_t:
     return skid8(stream_in_if, stream_out_if)

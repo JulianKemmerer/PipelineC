@@ -102,8 +102,10 @@ tkeep_t = make_uint_t(AXIS_N)
 KEEP_ALL = (1 << AXIS_N) - 1
 axis32_intrf = make_axis_interface(AXIS_N)
 
-pulse_gen, out_stream_t = make_pulse_gen()
-pdw_ctrl, pdw_ctrl_out_t = make_pdw_ctrl(AXIS_N)
+pulse_gen = make_pulse_gen()
+out_stream_t = pulse_gen.return_t
+pdw_ctrl = make_pdw_ctrl(AXIS_N)
+
 
 # ---------------------------------------------------------------------------
 # rst_main -- the reset tree (README's "Reset").
@@ -166,7 +168,8 @@ ALARM_DROP_SAMPLES = 4096
 # stay low regardless. ~8.4 ms at 125 MHz -- far more than ALARM_DROP_SAMPLES
 # needs when the input runs continuously, as the platform says it does.
 ALARM_MAX_CYCLES = 1 << 20
-error_alarm, _error_alarm_t = make_error_alarm(ALARM_DROP_SAMPLES, ALARM_MAX_CYCLES)
+error_alarm = make_error_alarm(ALARM_DROP_SAMPLES, ALARM_MAX_CYCLES)
+
 
 global_rst: Wire[uint1_t]  # OR of all seven -- everything except pdw_ctrl
 ctrl_rst: Wire[uint1_t]  # tx0_s_axis_rst alone -- pdw_ctrl only
@@ -302,8 +305,9 @@ def pulse_gen_main():
 # pulse_gen_main's own generated sample (internal loopback) via the control
 # struct's CTRL_FLAG_LOOPBACK_EN.
 # ---------------------------------------------------------------------------
-pulse_detect, pulse_detect_t = make_pulse_detect()
-pulse_extract, pulse_extract_t = make_pulse_extract(pulse_detect)
+pulse_detect = make_pulse_detect()
+
+pulse_extract = make_pulse_extract(pulse_detect)
 
 
 @struct
@@ -320,8 +324,10 @@ class candidate_rec_t(NamedTuple):
     peak_power: uint32_t  # 32   linear, power_t truncated
 
 
-pdw_tx, _pdw_tx_t = make_type_to_axis(pulse_extract.valid_pdw_t, AXIS_N)
-cand_tx, _cand_tx_t = make_type_to_axis(candidate_rec_t, AXIS_N)
+pdw_tx = make_type_to_axis(pulse_extract.valid_pdw_t, AXIS_N)
+
+cand_tx = make_type_to_axis(candidate_rec_t, AXIS_N)
+
 
 # ---------------------------------------------------------------------------
 # What a host program needs, exported into <out_dir>/host/pypeline_host_types.py
@@ -379,12 +385,15 @@ host_export(
 # rx*_m_axis_tready pin included -- reaches the serializer's own ready. That is
 # what lets reset force the drain unconditionally again; see the note in
 # pdw_main. Two slots, +1 cycle, 100% throughput.
-pdw_skid, _pdw_skid_t = make_axis_skid_buffer(pdw_tx.axis_intrf)
-cand_skid, _cand_skid_t = make_axis_skid_buffer(cand_tx.axis_intrf)
+pdw_skid = make_axis_skid_buffer(pdw_tx.axis_intrf)
+
+cand_skid = make_axis_skid_buffer(cand_tx.axis_intrf)
+
 # Two sinks for the released packet: the host capture port and the TX replay
 # port. Combinational valid/ready interlocking, no buffering -- see
 # make_axis_broadcast_interlock.
-pkt_bcast, _pkt_bcast_t = make_axis_broadcast_interlock(axis32_intrf, 2)
+pkt_bcast = make_axis_broadcast_interlock(axis32_intrf, 2)
+
 
 # Raw RX0 ADC input.
 rx0_s_axis_tdata: Input[uint32_t]

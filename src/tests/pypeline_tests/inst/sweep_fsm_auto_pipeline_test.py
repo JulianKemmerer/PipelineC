@@ -47,9 +47,10 @@ def heavy_pipeline(x: stream_t) -> stream_t:
     return rv
 
 
-auto_pipelined_heavy_pipeline, heavy_pipeline_ap = _auto_pipeline_with_io_regs(
+auto_pipelined_heavy_pipeline = _auto_pipeline_with_io_regs(
     heavy_pipeline, has_input_reg=True, has_output_reg=True
 )
+heavy_pipeline_ap = auto_pipelined_heavy_pipeline.auto_pipeline
 # Reading .latency here makes this design a .latency consumer: a real
 # synthesizing build (synth_tests runs this file through a full sweep) then
 # exercises the pypelinec driver's pin-and-confirm pass. 0 on the bootstrap

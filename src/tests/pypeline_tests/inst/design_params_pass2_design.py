@@ -24,12 +24,13 @@ def pass2_core(x: uint8_t) -> uint8_t:
 
 
 uint8_stream_intrf = make_stream_interface(uint8_t)
-pass2_sap, pass2_sap_t = make_stream_auto_pipeline(pass2_core, start_latency=START)
+pass2_sap = make_stream_auto_pipeline(pass2_core, start_latency=START)
+
 CORE_LATENCY = pass2_sap.auto_pipeline.latency  # DIRECT_LATENCY_READ
 
 
 @MAIN(100.0)
 def design_params_pass2_main(
     stream_in_if: uint8_stream_intrf.fwd_t, stream_out_if: uint8_stream_intrf.fb_t
-) -> pass2_sap_t:
+) -> pass2_sap.return_t:
     return pass2_sap(stream_in_if, stream_out_if)

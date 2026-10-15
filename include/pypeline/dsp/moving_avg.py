@@ -48,7 +48,7 @@ def make_moving_avg(
     start_latency=None,
     max_latency=None,
 ):
-    """Build an n-sample moving average. Returns (moving_avg, moving_avg_t).
+    """Build an n-sample moving average. Returns moving_avg, with its complete return type at moving_avg.return_t.
 
     data_t:    fixed_t sample format.
     n:         window length (>= 1), including the current sample. Must be a
@@ -121,12 +121,13 @@ def make_moving_avg(
             return resize_fn(s)
 
     if handshake == "elastic":
-        sp_func, _sp_t = make_stream_auto_pipeline(
+        sp_func = make_stream_auto_pipeline(
             moving_avg_core,
             latency=latency,
             start_latency=start_latency,
             max_latency=max_latency,
         )
+
         in_intrf = make_stream_interface(data_t)
         out_intrf = sp_func.out_intrf
 
@@ -178,7 +179,7 @@ def make_moving_avg(
             rv.valid = x.valid
             return rv
 
-        moving_avg_core_ap, _moving_avg_core_ap_call = _auto_pipeline_with_io_regs(
+        moving_avg_core_ap = _auto_pipeline_with_io_regs(
             moving_avg_core_stream,
             has_input_reg=True,
             has_output_reg=True,
@@ -186,6 +187,7 @@ def make_moving_avg(
             start_latency=start_latency,
             max_latency=max_latency,
         )
+        _moving_avg_core_ap_call = moving_avg_core_ap.auto_pipeline
         _core_ap = _moving_avg_core_ap_call
 
         @hw_func
@@ -243,4 +245,4 @@ def make_moving_avg(
         if handshake == "valid_only"
         else None
     )
-    return moving_avg, moving_avg_t
+    return moving_avg

@@ -448,7 +448,9 @@ def test_report():
 N = 4
 axis_intrf = make_axis_interface(N)
 FIFO_DEPTH = 4
-pfifo, pfifo_t = probe.make_probed_stream_fifo(axis_intrf.stream_t.typeof("data"), FIFO_DEPTH, "fifo")
+pfifo = probe.make_probed_stream_fifo(
+    axis_intrf.stream_t.typeof("data"), FIFO_DEPTH, "fifo"
+)
 
 
 def test_probed_fifo_sim_call():

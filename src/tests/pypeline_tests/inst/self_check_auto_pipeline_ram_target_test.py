@@ -19,7 +19,8 @@ from pypeline import (
 )
 from ram import make_auto_pipeline_ram
 
-ram, _out_t = make_auto_pipeline_ram(uint32_t, 1024, ports=("w", "r"), latency=7)
+ram = make_auto_pipeline_ram(uint32_t, 1024, ports=("w", "r"), latency=7)
+
 GAP = ram.read_after_write_gap
 if param("RAM_TARGET_IN_SOURCE", True):
     PART("xc7a200tffg1156-2")

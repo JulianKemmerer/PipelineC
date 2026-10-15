@@ -3,8 +3,9 @@
 
 A function whose annotations use whole `@interface` types is an *interface
 function*: its body wires only the feedforward direction between submodule calls,
-and `make_hw_func_from_interface_func` generates the ordinary `(hw_func,
-struct_t)` pair that threads the reverse direction through `Feedback[T]`.
+and `make_hw_func_from_interface_func` generates an ordinary `hw_func` that
+threads the reverse direction through `Feedback[T]`. Its `.return_t` holds
+the generated result struct.
 
 No decorator is needed -- a whole interface is not a valid hardware type, so
 annotating with one is unambiguous. Instantiation stays explicit, so the boundary
@@ -530,7 +531,7 @@ def _bind_call_args(call, fwd_params, fb_params, ref, src, lineno):
 
 
 def make_hw_func_from_interface_func(f):
-    """Compile an interface function into an ordinary `(hw_func, struct_t)` pair.
+    """Compile an interface function into a hw_func with .return_t metadata.
 
     Memoized on the function so repeated instantiation yields one identical
     definition (one hardware definition, many call-site instances).
@@ -605,7 +606,7 @@ def make_hw_func_from_interface_func(f):
         # injected rather than referenced by name.
         was_iface_func = callobj is not None and is_interface_func(callobj)
         if was_iface_func:
-            callobj, _ = make_hw_func_from_interface_func(callobj)
+            callobj = make_hw_func_from_interface_func(callobj)
         cports = {}
         if callobj is not None:
             try:
@@ -931,8 +932,8 @@ def make_hw_func_from_interface_func(f):
     )
     inst._pypeline_iface_generated = True
     inst.generated_source = source
-    _MEMO[orig] = (inst, inst_t)
-    return inst, inst_t
+    _MEMO[orig] = inst
+    return inst
 
 
 def _norm_stmt(src, stmt):

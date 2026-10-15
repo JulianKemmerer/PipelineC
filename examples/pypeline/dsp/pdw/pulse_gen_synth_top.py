@@ -27,7 +27,8 @@ from pulse_gen import make_pulse_gen
 
 PART("xc7a200tffg1156-2")  # AIR7310: XC7A200T-2FFG1156C, 125 MHz
 
-pulse_gen, out_stream_t = make_pulse_gen()
+pulse_gen = make_pulse_gen()
+out_stream_t = pulse_gen.return_t
 
 pri: Input[uint32_t]
 width: Input[uint32_t]

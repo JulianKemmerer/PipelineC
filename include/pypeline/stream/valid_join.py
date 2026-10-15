@@ -19,7 +19,7 @@ from fifo import make_fifo
 
 
 def make_valid_join(data_ts, depth=32):
-    """Return (join, joined_t).
+    """Return join, with its complete return type at join.return_t.
 
     join(data0, valid0, data1, valid1, ..., rst) ->
         joined_t{p0, p1, ..., valid, overflow}
@@ -65,7 +65,7 @@ def make_valid_join(data_ts, depth=32):
         JOINED_T=joined_t,
     )
     for i, data_t in enumerate(data_ts):
-        fifo, _ = make_fifo(data_t, depth)
+        fifo = make_fifo(data_t, depth)
         ns[f"DATA{i}_T"] = data_t
         ns[f"FIFO{i}"] = fifo
         lines += [
@@ -96,4 +96,4 @@ def make_valid_join(data_ts, depth=32):
     join.out_t = joined_t
     join.depth = depth
     join._sim_clocked_pipeline_boundary = True
-    return join, joined_t
+    return join

@@ -65,21 +65,22 @@ def round_b(x: uint32_t) -> uint32_t:
 
 
 uint32_stream_intrf = make_stream_interface(uint32_t)
-a_mcp, a_mcp_t = make_stream_multi_cycle(round_a, 2)
-b_mcp, b_mcp_t = make_stream_multi_cycle(round_b, 2)
+a_mcp = make_stream_multi_cycle(round_a, 2)
+
+b_mcp = make_stream_multi_cycle(round_b, 2)
 
 
 @MAIN(50.0)
 def a_main(
     stream_in_if: uint32_stream_intrf.fwd_t, stream_out_if: a_mcp.out_fb_t
-) -> a_mcp_t:
+) -> a_mcp.return_t:
     return a_mcp(stream_in_if, stream_out_if)
 
 
 @MAIN(50.0)
 def b_main(
     stream_in_if: uint32_stream_intrf.fwd_t, stream_out_if: b_mcp.out_fb_t
-) -> b_mcp_t:
+) -> b_mcp.return_t:
     return b_mcp(stream_in_if, stream_out_if)
 
 

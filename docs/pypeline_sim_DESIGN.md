@@ -104,7 +104,7 @@ avoids the per-hit overhead of an `lru_cache` function call frame.
 
 ## `@hw_func` / `_sim_type_wrap` — Per-Function Type Propagation
 
-The `@hw_func` decorator (`hw_func` is an alias for `_sim_type_wrap`) wraps a pypeline
+The `@hw_func` decorator delegates to `_sim_type_wrap`, which wraps a pypeline
 hardware function to propagate type information through the simulation call graph.
 
 At **decoration time**, `_sim_type_wrap` calls `_build_reg_sim_func(fn)`. Based on whether
@@ -169,7 +169,15 @@ wrapper body. Elaboration uses `func_for_source.__globals__` (the unwrapped func
 imports) rather than the wrapper's globals in `pypeline.py`.
 
 **`functools.wraps`** preserves `__name__`, `__annotations__`, and merges `__dict__`, so
-custom attributes like `clz.out_t` or `shifter_SL.amount_t` survive wrapping.
+custom metadata and the standard `.return_t` attribute survive wrapping.
+
+`_sim_type_wrap` sets `.return_t` on the original function before constructing
+the wrapper. Every strict/raw and stateful/stateless wrapper therefore exposes
+the same complete return annotation; absent or void annotations yield `None`.
+This metadata is assigned at decoration time and adds no per-cycle work.
+Factories return the callable directly, including generated and modeled RAM
+functions; simulation models and interface pairing still consume the declared
+annotations. Cache hits return that same callable and its `.return_t` type.
 
 ### Usage in Factory Functions
 
@@ -191,7 +199,7 @@ def make_clz(value_t):
             if v[i]:
                 result = n_bits - 1 - i
         return result
-    clz.out_t = out_t    # preserved by functools.wraps
+    # @hw_func supplies clz.return_t from the return annotation.
     return clz
 ```
 

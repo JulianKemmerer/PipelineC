@@ -52,7 +52,8 @@ def mult(x: input_payload_t) -> output_payload_t:
 # Resource-shared multiplier with a real valid/ready handshake, in place of
 # the free-running (AUTO_PIPELINE-swept) combinational version's input_ready=1
 # no-flow-control passthrough.
-MULT_FSM, MULT_FSM_T = make_stream_auto_fsm(mult)
+MULT_FSM = make_stream_auto_fsm(mult)
+
 
 CLK_RATE_MHZ = 50
 PART("sky130")

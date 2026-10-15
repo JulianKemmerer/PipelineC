@@ -1,3 +1,4 @@
+from types import SimpleNamespace
 import struct as _struct
 
 from pypeline import (
@@ -608,7 +609,9 @@ def make_int_to_float(int_t, float_t):
 
 def register_float_ops(float_t):
     """Build and globally register +, -, *, / for float_t x float_t.
-    Returns (add, sub, mul, div)."""
+    Return one operations object with .operand_t, .add, .subtract, .multiply and
+    .divide. Every operation exposes its complete result type as .return_t.
+    """
     add = make_float_adder(float_t)
     sub = make_float_subtractor(float_t, adder=add)
     mul = make_float_multiplier(float_t)
@@ -617,7 +620,9 @@ def register_float_ops(float_t):
     register_operator("MINUS", float_t, float_t, sub)
     register_operator("INFERRED_MULT", float_t, float_t, mul)
     register_operator("DIV", float_t, float_t, div)
-    return add, sub, mul, div
+    return SimpleNamespace(
+        operand_t=float_t, add=add, subtract=sub, multiply=mul, divide=div
+    )
 
 
 # ─────────────────────────────────────────────
@@ -629,9 +634,24 @@ float16_t = make_float_t(5, 10)
 float32_t = make_float_t(8, 23)
 float64_t = make_float_t(11, 52)
 
-float16_add, float16_sub, float16_mul, float16_div = register_float_ops(float16_t)
-float32_add, float32_sub, float32_mul, float32_div = register_float_ops(float32_t)
-float64_add, float64_sub, float64_mul, float64_div = register_float_ops(float64_t)
+# Registered arithmetic functions for the predefined float16_t type.
+float16_ops = register_float_ops(float16_t)
+float16_add = float16_ops.add
+float16_sub = float16_ops.subtract
+float16_mul = float16_ops.multiply
+float16_div = float16_ops.divide
+# Registered arithmetic functions for the predefined float32_t type.
+float32_ops = register_float_ops(float32_t)
+float32_add = float32_ops.add
+float32_sub = float32_ops.subtract
+float32_mul = float32_ops.multiply
+float32_div = float32_ops.divide
+# Registered arithmetic functions for the predefined float64_t type.
+float64_ops = register_float_ops(float64_t)
+float64_add = float64_ops.add
+float64_sub = float64_ops.subtract
+float64_mul = float64_ops.multiply
+float64_div = float64_ops.divide
 
 float32_to_float64 = make_float_converter(float32_t, float64_t)
 float64_to_float32 = make_float_converter(float64_t, float32_t)

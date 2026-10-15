@@ -15,6 +15,13 @@ any part instead of needing a per-vendor IP core.
 
 ## `make_fir` — single-rate filter
 
+DSP factories return one callable. Its `.return_t` is the complete call result;
+`.out_t` describes the output sample or arithmetic payload, which can be only
+one field within that result. Elastic filters expose `.in_intrf`, `.out_intrf`
+and their `.in_fwd_t`/`.in_fb_t`/`.out_fwd_t`/`.out_fb_t` halves. In valid-only
+mode, use `.in_stream_t` and `.out_stream_t` instead. Other metadata and timing
+attributes are listed with each block below.
+
 ```python
 from fixed_point import make_fixed_t
 from dsp.fir import make_fir
@@ -22,7 +29,7 @@ from dsp.fir import make_fir
 data_t  = make_fixed_t(1, 15)   # Q1.15 samples
 coeff_t = make_fixed_t(1, 15)   # Q1.15 coefficients
 
-fir, fir_t = make_fir(
+fir = make_fir(
     [0.25, 0.5, 0.5, 0.25],     # float taps (quantized to coeff_t here) or raw ints
     coeff_t, data_t,
     out_t=data_t,               # None = full-precision accumulator output
@@ -31,11 +38,11 @@ fir, fir_t = make_fir(
 )
 
 @MAIN(100.0)
-def top(stream_in_if: fir.in_fwd_t, stream_out_if: fir.out_fb_t) -> fir_t:
+def top(stream_in_if: fir.in_fwd_t, stream_out_if: fir.out_fb_t) -> fir.return_t:
     return fir(stream_in_if, stream_out_if)
 ```
 
-`fir_t` has the same `.stream_out_if` / `.stream_in_if` port fields as
+`fir.return_t` has the same `.stream_out_if` / `.stream_in_if` port fields as
 `make_stream_auto_pipeline`, so filters chain like any stream pipeline instance. Remaining
 parameters:
 
@@ -59,8 +66,8 @@ control" feature.
 from dsp.fir_decim import make_fir_decim
 from dsp.fir_interp import make_fir_interp
 
-decim5, decim5_t = make_fir_decim(taps, coeff_t, 5, data_t, out_t=data_t)
-interp4, interp4_t = make_fir_interp(taps, coeff_t, 4, data_t, out_t=data_t)
+decim5 = make_fir_decim(taps, coeff_t, 5, data_t, out_t=data_t)
+interp4 = make_fir_interp(taps, coeff_t, 4, data_t, out_t=data_t)
 ```
 
 Same interface and parameters as `make_fir`. `make_fir_decim` adds a phase counter in
@@ -125,10 +132,10 @@ from fixed_point import make_fixed_t
 from dsp.magnitude import make_magnitude
 
 data_t = make_fixed_t(16, 0)   # int16_t I/Q rails
-magnitude, magnitude_t = make_magnitude(data_t)   # out_t=None: full-precision uint32_t power
+magnitude = make_magnitude(data_t)   # out_t=None: full-precision uint32_t power
 
 @MAIN(125.0)
-def top(stream_in_if: magnitude.in_fwd_t, stream_out_if: magnitude.out_fb_t) -> magnitude_t:
+def top(stream_in_if: magnitude.in_fwd_t, stream_out_if: magnitude.out_fb_t) -> magnitude.return_t:
     return magnitude(stream_in_if, stream_out_if)
 ```
 
@@ -145,7 +152,7 @@ and wrapped in a stream, the same shape as `make_fir`'s core. `make_complex_t(da
 ```python
 from dsp.dc_block import make_dc_block
 
-dc_block, dc_block_t = make_dc_block(data_t, k=10, out_t=data_t, overflow="saturate")
+dc_block = make_dc_block(data_t, k=10, out_t=data_t, overflow="saturate")
 ```
 
 ```
@@ -170,7 +177,7 @@ output resize is auto-pipelined, not the whole block.
 ```python
 from dsp.moving_avg import make_moving_avg
 
-moving_avg, moving_avg_t = make_moving_avg(data_t, 16, out_t=data_t, overflow="saturate")
+moving_avg = make_moving_avg(data_t, 16, out_t=data_t, overflow="saturate")
 ```
 
 Average of the last `n` samples (window includes the current sample, matching
@@ -192,8 +199,8 @@ roadmap item below.
 from pypeline import make_int_t
 from dsp.cordic import make_cordic_atan2, make_cordic_rotate
 
-atan2, atan2_t = make_cordic_atan2(make_int_t(39), n_iters=14, work_bits=26)
-nco,   nco_t   = make_cordic_rotate(int16_t, n_iters=16, work_bits=24, phase_bits=32)
+atan2 = make_cordic_atan2(make_int_t(39), n_iters=14, work_bits=26)
+nco = make_cordic_rotate(int16_t, n_iters=16, work_bits=24, phase_bits=32)
 ```
 
 One shift-and-add iteration per pipeline stage: no multiplier, no lookup table, and
@@ -252,7 +259,7 @@ instance at different widths, against both a bit-exact model and `math.atan2`).
 ```python
 from dsp.lut_atan2 import make_lut_atan2, golden_lut_atan2
 
-angle, angle_t = make_lut_atan2(make_int_t(39))
+angle = make_lut_atan2(make_int_t(39))
 # angle(x_in, y_in, valid_in, rst) -> {.angle (int16_t turns), .valid, .degenerate, .overflow}
 # golden_lut_atan2(angle, x, y) -> (angle_bits, degenerate)
 ```
@@ -288,7 +295,7 @@ The parity matrix includes PDW's 40-bit accumulator width and signed extremes.
 ```python
 from dsp.nco import make_lut_nco
 
-nco, nco_t = make_lut_nco(int16_t, table_bits=10, phase_bits=32)
+nco = make_lut_nco(int16_t, table_bits=10, phase_bits=32)
 # nco(phase, amplitude, valid_in, rst) -> {.i, .q, .valid, .overflow}
 ```
 
@@ -333,8 +340,8 @@ checks selected latency, bubbles, clock-enable pauses and reset drain against GH
 ```python
 from dsp.log2_db import make_log2_db
 
-log_db, log_db_t = make_log2_db(power_t)                  # method="rom", the default
-log_pwl, log_pwl_t = make_log2_db(power_t, method="pwl")  # no ROM
+log_db = make_log2_db(power_t)                  # method="rom", the default
+log_pwl = make_log2_db(power_t, method="pwl")  # no ROM
 # log_db(v: power_t, valid_in: uint1_t, rst: uint1_t)
 # -> {.db (int16_t Q8.8), .valid, .floored, .overflow}
 ```

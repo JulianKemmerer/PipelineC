@@ -61,12 +61,14 @@ my_struct_intrf = make_stream_interface(my_struct_t)
 
 START_LATENCY = 3
 FIXED_LATENCY = 2
-divider_auto_multi_cycle, divider_auto_multi_cycle_t = make_stream_auto_multi_cycle(
+divider_auto_multi_cycle = make_stream_auto_multi_cycle(
     divider, start_latency=START_LATENCY, max_latency=8
 )
-divider_fixed_auto_multi_cycle, divider_fixed_auto_multi_cycle_t = make_stream_auto_multi_cycle(
+
+divider_fixed_auto_multi_cycle = make_stream_auto_multi_cycle(
     divider, latency=FIXED_LATENCY
 )
+
 
 
 @MAIN(100.0)

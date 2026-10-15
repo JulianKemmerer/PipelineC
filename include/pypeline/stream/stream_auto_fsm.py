@@ -38,7 +38,7 @@ def make_stream_auto_fsm(func, max_latency=None):
         @hw_func
         def blob(x: blob_in_t) -> int16_t: ...
 
-    Returns (func_auto_fsm, func_auto_fsm_t):
+    Returns func_auto_fsm, with its complete return type at func_auto_fsm.return_t:
         func_auto_fsm(stream_in_if: in_intrf.fwd_t, stream_out_if: out_intrf.fb_t) -> func_auto_fsm_t
         func_auto_fsm_t fields: .stream_in_if (in_intrf.fb_t), .stream_out_if (out_intrf.fwd_t)
 
@@ -116,4 +116,4 @@ def make_stream_auto_fsm(func, max_latency=None):
     func_auto_fsm.in_fb_t = in_intrf.fb_t
     func_auto_fsm.out_fwd_t = out_intrf.fwd_t
     func_auto_fsm.out_fb_t = out_intrf.fb_t
-    return func_auto_fsm, func_auto_fsm_t
+    return func_auto_fsm

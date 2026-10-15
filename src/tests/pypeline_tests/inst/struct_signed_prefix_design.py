@@ -20,9 +20,9 @@ class signed_payload_t(NamedTuple):
     value: uint16_t
 
 
-fifo, fifo_t = make_fifo(signed_payload_t, 4)
+fifo = make_fifo(signed_payload_t, 4)
 
 
 @MAIN(125.0)
-def signed_prefix_main(value: uint16_t) -> fifo_t:
+def signed_prefix_main(value: uint16_t) -> fifo.return_t:
     return fifo(1, signed_payload_t(value=value), 1)

@@ -3655,9 +3655,9 @@ def _auto_pipeline_with_io_regs(
     they constrain and name func's core register count only, never the
     boundary registers.
 
-    Returns (wrapped_func, auto_pipeline_call): wrapped_func has func's own
-    (in_type) -> out_type signature; auto_pipeline_call is the AUTO_PIPELINE
-    instance so callers can read .latency. Note .latency is func's own core
+    Returns wrapped_func with func's own (in_type) -> out_type signature and
+    .return_t metadata. Its .auto_pipeline attribute is the AUTO_PIPELINE
+    instance, so callers can read .auto_pipeline.latency. This is func's own core
     pipeline depth only — the boundary registers added here are NOT included
     (callers account for them, e.g. total = has_input_reg + .latency +
     has_output_reg).
@@ -3707,7 +3707,8 @@ def _auto_pipeline_with_io_regs(
         def auto_pipelined(x: in_type) -> out_type:
             return ap(x)
 
-    return auto_pipelined, ap
+    auto_pipelined.auto_pipeline = ap
+    return auto_pipelined
 
 
 # ─────────────────────────────────────────────
@@ -9452,6 +9453,10 @@ def _sim_type_wrap(fn):
         params = []
     ret_t = ann.get("return")
 
+    # Factory callers obtain the complete result type from the callable itself.
+    # Set it before functools.wraps copies fn.__dict__ into every wrapper variant.
+    fn.return_t = ret_t
+
     # Hard error if a port declares only one of its two interface halves.
     _check_partial_interface_ports(fn, ann, params, ret_t)
 
@@ -9714,6 +9719,9 @@ def hw_func(fn=None, *, name=None):
             return negate
 
     Transparent to the hardware elaborator (inspect.unwrap recovers the original).
+    The original function and its wrapper expose .return_t: the declared return
+    annotation, or None when no return type is declared. This is the complete
+    call result, including feedback fields on functions with interface ports.
 
     name="..." gives a factory-produced function a name of your choosing
     instead of the automatic description of its factory arguments:

@@ -100,11 +100,13 @@ def merge(axis_in_if: chan_intrf) -> chan_intrf:
     return f.axis_out_if
 
 
-merge_inst, merge_inst_t = make_hw_func_from_interface_func(merge)
+merge_inst = make_hw_func_from_interface_func(merge)
 
 
 @MAIN
-def top_loop(axis_in_if: chan_intrf.fwd_t, out_port_if: chan_intrf.fb_t) -> merge_inst_t:
+def top_loop(
+    axis_in_if: chan_intrf.fwd_t, out_port_if: chan_intrf.fb_t
+) -> merge_inst.return_t:
     return merge_inst(axis_in_if, out_port_if)
 
 

@@ -11,7 +11,7 @@ import pypeline as py
 from pypeline import MAIN, Reg, uint1_t, uint8_t, uint16_t, int32_t
 from stream.valid_join import make_valid_join
 
-join, _ = make_valid_join((uint16_t, int32_t, uint8_t))
+join = make_valid_join((uint16_t, int32_t, uint8_t))
 
 
 @MAIN(125.0)
@@ -114,7 +114,7 @@ def test_one_result_per_clock():
 
 
 def test_overflow_is_detected():
-    small, _ = make_valid_join((uint16_t, uint16_t), depth=2)
+    small = make_valid_join((uint16_t, uint16_t), depth=2)
     py.sim_reset()
     try:
         for c in range(8):

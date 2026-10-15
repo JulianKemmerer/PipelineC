@@ -562,6 +562,7 @@ def _carry_save_level_out_width(ops):
     return max(_op_end(op) for op in ops)
 
 
+# Shared chunk-adder callables, including their .return_t, keyed by operand width.
 _CS_CHUNK_ADD_CACHE = {}
 
 
@@ -587,8 +588,8 @@ def _get_carry_save_chunk_add(w):
         result: sum_t = ac + bc
         return result
 
-    _CS_CHUNK_ADD_CACHE[w] = (chunk_add, sum_t)
-    return chunk_add, sum_t
+    _CS_CHUNK_ADD_CACHE[w] = chunk_add
+    return chunk_add
 
 
 def _flatten_carry_save_ops(ops):
@@ -680,7 +681,8 @@ def _build_carry_save_stage(levels, idx, in_width, out_bits, max_width, final_ou
     decorator, matching this codebase's convention of never applying
     @wires/@hw_func outside literal `@` syntax.
 
-    Returns (stage_fn, is_wires): is_wires is true only when THIS level
+    Returns stage_fn with .return_t and .is_wires metadata. is_wires is true
+    only when THIS level
     has no add AND (for a non-final level) the rest of the chain is also
     wires -- a real add anywhere from here down makes every stage above
     it in the chain genuinely combinational, regardless of what deeper
@@ -694,7 +696,7 @@ def _build_carry_save_stage(levels, idx, in_width, out_bits, max_width, final_ou
     bus_out_t = make_uint_t(out_width)
     op_t = make_uint_t(max_width)
     sum_t = make_uint_t(max_width + 1)
-    chunk_add, _sum_t = _get_carry_save_chunk_add(max_width)
+    chunk_add = _get_carry_save_chunk_add(max_width)
 
     if is_last:
         is_wires = not has_add
@@ -765,11 +767,13 @@ def _build_carry_save_stage(levels, idx, in_width, out_bits, max_width, final_ou
                 final_result: final_out_t = result
                 return final_result
 
-        return stage, is_wires
+        stage.is_wires = is_wires
+        return stage
 
-    rest_fn, rest_wires = _build_carry_save_stage(
+    rest_fn = _build_carry_save_stage(
         levels, idx + 1, out_width, out_bits, max_width, final_out_t
     )
+    rest_wires = rest_fn.is_wires
     is_wires = (not has_add) and rest_wires
 
     if is_wires:
@@ -836,7 +840,8 @@ def _build_carry_save_stage(levels, idx, in_width, out_bits, max_width, final_ou
                         result = bit_assign(result, s[op_w - 1:0], out_off)
             return rest_fn(result)
 
-    return stage, is_wires
+    stage.is_wires = is_wires
+    return stage
 
 
 def make_soft_add_tree_carry_save(n_leaves, leaf_t, out_t, max_width=2):
@@ -866,9 +871,10 @@ def make_soft_add_tree_carry_save(n_leaves, leaf_t, out_t, max_width=2):
 
     in_t = leaf_t[n_leaves]
     initial_bus_t = make_uint_t(leaf_width * n_leaves)
-    chain_fn, chain_wires = _build_carry_save_stage(
+    chain_fn = _build_carry_save_stage(
         levels, 0, leaf_width * n_leaves, out_bits, max_width, out_t
     )
+    chain_wires = chain_fn.is_wires
 
     # array_to_uint_le is a zero-delay bit-manip primitive (like concat/
     # bit_dup elsewhere in this codebase, its own delay is analytically

@@ -12,7 +12,7 @@ from ram import make_auto_pipeline_ram
 
 SIZE = param("AUTO_PIPELINE_RAM_SIZE", 4096)
 WIDTH = param("AUTO_PIPELINE_RAM_WIDTH", 32)
-ram, out_t = make_auto_pipeline_ram(
+ram = make_auto_pipeline_ram(
     make_uint_t(WIDTH),
     SIZE,
     ports=param("AUTO_PIPELINE_RAM_PORTS", ("w", "r")),
@@ -26,6 +26,7 @@ ram, out_t = make_auto_pipeline_ram(
         for i in range(SIZE)
     ],
 )
+out_t = ram.return_t
 p0_t, p1_t = ram.p0_in_t, ram.in_ts[-1]
 p2_t = p3_t = ram.in_ts[-1]
 N_PORTS = len(ram.ports)

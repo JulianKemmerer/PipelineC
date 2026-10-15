@@ -1,3 +1,4 @@
+from types import SimpleNamespace
 import math
 
 from pypeline import (
@@ -186,7 +187,10 @@ def make_fixed_negate(a_t):
 
 def register_fixed_ops(fixed_t):
     """Build and globally register +, -, * (and unary - iff fixed_t.signed)
-    for fixed_t x fixed_t. Returns (add, sub, mul, negate_or_None)."""
+    for fixed_t x fixed_t. Return one operations object with .operand_t, .add,
+    .subtract, .multiply and .negate (None for unsigned operands). Each callable's
+    .return_t describes its result, including any precision growth.
+    """
     add = make_fixed_adder(fixed_t, fixed_t)
     sub = make_fixed_subtractor(fixed_t, fixed_t)
     mul = make_fixed_multiplier(fixed_t, fixed_t)
@@ -197,7 +201,9 @@ def register_fixed_ops(fixed_t):
     if fixed_t.signed:
         negate = make_fixed_negate(fixed_t)
         register_unary_operator("NEGATE", fixed_t, negate)
-    return add, sub, mul, negate
+    return SimpleNamespace(
+        operand_t=fixed_t, add=add, subtract=sub, multiply=mul, negate=negate
+    )
 
 
 def make_fixed_resize(src_t, dst_t, rounding="truncate", overflow="wrap"):

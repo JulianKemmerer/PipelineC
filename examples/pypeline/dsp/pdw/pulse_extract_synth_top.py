@@ -32,8 +32,10 @@ PART("xc7a200tffg1156-2")  # AIR7310: XC7A200T-2FFG1156C, 125 MHz
 # Built against a pulse_detect instance for its types only (complex_t /
 # gated_sample_t / candidate_pdw_t / width_t); no detector logic is
 # synthesized here -- pulse_detect is never called.
-pulse_detect, _pulse_detect_t = make_pulse_detect()
-pulse_extract, pulse_extract_t = make_pulse_extract(pulse_detect)
+pulse_detect = make_pulse_detect()
+
+pulse_extract = make_pulse_extract(pulse_detect)
+
 
 # Runtime-configurable knobs (the README's control registers, as if from config
 # regs -- same convention as pulse_detect_synth_top.py).
@@ -60,7 +62,7 @@ def pulse_extract_top(
     # release path's timing real rather than tied off.
     pkt_out_if: pulse_extract.pkt_out_intrf.fb_t,
     pdw_out_if: pulse_extract.pdw_out_intrf.fb_t,
-) -> pulse_extract_t:
+) -> pulse_extract.return_t:
     return pulse_extract(
         gated_in=gated_in,
         pdw_in_if=pdw_in_if,

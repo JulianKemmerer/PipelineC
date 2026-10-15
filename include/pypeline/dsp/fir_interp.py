@@ -42,7 +42,7 @@ def make_zero_stuffer(data_t, factor):
     input on the same cycle its last beat is consumed, so sustained
     throughput is exactly factor cycles per input.
 
-    Returns (zero_stuffer, zero_stuffer_t):
+    Returns zero_stuffer, with its complete return type at zero_stuffer.return_t:
         zero_stuffer(stream_in_if: stream_intrf.fwd_t, stream_out_if: stream_intrf.fb_t)
             -> zero_stuffer_t{stream_in_if: stream_intrf.fb_t, stream_out_if: stream_intrf.fwd_t}
     i.e. one stream `@interface` per port, split into its two halves.
@@ -96,7 +96,7 @@ def make_zero_stuffer(data_t, factor):
     zero_stuffer.stream_intrf = stream_intrf
     zero_stuffer.in_fwd_t = stream_intrf.fwd_t
     zero_stuffer.in_fb_t = stream_intrf.fb_t
-    return zero_stuffer, zero_stuffer_t
+    return zero_stuffer
 
 
 def make_fir_interp(
@@ -132,8 +132,9 @@ def make_fir_interp(
     if gain is None:
         gain = interp
 
-    stuffer, _stuffer_t = make_zero_stuffer(data_t, interp)
-    fir, _fir_t = make_fir(
+    stuffer = make_zero_stuffer(data_t, interp)
+
+    fir = make_fir(
         coeffs,
         coeff_t,
         data_t,
@@ -163,7 +164,7 @@ def make_fir_interp(
         f = fir(st.stream_out_if)
         return fir_interp_ports(stream_out_if=f.stream_out_if)
 
-    fir_interp, fir_interp_t = make_hw_func_from_interface_func(fir_interp_wiring)
+    fir_interp = make_hw_func_from_interface_func(fir_interp_wiring)
 
     fir_interp.coeffs_q = fir.coeffs_q
     fir_interp.data_t = data_t
@@ -183,4 +184,4 @@ def make_fir_interp(
     fir_interp.out_fb_t = fir.out_fb_t
     fir_interp.in_intrf = stuffer.stream_intrf
     fir_interp.out_intrf = fir.out_intrf
-    return fir_interp, fir_interp_t
+    return fir_interp

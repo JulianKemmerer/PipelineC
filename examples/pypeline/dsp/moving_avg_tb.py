@@ -54,7 +54,8 @@ def _check_noise_reduced(state):
     )
 
 
-ma_e, ma_e_t = make_moving_avg(data_t, N_WINDOW, out_t=data_t, overflow="saturate")
+ma_e = make_moving_avg(data_t, N_WINDOW, out_t=data_t, overflow="saturate")
+
 expected_e = golden_moving_avg(ma_e, STIM)
 tb_e = make_block_tb(
     ma_e,
@@ -80,9 +81,10 @@ def moving_avg_elastic_tb():
     tb_e.observe(o)
 
 
-ma_v, ma_v_t = make_moving_avg(
+ma_v = make_moving_avg(
     data_t, N_WINDOW, out_t=data_t, overflow="saturate", handshake="valid_only"
 )
+
 expected_v = golden_moving_avg(ma_v, STIM)
 tb_v = make_block_tb(ma_v, STIM, expected_v, name="moving_avg_valid_only")
 

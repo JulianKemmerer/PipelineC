@@ -34,7 +34,7 @@ coeff_t = make_fixed_t(2, 6)
 # gain defaults to interp=3: 3 * max|tap| = 0.703 fits coeff_t's +/-2 range.
 TAPS = [0.078125, 0.15625, 0.234375, 0.15625, 0.078125]
 
-interp3, interp3_t = make_fir_interp(
+interp3 = make_fir_interp(
     TAPS,
     coeff_t,
     3,
@@ -43,13 +43,14 @@ interp3, interp3_t = make_fir_interp(
     rounding="round_half_even",
     overflow="saturate",
 )
-stuffer2, stuffer2_t = make_zero_stuffer(data_t, 2)
+
+stuffer2 = make_zero_stuffer(data_t, 2)
 
 
 @MAIN(100.0)
 def interp3_main(
     stream_in_if: interp3.in_fwd_t, stream_out_if: interp3.out_fb_t
-) -> interp3_t:
+) -> interp3.return_t:
     return interp3(stream_in_if, stream_out_if)
 
 

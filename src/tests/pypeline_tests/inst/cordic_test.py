@@ -36,21 +36,22 @@ from pypeline import MAIN, make_int_t, sim_call, sim_reset, uint1_t
 from dsp.cordic import golden_cordic_atan2, make_cordic_atan2
 
 acc_t = make_int_t(39)  # the PDW phasor accumulator width
-cordic, cordic_t = make_cordic_atan2(acc_t)
+cordic = make_cordic_atan2(acc_t)
+
 
 narrow_t = make_int_t(20)
-cordic_narrow, cordic_narrow_t = make_cordic_atan2(narrow_t, n_iters=10, work_bits=20)
+cordic_narrow = make_cordic_atan2(narrow_t, n_iters=10, work_bits=20)
 
 
 @MAIN(125.0)
-def cordic_main(x_in: acc_t, y_in: acc_t, valid_in: uint1_t) -> cordic_t:
+def cordic_main(x_in: acc_t, y_in: acc_t, valid_in: uint1_t) -> cordic.return_t:
     return cordic(x_in, y_in, valid_in)
 
 
 @MAIN(125.0)
 def cordic_narrow_main(
     x_in: narrow_t, y_in: narrow_t, valid_in: uint1_t
-) -> cordic_narrow_t:
+) -> cordic_narrow.return_t:
     return cordic_narrow(x_in, y_in, valid_in)
 
 

@@ -296,7 +296,7 @@ def test_auto_tag_names_preserve_instance_hierarchy():
     """Names on a direct tag and a stream factory preserve emitted labels."""
     import pypeline
 
-    src = textwrap.dedent('''
+    src = textwrap.dedent("""
         import sys
         sys.path.insert(0, {repo!r})
         sys.path.insert(0, {library!r})
@@ -308,16 +308,16 @@ def test_auto_tag_names_preserve_instance_hierarchy():
             return x * x
 
         TAG = AUTO_PIPELINE(square{direct})
-        stream_core, stream_t = make_stream_auto_pipeline(square{stream})
+        stream_core = make_stream_auto_pipeline(square{stream})
 
         @MAIN
         def direct_top(x: uint8_t) -> uint8_t:
             return TAG(x)
 
         @MAIN
-        def stream_top(stream_in_if: stream_core.in_fwd_t, stream_out_if: stream_core.out_fb_t) -> stream_t:
+        def stream_top(stream_in_if: stream_core.in_fwd_t, stream_out_if: stream_core.out_fb_t) -> stream_core.return_t:
             return stream_core(stream_in_if, stream_out_if)
-    ''')
+    """)
     with tempfile.TemporaryDirectory() as tmp:
         def parse(named):
             return _parse(tmp, "neutral", src.format(

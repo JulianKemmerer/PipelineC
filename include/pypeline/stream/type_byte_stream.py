@@ -42,7 +42,7 @@ def make_type_to_byte_stream(
     align="packed" concatenates values into one packet that the caller ends by
     driving eod[0] on the last value. See `stream/serializer.py`.
 
-    Returns (type_to_byte_stream, type_to_byte_stream_t):
+    Returns type_to_byte_stream, with its complete return type at type_to_byte_stream.return_t:
         type_to_byte_stream(stream_in_if: in_intrf.fwd_t,
                             stream_out_if: out_intrf.fb_t) -> ..._t
         in_intrf  = make_stream_interface(make_ndarray_fragment_t(t, 1))
@@ -54,9 +54,7 @@ def make_type_to_byte_stream(
     """
     n_bytes = byte_length(t)
     t_to_bytes = make_type_to_bytes(t, endian)
-    ser, ser_t = make_serializer(
-        uint8_t, n_bytes, out_n, align=align, padding=padding
-    )
+    ser = make_serializer(uint8_t, n_bytes, out_n, align=align, padding=padding)
 
     in_intrf = make_stream_interface(make_ndarray_fragment_t(t, 1))
     out_intrf = ser.out_intrf
@@ -89,7 +87,7 @@ def make_type_to_byte_stream(
     type_to_byte_stream.t = t
     type_to_byte_stream.n_bytes = n_bytes
     type_to_byte_stream.out_n = out_n
-    return type_to_byte_stream, type_to_byte_stream_t
+    return type_to_byte_stream
 
 
 def make_byte_stream_to_type(
@@ -109,7 +107,7 @@ def make_byte_stream_to_type(
     "zero_pad" emits it zero-filled, also pulsing `.runt`; "ignore" carries the
     residue forward, reproducing the old desync. See `stream/deserializer.py`.
 
-    Returns (byte_stream_to_type, byte_stream_to_type_t):
+    Returns byte_stream_to_type, with its complete return type at byte_stream_to_type.return_t:
         byte_stream_to_type(stream_in_if: in_intrf.fwd_t,
                             stream_out_if: out_intrf.fb_t) -> ..._t
         result fields: .stream_out_if (values), .stream_in_if (reverse half),
@@ -118,7 +116,7 @@ def make_byte_stream_to_type(
     """
     n_bytes = byte_length(t)
     t_from_bytes = make_type_from_bytes(t, endian)
-    deser, deser_t = make_deserializer(
+    deser = make_deserializer(
         uint8_t,
         in_n,
         n_bytes,
@@ -160,4 +158,4 @@ def make_byte_stream_to_type(
     byte_stream_to_type.t = t
     byte_stream_to_type.n_bytes = n_bytes
     byte_stream_to_type.in_n = in_n
-    return byte_stream_to_type, byte_stream_to_type_t
+    return byte_stream_to_type

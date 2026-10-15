@@ -54,7 +54,7 @@ def div_inv(x: uint8_t) -> uint8_t:
 
 
 uint8_stream_intrf = make_stream_interface(uint8_t)
-stream_auto_pipeline, stream_auto_pipeline_t = make_stream_auto_pipeline(div_inv)
+stream_auto_pipeline = make_stream_auto_pipeline(div_inv)
 
 
 # Repeating 4-value input pattern (avoid x=255: ~x wraps to 0, division by
@@ -104,7 +104,7 @@ def self_check_stream_auto_pipeline() -> stream_auto_pipeline.out_fwd_t:
     stream_in_if: uint8_stream_intrf.stream_t
     stream_in_if.valid = in_count < NUM_OUTPUTS
     stream_in_if.data = x
-    o: stream_auto_pipeline_t = stream_auto_pipeline(
+    o: stream_auto_pipeline.return_t = stream_auto_pipeline(
         uint8_stream_intrf.fwd_t(stream=stream_in_if),
         uint8_stream_intrf.fb_t(ready=1),
     )

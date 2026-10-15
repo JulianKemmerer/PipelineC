@@ -35,7 +35,7 @@ from fifo import make_fifo
 STIMULUS = [10, 20, 30, 40, 50]
 NUM_VALUES = len(STIMULUS)
 
-fifo_fwft, fifo_fwft_t = make_fifo(uint32_t, NUM_VALUES)
+fifo_fwft = make_fifo(uint32_t, NUM_VALUES)
 
 
 @MAIN
@@ -53,7 +53,7 @@ def self_check_fifo():
     if do_push:
         data_in = values[push_idx]
 
-    fifo_out: fifo_fwft_t = fifo_fwft(do_pop, data_in, do_push)
+    fifo_out: fifo_fwft.return_t = fifo_fwft(do_pop, data_in, do_push)
 
     if do_push & fifo_out.data_in_ready:
         push_idx = push_idx + 1

@@ -36,17 +36,21 @@ from AUTO_PIPELINE import RamPlan
 from dsp.nco import golden_lut_nco, make_lut_nco, sine_quarter_table
 
 
-nco, nco_t = make_lut_nco(int16_t, auto_pipeline_ram=param("NCO_AUTO_RAM", True))
+nco = make_lut_nco(int16_t, auto_pipeline_ram=param("NCO_AUTO_RAM", True))
+
 
 # A second, coarser instance: a table/index mistake that happens to cancel at
 # one size rarely does at two.
-nco_small, nco_small_t = make_lut_nco(int16_t, table_bits=6, phase_bits=20)
+nco_small = make_lut_nco(int16_t, table_bits=6, phase_bits=20)
+
 
 TURN = 1 << 32
 
 
 @MAIN(125.0)
-def lut_nco_main(phase: uint32_t, amplitude: int16_t, valid_in: uint1_t) -> nco_t:
+def lut_nco_main(
+    phase: uint32_t, amplitude: int16_t, valid_in: uint1_t
+) -> nco.return_t:
     return nco(phase, amplitude, valid_in, 0)
 
 
@@ -76,13 +80,13 @@ def test_automatic_and_manual_latency():
     rng = random.Random(212)
     requests = [(rng.randrange(TURN), rng.randrange(-32768, 32768)) for _ in range(60)]
     try:
-        units = [make_lut_nco(int16_t, auto_pipeline_ram=False)[0]]
+        units = [make_lut_nco(int16_t, auto_pipeline_ram=False)]
         assert units[0].get_latency() == 8
         for latency in (1, 2, 3, 5):
             py.SET_AUTO_PIPELINE_RAM_PLAN_CACHE(
                 {nco.rom._auto_pipeline_ram["key"]: RamPlan(0, latency - 1)}
             )
-            unit, _ = make_lut_nco(int16_t)
+            unit = make_lut_nco(int16_t)
             assert unit.get_latency() == latency + 5
             units.append(unit)
         for unit in units:

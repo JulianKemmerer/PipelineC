@@ -90,7 +90,7 @@ def atan_turns_table(n_iters, angle_frac):
 
 
 def make_cordic_atan2(in_val_t, n_iters=14, work_bits=26):
-    """Build a pipelined atan2. Returns (cordic_atan2, cordic_atan2_t).
+    """Build a pipelined atan2. Returns cordic_atan2, with its complete return type at cordic_atan2.return_t.
 
     in_val_t:  signed integer type of the x/y inputs (e.g. make_int_t(39)).
                x and y are treated as a ratio -- only their angle matters, so
@@ -348,7 +348,7 @@ def make_cordic_atan2(in_val_t, n_iters=14, work_bits=26):
     # out of the second stage into the first iteration register, so they cost
     # no extra cycle.
     cordic_atan2.latency = n_iters + 2
-    return cordic_atan2, cordic_atan2_t
+    return cordic_atan2
 
 
 def make_cordic_rotate(amp_t, n_iters=16, work_bits=24, phase_bits=32):
@@ -519,7 +519,7 @@ def make_cordic_rotate(amp_t, n_iters=16, work_bits=24, phase_bits=32):
     cordic_rotate.atan_table = ATAN
     cordic_rotate.phase_sh = PHASE_SH
     cordic_rotate.latency = n_iters + 2
-    return cordic_rotate, cordic_rotate_t
+    return cordic_rotate
 
 
 def golden_cordic_rotate(rot, phase, amplitude):

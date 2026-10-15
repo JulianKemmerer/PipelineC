@@ -22,14 +22,15 @@ from fifo import make_fifo
 
 # depth=5 rounds up to the real hardware's capacity of 8 (2**ceil(log2(5))) --
 # small on purpose, so fill/drain tests are fast and readable.
-fifo_fwft, fifo_fwft_t = make_fifo(uint32_t, 5)
+fifo_fwft = make_fifo(uint32_t, 5)
+
 CAPACITY = 8
 
 
 @MAIN
 def fifo_test_top(
     ready_for_data_out: uint1_t, data_in: uint32_t, data_in_valid: uint1_t
-) -> fifo_fwft_t:
+) -> fifo_fwft.return_t:
     return fifo_fwft(ready_for_data_out, data_in, data_in_valid)
 
 

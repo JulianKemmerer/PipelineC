@@ -63,7 +63,7 @@ def test_auto_pipeline_read_sites_and_pass_record():
     try:
         ap = AUTO_PIPELINE(plus_one, start_latency=2)
         assert ap.latency == 2  # DIRECT_READ
-        sap, _ = make_stream_auto_pipeline(plus_two, start_latency=3)  # FACTORY_CALL
+        sap = make_stream_auto_pipeline(plus_two, start_latency=3)  # FACTORY_CALL
         sites = pypeline.AUTO_PIPELINE_READ_SITES()
         assert sites[ap.canonical_key] == [f"{__file__}:{_line_of('# DIRECT_READ')}"], sites
         (library_site,) = sites[sap.auto_pipeline.canonical_key]
@@ -124,25 +124,25 @@ def test_hardware_body_read_site():
 
 def test_documented_sizing_attributes():
     # Outside a build: .latency reads the constructor value (0, or latency=)
-    sap, _ = make_stream_auto_pipeline(plus_one)
+    sap = make_stream_auto_pipeline(plus_one)
     assert isinstance(sap.auto_pipeline, AUTO_PIPELINE)
     assert sap.auto_pipeline.latency == 0 and sap.max_in_flight == 0 + 5
-    fixed, _ = make_stream_auto_pipeline(plus_two, latency=3)
+    fixed = make_stream_auto_pipeline(plus_two, latency=3)
     assert fixed.auto_pipeline.latency == 3 and fixed.max_in_flight == 3 + 5
     assert not hasattr(sap, "latency")  # valid/ready is not a fixed latency
 
     pypeline.RESET_AUTO_MULTI_CYCLE_TRACKING()
-    mcp, _ = make_stream_auto_multi_cycle(plus_one, start_latency=3)
+    mcp = make_stream_auto_multi_cycle(plus_one, start_latency=3)
     assert isinstance(mcp.mcp, AUTO_MULTI_CYCLE) and mcp.mcp.latency == 3
 
-    fifo, _ = make_stream_fifo(uint8_t, 100)
+    fifo = make_stream_fifo(uint8_t, 100)
     assert (fifo.depth, fifo.capacity_beats) == (100, 128 + 1)
-    fifo, _ = make_stream_fifo(uint8_t, 64)
+    fifo = make_stream_fifo(uint8_t, 64)
     assert (fifo.depth, fifo.capacity_beats) == (64, 64 + 1)
 
-    skid, _ = make_skid_buffer(uint8_t)
+    skid = make_skid_buffer(uint8_t)
     assert isinstance(skid.latency, int)
-    ram, _ = make_stream_ram(uint8_t, 16)
+    ram = make_stream_ram(uint8_t, 16)
     assert isinstance(ram.latency, int)
 
 

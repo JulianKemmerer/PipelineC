@@ -71,7 +71,7 @@ def make_skid_buffer(data_t_or_intrf, mode: str = "full"):
     full throughput: a caller who reaches for a skid buffer because of a timing
     problem gets the thing that actually fixes it.
 
-    Returns (skid_buffer, skid_buffer_t):
+    Returns skid_buffer, with its complete return type at skid_buffer.return_t:
         skid_buffer(stream_in_if: stream_intrf.fwd_t, stream_out_if: stream_intrf.fb_t)
             -> skid_buffer_t
         skid_buffer_t fields: .stream_out_if (stream_intrf.fwd_t),
@@ -205,4 +205,4 @@ def make_skid_buffer(data_t_or_intrf, mode: str = "full"):
     skid_buffer.mode = mode
     skid_buffer.n_slots = _MODE_SLOTS[mode]
     skid_buffer.latency = _MODE_LATENCY[mode]
-    return skid_buffer, skid_buffer_t
+    return skid_buffer

@@ -2,11 +2,11 @@
 """Stream RAM: `make_ram`'s memory behind valid/ready streams, one request
 stream and one response stream per port.
 
-    sram, sram_t = make_stream_ram(uint32_t, 1024, ports=("w", "r"), read_latency=1)
+    sram = make_stream_ram(uint32_t, 1024, ports=("w", "r"), read_latency=1)
 
     @MAIN
     def top(p0_req_if: sram.p0_req_intrf.fwd_t, p0_resp_if: sram.p0_resp_intrf.fb_t,
-            p1_req_if: sram.p1_req_intrf.fwd_t, p1_resp_if: sram.p1_resp_intrf.fb_t) -> sram_t:
+            p1_req_if: sram.p1_req_intrf.fwd_t, p1_resp_if: sram.p1_resp_intrf.fb_t) -> sram.return_t:
         return sram(p0_req_if, p0_resp_if, p1_req_if, p1_resp_if)
 
 This is the pypeline answer to old PipelineC's `DECL_STREAM_RAM_DP_W_R_1`, for
@@ -77,7 +77,7 @@ def make_stream_ram(
     `make_ram` (read-first, highest port index wins a write collision, `init`
     from Python values, byte write enables).
 
-    Returns (stream_ram, stream_ram_t):
+    Returns stream_ram, with its complete return type at stream_ram.return_t:
         stream_ram(p0_req_if: .p0_req_intrf.fwd_t, p0_resp_if: .p0_resp_intrf.fb_t,
                    p1_req_if: ..., p1_resp_if: ..., ...) -> stream_ram_t
         stream_ram_t fields: .p{i}_resp_if (.p{i}_resp_intrf.fwd_t),
@@ -224,8 +224,8 @@ def make_stream_ram(
         setattr(stream_ram, f"p{i}_resp_intrf", resp_intrfs[i])
         setattr(stream_ram, f"p{i}_req_t", req_ts[i])
         setattr(stream_ram, f"p{i}_resp_t", resp_ts[i])
-    _STREAM_RAM_CACHE[cfg.key] = (stream_ram, stream_ram_t)
-    return stream_ram, stream_ram_t
+    _STREAM_RAM_CACHE[cfg.key] = stream_ram
+    return stream_ram
 
 
 def make_stream_auto_pipeline_ram(
@@ -247,7 +247,7 @@ def make_stream_auto_pipeline_ram(
     The core supports Vivado and ECP5 OPEN_TOOLS synthesis; selected target
     geometry and latency also determine the response FIFO's credit capacity.
     """
-    core, core_t = make_auto_pipeline_ram(
+    core = make_auto_pipeline_ram(
         elem_t,
         size,
         ports,
@@ -257,6 +257,7 @@ def make_stream_auto_pipeline_ram(
         start_latency=start_latency,
         max_latency=max_latency,
     )
+
     depth = 1 << (core.latency + 2).bit_length()  # ceil_pow2(L + 3)
     counter_t = py.make_uint_t(depth.bit_length())
     req_ts, resp_ts, req_intrfs, resp_intrfs, fifos = [], [], [], [], []
@@ -289,7 +290,7 @@ def make_stream_auto_pipeline_ram(
         COUNTER_T=counter_t,
         OUT_T=out_t,
         CORE=core,
-        CORE_T=core_t,
+        CORE_T=core.return_t,
         DEPTH=depth,
     )
     for i, kind in enumerate(core.ports):
@@ -299,8 +300,8 @@ def make_stream_auto_pipeline_ram(
                 f"P{i}_RESP_FB_T": resp_intrfs[i].fb_t,
                 f"P{i}_IN_T": core.in_ts[i],
                 f"P{i}_RESP_T": resp_ts[i],
-                f"FIFO{i}": fifos[i][0],
-                f"FIFO{i}_T": fifos[i][1],
+                f"FIFO{i}": fifos[i],
+                f"FIFO{i}_T": fifos[i].return_t,
             }
         )
         lines += [
@@ -334,7 +335,7 @@ def make_stream_auto_pipeline_ram(
             f"        count{i} -= 1",
         ]
     lines.append("    return o")
-    ram_exec_globals(ns, elem_t, out_t, core_t, *req_ts, *resp_ts)
+    ram_exec_globals(ns, elem_t, out_t, core.return_t, *req_ts, *resp_ts)
     init = core._auto_pipeline_ram["key"]  # avoid large init values in generated names
     wrapped = py._exec_generated_func(
         name, "\n".join(lines) + "\n", ns, folder=RAM_GENERATED_FOLDER
@@ -374,4 +375,4 @@ def make_stream_auto_pipeline_ram(
             ("resp_intrf", resp_intrfs),
         ):
             setattr(wrapped, f"p{i}_{attr}", values[i])
-    return wrapped, out_t
+    return wrapped

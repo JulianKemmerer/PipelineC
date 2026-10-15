@@ -27,9 +27,11 @@ def test_interface_specializations_have_distinct_keys_and_keep_pairing():
     keys = {}
     for width in (8, 4, 8, 4):
         iface = make_axis_interface(width)
-        broadcast, result = make_axis_broadcast_interlock(iface, 2)
-        skid, skid_result = make_axis_skid_buffer(iface)
-        for fn, result_t in ((broadcast, result), (skid, skid_result)):
+        broadcast = make_axis_broadcast_interlock(iface, 2)
+
+        skid = make_axis_skid_buffer(iface)
+
+        for fn, result_t in ((broadcast, broadcast.return_t), (skid, skid.return_t)):
             assert inspect.unwrap(fn).__annotations__["return"] is result_t
             assert fn.axis_intrf is iface
             key = P.CANONICAL_CALLABLE_KEY(fn)
@@ -115,7 +117,7 @@ def _make_late_interface_factory(iface):
     from interface.interface_func import make_hw_func_from_interface_func
 
     def build():
-        skid, _ = make_axis_skid_buffer(iface)
+        skid = make_axis_skid_buffer(iface)
 
         def chain(stream_in_if: iface) -> iface:
             stage = skid(stream_in_if)
@@ -128,10 +130,10 @@ def _make_late_interface_factory(iface):
 
 def test_interface_function_identity_survives_a_returned_factory():
     factories = [_make_late_interface_factory(make_axis_interface(n)) for n in (4, 8)]
-    generated = [factory()[0] for factory in factories]
+    generated = [factory() for factory in factories]
     keys = [P.CANONICAL_CALLABLE_KEY(fn) for fn in generated]
     assert len(set(keys)) == 2, keys
-    assert keys == [P.CANONICAL_CALLABLE_KEY(factory()[0]) for factory in factories]
+    assert keys == [P.CANONICAL_CALLABLE_KEY(factory()) for factory in factories]
     for fn, width in zip(generated, (4, 8)):
         info = fn._pypeline_name_info
         assert info.symbol == "chain"

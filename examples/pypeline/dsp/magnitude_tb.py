@@ -45,7 +45,8 @@ def _tone_pulse():
 
 STIM = _tone_pulse()
 
-magnitude_e, magnitude_e_t = make_magnitude(data_t)
+magnitude_e = make_magnitude(data_t)
+
 expected_e = golden_magnitude(magnitude_e, STIM)
 
 
@@ -95,7 +96,8 @@ def magnitude_elastic_tb():
     tb_e.observe(o)
 
 
-magnitude_v, magnitude_v_t = make_magnitude(data_t, handshake="valid_only")
+magnitude_v = make_magnitude(data_t, handshake="valid_only")
+
 expected_v = golden_magnitude(magnitude_v, STIM)
 
 

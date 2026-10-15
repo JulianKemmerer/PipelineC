@@ -33,29 +33,31 @@ from dsp.dsp_tb import golden_dc_block, quantize_samples, white_noise
 
 data_t = make_fixed_t(1, 15)  # Q1.15 samples
 
-dcb_full, dcb_full_t = make_dc_block(data_t, k=5)  # out_t=None: full precision
-dcb_resized, dcb_resized_t = make_dc_block(
+dcb_full = make_dc_block(data_t, k=5)
+# out_t=None: full precision
+dcb_resized = make_dc_block(
     data_t, k=5, out_t=data_t, rounding="round_half_even", overflow="saturate"
 )
-dcb_vonly, dcb_vonly_t = make_dc_block(data_t, k=5, handshake="valid_only")
+
+dcb_vonly = make_dc_block(data_t, k=5, handshake="valid_only")
 
 
 @MAIN(100.0)
 def dc_block_full_main(
     stream_in_if: dcb_full.in_fwd_t, stream_out_if: dcb_full.out_fb_t
-) -> dcb_full_t:
+) -> dcb_full.return_t:
     return dcb_full(stream_in_if, stream_out_if)
 
 
 @MAIN(100.0)
 def dc_block_resized_main(
     stream_in_if: dcb_resized.in_fwd_t, stream_out_if: dcb_resized.out_fb_t
-) -> dcb_resized_t:
+) -> dcb_resized.return_t:
     return dcb_resized(stream_in_if, stream_out_if)
 
 
 @MAIN(100.0)
-def dc_block_vonly_main(stream_in_if: dcb_vonly.in_stream_t) -> dcb_vonly_t:
+def dc_block_vonly_main(stream_in_if: dcb_vonly.in_stream_t) -> dcb_vonly.return_t:
     return dcb_vonly(stream_in_if)
 
 

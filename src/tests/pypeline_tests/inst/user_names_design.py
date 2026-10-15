@@ -70,8 +70,9 @@ def triple(x: uint16_t) -> uint16_t:
 
 square_encrypt = AUTO_PIPELINE(square, name="square_encrypt")
 square_decrypt = AUTO_PIPELINE(square, name="square_decrypt", start_latency=1)
-triple_stream, triple_stream_t = make_stream_auto_pipeline(triple, name="triple")
-triple_mcp, triple_mcp_t = make_stream_auto_multi_cycle(triple, name="triple_mcp")
+triple_stream = make_stream_auto_pipeline(triple, name="triple")
+
+triple_mcp = make_stream_auto_multi_cycle(triple, name="triple_mcp")
 
 
 @MAIN

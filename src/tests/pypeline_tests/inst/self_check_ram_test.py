@@ -88,25 +88,57 @@ class flags_t(NamedTuple):
 
 # ── 1. ROMs generated from Python values ──
 
-bit_rom, bit_rom_out_t = make_ram(uint1_t, 4, ports=("r",), read_latency=0, init=[1, 0, 1, 1])
-sbit_rom, sbit_rom_out_t = make_ram(int1_t, 4, ports=("r",), read_latency=1, init=[-1, 0, -1, 0])
-wide_rom, wide_rom_out_t = make_ram(
-    int64_t, 4, ports=("r",), read_latency=1, in_regs=1, out_regs=1,
+bit_rom = make_ram(uint1_t, 4, ports=("r",), read_latency=0, init=[1, 0, 1, 1])
+
+sbit_rom = make_ram(int1_t, 4, ports=("r",), read_latency=1, init=[-1, 0, -1, 0])
+
+wide_rom = make_ram(
+    int64_t,
+    4,
+    ports=("r",),
+    read_latency=1,
+    in_regs=1,
+    out_regs=1,
     init=[-5, 1 << 40, -(1 << 62), 7],
 )
-mode_rom, mode_rom_out_t = make_ram(mode_t, 4, ports=("r",), read_latency=0, init=[mode_t.HALT, mode_t.RUN])
-flags_rom, flags_rom_out_t = make_ram(
-    flags_t, 4, ports=("r",), read_latency=1,
-    init=[{"mode": mode_t.RUN, "armed": 1, "count": 9}, {"mode": mode_t.HALT, "count": 15}],
+
+mode_rom = make_ram(
+    mode_t, 4, ports=("r",), read_latency=0, init=[mode_t.HALT, mode_t.RUN]
 )
-grid_rom, grid_rom_out_t = make_ram(
-    uint8_t[4][2], 4, ports=("r",), read_latency=0, init=[[[1, 2], [3, 4], [5, 6], [7, 8]]]
+
+flags_rom = make_ram(
+    flags_t,
+    4,
+    ports=("r",),
+    read_latency=1,
+    init=[
+        {"mode": mode_t.RUN, "armed": 1, "count": 9},
+        {"mode": mode_t.HALT, "count": 15},
+    ],
 )
-text_rom, text_rom_out_t = make_ram(char_t[8], 4, ports=("r",), read_latency=1, init=["boot", "run"])
-fix_rom, fix_rom_out_t = make_ram(fix_t, 4, ports=("r",), read_latency=1, init=[{"val": -3}, {"val": 100}])
-flt_rom, flt_rom_out_t = make_ram(flt_t, 4, ports=("r",), read_latency=1, init=[{"sign": 1, "exp": 17, "man": 513}])
-twin_a, twin_a_out_t = make_ram(uint8_t, 4, ports=("r",), read_latency=1, init=[10, 20, 30, 40])
-twin_b, twin_b_out_t = make_ram(uint8_t, 4, ports=("r",), read_latency=1, init=[40, 30, 20, 10])
+
+grid_rom = make_ram(
+    uint8_t[4][2],
+    4,
+    ports=("r",),
+    read_latency=0,
+    init=[[[1, 2], [3, 4], [5, 6], [7, 8]]],
+)
+
+text_rom = make_ram(char_t[8], 4, ports=("r",), read_latency=1, init=["boot", "run"])
+
+fix_rom = make_ram(
+    fix_t, 4, ports=("r",), read_latency=1, init=[{"val": -3}, {"val": 100}]
+)
+
+flt_rom = make_ram(
+    flt_t, 4, ports=("r",), read_latency=1, init=[{"sign": 1, "exp": 17, "man": 513}]
+)
+
+twin_a = make_ram(uint8_t, 4, ports=("r",), read_latency=1, init=[10, 20, 30, 40])
+
+twin_b = make_ram(uint8_t, 4, ports=("r",), read_latency=1, init=[40, 30, 20, 10])
+
 
 bit_rom_in_t = bit_rom.p0_in_t
 sbit_rom_in_t = sbit_rom.p0_in_t
@@ -122,19 +154,33 @@ twin_b_in_t = twin_b.p0_in_t
 
 # ── 2. Read/write traffic ──
 
-tdp_ram, tdp_ram_out_t = make_ram(
-    uint16_t, 8, ports=("rw", "r"), read_latency=1, in_regs=1, out_regs=1, init=[5, 6, 7, 8]
+tdp_ram = make_ram(
+    uint16_t,
+    8,
+    ports=("rw", "r"),
+    read_latency=1,
+    in_regs=1,
+    out_regs=1,
+    init=[5, 6, 7, 8],
 )
+
 tdp_p0_in_t = tdp_ram.p0_in_t
 tdp_p1_in_t = tdp_ram.p1_in_t
-bwe_ram, bwe_ram_out_t = make_ram(uint32_t, 4, ports=("rw",), read_latency=1, byte_write_enables=True)
+bwe_ram = make_ram(uint32_t, 4, ports=("rw",), read_latency=1, byte_write_enables=True)
+
 bwe_in_t = bwe_ram.p0_in_t
 
 # ── 3. A pure MAIN aligned around a fixed-latency RAM ──
 
-square_rom, square_rom_out_t = make_ram(
-    uint16_t, 16, ports=("r",), read_latency=1, out_regs=1, init=[i * i for i in range(16)]
+square_rom = make_ram(
+    uint16_t,
+    16,
+    ports=("r",),
+    read_latency=1,
+    out_regs=1,
+    init=[i * i for i in range(16)],
 )
+
 square_in_t = square_rom.p0_in_t
 
 
@@ -155,7 +201,7 @@ def self_check_ram_lookup():
     req: square_in_t
     req.addr = lookup_addr
     req.valid = lookup_valid
-    resp: square_rom_out_t = square_rom(req)
+    resp: square_rom.return_t = square_rom(req)
     result: lookup_t
     # The compiler delays lookup_addr/lookup_valid to meet the 2-clock read.
     result.addr = lookup_addr
@@ -166,7 +212,8 @@ def self_check_ram_lookup():
 
 # ── 4. Stream RAM ──
 
-sram, sram_t = make_stream_ram(uint16_t, 16, ports=("rw",), read_latency=1, out_regs=1)
+sram = make_stream_ram(uint16_t, 16, ports=("rw",), read_latency=1, out_regs=1)
+
 sram_req_payload_t = sram.p0_req_t
 sram_req_stream_t = sram.p0_req_intrf.stream_t
 sram_req_fwd_t = sram.p0_req_intrf.fwd_t
@@ -191,47 +238,47 @@ def self_check_ram_checker() -> lookup_t:
     bit_req: bit_rom_in_t
     bit_req.addr = a
     bit_req.valid = 1
-    bit_resp: bit_rom_out_t = bit_rom(bit_req)
+    bit_resp: bit_rom.return_t = bit_rom(bit_req)
     sbit_req: sbit_rom_in_t
     sbit_req.addr = a
     sbit_req.valid = 1
-    sbit_resp: sbit_rom_out_t = sbit_rom(sbit_req)
+    sbit_resp: sbit_rom.return_t = sbit_rom(sbit_req)
     wide_req: wide_rom_in_t
     wide_req.addr = a
     wide_req.valid = 1
-    wide_resp: wide_rom_out_t = wide_rom(wide_req)
+    wide_resp: wide_rom.return_t = wide_rom(wide_req)
     mode_req: mode_rom_in_t
     mode_req.addr = a
     mode_req.valid = 1
-    mode_resp: mode_rom_out_t = mode_rom(mode_req)
+    mode_resp: mode_rom.return_t = mode_rom(mode_req)
     flags_req: flags_rom_in_t
     flags_req.addr = a
     flags_req.valid = 1
-    flags_resp: flags_rom_out_t = flags_rom(flags_req)
+    flags_resp: flags_rom.return_t = flags_rom(flags_req)
     grid_req: grid_rom_in_t
     grid_req.addr = a
     grid_req.valid = 1
-    grid_resp: grid_rom_out_t = grid_rom(grid_req)
+    grid_resp: grid_rom.return_t = grid_rom(grid_req)
     text_req: text_rom_in_t
     text_req.addr = a
     text_req.valid = 1
-    text_resp: text_rom_out_t = text_rom(text_req)
+    text_resp: text_rom.return_t = text_rom(text_req)
     fix_req: fix_rom_in_t
     fix_req.addr = a
     fix_req.valid = 1
-    fix_resp: fix_rom_out_t = fix_rom(fix_req)
+    fix_resp: fix_rom.return_t = fix_rom(fix_req)
     flt_req: flt_rom_in_t
     flt_req.addr = a
     flt_req.valid = 1
-    flt_resp: flt_rom_out_t = flt_rom(flt_req)
+    flt_resp: flt_rom.return_t = flt_rom(flt_req)
     twin_a_req: twin_a_in_t
     twin_a_req.addr = a
     twin_a_req.valid = 1
-    twin_a_resp: twin_a_out_t = twin_a(twin_a_req)
+    twin_a_resp: twin_a.return_t = twin_a(twin_a_req)
     twin_b_req: twin_b_in_t
     twin_b_req.addr = a
     twin_b_req.valid = 1
-    twin_b_resp: twin_b_out_t = twin_b(twin_b_req)
+    twin_b_resp: twin_b.return_t = twin_b(twin_b_req)
 
     a1: uint2_t = c - 1
     a3: uint2_t = c - 3
@@ -307,7 +354,7 @@ def self_check_ram_checker() -> lookup_t:
     if t >= 8:
         p1.addr = t - 8
     p1.valid = (c >= 16) & (t < 16)
-    tdp: tdp_ram_out_t = tdp_ram(p0, p1)
+    tdp: tdp_ram.return_t = tdp_ram(p0, p1)
     init_vals: uint16_t[8] = [5, 6, 7, 8, 0, 0, 0, 0]
     if (c >= 19) & (c < 35) & ~traffic_done:
         r: uint8_t = c - 19
@@ -337,7 +384,7 @@ def self_check_ram_checker() -> lookup_t:
     if c == 17:
         bw.wr_data = 0x11223344
         bw.wr_en = [1, 0, 0, 1]
-    bwe: bwe_ram_out_t = bwe_ram(bw)
+    bwe: bwe_ram.return_t = bwe_ram(bw)
     if (c == 19) & ~traffic_done:
         sim_assert(bwe.p0.rd_data == 0x11BBCC44, "byte write enables")
         sim_print(f"bwe c={c} rd={bwe.p0.rd_data}", debug=True)
@@ -365,7 +412,9 @@ def self_check_ram_checker() -> lookup_t:
     req_s.data.wr_data = req_idx + 50
     req_s.data.wr_en = req_idx < 8
     resp_ready: uint1_t = (c % 3) != 0
-    sr: sram_t = sram(sram_req_fwd_t(stream=req_s), sram_resp_fb_t(ready=resp_ready))
+    sr: sram.return_t = sram(
+        sram_req_fwd_t(stream=req_s), sram_resp_fb_t(ready=resp_ready)
+    )
     resp_s: sram_resp_stream_t = sr.p0_resp_if.stream
     if req_s.valid & sr.p0_req_if.ready:
         req_idx += 1

@@ -39,7 +39,7 @@ def mix(x: uint32_t) -> uint32_t:
 
 
 word_intrf = make_stream_interface(uint32_t)
-mix_mcp, mix_mcp_t = make_stream_auto_multi_cycle(
+mix_mcp = make_stream_auto_multi_cycle(
     mix,
     start_latency=param("AUTO_MULTI_CYCLE_SWEEP_START", type=int),
     max_latency=param("AUTO_MULTI_CYCLE_SWEEP_MAX", type=int),

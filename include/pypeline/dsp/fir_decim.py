@@ -43,7 +43,7 @@ def make_fir_decim(
     start_latency=None,
     max_latency=None,
 ):
-    """Build a decimate-by-`decim` streaming FIR. Returns (fir_decim, fir_decim_t).
+    """Build a decimate-by-`decim` streaming FIR. Returns fir_decim, with its complete return type at fir_decim.return_t.
 
     Interface and parameters match dsp/fir.make_fir exactly (same stream
     types, same metadata attributes on the returned function); `decim` >= 1
@@ -57,7 +57,7 @@ def make_fir_decim(
     coeffs_q = _quantize_arg_coeffs(coeffs, coeff_t, gain)
     n_taps = len(coeffs_q)
 
-    fir_core, out_t_actual, accum_t = make_fir_core(
+    fir_core = make_fir_core(
         coeffs_q,
         data_t,
         coeff_t,
@@ -68,13 +68,15 @@ def make_fir_decim(
         skip_zero_taps=skip_zero_taps,
     )
 
+    accum_t = fir_core.accum_t
+
     win_t = data_t[n_taps]
     in_intrf = make_stream_interface(data_t)
     phase_t = make_uint_t(max(1, (decim - 1).bit_length()))
     LAST_PHASE = decim - 1
 
     if handshake == "elastic":
-        sp_func, sp_t = make_stream_auto_pipeline(
+        sp_func = make_stream_auto_pipeline(
             fir_core,
             latency=latency,
             start_latency=start_latency,
@@ -121,7 +123,7 @@ def make_fir_decim(
         # identical valid_only branch.
         in_stream_t = make_stream_t(data_t)
         win_stream_t = make_stream_t(win_t)
-        out_stream_t = make_stream_t(out_t_actual)
+        out_stream_t = make_stream_t(fir_core.return_t)
         fir_decim_t = out_stream_t
 
         @hw_func
@@ -131,7 +133,7 @@ def make_fir_decim(
             rv.valid = x.valid
             return rv
 
-        fir_core_ap, _fir_core_ap_call = _auto_pipeline_with_io_regs(
+        fir_core_ap = _auto_pipeline_with_io_regs(
             fir_core_stream,
             has_input_reg=True,
             has_output_reg=True,
@@ -139,6 +141,7 @@ def make_fir_decim(
             start_latency=start_latency,
             max_latency=max_latency,
         )
+        _fir_core_ap_call = fir_core_ap.auto_pipeline
 
         @hw_func
         def fir_decim(in_stream: in_stream_t) -> out_stream_t:
@@ -168,7 +171,7 @@ def make_fir_decim(
     fir_decim.coeffs_q = coeffs_q
     fir_decim.data_t = data_t
     fir_decim.coeff_t = coeff_t
-    fir_decim.out_t = out_t_actual
+    fir_decim.out_t = fir_core.return_t
     fir_decim.accum_t = accum_t
     fir_decim.full_precision = out_t is None
     fir_decim.rounding = rounding
@@ -186,4 +189,4 @@ def make_fir_decim(
     fir_decim.out_fb_t = sp_func.out_intrf.fb_t if handshake == "elastic" else None
     fir_decim.stream_intrf = in_intrf
     fir_decim.in_intrf = in_intrf
-    return fir_decim, fir_decim_t
+    return fir_decim

@@ -41,23 +41,27 @@ from dsp.log2_db import golden_log2_db, make_log2_db
 # The PDW project's power_t: 46 bits, 12 fractional (dc_k=10 + log2(ma_n)=2).
 power_t = make_fixed_t(34, 12, signed=True)
 AUTO_RAM = param("LOG2_DB_AUTO_RAM", True)
-log2_db, log2_db_t = make_log2_db(power_t, auto_pipeline_ram=AUTO_RAM)
+log2_db = make_log2_db(power_t, auto_pipeline_ram=AUTO_RAM)
+
 
 # A second shape with a different binary point -- the noise estimate carries 10
 # fractional bits, not 12, and getting that scaling wrong is silent.
 mean_t = make_fixed_t(33, 10, signed=True)
-log2_db_mean, log2_db_mean_t = make_log2_db(mean_t, auto_pipeline_ram=AUTO_RAM)
+log2_db_mean = make_log2_db(mean_t, auto_pipeline_ram=AUTO_RAM)
+
 
 # The same two shapes through the ROM-less method.
-log2_db_pwl, log2_db_pwl_t = make_log2_db(power_t, method="pwl")
-log2_db_pwl_mean, log2_db_pwl_mean_t = make_log2_db(mean_t, method="pwl")
+log2_db_pwl = make_log2_db(power_t, method="pwl")
+
+log2_db_pwl_mean = make_log2_db(mean_t, method="pwl")
+
 
 # (block, block on mean_t, worst-case dB error allowed against 10*log10)
 METHODS = (
     (log2_db, log2_db_mean, 0.01),
     (
-        make_log2_db(power_t, auto_pipeline_ram=False)[0],
-        make_log2_db(mean_t, auto_pipeline_ram=False)[0],
+        make_log2_db(power_t, auto_pipeline_ram=False),
+        make_log2_db(mean_t, auto_pipeline_ram=False),
         0.01,
     ),
     (log2_db_pwl, log2_db_pwl_mean, 0.10),
@@ -65,17 +69,17 @@ METHODS = (
 
 
 @MAIN(125.0)
-def log2_db_main(v: power_t, valid_in: uint1_t) -> log2_db_t:
+def log2_db_main(v: power_t, valid_in: uint1_t) -> log2_db.return_t:
     return log2_db(v, valid_in, 0)
 
 
 @MAIN(125.0)
-def log2_db_mean_main(v: mean_t, valid_in: uint1_t) -> log2_db_mean_t:
+def log2_db_mean_main(v: mean_t, valid_in: uint1_t) -> log2_db_mean.return_t:
     return log2_db_mean(v, valid_in, 0)
 
 
 @MAIN(125.0)
-def log2_db_pwl_main(v: power_t, valid_in: uint1_t) -> log2_db_pwl_t:
+def log2_db_pwl_main(v: power_t, valid_in: uint1_t) -> log2_db_pwl.return_t:
     return log2_db_pwl(v, valid_in, 0)
 
 
@@ -281,7 +285,7 @@ def test_independent_rom_latencies():
                     log2_db.exp_rom._auto_pipeline_ram["key"]: RamPlan(0, el - 1),
                 }
             )
-            unit, _ = make_log2_db(power_t)
+            unit = make_log2_db(power_t)
             assert unit.get_latency() == max(ml, el) + 5
             sim_reset()
             requests = [

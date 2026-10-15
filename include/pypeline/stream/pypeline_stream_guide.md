@@ -44,15 +44,15 @@ class hdr_t(NamedTuple):
     length:  uint16_t
     flags:   uint32_t          # 7 bytes -- deliberately not a multiple of 4
 
-rx, rx_t = make_axis_to_type(hdr_t, 4)    # AXIS frames -> hdr_t values
-tx, tx_t = make_type_to_axis(hdr_t, 4)    # hdr_t values -> AXIS frames
+rx = make_axis_to_type(hdr_t, 4)    # AXIS frames -> hdr_t values
+tx = make_type_to_axis(hdr_t, 4)    # hdr_t values -> AXIS frames
 
 @MAIN
-def rx_top(axis_in_if: rx.axis_intrf.fwd_t, stream_out_if: rx.out_fb_t) -> rx_t:
+def rx_top(axis_in_if: rx.axis_intrf.fwd_t, stream_out_if: rx.out_fb_t) -> rx.return_t:
     return rx(axis_in_if, stream_out_if)
 
 @MAIN
-def tx_top(stream_in_if: tx.in_intrf.fwd_t, axis_out_if: tx.axis_fb_t) -> tx_t:
+def tx_top(stream_in_if: tx.in_intrf.fwd_t, axis_out_if: tx.axis_fb_t) -> tx.return_t:
     return tx(stream_in_if, axis_out_if)
 ```
 
@@ -117,8 +117,9 @@ whenever a value is a single beat wide (a 4-byte struct on a 4-byte bus, say).
 
 Everything here uses the standard pypeline conventions: `@interface` port halves paired
 by name (`stream_in_if`/`stream_out_if`, or `axis_in_if`/`axis_out_if`), `.fwd_t` on the
-argument side and `.fb_t` as a return-struct field, and `(hw_func, struct_t)` from every
-factory. Each returned function carries its interfaces as attributes
+argument side for an input and `.fb_t` as its return-struct field; an output
+reverses those roles. Every HDL factory returns the function itself, with its
+complete result type at `.return_t`. Each returned function carries its interfaces as attributes
 (`.in_intrf`, `.out_intrf`, `.axis_intrf`, `.in_fb_t`, `.out_fb_t`, `.axis_fb_t`, plus
 `.t`, `.n_bytes` and the sizes), so a caller never has to rebuild a type to declare a
 port.
@@ -141,7 +142,7 @@ port.
 ```python
 from stream.valid_join import make_valid_join
 
-join, result_t = make_valid_join((metadata_t, response_t), depth=32)
+join = make_valid_join((metadata_t, response_t), depth=32)
 # join(metadata, metadata_valid, response, response_valid, rst)
 # -> result_t{p0: metadata_t, p1: response_t, valid, overflow}
 ```

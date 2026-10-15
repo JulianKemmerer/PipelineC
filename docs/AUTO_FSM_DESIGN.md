@@ -170,9 +170,9 @@ a real valid/ready `@interface` stream port, so callers no longer hand-roll
 the `busy`-register spacing the raw contract above requires.
 
 ```python
-blob_fsm, blob_fsm_t = make_stream_auto_fsm(blob)
+blob_fsm = make_stream_auto_fsm(blob)
 @MAIN(25.0)
-def top(stream_in: blob_fsm.in_stream_t, stream_out: blob_fsm.out_fb_t) -> blob_fsm_t:
+def top(stream_in: blob_fsm.in_stream_t, stream_out: blob_fsm.out_fb_t) -> blob_fsm.return_t:
     return blob_fsm(stream_in, stream_out)
 ```
 

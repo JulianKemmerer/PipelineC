@@ -47,7 +47,8 @@ TEST_AMPLITUDE = 1000
 TONE_FREQ = 1 << 30
 NOISE_AMP = 400
 
-pulse_gen, out_stream_t = make_pulse_gen()
+pulse_gen = make_pulse_gen()
+out_stream_t = pulse_gen.return_t
 LAT = pulse_gen.get_latency()
 
 # The table NCO's amplitude is exact to a rounding step: |cos|^2 + |sin|^2 of

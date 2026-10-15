@@ -161,7 +161,7 @@ CTRL_DEFAULTS = pdw_ctrl_t(
 
 
 def make_pdw_ctrl(n=4, registered_ready=False):
-    """Build the control register file. Returns (pdw_ctrl, pdw_ctrl_out_t).
+    """Build the control register file. Returns pdw_ctrl, with its complete return type at pdw_ctrl.return_t.
 
         pdw_ctrl(axis_in_if: pdw_ctrl.axis_intrf.fwd_t, rst: uint1_t)
             -> pdw_ctrl_out_t
@@ -182,7 +182,7 @@ def make_pdw_ctrl(n=4, registered_ready=False):
     change `.latency` (measured identical both ways in pdw_ctrl_test.py), and
     nothing downstream hardcodes that number anyway.
     """
-    rx, _rx_t = make_axis_to_type(
+    rx = make_axis_to_type(
         pdw_ctrl_t,
         n,
         frame="one_per_packet",
@@ -281,4 +281,4 @@ def make_pdw_ctrl(n=4, registered_ready=False):
     # the deserializer's output register, one for `regs` itself. Pinned by
     # pdw_ctrl_test.py against a real run, for both registered_ready settings.
     pdw_ctrl.latency = 2
-    return pdw_ctrl, pdw_ctrl_out_t
+    return pdw_ctrl

@@ -72,7 +72,7 @@ def make_serializer(elem_t, in_n, out_n, align="beat", padding="pad"):
               carrying the true element count; "exact" rejects it at
               factory-call time.
 
-    Returns (serializer, serializer_t):
+    Returns serializer, with its complete return type at serializer.return_t:
         serializer(stream_in_if: in_intrf.fwd_t, stream_out_if: out_intrf.fb_t)
             -> serializer_t
         serializer_t fields:
@@ -154,4 +154,4 @@ def make_serializer(elem_t, in_n, out_n, align="beat", padding="pad"):
     serializer.elem_t = elem_t
     serializer.in_n = in_n
     serializer.out_n = out_n
-    return serializer, serializer_t
+    return serializer

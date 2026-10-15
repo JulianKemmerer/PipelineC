@@ -5080,6 +5080,21 @@ class FuncElaborator:
             # intrf.fb_t(x) are caught. See _elab_cast_call/docs: Casting.
             return self._elab_cast_call(expr, tag_probe)
         # ── Resolve callee ──────────────────────────────────────────────────────
+        elif (
+            isinstance(expr.func, ast.Attribute)
+            and callable(tag_probe)
+            and not (
+                isinstance(expr.func.value, ast.Name)
+                and isinstance(
+                    self.module_globals.get(expr.func.value.id), _types.ModuleType
+                )
+            )
+        ):
+            # Factory bundles and callable metadata can hold peer hardware
+            # functions. Resolve them like an indexed closure, using the live
+            # callable's identity; _try_eval_const rejects hardware-local shadows.
+            callee_name = getattr(tag_probe, "__name__", "call")
+            callee_def = self._elaborate_live_func(callee_name, tag_probe)
         elif isinstance(expr.func, ast.Attribute):
             # Module-qualified call: pypeline_tests.abs_int32(a)
             if not isinstance(expr.func.value, ast.Name):

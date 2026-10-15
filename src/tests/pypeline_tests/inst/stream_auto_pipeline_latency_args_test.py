@@ -42,29 +42,31 @@ def div_inv(x: uint8_t) -> uint8_t:
 
 uint8_stream_intrf = make_stream_interface(uint8_t)
 # Constructed at import, outside any pypelinec build (build mode None)
-plain_sap, plain_sap_t = make_stream_auto_pipeline(div_inv)
-hinted_sap, hinted_sap_t = make_stream_auto_pipeline(div_inv, start_latency=4, max_latency=6)
-fixed_sap, fixed_sap_t = make_stream_auto_pipeline(div_inv, latency=2)
+plain_sap = make_stream_auto_pipeline(div_inv)
+
+hinted_sap = make_stream_auto_pipeline(div_inv, start_latency=4, max_latency=6)
+
+fixed_sap = make_stream_auto_pipeline(div_inv, latency=2)
 
 
 @MAIN(50.0)
 def plain_sap_main(
     stream_in_if: uint8_stream_intrf.fwd_t, stream_out_if: uint8_stream_intrf.fb_t
-) -> plain_sap_t:
+) -> plain_sap.return_t:
     return plain_sap(stream_in_if, stream_out_if)
 
 
 @MAIN(50.0)
 def hinted_sap_main(
     stream_in_if: uint8_stream_intrf.fwd_t, stream_out_if: uint8_stream_intrf.fb_t
-) -> hinted_sap_t:
+) -> hinted_sap.return_t:
     return hinted_sap(stream_in_if, stream_out_if)
 
 
 @MAIN(50.0)
 def fixed_sap_main(
     stream_in_if: uint8_stream_intrf.fwd_t, stream_out_if: uint8_stream_intrf.fb_t
-) -> fixed_sap_t:
+) -> fixed_sap.return_t:
     return fixed_sap(stream_in_if, stream_out_if)
 
 
@@ -150,7 +152,7 @@ def test_pinned_latency_metadata():
             pypeline.SET_AUTO_PIPELINE_LATENCY_CACHE({ap.canonical_key: pinned})
             pypeline.SET_AUTO_PIPELINE_BUILD_MODE("sweep")
             with _RecordAutoPipelines() as rec:
-                sap, _ = make_stream_auto_pipeline(div_inv)
+                sap = make_stream_auto_pipeline(div_inv)
             assert sap.auto_pipeline is rec.made[0]
             assert sap.auto_pipeline.latency == pinned, (pinned, sap.auto_pipeline.latency)
             assert sap.max_in_flight == pinned + 5, (pinned, sap.max_in_flight)

@@ -34,37 +34,40 @@ from dsp.dsp_tb import golden_moving_avg, quantize_samples, white_noise
 
 data_t = make_fixed_t(1, 15)  # Q1.15 samples
 
-ma_full, ma_full_t = make_moving_avg(data_t, 8)  # out_t=None: full precision
-ma_resized, ma_resized_t = make_moving_avg(
+ma_full = make_moving_avg(data_t, 8)
+# out_t=None: full precision
+ma_resized = make_moving_avg(
     data_t, 8, out_t=data_t, rounding="round_half_even", overflow="saturate"
 )
-ma_rawsum, ma_rawsum_t = make_moving_avg(data_t, 5, normalize=False)  # not a pow2
-ma_vonly, ma_vonly_t = make_moving_avg(data_t, 8, handshake="valid_only")
+
+ma_rawsum = make_moving_avg(data_t, 5, normalize=False)
+# not a pow2
+ma_vonly = make_moving_avg(data_t, 8, handshake="valid_only")
 
 
 @MAIN(100.0)
 def moving_avg_full_main(
     stream_in_if: ma_full.in_fwd_t, stream_out_if: ma_full.out_fb_t
-) -> ma_full_t:
+) -> ma_full.return_t:
     return ma_full(stream_in_if, stream_out_if)
 
 
 @MAIN(100.0)
 def moving_avg_resized_main(
     stream_in_if: ma_resized.in_fwd_t, stream_out_if: ma_resized.out_fb_t
-) -> ma_resized_t:
+) -> ma_resized.return_t:
     return ma_resized(stream_in_if, stream_out_if)
 
 
 @MAIN(100.0)
 def moving_avg_rawsum_main(
     stream_in_if: ma_rawsum.in_fwd_t, stream_out_if: ma_rawsum.out_fb_t
-) -> ma_rawsum_t:
+) -> ma_rawsum.return_t:
     return ma_rawsum(stream_in_if, stream_out_if)
 
 
 @MAIN(100.0)
-def moving_avg_vonly_main(stream_in_if: ma_vonly.in_stream_t) -> ma_vonly_t:
+def moving_avg_vonly_main(stream_in_if: ma_vonly.in_stream_t) -> ma_vonly.return_t:
     return ma_vonly(stream_in_if)
 
 

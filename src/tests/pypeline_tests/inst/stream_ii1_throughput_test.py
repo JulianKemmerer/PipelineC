@@ -53,7 +53,7 @@ def plus_three(x: uint8_t) -> uint8_t:
 
 
 LATENCIES = (0, 1, 2, 3, 4, 5, 8)
-SAPS = {L: make_stream_auto_pipeline(plus_three, latency=L)[0] for L in LATENCIES}
+SAPS = {L: make_stream_auto_pipeline(plus_three, latency=L) for L in LATENCIES}
 
 N_WORDS = 40
 
@@ -131,16 +131,16 @@ TAPS = [0.125, 0.375, 0.375, 0.125]
 
 def _dsp_blocks():
     for L in (0, 2):
-        yield f"make_fir L={L}", make_fir(TAPS, coeff_t, data_t, latency=L)[0], 1, 1
+        yield f"make_fir L={L}", make_fir(TAPS, coeff_t, data_t, latency=L), 1, 1
         for d in (1, 2, 3):
-            block = make_fir_decim(TAPS, coeff_t, d, data_t, latency=L)[0]
+            block = make_fir_decim(TAPS, coeff_t, d, data_t, latency=L)
             yield f"make_fir_decim D={d} L={L}", block, 1, d
         for i in (2, 4):
-            block = make_fir_interp(TAPS, coeff_t, i, data_t, latency=L)[0]
+            block = make_fir_interp(TAPS, coeff_t, i, data_t, latency=L)
             yield f"make_fir_interp I={i} L={L}", block, i, 1
-        yield f"make_dc_block L={L}", make_dc_block(data_t, k=5, latency=L)[0], 1, 1
-        yield f"make_moving_avg L={L}", make_moving_avg(data_t, 8, latency=L)[0], 1, 1
-        yield f"make_magnitude L={L}", make_magnitude(data_t, latency=L)[0], 1, 1
+        yield f"make_dc_block L={L}", make_dc_block(data_t, k=5, latency=L), 1, 1
+        yield f"make_moving_avg L={L}", make_moving_avg(data_t, 8, latency=L), 1, 1
+        yield f"make_magnitude L={L}", make_magnitude(data_t, latency=L), 1, 1
 
 
 def _sample(block, n):

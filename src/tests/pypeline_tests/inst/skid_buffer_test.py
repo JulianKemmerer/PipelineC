@@ -26,48 +26,52 @@ from stream.skid_buffer import make_skid_buffer
 # One instance per mode. Each mode is a whole separate @hw_func body, and
 # `mode` is an enclosing-factory arg so each gets its own entity name -- these
 # do not collapse into one another.
-full_skid, full_skid_t = make_skid_buffer(uint32_t, mode="full")
-fwd_skid, fwd_skid_t = make_skid_buffer(uint32_t, mode="forward")
-rev_skid, rev_skid_t = make_skid_buffer(uint32_t, mode="reverse")
-byp_skid, byp_skid_t = make_skid_buffer(uint32_t, mode="bypass")
+full_skid = make_skid_buffer(uint32_t, mode="full")
+
+fwd_skid = make_skid_buffer(uint32_t, mode="forward")
+
+rev_skid = make_skid_buffer(uint32_t, mode="reverse")
+
+byp_skid = make_skid_buffer(uint32_t, mode="bypass")
+
 
 N = 4
 axis_intrf = make_axis_interface(N)
-axis_skid, axis_skid_t = make_axis_skid_buffer(axis_intrf)
+axis_skid = make_axis_skid_buffer(axis_intrf)
 
 
 @MAIN
 def full_skid_top(
     stream_in_if: full_skid.fwd_t, stream_out_if: full_skid.fb_t
-) -> full_skid_t:
+) -> full_skid.return_t:
     return full_skid(stream_in_if, stream_out_if)
 
 
 @MAIN
 def fwd_skid_top(
     stream_in_if: fwd_skid.fwd_t, stream_out_if: fwd_skid.fb_t
-) -> fwd_skid_t:
+) -> fwd_skid.return_t:
     return fwd_skid(stream_in_if, stream_out_if)
 
 
 @MAIN
 def rev_skid_top(
     stream_in_if: rev_skid.fwd_t, stream_out_if: rev_skid.fb_t
-) -> rev_skid_t:
+) -> rev_skid.return_t:
     return rev_skid(stream_in_if, stream_out_if)
 
 
 @MAIN
 def byp_skid_top(
     stream_in_if: byp_skid.fwd_t, stream_out_if: byp_skid.fb_t
-) -> byp_skid_t:
+) -> byp_skid.return_t:
     return byp_skid(stream_in_if, stream_out_if)
 
 
 @MAIN
 def axis_skid_top(
     stream_in_if: axis_skid.fwd_t, stream_out_if: axis_skid.fb_t
-) -> axis_skid_t:
+) -> axis_skid.return_t:
     return axis_skid(stream_in_if, stream_out_if)
 
 

@@ -46,7 +46,7 @@ from axi.axis import make_axis_interface, make_axis_broadcast_interlock
 
 N_LANES = 2
 axis_intrf = make_axis_interface(2)  # 2 byte lanes, keep+eod
-bcast, bcast_t = make_axis_broadcast_interlock(axis_intrf, N_LANES)
+bcast = make_axis_broadcast_interlock(axis_intrf, N_LANES)
 
 
 def test_array_port_is_introspected_as_one_port_of_n_elements():
@@ -105,12 +105,14 @@ def fork_wiring(axis_in_if: axis_intrf) -> fork_ports:
     return fork_ports(fast_if=f.axis_out_if, slow_if=s.axis_out_if)
 
 
-fork, fork_t = make_hw_func_from_interface_func(fork_wiring)
+fork = make_hw_func_from_interface_func(fork_wiring)
 
 
 @hw_func
-def fork_twin(axis_in_if: axis_intrf.fwd_t, fast_if: axis_intrf.fb_t, slow_if: axis_intrf.fb_t) -> fork_t:
-    o: fork_t
+def fork_twin(
+    axis_in_if: axis_intrf.fwd_t, fast_if: axis_intrf.fb_t, slow_if: axis_intrf.fb_t
+) -> fork.return_t:
+    o: fork.return_t
     f_ready: Feedback[uint1_t]
     s_ready: Feedback[uint1_t]
     d = bcast(axis_in_if, [axis_intrf.fb_t(ready=f_ready), axis_intrf.fb_t(ready=s_ready)])
@@ -125,12 +127,16 @@ def fork_twin(axis_in_if: axis_intrf.fwd_t, fast_if: axis_intrf.fb_t, slow_if: a
 
 
 @MAIN
-def top_fork(axis_in_if: axis_intrf.fwd_t, fast_if: axis_intrf.fb_t, slow_if: axis_intrf.fb_t) -> fork_t:
+def top_fork(
+    axis_in_if: axis_intrf.fwd_t, fast_if: axis_intrf.fb_t, slow_if: axis_intrf.fb_t
+) -> fork.return_t:
     return fork(axis_in_if, fast_if, slow_if)
 
 
 @MAIN
-def top_fork_twin(axis_in_if: axis_intrf.fwd_t, fast_if: axis_intrf.fb_t, slow_if: axis_intrf.fb_t) -> fork_t:
+def top_fork_twin(
+    axis_in_if: axis_intrf.fwd_t, fast_if: axis_intrf.fb_t, slow_if: axis_intrf.fb_t
+) -> fork.return_t:
     return fork_twin(axis_in_if, fast_if, slow_if)
 
 

@@ -31,7 +31,8 @@ def mult(i: mult_in_t) -> uint32_t:
 
 
 # One instance of mult(), auto-pipelined, behind stream handshakes
-mult_pipeline, mult_pipeline_t = make_stream_auto_pipeline(mult)
+mult_pipeline = make_stream_auto_pipeline(mult)
+
 in_intrf = mult_pipeline.in_intrf
 out_intrf = mult_pipeline.out_intrf
 

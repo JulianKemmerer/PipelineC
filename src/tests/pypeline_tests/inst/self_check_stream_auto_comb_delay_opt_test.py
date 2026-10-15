@@ -26,7 +26,7 @@ def selected(x: input_t) -> uint16_t:
 
 
 CORE = AUTO_COMB_DELAY_OPT(selected)
-STREAM, STREAM_T = make_stream_auto_comb_delay_opt(CORE)
+STREAM = make_stream_auto_comb_delay_opt(CORE)
 
 
 @MAIN(5.0)

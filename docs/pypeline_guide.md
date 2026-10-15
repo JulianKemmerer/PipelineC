@@ -1854,12 +1854,61 @@ bottom-up values reach the rest of a design, and the report each build prints ab
 Because module-level Python code runs at elaboration time, you can generate specialised
 hardware functions and types using ordinary Python factories (closures).
 
+### Factory results and attributes
+
+An HDL factory returns one object: the function, struct, enum, or interface it
+creates. Related types and configuration are attributes of that object. A
+function's `.return_t` is its **complete return type**, matching its `->`
+annotation; use it in annotations, `Reg[...]`, `Feedback[...]`, or to construct
+a result value:
+
+```python
+pipeline = make_stream_auto_pipeline(compute, start_latency=4)
+
+@hw_func
+def stage(
+    stream_in_if: pipeline.in_fwd_t, stream_out_if: pipeline.out_fb_t
+) -> pipeline.return_t:
+    return pipeline(stream_in_if, stream_out_if)
+```
+
+A stream function's result contains both output data and input feedback.
+`.return_t` therefore differs from the output payload type. Directional
+attributes name the port's role at the returned function:
+
+| Attribute, when supported | Meaning |
+|---|---|
+| `.return_t` | Complete function result; `None` for an unannotated or void return |
+| `.in_intrf`, `.in_fwd_t`, `.in_fb_t` | Input interface, data received as an argument, and feedback returned to the producer |
+| `.out_intrf`, `.out_fwd_t`, `.out_fb_t` | Output interface, data returned to the consumer, and feedback received as an argument |
+| `.out_t` | Library-specific output type: a DSP payload type, or the complete result on RAM functions; see that factory's reference |
+
+Every `@hw_func` callable exposes `.return_t`, including functions produced by
+factories. Struct and enum factories return the type itself; they do not need a
+`.return_t`. Input parameter types remain available through `hw_arg_types(func)`.
+
+| Library factories | Other attributes on the returned object |
+|---|---|
+| Stream AUTO_PIPELINE, MCP, AUTO_FSM, and combinational-optimization wrappers | `.in_intrf`, `.out_intrf` and all four directional halves; AUTO_PIPELINE adds `.auto_pipeline`, `.max_in_flight`; automatic MCP adds `.mcp`; AUTO_FSM adds `.fsm` |
+| Stream FIFO and skid buffers, including probed variants | `.stream_intrf`, `.fwd_t`, `.fb_t`; FIFO sizing uses `.depth`, `.capacity_beats`; skid sizing uses `.n_slots`, `.mode`, `.latency`; probed variants add `.tap_name`, `.capacity_beats` |
+| AXIS width converters | Widening: `.narrow_in_intrf`, `.wide_out_intrf`; narrowing: `.wide_in_intrf`, `.narrow_out_intrf`; each interface exposes `.fwd_t` and `.fb_t` |
+| Raw and stream RAM | Element/address/port metadata and timing; raw `.p{i}_in_t`/`.p{i}_out_t`, stream `.p{i}_req_intrf`/`.p{i}_resp_intrf`; `.return_t` is the whole multi-port result |
+| DSP blocks | Payload, arithmetic, and timing metadata described in the DSP guide; `.out_t` is distinct from `.return_t`; FIR core additionally exposes `.accum_t` |
+| `make_fixed_t`, `make_float_t` | The numeric type, including `.as_const`; fixed-point types also expose `.int_bits`, `.frac_bits`, `.signed` |
+| `register_fixed_ops`, `register_float_ops` | One operations object with `.operand_t`, `.add`, `.subtract`, `.multiply`, plus fixed `.negate` or float `.divide`; each operation has its own `.return_t` |
+
+Only use attributes documented for the chosen factory. An AUTO_PIPELINE stream
+wrapper exposes core depth as `.auto_pipeline.latency`, rather than a fixed
+end-to-end `.latency`. Factories that produce several peer objects return a
+named bundle, with one attribute per object.
+
 ### Generic functions
 
 ```python
-from pypeline import uint8_t, uint32_t
+from pypeline import hw_func, uint8_t, uint32_t
 
 def make_adder(T):
+    @hw_func
     def add(a: T, b: T) -> T:
         return a + b
     return add
@@ -1903,6 +1952,7 @@ pair_u8_t  = make_pair_t(uint8_t)
 
 ```python
 def make_sum_array(T, N):
+    @hw_func
     def sum_array(arr: T[N]) -> T:
         total: T = 0
         for i in range(N):
@@ -2012,12 +2062,12 @@ decoration does not propagate into plain functions called from inside that body 
 factory that calls an undecorated `func` won't simulate `Reg[T]`/`Feedback[T]` or bare
 struct/array locals correctly under `sim_call`, which is why the check exists.
 
-Prefer `hw_arg_types`/`hw_return_type` over reading `func.__annotations__` directly, or
-having a factory stash a type as a custom attribute on the function it returns (e.g.
-`my_func.out_t = out_t`) — the type is already recoverable generically from the
-function's own annotations, so there's no need for either function authors or callers
-to manage it by hand. See `include/pypeline/stream/stream_multi_cycle.py` for the full
-`make_stream_multi_cycle` example.
+Use `func.return_t` for the complete return type of a `@hw_func` callable.
+`hw_arg_types` and `hw_return_type` also support undecorated annotated functions
+and remain useful when introspecting caller-supplied functions. Avoid reaching
+into `func.__annotations__` directly or inventing a factory-specific alias for
+the complete return type. See `include/pypeline/stream/stream_multi_cycle.py`
+for the full `make_stream_multi_cycle` example.
 
 A port annotation may reach its type through any factory argument, even one the function
 body never mentions:
@@ -2025,7 +2075,7 @@ body never mentions:
 ```python
 def make_consumer(src):
     @hw_func
-    def consumer(p: hw_return_type(src)) -> uint16_t:   # `src` appears only here
+    def consumer(p: src.return_t) -> uint16_t:   # `src` appears only here
         return p.a + p.b
     return consumer
 ```
@@ -2144,7 +2194,7 @@ struct type wrapping a single raw integer field — a fixed-point number is just
 from fixed_point import make_fixed_t, register_fixed_ops
 
 q4_12_t = make_fixed_t(4, 12)          # signed Q4.12: 4 integer bits, 12 fraction bits
-add, sub, mul, neg = register_fixed_ops(q4_12_t)   # registers +, -, *, unary - globally
+ops = register_fixed_ops(q4_12_t)   # registers +, -, *, unary - globally
 
 def bias_one(x: q4_12_t):
     one: q4_12_t = q4_12_t.as_const(1.0)   # Python float -> hardware constant
@@ -2171,12 +2221,12 @@ the same type as its operands:
 ```python
 from pypeline import hw_return_type
 
-sum_t = hw_return_type(add)   # the actual (wider) result type: Q5.12
+sum_t = ops.add.return_t   # the actual (wider) result type: Q5.12
 ```
 
 `hw_return_type` (see [Introspecting a function's types](#introspecting-a-functions-types-hw_arg_types--hw_return_type))
-reads the operator's declared return type, so `sum_t` is the same type object `add`
-returns.
+reads the same declared return type as `.return_t`, so `sum_t` is the type
+returned by `ops.add`. The operation bundle's `.operand_t` remains `q4_12_t`.
 
 `+`/`-` require both operands to share the same `frac_bits` (mismatched `frac_bits` raises
 `TypeError` at the point you build the adder/subtractor — resize one operand first via
@@ -3056,9 +3106,9 @@ factory of whatever it sizes. Don't send it through a module-level variable that
 other file reads later:
 
 ```python
-core, core_t = make_stream_auto_pipeline(round_func)
+core = make_stream_auto_pipeline(round_func)
 # Storage that must cover everything the core can have in flight
-fifo, fifo_t = make_stream_fifo(data_t, 4 * core.max_in_flight + 8)
+fifo = make_stream_fifo(data_t, 4 * core.max_in_flight + 8)
 ```
 
 The library documents the bottom-up values its factories expose. These attributes are
@@ -3180,10 +3230,10 @@ from pypeline import hw_func, uint1_t, uint32_t
 from ram import make_auto_pipeline_ram
 from stream.stream_ram import make_stream_auto_pipeline_ram
 
-ram, ram_out_t = make_auto_pipeline_ram(
+ram = make_auto_pipeline_ram(
     uint32_t, 65536, ports=("w", "r"), max_latency=9
 )
-stream_ram, stream_ram_t = make_stream_auto_pipeline_ram(
+stream_ram = make_stream_auto_pipeline_ram(
     uint32_t, 65536, ports=("w", "r"), max_latency=9
 )
 ```
@@ -3205,7 +3255,7 @@ read_t = ram.p1_in_t
 
 @hw_func
 def access_ram(write_addr: addr_t, write_data: uint32_t,
-               read_addr: addr_t, do_write: uint1_t) -> ram_out_t:
+               read_addr: addr_t, do_write: uint1_t) -> ram.return_t:
     write: write_t
     write.addr = write_addr
     write.valid = do_write
@@ -3232,7 +3282,7 @@ read_resp_fb_t = stream_ram.p1_resp_intrf.fb_t
 @hw_func
 def access_stream_ram(write_req: write_req_if_t, write_response_ready: uint1_t,
                       read_req: read_req_if_t, read_response_ready: uint1_t
-                      ) -> stream_ram_t:
+                      ) -> stream_ram.return_t:
     return stream_ram(
         write_req,
         write_resp_fb_t(ready=write_response_ready),
@@ -3976,11 +4026,11 @@ def two_in_series(stream_in: chan) -> chan:
     b = inc5(a.stream_out)
     return b.stream_out
 
-two_series, two_series_t = make_hw_func_from_interface_func(two_in_series)
+two_series = make_hw_func_from_interface_func(two_in_series)
 ```
 
 Instantiation stays explicit, so the boundary where real hardware enters a design is always
-visible. The generated pair is an ordinary `(hw_func, struct_t)`, identical in shape to what a
+visible. The generated callable has a `.return_t` result struct, identical in shape to what a
 hand-written module declares — which is why the two compose freely in either direction.
 
 ```text
@@ -4032,7 +4082,7 @@ Designs mix the two: hand-written modules for anything stateful, generated wirin
 Both directions of that boundary are ordinary, and neither reinvents a naming convention.
 
 **Manual → implied: a hand-written `@hw_func` (or a `@MAIN`) instantiates an interface function.**
-No name matching is involved at all — the generated pair is an ordinary `(hw_func, struct_t)`,
+No name matching is involved at all — the generated callable has an ordinary `.return_t` result struct,
 so you call it like any module: reverse halves go in as arguments, and come back out as named
 return fields. The shape follows from the interface function's own signature:
 
@@ -4360,8 +4410,8 @@ that out into reusable, synthesizable `@hw_func`s:
 from axi.axis import make_axis_interface, make_axis_byte_source, make_axis_byte_sink
 
 axis128_intrf = make_axis_interface(16)
-byte_source, byte_source_t = make_axis_byte_source(axis128_intrf, 16, MAX_FRAME_BYTES)
-byte_sink, byte_sink_t = make_axis_byte_sink(axis128_intrf, 16, MAX_FRAME_BYTES)
+byte_source = make_axis_byte_source(axis128_intrf, 16, MAX_FRAME_BYTES)
+byte_sink = make_axis_byte_sink(axis128_intrf, 16, MAX_FRAME_BYTES)
 
 # byte_source(load, load_data, load_len, stream_out_if) -> byte_source_t
 #   .stream_out_if (fwd_t) - the generated stream; .idle - safe to `load` a new frame
@@ -4473,15 +4523,15 @@ on both sides. They are the pypeline replacements for old PipelineC's
 from stream.serializer import make_serializer
 from stream.deserializer import make_deserializer
 
-ser, ser_t     = make_serializer(uint8_t, 13, 4)    # 13-element value -> 4-lane beats
-deser, deser_t = make_deserializer(uint8_t, 4, 13)  # the inverse
+ser = make_serializer(uint8_t, 13, 4)    # 13-element value -> 4-lane beats
+deser = make_deserializer(uint8_t, 4, 13)  # the inverse
 ```
 
-Both take the usual paired ports and return the usual `(hw_func, struct_t)`:
+Both take the usual paired ports and return a callable with its complete result type at `.return_t`:
 
 ```python
 @MAIN
-def top(stream_in_if: ser.in_intrf.fwd_t, stream_out_if: ser.out_fb_t) -> ser_t:
+def top(stream_in_if: ser.in_intrf.fwd_t, stream_out_if: ser.out_fb_t) -> ser.return_t:
     return ser(stream_in_if, stream_out_if)
 ```
 
@@ -4528,11 +4578,11 @@ policy on top.
 ```python
 from axi.type_axis import make_axis_to_type, make_type_to_axis
 
-rx, rx_t = make_axis_to_type(hdr_t, 4)   # AXIS frames -> hdr_t values
-tx, tx_t = make_type_to_axis(hdr_t, 4)   # hdr_t values -> AXIS frames
+rx = make_axis_to_type(hdr_t, 4)   # AXIS frames -> hdr_t values
+tx = make_type_to_axis(hdr_t, 4)   # hdr_t values -> AXIS frames
 
 @MAIN
-def rx_top(axis_in_if: rx.axis_intrf.fwd_t, stream_out_if: rx.out_fb_t) -> rx_t:
+def rx_top(axis_in_if: rx.axis_intrf.fwd_t, stream_out_if: rx.out_fb_t) -> rx.return_t:
     return rx(axis_in_if, stream_out_if)
 ```
 
@@ -4629,24 +4679,24 @@ don't have to unpack/repack `.data`/`.valid` by hand. (It's a thin layer over
 from pypeline import uint32_t, MAIN
 from stream.stream_fifo import make_stream_fifo
 
-stream_fifo, stream_fifo_t = make_stream_fifo(uint32_t, 256)   # 256-deep FIFO of uint32_t
+stream_fifo = make_stream_fifo(uint32_t, 256)   # 256-deep FIFO of uint32_t
 uint32_stream_t = stream_fifo.stream_t
 uint32_stream_fb_t = stream_fifo.stream_fb_t
 
 @MAIN
-def buffered(in_stream: uint32_stream_t, out_stream: uint32_stream_fb_t) -> stream_fifo_t:
+def buffered(in_stream: uint32_stream_t, out_stream: uint32_stream_fb_t) -> stream_fifo.return_t:
     return stream_fifo(in_stream, out_stream)
 ```
 
-`make_stream_fifo(data_t, depth, mode="fwft")` returns `(stream_fifo_func, stream_fifo_t)`. It
+`make_stream_fifo(data_t, depth, mode="fwft")` returns `stream_fifo_func`, with its complete return type at `stream_fifo_func.return_t`. It
 has one input port `in_stream` and one output port `out_stream`, each declared as the two
 halves of the same [interface](#bidirectional-ports-interface):
 
 | | Type | Meaning |
 |---|---|---|
-| `stream_fifo_func(in_stream, out_stream)` | `(stream_t, stream_fb_t) -> stream_fifo_t` | one FIFO instance |
-| `stream_fifo_t.out_stream` | `stream_t` | the FIFO's output: `.data`/`.valid` |
-| `stream_fifo_t.in_stream` | `stream_fb_t` | backpressure for `in_stream` — `.ready` high while the FIFO has room |
+| `stream_fifo_func(in_stream, out_stream)` | `(stream_t, stream_fb_t) -> stream_fifo.return_t` | one FIFO instance |
+| `stream_fifo.return_t.out_stream` | `stream_t` | the FIFO's output: `.data`/`.valid` |
+| `stream_fifo.return_t.in_stream` | `stream_fb_t` | backpressure for `in_stream` — `.ready` high while the FIFO has room |
 
 The interface and both halves hang off the returned function as `.stream_intrf` / `.stream_t` /
 `.stream_fb_t`, so callers don't rebuild them. Because the ports are interfaces, an
@@ -4710,12 +4760,12 @@ functions.
 from pypeline import uint32_t, MAIN
 from ram import make_ram
 
-ram, ram_out_t = make_ram(uint32_t, 1024, ports=("w", "r"), read_latency=1)
+ram = make_ram(uint32_t, 1024, ports=("w", "r"), read_latency=1)
 ram_wr_t = ram.p0_in_t
 ram_rd_t = ram.p1_in_t
 
 @MAIN
-def memory(wr: ram_wr_t, rd: ram_rd_t) -> ram_out_t:
+def memory(wr: ram_wr_t, rd: ram_rd_t) -> ram.return_t:
     return ram(wr, rd)
 ```
 
@@ -4730,7 +4780,7 @@ x = o.p1.rd_data      # answers the request made ram.latency clocks earlier
 ### Ports
 
 `make_ram(elem_t, size, ports=("rw",), read_latency=1, in_regs=0, out_regs=0, init=None,
-byte_write_enables=False)` returns `(ram, ram_out_t)`. `ram` takes one struct argument per
+byte_write_enables=False)` returns `ram`, with its complete return type at `ram.return_t`. `ram` takes one struct argument per
 entry of `ports` (`p0`, `p1`, ...) and returns `ram_out_t`, which has one field per port.
 
 | Port kind | Input: `ram.p{i}_in_t` | Output: `ram_out_t.p{i}` (`ram.p{i}_out_t`) |
@@ -4797,9 +4847,9 @@ class limit_t(NamedTuple):
     mode: mode_t      # an @enum
     level: uint4_t
 
-squares, squares_t = make_ram(uint16_t, 256, ports=("r",), init=[i * i for i in range(256)])
-limits, limits_t = make_ram(limit_t, 4, init={0: limit_t(mode=mode_t.RUN, level=9), 3: {"level": 2}})
-names, names_t = make_ram(char_t[8], 3, ports=("r",), init=["boot", "run", "halt"])
+squares = make_ram(uint16_t, 256, ports=("r",), init=[i * i for i in range(256)])
+limits = make_ram(limit_t, 4, init={0: limit_t(mode=mode_t.RUN, level=9), 3: {"level": 2}})
+names = make_ram(char_t[8], 3, ports=("r",), init=["boot", "run", "halt"])
 ```
 
 - `init` is `None` (all zeros), a sequence of up to `size` values (the rest are zero), or a
@@ -4821,11 +4871,11 @@ RAMs with different contents become different hardware entities automatically. C
 ```python
 from stream.stream_ram import make_stream_ram
 
-sram, sram_t = make_stream_ram(uint32_t, 1024, ports=("w", "r"), read_latency=1)
+sram = make_stream_ram(uint32_t, 1024, ports=("w", "r"), read_latency=1)
 
 @MAIN
 def memory(p0_req_if: sram.p0_req_intrf.fwd_t, p0_resp_if: sram.p0_resp_intrf.fb_t,
-           p1_req_if: sram.p1_req_intrf.fwd_t, p1_resp_if: sram.p1_resp_intrf.fb_t) -> sram_t:
+           p1_req_if: sram.p1_req_intrf.fwd_t, p1_resp_if: sram.p1_resp_intrf.fb_t) -> sram.return_t:
     return sram(p0_req_if, p0_resp_if, p1_req_if, p1_resp_if)
 ```
 
@@ -4896,16 +4946,16 @@ problem that needs one or two registers.
 from pypeline import uint32_t, MAIN
 from stream.skid_buffer import make_skid_buffer
 
-skid, skid_t = make_skid_buffer(uint32_t)          # mode="full" by default
+skid = make_skid_buffer(uint32_t)          # mode="full" by default
 
 @MAIN
 def buffered(
     stream_in_if: skid.fwd_t, stream_out_if: skid.fb_t
-) -> skid_t:
+) -> skid.return_t:
     return skid(stream_in_if, stream_out_if)
 ```
 
-`make_skid_buffer(data_t_or_intrf, mode="full")` returns `(skid_buffer, skid_buffer_t)`, with
+`make_skid_buffer(data_t_or_intrf, mode="full")` returns `skid_buffer`, with its complete return type at `skid_buffer.return_t`, with
 one input port `stream_in_if` and one output port `stream_out_if` declared as the two halves
 of the same [interface](#bidirectional-ports-interface). The first argument is either a plain
 payload type (the interface is built for you) **or** an already-built `@interface` — pass the
@@ -4956,7 +5006,7 @@ one-line face over this module that takes the interface you already built:
 from axi.axis import make_axis_interface, make_axis_skid_buffer
 
 axis_intrf = make_axis_interface(4)
-axis_skid, axis_skid_t = make_axis_skid_buffer(axis_intrf, mode="reverse")
+axis_skid = make_axis_skid_buffer(axis_intrf, mode="reverse")
 ```
 
 `tdata`/`tkeep`/`tlast` are carried through opaquely: whole beats are stored and replayed, never
@@ -5012,23 +5062,23 @@ from stream.stream_auto_pipeline import make_stream_auto_pipeline
 def div_inv(x: uint8_t) -> uint8_t:
     return x / ~x
 
-stream_auto_pipeline, stream_auto_pipeline_t = make_stream_auto_pipeline(div_inv)
+stream_auto_pipeline = make_stream_auto_pipeline(div_inv)
 
 @MAIN(50.0)
 def buffered_div_inv(
     stream_in_if: stream_auto_pipeline.in_fwd_t, stream_out_if: stream_auto_pipeline.out_fb_t
-) -> stream_auto_pipeline_t:
+) -> stream_auto_pipeline.return_t:
     return stream_auto_pipeline(stream_in_if, stream_out_if)
 ```
 
 `make_stream_auto_pipeline(func, *, latency=None, start_latency=None, max_latency=None, name=None)`
-returns `(stream_auto_pipeline_func, stream_auto_pipeline_t)`:
+returns `stream_auto_pipeline_func`, with its complete return type at `stream_auto_pipeline_func.return_t`:
 
 | | Type | Meaning |
 |---|---|---|
-| `stream_auto_pipeline_func(stream_in_if, stream_out_if)` | `(in_fwd_t, out_fb_t) -> stream_auto_pipeline_t` | one pipelined instance of `func`; ports are the two halves of a stream `@interface` |
-| `stream_auto_pipeline_t.stream_out_if.stream` | `stream_t(out_type)` | `func`'s result, after AUTO_PIPELINE retiming and the output FIFO |
-| `stream_auto_pipeline_t.stream_in_if.ready` | `uint1_t` | high while the pipeline can accept a new `stream_in_if` word (registered; high while fewer than L+5 words are in flight) |
+| `stream_auto_pipeline_func(stream_in_if, stream_out_if)` | `(in_fwd_t, out_fb_t) -> stream_auto_pipeline.return_t` | one pipelined instance of `func`; ports are the two halves of a stream `@interface` |
+| `stream_auto_pipeline.return_t.stream_out_if.stream` | `stream_t(out_type)` | `func`'s result, after AUTO_PIPELINE retiming and the output FIFO |
+| `stream_auto_pipeline.return_t.stream_in_if.ready` | `uint1_t` | high while the pipeline can accept a new `stream_in_if` word (registered; high while fewer than L+5 words are in flight) |
 
 The returned function also carries `.in_intrf`/`.out_intrf` and their halves
 `.in_fwd_t`, `.in_fb_t`, `.out_fwd_t`, `.out_fb_t` for declaring matching ports.
@@ -5069,7 +5119,7 @@ and `max_latency`, so the core stays a zero-latency passthrough there:
 
 ```python
 # Seed the sweep from a previously confirmed core depth of 4
-chacha_pipeline, chacha_pipeline_t = make_stream_auto_pipeline(chacha_loop_body, start_latency=4)
+chacha_pipeline = make_stream_auto_pipeline(chacha_loop_body, start_latency=4)
 ```
 
 A synthesizing build also starts the core from the depth earlier builds of the same
@@ -5081,7 +5131,7 @@ output directory verified (the
 [Naming a latency group](#naming-a-latency-group-name)):
 
 ```python
-chacha_pipeline, chacha_pipeline_t = make_stream_auto_pipeline(chacha_loop_body, name="chacha20")
+chacha_pipeline = make_stream_auto_pipeline(chacha_loop_body, name="chacha20")
 ```
 
 Hints and reports then find the core as `chacha20`, and the wrapper's generated names
@@ -5134,23 +5184,23 @@ from stream.stream_multi_cycle import make_stream_multi_cycle
 def divider(i: my_struct_t) -> uint32_t:
     return i.x / i.y
 
-divider_mcp, divider_mcp_t = make_stream_multi_cycle(divider, 16)   # 16-cycle MCP
+divider_mcp = make_stream_multi_cycle(divider, 16)   # 16-cycle MCP
 
 @MAIN(100.0)
-def top(stream_in: divider_mcp.in_stream_t, stream_out: divider_mcp.out_fb_t) -> divider_mcp_t:
-    return divider_mcp(stream_in, stream_out)
+def top(stream_in_if: divider_mcp.in_fwd_t, stream_out_if: divider_mcp.out_fb_t) -> divider_mcp.return_t:
+    return divider_mcp(stream_in_if, stream_out_if)
 ```
 
 `make_stream_multi_cycle(func, latency)` infers `in_type`/`out_type` from `func`'s own
 parameter/return type annotations (unlike the C macro, which takes them as separate
-arguments) and returns `(func_mcp, func_mcp_t)`. Its ports are the two halves of a stream
+arguments) and returns `func_mcp`, with its complete return type at `func_mcp.return_t`. Its ports are the two halves of a stream
 `@interface`, exactly like `make_stream_auto_pipeline`'s:
 
 | | Type | Meaning |
 |---|---|---|
-| `func_mcp(stream_in, stream_out)` | `(in_stream_t, out_fb_t) -> func_mcp_t` | one MCP-wrapped instance of `func` |
-| `func_mcp_t.stream_out` | `stream_t(out_type)` | `func`'s result, valid `latency + 1` cycles after launch |
-| `func_mcp_t.stream_in.ready` | `uint1_t` | high while the FSM is idle and ready to accept a new `stream_in` |
+| `func_mcp(stream_in_if, stream_out_if)` | `(in_fwd_t, out_fb_t) -> func_mcp.return_t` | one MCP-wrapped instance of `func` |
+| `func_mcp.return_t.stream_out_if.stream` | `stream_t(out_type)` | `func`'s result, valid `latency + 1` cycles after launch |
+| `func_mcp.return_t.stream_in_if.ready` | `uint1_t` | high while the FSM is idle and ready to accept a new `stream_in` |
 
 Internally it is the same `MULTI_CYCLE[latency]` / `Reg[T, MC.start]` / `Reg[T, MC.end]`
 pattern from [Multi-Cycle Paths: `MULTI_CYCLE[...]`](#multi-cycle-paths-multi_cycle), with `launch`/`capture` registers and a
@@ -5170,16 +5220,16 @@ simulation always sees `func`'s result settle the same cycle it is computed. See
 ```python
 from stream.stream_multi_cycle import make_stream_auto_multi_cycle
 
-divider_mcp, divider_mcp_t = make_stream_auto_multi_cycle(divider)                   # sweep starts at 1
-divider_mcp, divider_mcp_t = make_stream_auto_multi_cycle(divider, start_latency=5)  # known-good start
-divider_mcp, divider_mcp_t = make_stream_auto_multi_cycle(divider, start_latency=5, max_latency=8)
-divider_mcp, divider_mcp_t = make_stream_auto_multi_cycle(divider, latency=5)        # fixed
-divider_mcp, divider_mcp_t = make_stream_auto_multi_cycle(divider, name="divider")    # a stable key
+divider_mcp = make_stream_auto_multi_cycle(divider)                   # sweep starts at 1
+divider_mcp = make_stream_auto_multi_cycle(divider, start_latency=5)  # known-good start
+divider_mcp = make_stream_auto_multi_cycle(divider, start_latency=5, max_latency=8)
+divider_mcp = make_stream_auto_multi_cycle(divider, latency=5)        # fixed
+divider_mcp = make_stream_auto_multi_cycle(divider, name="divider")    # a stable key
 
 divider_mcp.mcp.latency    # the cycle count (results are valid latency + 1 cycles after launch)
 ```
 
-The ports and `func_mcp_t` are identical to `make_stream_multi_cycle`'s. The handshake
+The ports and `func_mcp.return_t` are identical to `make_stream_multi_cycle`'s. The handshake
 is written in terms of `func_mcp.mcp.latency`, so it always waits exactly as many cycles
 as the path is constrained for. A correct `start_latency=` can already match the final
 value; otherwise source re-elaboration updates the handshake automatically.
@@ -5193,15 +5243,15 @@ For a reduced combinational core between registered valid/ready ports:
 ```python
 from stream.stream_auto_comb_area_opt import make_stream_auto_comb_area_opt
 
-opt, opt_t = make_stream_auto_comb_area_opt(my_comb_func)  # or an AUTO_COMB_AREA_OPT tag
+opt = make_stream_auto_comb_area_opt(my_comb_func)  # or an AUTO_COMB_AREA_OPT tag
 
 @MAIN(20.0)
-def top(stream_in: opt.in_fwd_t, stream_out: opt.out_fb_t) -> opt_t:
-    return opt(stream_in, stream_out)
+def top(stream_in_if: opt.in_fwd_t, stream_out_if: opt.out_fb_t) -> opt.return_t:
+    return opt(stream_in_if, stream_out_if)
 ```
 
 `my_comb_func` must be a pure `@hw_func` with one annotated input and an annotated
-return type. The factory returns `(stream_function, result_type)`. Results have
+return type. The factory returns `stream_function`, with its complete return type at `stream_function.return_t`. Results have
 `stream_in_if.ready` and `stream_out_if.stream.{data,valid}` fields. The function
 exposes `.in_intrf`, `.out_intrf`, their `.in_fwd_t`/`.in_fb_t`/`.out_fwd_t`/
 `.out_fb_t` halves, and the underlying tag as `.comb_opt`.
@@ -5244,17 +5294,17 @@ from stream.stream_auto_fsm import make_stream_auto_fsm
 def blob(x: blob_in_t) -> int16_t:
     ...
 
-blob_fsm, blob_fsm_t = make_stream_auto_fsm(blob)   # tool picks the state count
+blob_fsm = make_stream_auto_fsm(blob)   # tool picks the state count
 
 @MAIN(25.0)
-def top(stream_in: blob_fsm.in_stream_t, stream_out: blob_fsm.out_fb_t) -> blob_fsm_t:
-    return blob_fsm(stream_in, stream_out)
+def top(stream_in_if: blob_fsm.in_fwd_t, stream_out_if: blob_fsm.out_fb_t) -> blob_fsm.return_t:
+    return blob_fsm(stream_in_if, stream_out_if)
 ```
 
 `make_stream_auto_fsm(func, max_latency=None)` infers `in_type`/`out_type` from `func`'s own
 parameter/return type annotations, constructs an
 `AUTO_FSM(func, max_latency=max_latency, register_output=False)` instance
-internally, and returns `(func_auto_fsm, func_auto_fsm_t)`. Disabling the raw
+internally, and returns `func_auto_fsm`, with its complete return type at `func_auto_fsm.return_t`. Disabling the raw
 result bank avoids duplicating the wrapper's own backpressure holding register.
 Its ports are the two
 halves of a stream `@interface`, exactly like `make_stream_auto_pipeline`'s and
@@ -5262,9 +5312,9 @@ halves of a stream `@interface`, exactly like `make_stream_auto_pipeline`'s and
 
 | | Type | Meaning |
 |---|---|---|
-| `func_auto_fsm(stream_in_if, stream_out_if)` | `(in_intrf.fwd_t, out_intrf.fb_t) -> func_auto_fsm_t` | one AUTO_FSM-backed instance of `func` |
-| `func_auto_fsm_t.stream_out_if` | `out_intrf.fwd_t` | `func`'s result, held valid until the consumer takes it |
-| `func_auto_fsm_t.stream_in_if` | `in_intrf.fb_t` | `.ready` high while the FSM is idle **and** the output slot is free |
+| `func_auto_fsm(stream_in_if, stream_out_if)` | `(in_intrf.fwd_t, out_intrf.fb_t) -> func_auto_fsm.return_t` | one AUTO_FSM-backed instance of `func` |
+| `func_auto_fsm.return_t.stream_out_if` | `out_intrf.fwd_t` | `func`'s result, held valid until the consumer takes it |
+| `func_auto_fsm.return_t.stream_in_if` | `in_intrf.fb_t` | `.ready` high while the FSM is idle **and** the output slot is free |
 | `func_auto_fsm.fsm` | `AUTO_FSM` | the underlying tag object — `func_auto_fsm.fsm.latency` reads the raw FSM's cycle count |
 | `func_auto_fsm.latency` | `int` | the wrapper's own latency, `fsm.latency + 1` |
 

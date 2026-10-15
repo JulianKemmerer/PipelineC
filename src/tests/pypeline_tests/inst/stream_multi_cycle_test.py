@@ -59,7 +59,7 @@ def divider(i: my_struct_t) -> uint32_t:
 
 my_struct_intrf = make_stream_interface(my_struct_t)
 
-divider_mcp, divider_mcp_t = make_stream_multi_cycle(divider, 16)
+divider_mcp = make_stream_multi_cycle(divider, 16)
 
 
 # ── examples/mcp/mcp_divider.c's main() FSM, driving divider_mcp directly ──

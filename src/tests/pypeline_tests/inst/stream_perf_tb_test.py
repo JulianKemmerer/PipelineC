@@ -44,8 +44,10 @@ axis_intrf = make_axis_interface(BUS)
 frag_t = axis_intrf.stream_t.typeof("data")
 
 # The DUT: a probed FIFO feeding a probed register slice.
-fifo, fifo_t = probe.make_probed_stream_fifo(frag_t, 8, "fifo")
-out_slice, out_slice_t = probe.make_probed_skid_buffer(axis_intrf, "out_slice")
+fifo = probe.make_probed_stream_fifo(frag_t, 8, "fifo")
+
+out_slice = probe.make_probed_skid_buffer(axis_intrf, "out_slice")
+
 
 BLOCKS = {
     "fifo": stream_bottleneck.block_spec("fifo.in", "fifo.out", ("out_slice",)),

@@ -30,14 +30,15 @@ constraints = (
     if param("AUTO_PIPELINE_RAM_AUTO", False)
     else dict(latency=L)
 )
-raw, raw_t = make_auto_pipeline_ram(uint32_t, 4096, ports=("w", "r"), **constraints)
-dual, dual_t = make_auto_pipeline_ram(
+raw = make_auto_pipeline_ram(uint32_t, 4096, ports=("w", "r"), **constraints)
+
+dual = make_auto_pipeline_ram(
     uint32_t, 4096, ports=("rw", "rw"), byte_write_enables=True, **constraints
 )
+
 dual_in_t = dual.p0_in_t
-stream, stream_t = make_stream_auto_pipeline_ram(
-    uint32_t, 4096, ports=("w", "r"), **constraints
-)
+stream = make_stream_auto_pipeline_ram(uint32_t, 4096, ports=("w", "r"), **constraints)
+stream_t = stream.return_t
 addr_t = raw.addr_t
 wr_t, rd_t = raw.p0_in_t, raw.p1_in_t
 wreq_t, rreq_t = stream.p0_req_t, stream.p1_req_t
@@ -55,7 +56,7 @@ class aligned_t(NamedTuple):
 
 @hw_func
 def aligned(w: wr_t, r: rd_t) -> aligned_t:
-    result: raw_t = raw(w, r)
+    result: raw.return_t = raw(w, r)
     out: aligned_t
     out.data = result.p1.rd_data
     out.valid = result.p1.valid
@@ -99,7 +100,7 @@ def self_check_auto_pipeline_ram() -> uint32_t:
         d0.wr_en[2] = w.valid
         d1.wr_en[1] = w.valid
         d1.wr_en[3] = w.valid
-        two: dual_t = dual(d0, d1)
+        two: dual.return_t = dual(d0, d1)
         if two.p0.valid & (two.p0.wr_en[0] == 0):
             sim_assert(two.p0.rd_data == 0x00220044, "dual port byte write p0")
             sim_assert(two.p1.rd_data == 0xAA00CC00, "dual port byte write p1")

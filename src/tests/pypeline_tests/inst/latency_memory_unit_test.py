@@ -314,12 +314,12 @@ def make_compute(n):
             a = a * 3 + x
         return a
     return compute
-MCP, mcp_t = make_stream_auto_multi_cycle(make_compute(BODY.latency + 2), name="dependent")
+MCP = make_stream_auto_multi_cycle(make_compute(BODY.latency + 2), name="dependent")
 @MAIN(50.0)
 def body_main(x: uint8_t) -> uint8_t:
     return BODY(x)
 @MAIN(50.0)
-def mcp_main(stream_in_if: MCP.in_fwd_t, stream_out_if: MCP.out_fb_t) -> mcp_t:
+def mcp_main(stream_in_if: MCP.in_fwd_t, stream_out_if: MCP.out_fb_t) -> MCP.return_t:
     return MCP(stream_in_if, stream_out_if)
 """
 

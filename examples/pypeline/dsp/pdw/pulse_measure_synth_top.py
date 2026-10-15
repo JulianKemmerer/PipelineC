@@ -11,8 +11,9 @@ from pulse_detect import make_pulse_detect
 from pulse_measure import make_pulse_measure
 
 PART("xc7a200tffg1156-2")
-detector, _ = make_pulse_detect()
-measure, result_t = make_pulse_measure(detector)
+detector = make_pulse_detect()
+measure = make_pulse_measure(detector)
+
 freq_t, noise_t, power_t = detector.freq_accum_t, detector.noise_t, detector.power_t
 
 
@@ -25,5 +26,5 @@ def pulse_measure_top(
     valid: uint1_t,
     accept: uint1_t,
     rst: uint1_t,
-) -> result_t:
+) -> measure.return_t:
     return measure(freq, noise, power, toa, valid, accept, rst)

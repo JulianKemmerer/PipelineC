@@ -40,7 +40,8 @@ from stream import stream_bottleneck
 from stream import stream_perf_probe as probe
 
 FIFO_DEPTH = 4
-fifo, fifo_t = probe.make_probed_stream_fifo(uint8_t, FIFO_DEPTH, "fifo")
+fifo = probe.make_probed_stream_fifo(uint8_t, FIFO_DEPTH, "fifo")
+
 intrf = fifo.stream_intrf
 
 CONSUMER_STATE_NAMES = ("READY", "COOLDOWN")

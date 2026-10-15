@@ -45,7 +45,7 @@ def make_magnitude(
     start_latency=None,
     max_latency=None,
 ):
-    """Build a power (I^2+Q^2) stage. Returns (magnitude, magnitude_t).
+    """Build a power (I^2+Q^2) stage. Returns magnitude, with its complete return type at magnitude.return_t.
 
     data_t:    fixed_t sample format of each I/Q rail (e.g. make_fixed_t(16, 0)
                for a plain int16_t rail -- the PDW's raw ADC format).
@@ -99,12 +99,13 @@ def make_magnitude(
         return resize_fn(acc)
 
     if handshake == "elastic":
-        sp_func, _sp_t = make_stream_auto_pipeline(
+        sp_func = make_stream_auto_pipeline(
             magnitude_core,
             latency=latency,
             start_latency=start_latency,
             max_latency=max_latency,
         )
+
         in_intrf = sp_func.in_intrf
         out_intrf = sp_func.out_intrf
 
@@ -137,7 +138,7 @@ def make_magnitude(
             rv.valid = x.valid
             return rv
 
-        magnitude_core_ap, _magnitude_core_ap_call = _auto_pipeline_with_io_regs(
+        magnitude_core_ap = _auto_pipeline_with_io_regs(
             magnitude_core_stream,
             has_input_reg=True,
             has_output_reg=True,
@@ -145,6 +146,7 @@ def make_magnitude(
             start_latency=start_latency,
             max_latency=max_latency,
         )
+        _magnitude_core_ap_call = magnitude_core_ap.auto_pipeline
 
         @hw_func
         def magnitude(in_stream: in_stream_t) -> out_stream_t:
@@ -189,4 +191,4 @@ def make_magnitude(
         if handshake == "valid_only"
         else None
     )
-    return magnitude, magnitude_t
+    return magnitude

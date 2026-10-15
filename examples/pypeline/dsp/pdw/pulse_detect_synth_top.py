@@ -28,7 +28,8 @@ PART("xc7a200tffg1156-2")  # AIR7310: XC7A200T-2FFG1156C, 125 MHz
 
 power_t = make_fixed_t(32, 0, signed=False)  # README's uint32_t power format
 
-pulse_detect_fsm, pulse_detect_fsm_t = make_pulse_detect_fsm(power_t)
+pulse_detect_fsm = make_pulse_detect_fsm(power_t)
+
 
 # Runtime-configurable knobs (the README's control registers, as if from config
 # regs -- see pulse_gen_synth_top.py for the same convention).
@@ -43,7 +44,7 @@ rst: Input[uint1_t]
 @MAIN(125.0)
 def pulse_detect_fsm_top(
     stream_in_if: pulse_detect_fsm.in_fwd_t, pdw_out_if: pulse_detect_fsm.out_fb_t
-) -> pulse_detect_fsm_t:
+) -> pulse_detect_fsm.return_t:
     return pulse_detect_fsm(
         stream_in_if,
         pdw_out_if,

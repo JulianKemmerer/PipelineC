@@ -38,8 +38,8 @@ class _NoLatency:
 
 def _guard(factory):
     def guarded(*args, **kwargs):
-        block, out_t = factory(*args, **kwargs)
-        return _NoLatency(block), out_t
+        block = factory(*args, **kwargs)
+        return _NoLatency(block)
 
     return guarded
 
@@ -56,9 +56,9 @@ def test_factories_do_not_query_latency():
         lut_atan2.make_lut_atan2(int32_t)
         log2_db.make_log2_db(make_fixed_t(34, 12, signed=True))
         make_pulse_gen()
-        detector, _ = make_pulse_detect()
+        detector = make_pulse_detect()
         del detector.freq_latency
-        engine, _ = make_pulse_extract(detector, join_depth=64)
+        engine = make_pulse_extract(detector, join_depth=64)
         assert engine.pulse_measure.join_depth == 64
         assert engine.pulse_measure.log_db.join_depth == 64
         assert engine.pulse_measure.log_db_noise.join_depth == 64

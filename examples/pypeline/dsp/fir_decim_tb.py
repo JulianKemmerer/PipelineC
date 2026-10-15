@@ -37,7 +37,7 @@ coeff_t = make_fixed_t(1, 15)
 
 # rounding="truncate", overflow="wrap" reproduce the old library's plain
 # `accum >> FIR_DECIM_POW2_DN_SCALE` output stage bit-for-bit.
-fir_decim5, fir_decim5_t = make_fir_decim(
+fir_decim5 = make_fir_decim(
     DECIM_5X_COEFFS_Q15,
     coeff_t,
     5,
@@ -46,6 +46,7 @@ fir_decim5, fir_decim5_t = make_fir_decim(
     rounding="truncate",
     overflow="wrap",
 )
+
 
 # Two tones: 0.02 f/fs survives 5x decimation; 0.30 f/fs sits in the filter's
 # stopband (above the post-decimation Nyquist of 0.1 f/fs) and is removed.

@@ -8,7 +8,7 @@ enables).
 splitting. It has a minimum one-cycle read and a relaxed collision contract;
 see docs/AUTO_PIPELINE_DESIGN.md. The manual factory's semantics follow below.
 
-    ram, ram_out_t = make_ram(uint32_t, 1024, ports=("w", "r"), read_latency=1)
+    ram = make_ram(uint32_t, 1024, ports=("w", "r"), read_latency=1)
     o = ram(ram.p0_in_t(addr=wa, wr_data=wd, wr_en=we, valid=1),
             ram.p1_in_t(addr=ra, valid=1))
     o.p1.rd_data    # ram.latency clocks after the request, aligned with o.p1.addr/.valid
@@ -813,7 +813,7 @@ def make_ram(
 ):
     """A RAM of `size` elements of `elem_t`, with one port per entry of `ports`.
 
-    Returns (ram, ram_out_t):
+    Returns ram, with its complete return type at ram.return_t:
         ram(p0: ram.p0_in_t, p1: ram.p1_in_t, ...) -> ram_out_t
         ram_out_t fields: .p0 (ram.p0_out_t), .p1 (ram.p1_out_t), ...
 
@@ -911,8 +911,8 @@ def make_ram(
     for i in range(len(cfg.ports)):
         setattr(ram, f"p{i}_in_t", in_ts[i])
         setattr(ram, f"p{i}_out_t", out_ts[i])
-    _RAM_CACHE[cfg.key] = (ram, ram_out_t)
-    return ram, ram_out_t
+    _RAM_CACHE[cfg.key] = ram
+    return ram
 
 
 # Auto-pipelined synchronous RAMs (see AUTO_PIPELINE_DESIGN.md).
@@ -1319,4 +1319,4 @@ def make_auto_pipeline_ram(
     for i, (in_t, port_out_t) in enumerate(zip(in_ts, out_ts)):
         setattr(ram, f"p{i}_in_t", in_t)
         setattr(ram, f"p{i}_out_t", port_out_t)
-    return ram, out_t
+    return ram

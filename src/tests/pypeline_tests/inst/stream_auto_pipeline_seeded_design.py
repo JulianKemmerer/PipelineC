@@ -26,13 +26,16 @@ def seeded_core(x: uint8_t) -> uint8_t:
 
 
 uint8_stream_intrf = make_stream_interface(uint8_t)
-seeded_sap, seeded_sap_t = make_stream_auto_pipeline(seeded_core, start_latency=1)
-served = sorted(v for vals in pypeline.AUTO_PIPELINE_SERVED_LATENCIES().values() for v in vals)
+seeded_sap = make_stream_auto_pipeline(seeded_core, start_latency=1)
+
+served = sorted(
+    v for vals in pypeline.AUTO_PIPELINE_SERVED_LATENCIES().values() for v in vals
+)
 print(f"stream_auto_pipeline_seeded_design: served .latency={served}", flush=True)
 
 
 @MAIN(10.0)
 def stream_auto_pipeline_seeded_main(
     stream_in_if: uint8_stream_intrf.fwd_t, stream_out_if: uint8_stream_intrf.fb_t
-) -> seeded_sap_t:
+) -> seeded_sap.return_t:
     return seeded_sap(stream_in_if, stream_out_if)

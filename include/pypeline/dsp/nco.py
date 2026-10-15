@@ -5,7 +5,7 @@ The same interface as `dsp/cordic.py`'s `make_cordic_rotate`, built the other
 way: one block-RAM ROM (`ram.make_auto_pipeline_ram`) read on two ports, and one multiplier
 per rail, instead of `n_iters` shift-and-add stages.
 
-    nco, nco_t = make_lut_nco(int16_t, table_bits=10, phase_bits=32)
+    nco = make_lut_nco(int16_t, table_bits=10, phase_bits=32)
     o = nco(phase, amplitude, valid_in, rst)  # -> .i, .q, .valid, .overflow
 
 `phase` is unsigned `phase_bits` wide, turns x 2^phase_bits, wrapping
@@ -99,7 +99,7 @@ def sine_quarter_table(table_bits, table_frac):
 def make_lut_nco(
     amp_t, table_bits=10, phase_bits=32, *, auto_pipeline_ram=True, join_depth=32
 ):
-    """Build a ROM-based NCO. Returns (lut_nco, lut_nco_t).
+    """Build a ROM-based NCO. Returns lut_nco, with its complete return type at lut_nco.return_t.
 
         lut_nco(phase, amplitude, valid_in, rst) -> lut_nco_t
         lut_nco_t: .i, .q (amp_t), .valid, .overflow
@@ -145,7 +145,7 @@ def make_lut_nco(
         if auto_pipeline_ram
         else dict(read_latency=1, in_regs=1, out_regs=1)
     )
-    rom, _rom_t = factory(
+    rom = factory(
         tab_t,
         1 << N,
         ports=("r", "r"),
@@ -174,7 +174,7 @@ def make_lut_nco(
         cos: tab_t
         sin: tab_t
 
-    join, _ = make_valid_join((amplitudes_t, table_pair_t), join_depth)
+    join = make_valid_join((amplitudes_t, table_pair_t), join_depth)
 
     @struct
     class lut_nco_t(NamedTuple):
@@ -287,7 +287,7 @@ def make_lut_nco(
     # which it does not need. Same attribute, same reason, as
     # stream/stream_ram.py's handshake controller.
     lut_nco._sim_clocked_pipeline_boundary = True
-    return lut_nco, lut_nco_t
+    return lut_nco
 
 
 def golden_lut_nco(nco, phase, amplitude):

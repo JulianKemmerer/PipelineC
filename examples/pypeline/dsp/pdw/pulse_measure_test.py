@@ -20,8 +20,9 @@ from pypeline import sim_call, sim_reset
 from pulse_detect import make_pulse_detect
 from pulse_measure import golden_pulse_measure, make_pulse_measure
 
-_DP, _ = make_pulse_detect()
-meas, meas_t = make_pulse_measure(_DP)
+_DP = make_pulse_detect()
+meas = make_pulse_measure(_DP)
+meas_t = meas.return_t
 FA = _DP.freq_accum_t
 PT = _DP.power_t
 NT = _DP.noise_t
@@ -296,7 +297,7 @@ def test_selected_rom_alignment():
             py.SET_AUTO_PIPELINE_RAM_PLAN_CACHE(
                 {slow_table._auto_pipeline_ram["key"]: RamPlan(0, 19)}
             )
-            meas, _ = make_pulse_measure(_DP, atan2_method=original.atan2_method)
+            meas = make_pulse_measure(_DP, atan2_method=original.atan2_method)
             assert meas.get_latency() == 28
             test_matches_golden_model()
             test_pri_counts_accepted_pulses_only()

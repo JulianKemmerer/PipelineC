@@ -28,13 +28,13 @@ def div_inv(x: uint8_t) -> uint8_t:
 
 
 uint8_stream_intrf = make_stream_interface(uint8_t)
-stream_auto_pipeline, stream_auto_pipeline_t = make_stream_auto_pipeline(div_inv)
+stream_auto_pipeline = make_stream_auto_pipeline(div_inv)
 
 
 @MAIN(50.0)
 def stream_auto_pipeline_test_top(
     stream_in_if: uint8_stream_intrf.fwd_t, stream_out_if: uint8_stream_intrf.fb_t
-) -> stream_auto_pipeline_t:
+) -> stream_auto_pipeline.return_t:
     return stream_auto_pipeline(stream_in_if, stream_out_if)
 
 

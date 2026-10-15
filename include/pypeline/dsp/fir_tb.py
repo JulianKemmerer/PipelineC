@@ -28,7 +28,7 @@ an elastic filter's .fwd_t/.fb_t port halves are built inline at the call.
 Minimal testbench skeleton (see also src/tests/pypeline_tests/inst/
 fir_sim_tb_test.py):
 
-    fir, fir_t = make_fir(...)
+    fir = make_fir(...)
     stim = quantize_samples(sine(200, 5), fir.data_t)
     tb = make_fir_tb(fir, stim, ready_pattern="random", name="my_fir")
 

@@ -34,89 +34,98 @@ from stream.serializer import make_serializer
 # ── instances under test ──────────────────────
 # 13 elements on a 4-lane bus: deliberately NOT divisible, the case the old
 # macros deadlocked on.
-ser_13_4, ser_13_4_t = make_serializer(uint8_t, 13, 4)
-deser_4_13, deser_4_13_t = make_deserializer(uint8_t, 4, 13)
+ser_13_4 = make_serializer(uint8_t, 13, 4)
+
+deser_4_13 = make_deserializer(uint8_t, 4, 13)
+
 
 # divisible, both directions
-ser_8_4, ser_8_4_t = make_serializer(uint8_t, 8, 4)
-deser_4_4, deser_4_4_t = make_deserializer(uint8_t, 4, 4)
-deser_4_4_reg, deser_4_4_reg_t = make_deserializer(uint8_t, 4, 4, registered_ready=True)
+ser_8_4 = make_serializer(uint8_t, 8, 4)
+
+deser_4_4 = make_deserializer(uint8_t, 4, 4)
+
+deser_4_4_reg = make_deserializer(uint8_t, 4, 4, registered_ready=True)
+
 
 # widening (2 lanes in -> 8-element value) and packed/eod policy variants
-deser_2_8, deser_2_8_t = make_deserializer(uint8_t, 2, 8)
-deser_packed, deser_packed_t = make_deserializer(uint8_t, 4, 6, align="packed")
-deser_zero_pad, deser_zero_pad_t = make_deserializer(uint8_t, 4, 6, on_eod="zero_pad")
-deser_ignore, deser_ignore_t = make_deserializer(uint8_t, 4, 6, on_eod="ignore")
-ser_packed, ser_packed_t = make_serializer(uint8_t, 6, 4, align="packed")
+deser_2_8 = make_deserializer(uint8_t, 2, 8)
+
+deser_packed = make_deserializer(uint8_t, 4, 6, align="packed")
+
+deser_zero_pad = make_deserializer(uint8_t, 4, 6, on_eod="zero_pad")
+
+deser_ignore = make_deserializer(uint8_t, 4, 6, on_eod="ignore")
+
+ser_packed = make_serializer(uint8_t, 6, 4, align="packed")
 
 
 @MAIN
 def ser_13_4_main(
     stream_in_if: ser_13_4.in_intrf.fwd_t, stream_out_if: ser_13_4.out_fb_t
-) -> ser_13_4_t:
+) -> ser_13_4.return_t:
     return ser_13_4(stream_in_if, stream_out_if)
 
 
 @MAIN
 def deser_4_13_main(
     stream_in_if: deser_4_13.in_intrf.fwd_t, stream_out_if: deser_4_13.out_fb_t
-) -> deser_4_13_t:
+) -> deser_4_13.return_t:
     return deser_4_13(stream_in_if, stream_out_if)
 
 
 @MAIN
 def deser_2_8_main(
     stream_in_if: deser_2_8.in_intrf.fwd_t, stream_out_if: deser_2_8.out_fb_t
-) -> deser_2_8_t:
+) -> deser_2_8.return_t:
     return deser_2_8(stream_in_if, stream_out_if)
 
 
 @MAIN
 def deser_packed_main(
     stream_in_if: deser_packed.in_intrf.fwd_t, stream_out_if: deser_packed.out_fb_t
-) -> deser_packed_t:
+) -> deser_packed.return_t:
     return deser_packed(stream_in_if, stream_out_if)
 
 
 @MAIN
 def ser_packed_main(
     stream_in_if: ser_packed.in_intrf.fwd_t, stream_out_if: ser_packed.out_fb_t
-) -> ser_packed_t:
+) -> ser_packed.return_t:
     return ser_packed(stream_in_if, stream_out_if)
 
 
 @MAIN
 def deser_4_4_reg_main(
     stream_in_if: deser_4_4_reg.in_intrf.fwd_t, stream_out_if: deser_4_4_reg.out_fb_t
-) -> deser_4_4_reg_t:
+) -> deser_4_4_reg.return_t:
     return deser_4_4_reg(stream_in_if, stream_out_if)
 
 
 @MAIN
 def deser_4_4_main(
     stream_in_if: deser_4_4.in_intrf.fwd_t, stream_out_if: deser_4_4.out_fb_t
-) -> deser_4_4_t:
+) -> deser_4_4.return_t:
     return deser_4_4(stream_in_if, stream_out_if)
 
 
 @MAIN
 def deser_zero_pad_main(
     stream_in_if: deser_zero_pad.in_intrf.fwd_t, stream_out_if: deser_zero_pad.out_fb_t
-) -> deser_zero_pad_t:
+) -> deser_zero_pad.return_t:
     return deser_zero_pad(stream_in_if, stream_out_if)
 
 
 @MAIN
 def deser_ignore_main(
     stream_in_if: deser_ignore.in_intrf.fwd_t, stream_out_if: deser_ignore.out_fb_t
-) -> deser_ignore_t:
+) -> deser_ignore.return_t:
     return deser_ignore(stream_in_if, stream_out_if)
 
 
 @MAIN
 def ser_8_4_main(
     stream_in_if: ser_8_4.in_intrf.fwd_t, stream_out_if: ser_8_4.out_fb_t
-) -> ser_8_4_t:
+) -> ser_8_4.return_t:
     return ser_8_4(stream_in_if, stream_out_if)
 
 

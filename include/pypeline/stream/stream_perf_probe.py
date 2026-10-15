@@ -227,14 +227,15 @@ def make_probed_stream_fifo(data_t, depth: int, tap_name: str, mode: str = "fwft
     `.capacity_beats` (memory rounded to a power of two + the FWFT output
     register) and `.tap_name`. The probes add no hardware.
     """
-    fifo, result_t = make_stream_fifo(data_t, depth, mode)
+    fifo = make_stream_fifo(data_t, depth, mode)
+
     intrf = fifo.stream_intrf
     capacity = fifo.capacity_beats
 
     @hw_func
     def probed_stream_fifo(
         in_stream_if: intrf.fwd_t, out_stream_if: intrf.fb_t
-    ) -> result_t:
+    ) -> fifo.return_t:
         result = fifo(in_stream_if=in_stream_if, out_stream_if=out_stream_if)
         stream_hs(tap_name + ".in", in_stream_if.stream.valid,
                   result.in_stream_if.ready, in_stream_if.stream.data)
@@ -251,7 +252,7 @@ def make_probed_stream_fifo(data_t, depth: int, tap_name: str, mode: str = "fwft
     probed_stream_fifo.depth = depth
     probed_stream_fifo.capacity_beats = capacity
     probed_stream_fifo.tap_name = tap_name
-    return probed_stream_fifo, result_t
+    return probed_stream_fifo
 
 
 def make_probed_skid_buffer(data_t_or_intrf, tap_name: str, mode: str = "full"):
@@ -260,14 +261,15 @@ def make_probed_skid_buffer(data_t_or_intrf, tap_name: str, mode: str = "full"):
     Same ports, result type and attributes as `make_skid_buffer`, plus
     `.capacity_beats` and `.tap_name`. The probes add no hardware.
     """
-    skid, result_t = make_skid_buffer(data_t_or_intrf, mode)
+    skid = make_skid_buffer(data_t_or_intrf, mode)
+
     intrf = skid.stream_intrf
     capacity = skid.n_slots
 
     @hw_func
     def probed_skid_buffer(
         stream_in_if: intrf.fwd_t, stream_out_if: intrf.fb_t
-    ) -> result_t:
+    ) -> skid.return_t:
         result = skid(stream_in_if=stream_in_if, stream_out_if=stream_out_if)
         stream_hs(tap_name + ".in", stream_in_if.stream.valid,
                   result.stream_in_if.ready, stream_in_if.stream.data)
@@ -282,4 +284,4 @@ def make_probed_skid_buffer(data_t_or_intrf, tap_name: str, mode: str = "full"):
         setattr(probed_skid_buffer, attr, getattr(skid, attr))
     probed_skid_buffer.capacity_beats = capacity
     probed_skid_buffer.tap_name = tap_name
-    return probed_skid_buffer, result_t
+    return probed_skid_buffer

@@ -181,7 +181,8 @@ def make_fir_core(
     Otherwise a `make_fixed_resize(accum_t, out_t, rounding, overflow)` stage
     is fused onto the end of the blob so it retimes with everything else.
 
-    Returns (fir_core, out_t_actual, accum_t).
+    Returns fir_core, with its output type at .return_t and accumulator type
+    at .accum_t.
     """
     n_taps = len(coeffs_q)
     detected, _zero_taps = analyze_coeffs(coeffs_q)
@@ -263,4 +264,5 @@ def make_fir_core(
             acc: accum_t = accum_t(val=nodes[LEVELS][0])
             return resize_fn(acc)
 
-    return fir_core, out_t_actual, accum_t
+    fir_core.accum_t = accum_t
+    return fir_core

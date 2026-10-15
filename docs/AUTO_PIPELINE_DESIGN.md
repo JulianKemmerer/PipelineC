@@ -789,15 +789,20 @@ retain their existing implementations and semantics.
 
 ### RAM API and ordering
 
+Both RAM factories return the callable itself, with the complete multi-port
+result type at `.return_t`. Existing `.out_t` aliases that same type; request,
+response and per-port metadata retain their individual meanings. Manual RAM
+caches store the callable, so cached construction retains its attached types.
+
 ```python
 from pypeline import uint32_t
 from ram import make_auto_pipeline_ram
 from stream.stream_ram import make_stream_auto_pipeline_ram
 
-ram, ram_out_t = make_auto_pipeline_ram(
+ram = make_auto_pipeline_ram(
     uint32_t, 65536, ports=("w", "r"), max_latency=9,
 )
-stream_ram, stream_ram_t = make_stream_auto_pipeline_ram(
+stream_ram = make_stream_auto_pipeline_ram(
     uint32_t, 65536, ports=("w", "r"), max_latency=9,
 )
 ```

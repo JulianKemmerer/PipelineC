@@ -25,11 +25,11 @@ def grow_core(x: uint8_t) -> uint8_t:
 
 
 uint8_stream_intrf = make_stream_interface(uint8_t)
-grow_sap, grow_sap_t = make_stream_auto_pipeline(grow_core, start_latency=1)
+grow_sap = make_stream_auto_pipeline(grow_core, start_latency=1)
 
 
 @MAIN(100.0)
 def stream_auto_pipeline_grow_main(
     stream_in_if: uint8_stream_intrf.fwd_t, stream_out_if: uint8_stream_intrf.fb_t
-) -> grow_sap_t:
+) -> grow_sap.return_t:
     return grow_sap(stream_in_if, stream_out_if)

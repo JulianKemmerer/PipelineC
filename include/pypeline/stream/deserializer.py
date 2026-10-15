@@ -116,7 +116,7 @@ def make_deserializer(
               docstring -- the correctness of the unconditional lane writes
               rests on that invariant). Costs nothing in synthesis.
 
-    Returns (deserializer, deserializer_t):
+    Returns deserializer, with its complete return type at deserializer.return_t:
         deserializer(stream_in_if: in_intrf.fwd_t, stream_out_if: out_intrf.fb_t)
             -> deserializer_t
         deserializer_t fields:
@@ -236,4 +236,4 @@ def make_deserializer(
     deserializer.elem_t = elem_t
     deserializer.in_n = in_n
     deserializer.out_n = out_n
-    return deserializer, deserializer_t
+    return deserializer

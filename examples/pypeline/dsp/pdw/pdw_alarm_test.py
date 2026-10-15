@@ -29,7 +29,7 @@ from pdw_alarm import make_error_alarm
 # stop meaning anything.
 DROPS = 8
 MAX_CYCLES = 200
-ALARM, _ = make_error_alarm(drop_samples=DROPS, max_cycles=MAX_CYCLES)
+ALARM = make_error_alarm(drop_samples=DROPS, max_cycles=MAX_CYCLES)
 
 
 def _run(cycles, trig_of, valid_of, en=1, rst_of=lambda c: 0):

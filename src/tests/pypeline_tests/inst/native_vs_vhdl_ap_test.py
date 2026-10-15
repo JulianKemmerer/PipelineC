@@ -66,9 +66,10 @@ def heavy_stream(x: ap_stream_t) -> ap_stream_t:
     return rv
 
 
-AP_FUNC, AP_CALL = _auto_pipeline_with_io_regs(
+AP_FUNC = _auto_pipeline_with_io_regs(
     heavy_stream, has_input_reg=True, has_output_reg=True
 )
+AP_CALL = AP_FUNC.auto_pipeline
 # .latency consumer: 0 on the bootstrap pass / plain native sim; the real
 # discovered core depth on the driver's confirm pass AND in the pipelined
 # native sim (same installed cache).

@@ -163,11 +163,13 @@ def plain_reads_wiring(stream_in_if: chan_intrf) -> tagged_ports:
     return tagged_ports(stream_out_if=a.stream_out_if, tag=doubled)
 
 
-plain_reads, plain_reads_t = make_hw_func_from_interface_func(plain_reads_wiring)
+plain_reads = make_hw_func_from_interface_func(plain_reads_wiring)
 
 
 @MAIN
-def top_plain_reads(stream_in_if: chan_intrf.fwd_t, stream_out_if: chan_intrf.fb_t) -> plain_reads_t:
+def top_plain_reads(
+    stream_in_if: chan_intrf.fwd_t, stream_out_if: chan_intrf.fb_t
+) -> plain_reads.return_t:
     return plain_reads(stream_in_if, stream_out_if)
 
 
@@ -213,24 +215,29 @@ def make_bump(step):
     return make_hw_func_from_interface_func(wiring)
 
 
-bump3, bump3_t = make_bump(3)
-bump9, bump9_t = make_bump(9)
+bump3 = make_bump(3)
+
+bump9 = make_bump(9)
 
 
 @MAIN
-def top_bump3(stream_in_if: chan_intrf.fwd_t, out_port_if: chan_intrf.fb_t) -> bump3_t:
+def top_bump3(
+    stream_in_if: chan_intrf.fwd_t, out_port_if: chan_intrf.fb_t
+) -> bump3.return_t:
     return bump3(stream_in_if, out_port_if)
 
 
 @MAIN
-def top_bump9(stream_in_if: chan_intrf.fwd_t, out_port_if: chan_intrf.fb_t) -> bump9_t:
+def top_bump9(
+    stream_in_if: chan_intrf.fwd_t, out_port_if: chan_intrf.fb_t
+) -> bump9.return_t:
     return bump9(stream_in_if, out_port_if)
 
 
 def test_factory_instances_are_named_apart():
     assert bump3.__name__ != bump9.__name__
     assert "step_3" in bump3.__name__ and "step_9" in bump9.__name__
-    assert bump3_t.__name__ != bump9_t.__name__
+    assert bump3.return_t.__name__ != bump9.return_t.__name__
     sim_reset()
     r3 = sim_call(top_bump3, chan_intrf.fwd_t(data=10, valid=1), chan_intrf.fb_t(ready=1))
     r9 = sim_call(top_bump9, chan_intrf.fwd_t(data=10, valid=1), chan_intrf.fb_t(ready=1))

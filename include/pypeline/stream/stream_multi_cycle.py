@@ -1,4 +1,5 @@
 # pyright: reportInvalidTypeForm=none
+from types import SimpleNamespace
 from pypeline import (
     struct,
     NamedTuple,
@@ -30,7 +31,12 @@ def _mcp_stream_types(func, factory_name):
         )
     (in_type,) = hw_arg_types(func)
     out_type = hw_return_type(func)
-    return in_type, out_type, make_stream_interface(in_type), make_stream_interface(out_type)
+    return SimpleNamespace(
+        in_type=in_type,
+        out_type=out_type,
+        in_intrf=make_stream_interface(in_type),
+        out_intrf=make_stream_interface(out_type),
+    )
 
 
 def _check_mcp_latency(factory_name, latency):
@@ -62,7 +68,7 @@ def make_stream_multi_cycle(func, latency: int):
         @hw_func
         def divider(i: my_struct_t) -> uint32_t: ...
 
-    Returns (func_mcp, func_mcp_t):
+    Returns func_mcp, with its complete return type at func_mcp.return_t:
         func_mcp(stream_in_if: in_intrf.fwd_t, stream_out_if: out_intrf.fb_t) -> func_mcp_t
         func_mcp_t fields: .stream_in_if (in_intrf.fb_t), .stream_out_if (out_intrf.fwd_t)
     A result is valid latency + 1 cycles after its input is accepted.
@@ -73,9 +79,11 @@ def make_stream_multi_cycle(func, latency: int):
             "be an int >= 1"
         )
     _check_mcp_latency("make_stream_multi_cycle", latency)
-    in_type, out_type, in_intrf, out_intrf = _mcp_stream_types(
-        func, "make_stream_multi_cycle"
-    )
+    stream_types = _mcp_stream_types(func, "make_stream_multi_cycle")
+    in_type = stream_types.in_type
+    out_type = stream_types.out_type
+    in_intrf = stream_types.in_intrf
+    out_intrf = stream_types.out_intrf
 
     @struct
     class func_mcp_t(NamedTuple):
@@ -113,7 +121,7 @@ def make_stream_multi_cycle(func, latency: int):
         return o
 
     _attach_stream_attrs(func_mcp, in_intrf, out_intrf)
-    return func_mcp, func_mcp_t
+    return func_mcp
 
 
 def make_stream_auto_multi_cycle(
@@ -130,7 +138,7 @@ def make_stream_auto_multi_cycle(
     tag's .latency, so the final design always waits exactly as many cycles as
     the path is constrained for.
 
-    Returns (func_mcp, func_mcp_t), like make_stream_multi_cycle;
+    Returns func_mcp, with its complete return type at func_mcp.return_t, like make_stream_multi_cycle;
     func_mcp.mcp is the AUTO_MULTI_CYCLE tag (read func_mcp.mcp.latency for the count).
     A result is valid mcp.latency + 1 cycles after its input is accepted.
     """
@@ -140,9 +148,11 @@ def make_stream_auto_multi_cycle(
     # this one line: an unnamed tag's key is the source line it is built on,
     # so moving it renames every unnamed make_stream_auto_multi_cycle holder.
     _check_mcp_latency("make_stream_auto_multi_cycle", MC._ncycles_for_compiler())
-    in_type, out_type, in_intrf, out_intrf = _mcp_stream_types(
-        func, "make_stream_auto_multi_cycle"
-    )
+    stream_types = _mcp_stream_types(func, "make_stream_auto_multi_cycle")
+    in_type = stream_types.in_type
+    out_type = stream_types.out_type
+    in_intrf = stream_types.in_intrf
+    out_intrf = stream_types.out_intrf
 
     @struct
     class func_mcp_t(NamedTuple):
@@ -180,4 +190,4 @@ def make_stream_auto_multi_cycle(
 
     _attach_stream_attrs(func_mcp, in_intrf, out_intrf)
     func_mcp.mcp = MC
-    return func_mcp, func_mcp_t
+    return func_mcp

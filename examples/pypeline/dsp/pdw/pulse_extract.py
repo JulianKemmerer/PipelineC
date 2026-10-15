@@ -100,8 +100,7 @@ PEAK_POWER_BITS = 32
 
 
 def make_pdw_qualify(width_t=uint32_t):
-    """Post-pulse qualification (README box 3 step 2). Returns
-    (pdw_qualify, verdict_t). Pure combinational -- one compare each.
+    """Post-pulse qualification (README box 3 step 2). Returns pdw_qualify, with its complete return type at pdw_qualify.return_t. Pure combinational -- one compare each.
 
         pdw_qualify(pulse_width, min_width, max_width) -> verdict_t
         verdict_t{accept, is_glitch, is_cw}
@@ -141,7 +140,7 @@ def make_pdw_qualify(width_t=uint32_t):
 
     pdw_qualify.width_t = width_t
     pdw_qualify.verdict_t = verdict_t
-    return pdw_qualify, verdict_t
+    return pdw_qualify
 
 
 def make_packet_store(
@@ -154,7 +153,7 @@ def make_packet_store(
     n_pkts=16,
 ):
     """Store-and-forward packet FIFO + release/flush engine (README box 3
-    steps 1 and 3). Returns (packet_store, packet_store_t).
+    steps 1 and 3). Returns packet_store, with its complete return type at packet_store.return_t.
 
     sample_t:        the buffered payload type (the detector's complex_t).
     gated_sample_t:  make_pdw_gate's {data, valid, last} beat struct.
@@ -276,8 +275,10 @@ def make_packet_store(
         desc_drop: uint1_t
         meas_drop: uint1_t
 
-    data_fifo, _data_fifo_t = make_fifo(sample_t, depth)
-    desc_fifo, _desc_fifo_t = make_fifo(desc_t, n_pkts)
+    data_fifo = make_fifo(sample_t, depth)
+
+    desc_fifo = make_fifo(desc_t, n_pkts)
+
     # A pulse's descriptor is complete on its gate_last cycle, but its
     # measurement (frequency, dB, PRI) only lands some fixed number of cycles
     # later -- the CORDIC and the log converter are pipelines. Rather than hold
@@ -285,9 +286,9 @@ def make_packet_store(
     # FIFOs and are popped together. Each FIFO gets exactly one entry per
     # closed pulse, in the same order, so they stay in lockstep by
     # construction.
-    meas_fifo, _meas_fifo_t = make_fifo(meas_t, n_pkts)
+    meas_fifo = make_fifo(meas_t, n_pkts)
 
-    verdict_t = make_pdw_qualify(width_t)[1]
+    verdict_t = make_pdw_qualify(width_t).return_t
 
     @hw_func
     def packet_store(
@@ -523,12 +524,11 @@ def make_packet_store(
     packet_store.depth = depth
     packet_store.n_pkts = n_pkts
     packet_store.meas_t = meas_t
-    return packet_store, packet_store_t
+    return packet_store
 
 
 def make_pulse_extract(pulse_detect, depth=16384, n_pkts=16, *, join_depth=32):
-    """The whole README box 3, wired to a `pulse_detect` instance. Returns
-    (pulse_extract, pulse_extract_t).
+    """The whole README box 3, wired to a `pulse_detect` instance. Returns pulse_extract, with its complete return type at pulse_extract.return_t.
 
         pulse_extract(gated_in, pdw_in_if, dsp_overflow, min_width, max_width,
                    freq_acc, noise_est, pkt_out_if, pdw_out_if, rst)
@@ -576,19 +576,19 @@ def make_pulse_extract(pulse_detect, depth=16384, n_pkts=16, *, join_depth=32):
     rail_lo, rail_hi = data_range(rail_t)
     rail_val_t = rail_t.typeof("val")
 
-    pulse_measure, pulse_measure_t = make_pulse_measure(
-        pulse_detect, join_depth=join_depth
-    )
-    packet_store, _packet_store_t = make_packet_store(
+    pulse_measure = make_pulse_measure(pulse_detect, join_depth=join_depth)
+
+    packet_store = make_packet_store(
         pulse_detect.complex_t,
         pulse_detect.gated_sample_t,
         pulse_detect.candidate_pdw_t,
-        pulse_measure_t,
+        pulse_measure.return_t,
         width_t=pulse_detect.width_t,
         depth=depth,
         n_pkts=n_pkts,
     )
-    pdw_qualify, verdict_t = make_pdw_qualify(pulse_detect.width_t)
+
+    pdw_qualify = make_pdw_qualify(pulse_detect.width_t)
 
     @struct
     class candidate_meta_t(NamedTuple):
@@ -597,7 +597,7 @@ def make_pulse_extract(pulse_detect, depth=16384, n_pkts=16, *, join_depth=32):
         accept: uint1_t
         noise: pulse_detect.noise_t
 
-    input_join, _ = make_valid_join(
+    input_join = make_valid_join(
         (candidate_meta_t, pulse_detect.freq_accum_t), join_depth
     )
 
@@ -606,11 +606,11 @@ def make_pulse_extract(pulse_detect, depth=16384, n_pkts=16, *, join_depth=32):
         pdw_in_if: pulse_detect.out_fb_t
         pkt_out_if: packet_store.pkt_out_intrf.fwd_t
         pdw_out_if: packet_store.pdw_out_intrf.fwd_t
-        verdict: verdict_t
+        verdict: pdw_qualify.return_t
         fifo_full: uint1_t
         desc_drop: uint1_t  # sticky, see packet_store_t
         meas_drop: uint1_t  # sticky, see packet_store_t
-        measure: pulse_measure_t  # observability tap on the measurement stream
+        measure: pulse_measure.return_t  # observability tap on the measurement stream
 
     @hw_func
     def pulse_extract(
@@ -707,7 +707,7 @@ def make_pulse_extract(pulse_detect, depth=16384, n_pkts=16, *, join_depth=32):
     pulse_extract.pulse_detect = pulse_detect
     pulse_extract.packet_store = packet_store
     pulse_extract.pdw_qualify = pdw_qualify
-    pulse_extract.verdict_t = verdict_t
+    pulse_extract.verdict_t = pdw_qualify.return_t
     pulse_extract.valid_pdw_t = packet_store.valid_pdw_t
     pulse_extract.released_sample_t = packet_store.released_sample_t
     pulse_extract.pkt_out_intrf = packet_store.pkt_out_intrf
@@ -716,6 +716,6 @@ def make_pulse_extract(pulse_detect, depth=16384, n_pkts=16, *, join_depth=32):
     pulse_extract.depth = depth
     pulse_extract.n_pkts = n_pkts
     pulse_extract.pulse_measure = pulse_measure
-    pulse_extract.pulse_measure_t = pulse_measure_t
+    pulse_extract.pulse_measure_t = pulse_measure.return_t
     pulse_extract.join_depth = join_depth
-    return pulse_extract, pulse_extract_t
+    return pulse_extract

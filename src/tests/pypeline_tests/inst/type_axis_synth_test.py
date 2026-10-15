@@ -69,37 +69,38 @@ class record_t(NamedTuple):
 
 assert byte_length(record_t) == 13, byte_length(record_t)
 
-rx, rx_t = make_axis_to_type(record_t, N)
-tx, tx_t = make_type_to_axis(record_t, N)
-rx_many, rx_many_t = make_axis_to_type(record_t, N, frame="many_per_packet")
-tx_many, tx_many_t = make_type_to_axis(
-    record_t, N, frame="many_per_packet", structs_per_packet=4
-)
+rx = make_axis_to_type(record_t, N)
+
+tx = make_type_to_axis(record_t, N)
+
+rx_many = make_axis_to_type(record_t, N, frame="many_per_packet")
+
+tx_many = make_type_to_axis(record_t, N, frame="many_per_packet", structs_per_packet=4)
 
 
 @MAIN
 def axis_to_record(
     axis_in_if: rx.axis_intrf.fwd_t, stream_out_if: rx.out_fb_t
-) -> rx_t:
+) -> rx.return_t:
     return rx(axis_in_if, stream_out_if)
 
 
 @MAIN
 def record_to_axis(
     stream_in_if: tx.in_intrf.fwd_t, axis_out_if: tx.axis_fb_t
-) -> tx_t:
+) -> tx.return_t:
     return tx(stream_in_if, axis_out_if)
 
 
 @MAIN
 def axis_to_record_many(
     axis_in_if: rx_many.axis_intrf.fwd_t, stream_out_if: rx_many.out_fb_t
-) -> rx_many_t:
+) -> rx_many.return_t:
     return rx_many(axis_in_if, stream_out_if)
 
 
 @MAIN
 def record_to_axis_many(
     stream_in_if: tx_many.in_intrf.fwd_t, axis_out_if: tx_many.axis_fb_t
-) -> tx_many_t:
+) -> tx_many.return_t:
     return tx_many(stream_in_if, axis_out_if)

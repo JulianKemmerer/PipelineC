@@ -79,7 +79,7 @@ def make_axis_max_len_limiter(axis_intrf, n, max_bytes):
     never stalled by them) and the counter resets on both a real and a forced
     end-of-frame, so the next frame is limited identically.
 
-    Returns (axis_max_len_limiter, axis_max_len_limiter_t):
+    Returns axis_max_len_limiter, with its complete return type at axis_max_len_limiter.return_t:
         axis_max_len_limiter(axis_in_if: axis_intrf.fwd_t,
                              axis_out_if: axis_intrf.fb_t) -> ..._t
         fields: .axis_out_if (fwd), .axis_in_if (fb)
@@ -149,7 +149,7 @@ def make_axis_max_len_limiter(axis_intrf, n, max_bytes):
     axis_max_len_limiter.axis_intrf = axis_intrf
     axis_max_len_limiter.n = n
     axis_max_len_limiter.max_bytes = max_bytes
-    return axis_max_len_limiter, axis_max_len_limiter_t
+    return axis_max_len_limiter
 
 
 def make_axis_to_type(
@@ -173,7 +173,7 @@ def make_axis_to_type(
         resync and pulse .runt), "zero_pad" (emit it zero-filled, pulse .runt),
         or "ignore" (carry the residue, reproducing the old permanent desync).
 
-    Returns (axis_to_type, axis_to_type_t):
+    Returns axis_to_type, with its complete return type at axis_to_type.return_t:
         axis_to_type(axis_in_if: axis_intrf.fwd_t,
                      stream_out_if: out_intrf.fb_t) -> axis_to_type_t
         fields: .stream_out_if (values), .axis_in_if (reverse half of the AXIS
@@ -184,7 +184,7 @@ def make_axis_to_type(
     n_bytes = byte_length(out_t)
     limited = frame == "one_per_packet"
 
-    rx, rx_t = make_byte_stream_to_type(
+    rx = make_byte_stream_to_type(
         out_t,
         n,
         endian=endian,
@@ -193,10 +193,11 @@ def make_axis_to_type(
         registered_ready=registered_ready,
         check_keep=check_keep,
     )
+
     axis_intrf = rx.in_intrf  # already an AXIS interface: n lanes of uint8_t
     out_intrf = rx.out_intrf
     if limited:
-        limiter, limiter_t = make_axis_max_len_limiter(axis_intrf, n, n_bytes)
+        limiter = make_axis_max_len_limiter(axis_intrf, n, n_bytes)
 
     @struct
     class axis_to_type_t(NamedTuple):
@@ -252,7 +253,7 @@ def make_axis_to_type(
     axis_to_type.t = out_t
     axis_to_type.n_bytes = n_bytes
     axis_to_type.n = n
-    return axis_to_type, axis_to_type_t
+    return axis_to_type
 
 
 def make_type_to_axis(
@@ -268,7 +269,7 @@ def make_type_to_axis(
         by driving `stream_in_if.stream.data.eod[0]` on the last value, or by
         passing structs_per_packet=k to have an internal mod-k counter do it.
 
-    Returns (type_to_axis, type_to_axis_t):
+    Returns type_to_axis, with its complete return type at type_to_axis.return_t:
         type_to_axis(stream_in_if: in_intrf.fwd_t,
                      axis_out_if: axis_intrf.fb_t) -> type_to_axis_t
         fields: .axis_out_if (fwd), .stream_in_if (fb)
@@ -288,9 +289,10 @@ def make_type_to_axis(
                 f"got {structs_per_packet!r}"
             )
 
-    tx, tx_t = make_type_to_byte_stream(
+    tx = make_type_to_byte_stream(
         in_t, n, endian=endian, align="beat" if per_value else "packed"
     )
+
     in_intrf = make_stream_interface(make_ndarray_fragment_t(in_t, 1))
     axis_intrf = tx.out_intrf
     counted = structs_per_packet is not None
@@ -340,4 +342,4 @@ def make_type_to_axis(
     type_to_axis.t = in_t
     type_to_axis.n_bytes = byte_length(in_t)
     type_to_axis.n = n
-    return type_to_axis, type_to_axis_t
+    return type_to_axis

@@ -34,7 +34,7 @@ coeff_t = make_fixed_t(2, 6)
 
 TAPS = [0.125, 0.375, 0.375, 0.125]
 
-decim3, decim3_t = make_fir_decim(
+decim3 = make_fir_decim(
     TAPS,
     coeff_t,
     3,
@@ -43,7 +43,8 @@ decim3, decim3_t = make_fir_decim(
     rounding="round_half_even",
     overflow="saturate",
 )
-decim2_vonly, decim2_vonly_t = make_fir_decim(
+
+decim2_vonly = make_fir_decim(
     TAPS,
     coeff_t,
     2,
@@ -53,7 +54,8 @@ decim2_vonly, decim2_vonly_t = make_fir_decim(
     overflow="saturate",
     handshake="valid_only",
 )
-decim1, decim1_t = make_fir_decim(
+
+decim1 = make_fir_decim(
     TAPS,
     coeff_t,
     1,
@@ -62,7 +64,8 @@ decim1, decim1_t = make_fir_decim(
     rounding="round_half_even",
     overflow="saturate",
 )
-fir_ref, fir_ref_t = make_fir(
+
+fir_ref = make_fir(
     TAPS,
     coeff_t,
     data_t,
@@ -72,15 +75,16 @@ fir_ref, fir_ref_t = make_fir(
 )
 
 
+
 @MAIN(100.0)
 def decim3_main(
     stream_in_if: decim3.in_fwd_t, stream_out_if: decim3.out_fb_t
-) -> decim3_t:
+) -> decim3.return_t:
     return decim3(stream_in_if, stream_out_if)
 
 
 @MAIN(100.0)
-def decim2_vonly_main(stream_in_if: decim2_vonly.in_stream_t) -> decim2_vonly_t:
+def decim2_vonly_main(stream_in_if: decim2_vonly.in_stream_t) -> decim2_vonly.return_t:
     return decim2_vonly(stream_in_if)
 
 

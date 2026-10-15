@@ -33,7 +33,8 @@ from pdw_ctrl import (
 )
 
 N = 4
-ctrl, ctrl_t = make_pdw_ctrl(N)
+ctrl = make_pdw_ctrl(N)
+ctrl_t = ctrl.return_t
 FIELDS = pdw_ctrl_t._fields
 
 CFG_A = pdw_ctrl_t(
@@ -168,7 +169,7 @@ def test_latency_is_independent_of_registered_ready():
     """`registered_ready=True` is the documented escape hatch if the ready path
     ever needs breaking for timing. It must not move the apply moment, or
     reaching for it would silently invalidate pdw_tb.py."""
-    rr, _ = make_pdw_ctrl(N, registered_ready=True)
+    rr = make_pdw_ctrl(N, registered_ready=True)
     _, observed, _ = _measure_latency(rr, CFG_A)
     assert observed == rr.latency == ctrl.latency, (
         f"registered_ready changed the apply latency: {observed} vs {ctrl.latency}"

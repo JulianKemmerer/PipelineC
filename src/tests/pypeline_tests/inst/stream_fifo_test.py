@@ -21,7 +21,8 @@ from pypeline import MAIN, uint32_t, sim_call, sim_reset
 from stream.stream_fifo import make_stream_fifo
 
 # depth=5 rounds up to the real hardware's capacity of 8, same as fifo_test.py.
-stream_fifo, stream_fifo_t = make_stream_fifo(uint32_t, 5)
+stream_fifo = make_stream_fifo(uint32_t, 5)
+
 uint32_plain_t = stream_fifo.stream_intrf.stream_t
 CAPACITY = 8
 
@@ -29,7 +30,7 @@ CAPACITY = 8
 @MAIN
 def stream_fifo_test_top(
     in_stream_if: stream_fifo.fwd_t, out_stream_if: stream_fifo.fb_t
-) -> stream_fifo_t:
+) -> stream_fifo.return_t:
     return stream_fifo(in_stream_if, out_stream_if)
 
 

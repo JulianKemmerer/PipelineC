@@ -43,8 +43,10 @@ def plus_three(x: uint8_t) -> uint8_t:
     return x + 3
 
 
-sap0, sap0_t = make_stream_auto_pipeline(plus_three, latency=0)
-sap3, sap3_t = make_stream_auto_pipeline(plus_three, latency=3)
+sap0 = make_stream_auto_pipeline(plus_three, latency=0)
+
+sap3 = make_stream_auto_pipeline(plus_three, latency=3)
+
 
 NUM = 20  # words through each wrapper
 MAX_CYCLES = 100  # every result is due by cycle ~30; a stall fails loudly
@@ -69,7 +71,7 @@ def self_check_stream_auto_pipeline_ii1() -> uint8_t:
     in0: sap0.in_intrf.stream_t
     in0.data = sent0
     in0.valid = sent0 < NUM
-    o0: sap0_t = sap0(sap0.in_fwd_t(stream=in0), sap0.out_fb_t(ready=1))
+    o0: sap0.return_t = sap0(sap0.in_fwd_t(stream=in0), sap0.out_fb_t(ready=1))
     if (sent0 > 0) & in0.valid:
         sim_assert(o0.stream_in_if.ready, f"latency 0: input stalled after {sent0} words")
     if in0.valid & o0.stream_in_if.ready:
@@ -90,7 +92,7 @@ def self_check_stream_auto_pipeline_ii1() -> uint8_t:
     in3: sap3.in_intrf.stream_t
     in3.data = sent3
     in3.valid = sent3 < NUM
-    o3: sap3_t = sap3(sap3.in_fwd_t(stream=in3), sap3.out_fb_t(ready=1))
+    o3: sap3.return_t = sap3(sap3.in_fwd_t(stream=in3), sap3.out_fb_t(ready=1))
     if (sent3 > 0) & in3.valid:
         sim_assert(o3.stream_in_if.ready, f"latency 3: input stalled after {sent3} words")
     if in3.valid & o3.stream_in_if.ready:

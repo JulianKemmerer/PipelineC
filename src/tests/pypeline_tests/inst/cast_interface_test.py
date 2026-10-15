@@ -175,7 +175,7 @@ def test_wide_feedback_wrap_unwrap():
 # on an _intrf variable -- exercises _try_eval_const resolving an arbitrary
 # attribute chain, per _elab_cast_call/_is_pypeline_type. ──
 
-stream_fifo, stream_fifo_t = make_stream_fifo(uint8_t, 4)
+stream_fifo = make_stream_fifo(uint8_t, 4)
 
 
 @MAIN

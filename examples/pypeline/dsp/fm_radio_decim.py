@@ -42,7 +42,7 @@ coeff_t = make_fixed_t(1, 15)
 
 # Separate instance per rail (each has its own sample window state).
 # truncate/wrap matches the old library's `accum >> 15` output stage exactly.
-i_decim_5x, i_decim_5x_t = make_fir_decim(
+i_decim_5x = make_fir_decim(
     DECIM_5X_COEFFS_Q15,
     coeff_t,
     5,
@@ -51,7 +51,8 @@ i_decim_5x, i_decim_5x_t = make_fir_decim(
     rounding="truncate",
     overflow="wrap",
 )
-q_decim_5x, q_decim_5x_t = make_fir_decim(
+
+q_decim_5x = make_fir_decim(
     DECIM_5X_COEFFS_Q15,
     coeff_t,
     5,
@@ -65,12 +66,12 @@ q_decim_5x, q_decim_5x_t = make_fir_decim(
 @MAIN(125.0)
 def i_chan(
     stream_in_if: i_decim_5x.in_fwd_t, stream_out_if: i_decim_5x.out_fb_t
-) -> i_decim_5x_t:
+) -> i_decim_5x.return_t:
     return i_decim_5x(stream_in_if, stream_out_if)
 
 
 @MAIN(125.0)
 def q_chan(
     stream_in_if: q_decim_5x.in_fwd_t, stream_out_if: q_decim_5x.out_fb_t
-) -> q_decim_5x_t:
+) -> q_decim_5x.return_t:
     return q_decim_5x(stream_in_if, stream_out_if)

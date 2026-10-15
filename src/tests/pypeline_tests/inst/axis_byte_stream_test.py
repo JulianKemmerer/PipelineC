@@ -25,8 +25,10 @@ N = 4  # lanes per beat
 MAX_BYTES = 32
 
 axis_intrf = make_axis_interface(N)
-byte_source, byte_source_t = make_axis_byte_source(axis_intrf, N, MAX_BYTES)
-byte_sink, byte_sink_t = make_axis_byte_sink(axis_intrf, N, MAX_BYTES)
+byte_source = make_axis_byte_source(axis_intrf, N, MAX_BYTES)
+
+byte_sink = make_axis_byte_sink(axis_intrf, N, MAX_BYTES)
+
 
 buf_t = uint8_t[MAX_BYTES]
 
@@ -36,12 +38,12 @@ buf_t = uint8_t[MAX_BYTES]
 @MAIN
 def byte_source_main(
     load: uint1_t, load_data: buf_t, load_len: uint32_t, stream_out_if: axis_intrf.fb_t
-) -> byte_source_t:
+) -> byte_source.return_t:
     return byte_source(load, load_data, load_len, stream_out_if)
 
 
 @MAIN
-def byte_sink_main(stream_in_if: axis_intrf.fwd_t) -> byte_sink_t:
+def byte_sink_main(stream_in_if: axis_intrf.fwd_t) -> byte_sink.return_t:
     return byte_sink(stream_in_if)
 
 

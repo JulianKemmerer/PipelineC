@@ -59,9 +59,11 @@ def core(x: input_t) -> output_t:
 
 DELAY_OPT = AUTO_COMB_DELAY_OPT(core)
 FIXED = AUTO_PIPELINE(DELAY_OPT, latency=1)
-PIPE, PIPE_T = make_stream_auto_pipeline(DELAY_OPT)
-FSM, FSM_T = make_stream_auto_fsm(core)
-EXPLICIT, EXPLICIT_T = make_stream_auto_fsm(DELAY_OPT)
+PIPE = make_stream_auto_pipeline(DELAY_OPT)
+
+FSM = make_stream_auto_fsm(core)
+
+EXPLICIT = make_stream_auto_fsm(DELAY_OPT)
 
 
 def make_checker(stream, t, name):
@@ -103,9 +105,9 @@ def make_checker(stream, t, name):
     return checker
 
 
-CHECK_PIPE = make_checker(PIPE, PIPE_T, 0)
-CHECK_FSM = make_checker(FSM, FSM_T, 1)
-CHECK_EXPLICIT = make_checker(EXPLICIT, EXPLICIT_T, 2)
+CHECK_PIPE = make_checker(PIPE, PIPE.return_t, 0)
+CHECK_FSM = make_checker(FSM, FSM.return_t, 1)
+CHECK_EXPLICIT = make_checker(EXPLICIT, EXPLICIT.return_t, 2)
 
 
 @MAIN(5.0)

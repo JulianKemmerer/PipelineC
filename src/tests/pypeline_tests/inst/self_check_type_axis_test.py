@@ -69,8 +69,9 @@ class hdr_t(NamedTuple):
 
 assert byte_length(hdr_t) == 7
 
-tx, tx_t = make_type_to_axis(hdr_t, N)
-rx, rx_t = make_axis_to_type(hdr_t, N)
+tx = make_type_to_axis(hdr_t, N)
+
+rx = make_axis_to_type(hdr_t, N)
 
 
 @MAIN

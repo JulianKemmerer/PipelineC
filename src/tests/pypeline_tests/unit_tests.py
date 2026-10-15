@@ -15,6 +15,14 @@ from common import INST_DIR, Test, main
 
 def get_tests() -> list:
     tests = []
+    # Single-object factory results, callable return metadata, caches and ops bundles.
+    tests.append(
+        Test(
+            name="factory_api_test",
+            category="unit",
+            cmd=[INST_DIR / "factory_api_test.py"],
+        )
+    )
     # Two pinned hash seeds: no sweep decision may depend on set iteration order.
     for name, seed in (("sweep_evidence_test", "1"), ("sweep_evidence_test_seed777", "777")):
         tests.append(

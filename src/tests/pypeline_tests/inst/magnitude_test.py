@@ -33,32 +33,34 @@ from dsp.dsp_tb import golden_magnitude, quantize_samples, white_noise
 
 data_t = make_fixed_t(1, 15)  # Q1.15 samples
 
-mag_full, mag_full_t = make_magnitude(data_t)  # out_t=None: full precision
-mag_resized, mag_resized_t = make_magnitude(
+mag_full = make_magnitude(data_t)
+# out_t=None: full precision
+mag_resized = make_magnitude(
     data_t,
     out_t=make_fixed_t(1, 14, signed=False),
     rounding="round_half_even",
     overflow="saturate",
 )
-mag_vonly, mag_vonly_t = make_magnitude(data_t, handshake="valid_only")
+
+mag_vonly = make_magnitude(data_t, handshake="valid_only")
 
 
 @MAIN(100.0)
 def magnitude_full_main(
     stream_in_if: mag_full.in_fwd_t, stream_out_if: mag_full.out_fb_t
-) -> mag_full_t:
+) -> mag_full.return_t:
     return mag_full(stream_in_if, stream_out_if)
 
 
 @MAIN(100.0)
 def magnitude_resized_main(
     stream_in_if: mag_resized.in_fwd_t, stream_out_if: mag_resized.out_fb_t
-) -> mag_resized_t:
+) -> mag_resized.return_t:
     return mag_resized(stream_in_if, stream_out_if)
 
 
 @MAIN(100.0)
-def magnitude_vonly_main(stream_in_if: mag_vonly.in_stream_t) -> mag_vonly_t:
+def magnitude_vonly_main(stream_in_if: mag_vonly.in_stream_t) -> mag_vonly.return_t:
     return mag_vonly(stream_in_if)
 
 

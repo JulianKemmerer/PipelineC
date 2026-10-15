@@ -499,7 +499,7 @@ GLOBAL_VALID_READY_PIPELINE_INST(name, out_t, func, in_t, MAX_IN_FLIGHT)
 from stream.stream_auto_pipeline import make_stream_auto_pipeline
 
 # No MAX_IN_FLIGHT: the FIFO is sized from the core's discovered latency.
-name_pipeline_func, name_pipeline_t = make_stream_auto_pipeline(func)
+name_pipeline_func = make_stream_auto_pipeline(func)
 # ...or seed the throughput sweep with a known core depth (a starting guess,
 # not a fixed latency; latency= and max_latency= are also accepted):
 # name_pipeline_func, name_pipeline_t = make_stream_auto_pipeline(func, start_latency=4)
@@ -544,7 +544,7 @@ from stream.stream import make_stream_t
 from stream.stream_fifo import make_stream_fifo
 
 stream_T = make_stream_t(T)
-fifo_func, fifo_t = make_stream_fifo(T, depth)
+fifo_func = make_stream_fifo(T, depth)
 
 fifo_name_in:        Wire[stream_T]
 fifo_name_out:       Wire[stream_T]
@@ -572,10 +572,10 @@ SKID_BUF(T, name)
 # pypeline
 from stream.skid_buffer import make_skid_buffer
 
-skid, skid_t = make_skid_buffer(T)      # mode="full" matches SKID_BUF
+skid = make_skid_buffer(T)      # mode="full" matches SKID_BUF
 
 @MAIN
-def name(stream_in_if: skid.fwd_t, stream_out_if: skid.fb_t) -> skid_t:
+def name(stream_in_if: skid.fwd_t, stream_out_if: skid.fb_t) -> skid.return_t:
     return skid(stream_in_if, stream_out_if)
 ```
 
@@ -605,7 +605,7 @@ GLOBAL_VALID_READY_MCP_INST(name, out_t, func, in_t, ncycles)
 # pypeline
 from stream.stream_multi_cycle import make_stream_multi_cycle, make_stream_auto_multi_cycle
 
-name_mcp_func, name_mcp_t = make_stream_multi_cycle(func, ncycles)
+name_mcp_func = make_stream_multi_cycle(func, ncycles)
 # ...or let the Vivado sweep pick the cycle count (start at a known-good one):
 # name_mcp_func, name_mcp_t = make_stream_auto_multi_cycle(func, start_latency=ncycles)
 
@@ -627,7 +627,7 @@ of `AUTO_PIPELINE`/`MULTI_CYCLE[...]`.
 # pypeline
 from stream.stream_auto_fsm import make_stream_auto_fsm
 
-name_auto_fsm_func, name_auto_fsm_t = make_stream_auto_fsm(func)
+name_auto_fsm_func = make_stream_auto_fsm(func)
 
 # Wire and @MAIN pattern identical to 8c above,
 # substituting name_auto_fsm_func for name_pipeline_func.
@@ -652,7 +652,7 @@ my_ram_outputs_t o = my_ram(wr_addr, wr_data, wr_en, 1, 1, rd_addr, 1, 1);
 # pypeline
 from ram import make_ram
 
-my_ram, my_ram_out_t = make_ram(uint32_t, 1024, ports=("rw", "r"), read_latency=1)
+my_ram = make_ram(uint32_t, 1024, ports=("rw", "r"), read_latency=1)
 o = my_ram(my_ram.p0_in_t(addr=wr_addr, wr_data=wr_data, wr_en=wr_en, valid=1),
            my_ram.p1_in_t(addr=rd_addr, valid=1))
 # o.p0 / o.p1: addr, wr_data, wr_en, valid piped through, plus rd_data

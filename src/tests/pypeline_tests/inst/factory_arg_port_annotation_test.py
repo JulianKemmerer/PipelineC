@@ -82,9 +82,7 @@ def make_producer(b_t):
 
 
 def make_rom_consumer(pair_src):
-    rom, _rom_t = make_ram(
-        uint8_t, 16, ports=("r",), read_latency=1, init=list(range(16))
-    )
+    rom = make_ram(uint8_t, 16, ports=("r",), read_latency=1, init=list(range(16)))
 
     @hw_func
     def rom_consumer(p: pair_src.pair_t) -> uint8_t:

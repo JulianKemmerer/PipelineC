@@ -10,12 +10,13 @@ from pypeline import MAIN, SYN_TOOL, uint32_t
 from stream.stream_ram import make_stream_auto_pipeline_ram
 
 SYN_TOOL("open_tools")
-memory, result_t = make_stream_auto_pipeline_ram(
+memory = make_stream_auto_pipeline_ram(
     uint32_t,
     65536,
     ports=("w", "r"),
     max_latency=9,
 )
+
 write_req_t = memory.p0_req_intrf.fwd_t
 write_resp_t = memory.p0_resp_intrf.fb_t
 read_req_t = memory.p1_req_intrf.fwd_t
@@ -28,5 +29,5 @@ def auto_pipeline_ram(
     p0_resp_if: write_resp_t,
     p1_req_if: read_req_t,
     p1_resp_if: read_resp_t,
-) -> result_t:
+) -> memory.return_t:
     return memory(p0_req_if, p0_resp_if, p1_req_if, p1_resp_if)

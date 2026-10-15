@@ -42,9 +42,11 @@ from pypeline import MAIN, Reg, Wire, sim_output, uint32_t
 from ram import make_ram
 from stream.stream_ram import make_stream_ram
 
-acc_ram, acc_ram_out_t = make_ram(uint32_t, 4, ports=("rw",), read_latency=0)
+acc_ram = make_ram(uint32_t, 4, ports=("rw",), read_latency=0)
+
 acc_in_t = acc_ram.p0_in_t
-sacc_ram, sacc_ram_t = make_stream_ram(uint32_t, 4, ports=("rw",), read_latency=0)
+sacc_ram = make_stream_ram(uint32_t, 4, ports=("rw",), read_latency=0)
+
 sacc_req_stream_t = sacc_ram.p0_req_intrf.stream_t
 sacc_req_fwd_t = sacc_ram.p0_req_intrf.fwd_t
 sacc_resp_fb_t = sacc_ram.p0_resp_intrf.fb_t
@@ -65,7 +67,7 @@ def ram_acc_main():
     req.wr_data = acc_next
     req.wr_en = 1
     req.valid = 1
-    resp: acc_ram_out_t = acc_ram(req)
+    resp: acc_ram.return_t = acc_ram(req)
     acc_now = resp.p0.rd_data
 
 
@@ -76,7 +78,9 @@ def ram_stream_acc_main():
     req.data.addr = 2
     req.data.wr_data = sacc_next
     req.data.wr_en = 1
-    resp: sacc_ram_t = sacc_ram(sacc_req_fwd_t(stream=req), sacc_resp_fb_t(ready=1))
+    resp: sacc_ram.return_t = sacc_ram(
+        sacc_req_fwd_t(stream=req), sacc_resp_fb_t(ready=1)
+    )
     sacc_now = resp.p0_resp_if.stream.data.rd_data
 
 

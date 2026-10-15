@@ -864,7 +864,7 @@ def test_stream_factory_names_unchanged_and_forwarded():
     from stream.stream_multi_cycle import make_stream_auto_multi_cycle
 
     PL.RESET_AUTO_MULTI_CYCLE_TRACKING()
-    sap, _ = make_stream_auto_pipeline(round_a_hw)
+    sap = make_stream_auto_pipeline(round_a_hw)
     assert re.fullmatch(
         r"stream_auto_pipeline_func_v_main_round_a_hw_latency_None_start_latency_None"
         r"_max_latency_None_s[0-9a-f]{12}",
@@ -874,20 +874,24 @@ def test_stream_factory_names_unchanged_and_forwarded():
         "stream_auto_pipeline_from_stream_stream_auto_pipeline_latency_None"
         "_start_latency_None_max_latency_None_func_round_a_hw"
     )
-    mcp, _ = make_stream_auto_multi_cycle(round_a_hw)
+    mcp = make_stream_auto_multi_cycle(round_a_hw)
     # An unnamed tag's key is the library source line it is built on: moving
     # that line renames every unnamed make_stream_auto_multi_cycle holder
+    source, first_line = inspect.getsourcelines(make_stream_auto_multi_cycle)
+    constructor_line = first_line + next(
+        i for i, line in enumerate(source) if "MC = AUTO_MULTI_CYCLE(" in line
+    )
     assert mcp.mcp.canonical_key == (
-        "stream.stream_multi_cycle.make_stream_auto_multi_cycle_line137_0"
+        f"stream.stream_multi_cycle.make_stream_auto_multi_cycle_line{constructor_line}_0"
     ), mcp.mcp.canonical_key
     assert inspect.unwrap(mcp)._pypeline_name_info.render(192) == (
         "func_mcp_from_stream_stream_multi_cycle_make_stream_auto_multi_cycle"
         "_latency_None_start_latency_None_max_latency_None_func_round_a_hw"
     )
     # A name reaches the tag, and shows in the products' own names
-    named, _ = make_stream_auto_pipeline(round_a_hw, name="round_a", start_latency=2)
+    named = make_stream_auto_pipeline(round_a_hw, name="round_a", start_latency=2)
     assert "_name_round_a_" in P.CANONICAL_CALLABLE_KEY(named)
-    mcp, _ = make_stream_auto_multi_cycle(round_a_hw, name="round_a_mcp", max_latency=4)
+    mcp = make_stream_auto_multi_cycle(round_a_hw, name="round_a_mcp", max_latency=4)
     assert mcp.mcp.canonical_key == "round_a_mcp_max_latency_4"
     PL.RESET_AUTO_MULTI_CYCLE_TRACKING()
 

@@ -56,7 +56,7 @@ def _model(a, b):
     return (a + b) & 0xFF
 
 
-ADD_FSM, ADD_FSM_T = make_stream_auto_fsm(add_ab)
+ADD_FSM = make_stream_auto_fsm(add_ab)
 
 
 def _drive(inputs, ready_pattern, ncycles):

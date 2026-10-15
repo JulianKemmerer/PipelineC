@@ -67,7 +67,7 @@ from pulse_extract import (
 # The engine is built against a pulse_detect instance purely for its types
 # (complex_t/gated_sample_t/candidate_pdw_t/width_t); no detector logic is
 # instantiated by these testbenches -- the gate stream is synthesized here.
-_DP, _ = make_pulse_detect()
+_DP = make_pulse_detect()
 
 RAIL_MAX = 32767  # int16 rail -- what ADC clip detection compares against
 
@@ -127,7 +127,7 @@ def synth_freq_acc(gate_last: uint1_t, re_in: ACC_T, im_in: ACC_T) -> _DP.freq_a
     return o
 
 
-engine_acc, engine_acc_t = make_pulse_extract(_DP, depth=TB_DEPTH, n_pkts=TB_N_PKTS)
+engine_acc = make_pulse_extract(_DP, depth=TB_DEPTH, n_pkts=TB_N_PKTS)
 
 
 @MAIN(125.0)
@@ -249,7 +249,7 @@ GLITCH_WIDTH = 6
 GLITCH_PERIOD = 48
 GLITCH_MIN_WIDTH = 16
 
-engine_glitch, engine_glitch_t = make_pulse_extract(_DP, depth=TB_DEPTH, n_pkts=TB_N_PKTS)
+engine_glitch = make_pulse_extract(_DP, depth=TB_DEPTH, n_pkts=TB_N_PKTS)
 
 
 @MAIN(125.0)
@@ -315,7 +315,7 @@ CW_WIDTH = 32
 CW_PERIOD = 96
 CW_MAX_WIDTH = 32  # == the candidate's width: the SM's force-close marker
 
-engine_cw, engine_cw_t = make_pulse_extract(_DP, depth=TB_DEPTH, n_pkts=TB_N_PKTS)
+engine_cw = make_pulse_extract(_DP, depth=TB_DEPTH, n_pkts=TB_N_PKTS)
 
 
 @MAIN(125.0)
@@ -379,7 +379,7 @@ def pulse_extract_cw_tb():
 ST_WIDTH = 16
 ST_PERIOD = 48
 
-engine_st, engine_st_t = make_pulse_extract(_DP, depth=TB_DEPTH, n_pkts=TB_N_PKTS)
+engine_st = make_pulse_extract(_DP, depth=TB_DEPTH, n_pkts=TB_N_PKTS)
 
 
 @MAIN(125.0)
@@ -472,7 +472,7 @@ def pulse_extract_status_tb():
 BP_WIDTH = 20
 BP_PERIOD = 128
 
-engine_bp, engine_bp_t = make_pulse_extract(_DP, depth=TB_DEPTH, n_pkts=TB_N_PKTS)
+engine_bp = make_pulse_extract(_DP, depth=TB_DEPTH, n_pkts=TB_N_PKTS)
 
 
 @MAIN(125.0)

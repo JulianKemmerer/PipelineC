@@ -26,7 +26,8 @@ from AUTO_PIPELINE import RamPlan
 
 W = param("ATAN2_TEST_INPUT_WIDTH", 39)
 input_t = make_int_t(W)
-block, _out_t = make_lut_atan2(input_t)
+block = make_lut_atan2(input_t)
+_out_t = block.return_t
 RL = param("ATAN2_TEST_RECIP_LATENCY", type=int)
 AL = param("ATAN2_TEST_ANGLE_LATENCY", type=int)
 if RL is not None and AL is not None:
@@ -42,7 +43,8 @@ if RL is not None and AL is not None:
         }
     )
     py.SET_AUTO_PIPELINE_RAM_PLAN_CACHE(plans)
-    block, _out_t = make_lut_atan2(input_t)
+    block = make_lut_atan2(input_t)
+    _out_t = block.return_t
 rng = random.Random(718)
 MIN, MAX = -(1 << (W - 1)), (1 << (W - 1)) - 1
 VECTORS = [
@@ -182,7 +184,7 @@ def test_pipeline_and_selected_plans():
                     else RamPlan(0, alat - 1),
                 }
             )
-            unit, _ = make_lut_atan2(input_t)
+            unit = make_lut_atan2(input_t)
             assert unit.get_latency() == rlat + alat + 12
             check_pipeline(unit)
     finally:
@@ -200,7 +202,7 @@ def test_table_boundaries_pipeline():
 
 
 def test_pdw_width_pipeline():
-    unit, _ = make_lut_atan2(make_int_t(40))
+    unit = make_lut_atan2(make_int_t(40))
     rng = random.Random(4040)
     low, high = -(1 << 39), (1 << 39) - 1
     vectors = [(low, y) for y in (low, -1, 0, 1, high)]

@@ -15,10 +15,10 @@ from pulse_measure import golden_pulse_measure
 
 
 def test_variable_frequency_completion():
-    dp, _ = make_pulse_detect()
+    dp = make_pulse_detect()
     # A latency-counting engine would fail to construct with this detector.
     del dp.freq_latency
-    engine, _ = make_pulse_extract(dp, depth=256, n_pkts=32)
+    engine = make_pulse_extract(dp, depth=256, n_pkts=32)
     rng = random.Random(9876)
     beats, candidates, responses = {}, {}, {}
     expected_records, expected_packets = [], []

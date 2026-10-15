@@ -35,7 +35,7 @@ def atan2_tables():
 
 
 def make_lut_atan2(in_val_t, *, join_depth=32):
-    """Return (atan2, output_type), with angle/valid/degenerate output fields.
+    """Return atan2, with its complete return type at atan2.return_t, with angle/valid/degenerate output fields.
 
     in_val_t is a signed integer type. Accuracy is independent of input scale;
     axes and diagonals are exact, including the wrapped negative-x axis.
@@ -62,10 +62,10 @@ def make_lut_atan2(in_val_t, *, join_depth=32):
     clz = make_clz(mag_t)
     shift = make_shifter_sl(mag_t, amount_t=shift_t)
     RECIP, ANGLE = atan2_tables()
-    recip, _ = make_auto_pipeline_ram(
+    recip = make_auto_pipeline_ram(
         reciprocal_t, 4096, ports=("r",), init=RECIP, start_latency=2
     )
-    atan, _ = make_auto_pipeline_ram(
+    atan = make_auto_pipeline_ram(
         angle_t, 4096, ports=("r",), init=ANGLE, start_latency=2
     )
 
@@ -91,8 +91,8 @@ def make_lut_atan2(in_val_t, *, join_depth=32):
         minor: norm_t
         meta: meta_t
 
-    recip_join, _ = make_valid_join((reciprocal_meta_t, reciprocal_t), join_depth)
-    angle_join, _ = make_valid_join((meta_t, angle_t), join_depth)
+    recip_join = make_valid_join((reciprocal_meta_t, reciprocal_t), join_depth)
+    angle_join = make_valid_join((meta_t, angle_t), join_depth)
 
     @hw_func
     def lut_atan2(
@@ -202,7 +202,7 @@ def make_lut_atan2(in_val_t, *, join_depth=32):
     lut_atan2.get_latency = lambda: recip.latency + atan.latency + 12
     lut_atan2.join_depth = join_depth
     lut_atan2._sim_clocked_pipeline_boundary = True
-    return lut_atan2, atan2_t
+    return lut_atan2
 
 
 def golden_lut_atan2(block, x, y):

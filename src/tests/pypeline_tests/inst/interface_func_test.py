@@ -68,11 +68,12 @@ def make_inc(k):
         o.stream_in_if.ready = stream_out_if.ready
         return o
 
-    return inc, inc_t
+    return inc
 
 
-inc2, inc2_t = make_inc(2)
-inc5, inc5_t = make_inc(5)
+inc2 = make_inc(2)
+
+inc5 = make_inc(5)
 
 
 def test_ports_introspected_structurally():
@@ -92,11 +93,13 @@ def series(stream_in_if: chan_intrf) -> chan_intrf:
     return b.stream_out_if
 
 
-series_inst, series_inst_t = make_hw_func_from_interface_func(series)
+series_inst = make_hw_func_from_interface_func(series)
 
 
 @MAIN
-def top_sugar(stream_in_if: chan_intrf.fwd_t, out_port_if: chan_intrf.fb_t) -> series_inst_t:
+def top_sugar(
+    stream_in_if: chan_intrf.fwd_t, out_port_if: chan_intrf.fb_t
+) -> series_inst.return_t:
     return series_inst(stream_in_if, out_port_if)
 
 
@@ -148,13 +151,16 @@ def two_lanes(a_if: chan_intrf, b_if: chan_intrf) -> pair:
     return pair(x_if=p.stream_out_if, y_if=q.stream_out_if)
 
 
-lanes_inst, lanes_inst_t = make_hw_func_from_interface_func(two_lanes)
+lanes_inst = make_hw_func_from_interface_func(two_lanes)
 
 
 @MAIN
 def top_lanes(
-    a_if: chan_intrf.fwd_t, b_if: chan_intrf.fwd_t, x_if: chan_intrf.fb_t, y_if: chan_intrf.fb_t
-) -> lanes_inst_t:
+    a_if: chan_intrf.fwd_t,
+    b_if: chan_intrf.fwd_t,
+    x_if: chan_intrf.fb_t,
+    y_if: chan_intrf.fb_t,
+) -> lanes_inst.return_t:
     return lanes_inst(a_if, b_if, x_if, y_if)
 
 
@@ -204,11 +210,13 @@ def credit_series(s_if: credit_chan_intrf) -> credit_chan_intrf:
     return b.stream_out_if
 
 
-cs_inst, cs_inst_t = make_hw_func_from_interface_func(credit_series)
+cs_inst = make_hw_func_from_interface_func(credit_series)
 
 
 @MAIN
-def top_credit(s_if: credit_chan_intrf.fwd_t, out_port_if: credit_chan_intrf.fb_t) -> cs_inst_t:
+def top_credit(
+    s_if: credit_chan_intrf.fwd_t, out_port_if: credit_chan_intrf.fb_t
+) -> cs_inst.return_t:
     return cs_inst(s_if, out_port_if)
 
 
@@ -242,17 +250,19 @@ def with_plain(a_if: chan_intrf, k: uint8_t) -> chan_intrf:
     return m.stream_out_if
 
 
-plain_inst, plain_inst_t = make_hw_func_from_interface_func(with_plain)
+plain_inst = make_hw_func_from_interface_func(with_plain)
 
 
 @MAIN
-def top_plain(a_if: chan_intrf.fwd_t, k: uint8_t, out_port_if: chan_intrf.fb_t) -> plain_inst_t:
+def top_plain(
+    a_if: chan_intrf.fwd_t, k: uint8_t, out_port_if: chan_intrf.fb_t
+) -> plain_inst.return_t:
     return plain_inst(a_if, k, out_port_if)
 
 
 def test_plain_values_pass_through():
     # a non-interface param rides through with no reverse companion
-    assert "k" not in plain_inst_t._fields
+    assert "k" not in plain_inst.return_t._fields
     sim_reset()
     r = sim_call(top_plain, chan_intrf.fwd_t(data=10, valid=1), 4, chan_intrf.fb_t(ready=1))
     assert int(r.out_port_if.data) == 15  # 10 + (4+1)
@@ -271,17 +281,19 @@ def outer(s_if: chan_intrf) -> chan_intrf:
     return y.stream_out_if
 
 
-outer_inst, outer_inst_t = make_hw_func_from_interface_func(outer)
+outer_inst = make_hw_func_from_interface_func(outer)
 
 
 @MAIN
-def top_compose(s_if: chan_intrf.fwd_t, out_port_if: chan_intrf.fb_t) -> outer_inst_t:
+def top_compose(
+    s_if: chan_intrf.fwd_t, out_port_if: chan_intrf.fb_t
+) -> outer_inst.return_t:
     return outer_inst(s_if, out_port_if)
 
 
 def test_composition_and_memoization():
-    a1, _ = make_hw_func_from_interface_func(inner)
-    a2, _ = make_hw_func_from_interface_func(inner)
+    a1 = make_hw_func_from_interface_func(inner)
+    a2 = make_hw_func_from_interface_func(inner)
     assert a1 is a2, "one definition, many instances"
     sim_reset()
     r = sim_call(top_compose, chan_intrf.fwd_t(data=1, valid=1), chan_intrf.fb_t(ready=1))
@@ -377,11 +389,13 @@ def series_kw(stream_in_if: chan_intrf) -> chan_intrf:
     return b.stream_out_if
 
 
-series_kw_inst, series_kw_inst_t = make_hw_func_from_interface_func(series_kw)
+series_kw_inst = make_hw_func_from_interface_func(series_kw)
 
 
 @MAIN
-def top_sugar_kw(stream_in_if: chan_intrf.fwd_t, out_port_if: chan_intrf.fb_t) -> series_kw_inst_t:
+def top_sugar_kw(
+    stream_in_if: chan_intrf.fwd_t, out_port_if: chan_intrf.fb_t
+) -> series_kw_inst.return_t:
     return series_kw_inst(stream_in_if, out_port_if)
 
 
@@ -391,11 +405,13 @@ def with_mixed(a_if: chan_intrf, k: uint8_t) -> chan_intrf:
     return m.stream_out_if
 
 
-mixed_inst, mixed_inst_t = make_hw_func_from_interface_func(with_mixed)
+mixed_inst = make_hw_func_from_interface_func(with_mixed)
 
 
 @MAIN
-def top_mixed(a_if: chan_intrf.fwd_t, k: uint8_t, out_port_if: chan_intrf.fb_t) -> mixed_inst_t:
+def top_mixed(
+    a_if: chan_intrf.fwd_t, k: uint8_t, out_port_if: chan_intrf.fb_t
+) -> mixed_inst.return_t:
     return mixed_inst(a_if, k, out_port_if)
 
 

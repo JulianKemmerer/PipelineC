@@ -44,8 +44,9 @@ def bridge(x: uint16_t) -> uint16_t:
 
 
 word_if = make_stream_interface(uint16_t)
-auto_mcp, auto_mcp_t = make_stream_auto_multi_cycle(prologue)
-fixed_mcp, fixed_mcp_t = make_stream_multi_cycle(epilogue, 3)
+auto_mcp = make_stream_auto_multi_cycle(prologue)
+
+fixed_mcp = make_stream_multi_cycle(epilogue, 3)
 
 
 @MAIN(80.0)

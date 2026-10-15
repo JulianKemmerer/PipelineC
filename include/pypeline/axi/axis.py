@@ -1,4 +1,5 @@
 # pyright: reportInvalidTypeForm=none
+from types import SimpleNamespace
 from pypeline import (
     hw_func,
     struct,
@@ -61,7 +62,7 @@ def make_axis_broadcast_interlock(axis_intrf, n):
     `bcast = broadcast(src)` then handing `bcast.axis_out[i]` to each sink is
     the entire wiring.
 
-    Returns (axis_broadcast_interlock, axis_broadcast_interlock_t):
+    Returns axis_broadcast_interlock, with its complete return type at axis_broadcast_interlock.return_t:
         axis_broadcast_interlock(axis_in_if: axis_intrf.fwd_t, axis_out_if: axis_intrf.fb_t[n])
             -> axis_broadcast_interlock_t
         axis_broadcast_interlock_t fields:
@@ -93,7 +94,7 @@ def make_axis_broadcast_interlock(axis_intrf, n):
     axis_broadcast_interlock.axis_intrf = axis_intrf
     axis_broadcast_interlock.fwd_t = axis_intrf.fwd_t
     axis_broadcast_interlock.fb_t = axis_intrf.fb_t
-    return axis_broadcast_interlock, axis_broadcast_interlock_t
+    return axis_broadcast_interlock
 
 
 def make_axis_skid_buffer(axis_intrf, mode="full"):
@@ -121,15 +122,16 @@ def make_axis_skid_buffer(axis_intrf, mode="full"):
     matching. Regression coverage:
     `src/tests/pypeline_tests/inst/interface_factory_two_widths_test.py`.
 
-    Returns (axis_skid_buffer, axis_skid_buffer_t):
+    Returns axis_skid_buffer, with its complete return type at axis_skid_buffer.return_t:
         axis_skid_buffer(stream_in_if: axis_intrf.fwd_t, stream_out_if: axis_intrf.fb_t)
             -> axis_skid_buffer_t
         axis_skid_buffer_t fields: .stream_out_if (axis_intrf.fwd_t),
                                    .stream_in_if  (axis_intrf.fb_t)
     """
-    axis_skid_buffer, axis_skid_buffer_t = make_skid_buffer(axis_intrf, mode=mode)
+    axis_skid_buffer = make_skid_buffer(axis_intrf, mode=mode)
+
     axis_skid_buffer.axis_intrf = axis_intrf
-    return axis_skid_buffer, axis_skid_buffer_t
+    return axis_skid_buffer
 
 
 def make_keep_count(bus_t, n):
@@ -142,6 +144,7 @@ def make_keep_count(bus_t, n):
             rv = rv + lanes.keep[i]
         return rv
 
+    keep_count.return_t = count_t
     return keep_count
 
 
@@ -170,13 +173,13 @@ def _make_dwidth_types(elem_t, narrow_n, ratio):
     wide_frag_t = make_ndarray_fragment_t(wide_bus_t, 1)
     narrow_axis_intrf = make_stream_interface(narrow_frag_t)
     wide_axis_intrf = make_stream_interface(wide_frag_t)
-    return (
-        narrow_bus_t,
-        wide_bus_t,
-        narrow_frag_t,
-        wide_frag_t,
-        narrow_axis_intrf,
-        wide_axis_intrf,
+    return SimpleNamespace(
+        narrow_bus_t=narrow_bus_t,
+        wide_bus_t=wide_bus_t,
+        narrow_frag_t=narrow_frag_t,
+        wide_frag_t=wide_frag_t,
+        narrow_axis_intrf=narrow_axis_intrf,
+        wide_axis_intrf=wide_axis_intrf,
     )
 
 
@@ -258,17 +261,18 @@ def _make_null_chunk(narrow_n, narrow_bus_t, narrow_frag_t, narrow_chunk_t):
 
 def make_dwidth_widen(elem_t, narrow_n, ratio):
     """Combines `ratio` narrow beats into one wide beat.
-    Generalizes axis128_to_axis512. Returns (dwidth_widen, narrow_axis_intrf.fwd_t, wide_axis_intrf.fwd_t);
-    the interfaces and reverse halves hang off the function as
-    `.narrow_in_intrf` / `.wide_out_intrf` / `.narrow_in_fb_t` / `.wide_out_fb_t`."""
-    (
-        narrow_bus_t,
-        wide_bus_t,
-        narrow_frag_t,
-        wide_frag_t,
-        narrow_axis_intrf,
-        wide_axis_intrf,
-    ) = _make_dwidth_types(elem_t, narrow_n, ratio)
+    Generalizes axis128_to_axis512. Returns dwidth_widen, whose .return_t is
+    the complete result. Input and output ports use .narrow_in_intrf.fwd_t
+    and .wide_out_intrf.fb_t; the interfaces and reverse halves are available
+    as .narrow_in_intrf / .wide_out_intrf / .narrow_in_fb_t / .wide_out_fb_t.
+    """
+    dwidth_types = _make_dwidth_types(elem_t, narrow_n, ratio)
+    narrow_bus_t = dwidth_types.narrow_bus_t
+    wide_bus_t = dwidth_types.wide_bus_t
+    narrow_frag_t = dwidth_types.narrow_frag_t
+    wide_frag_t = dwidth_types.wide_frag_t
+    narrow_axis_intrf = dwidth_types.narrow_axis_intrf
+    wide_axis_intrf = dwidth_types.wide_axis_intrf
     # narrow_axis_intrf.stream_t is exactly make_stream_t(narrow_frag_t) --
     # split_to_chunks/assemble_chunks/shift_into_top are purely combinational,
     # not stream ports, so they work on that plain valid-only chunk type
@@ -330,22 +334,23 @@ def make_dwidth_widen(elem_t, narrow_n, ratio):
     dwidth_widen.wide_out_intrf = wide_axis_intrf
     dwidth_widen.narrow_in_fb_t = narrow_axis_intrf.fb_t
     dwidth_widen.wide_out_fb_t = wide_axis_intrf.fb_t
-    return dwidth_widen, narrow_axis_intrf.fwd_t, wide_axis_intrf.fwd_t
+    return dwidth_widen
 
 
 def make_dwidth_narrow(elem_t, narrow_n, ratio):
     """Splits one wide beat into `ratio` narrow beats, one per cycle.
-    Generalizes axis512_to_axis128. Returns (dwidth_narrow, wide_axis_intrf.fwd_t, narrow_axis_intrf.fwd_t);
-    the interfaces and reverse halves hang off the function as
-    `.wide_in_intrf` / `.narrow_out_intrf` / `.wide_in_fb_t` / `.narrow_out_fb_t`."""
-    (
-        narrow_bus_t,
-        wide_bus_t,
-        narrow_frag_t,
-        wide_frag_t,
-        narrow_axis_intrf,
-        wide_axis_intrf,
-    ) = _make_dwidth_types(elem_t, narrow_n, ratio)
+    Generalizes axis512_to_axis128. Returns dwidth_narrow, whose .return_t is
+    the complete result. Input and output ports use .wide_in_intrf.fwd_t
+    and .narrow_out_intrf.fb_t; the interfaces and reverse halves are available
+    as .wide_in_intrf / .narrow_out_intrf / .wide_in_fb_t / .narrow_out_fb_t.
+    """
+    dwidth_types = _make_dwidth_types(elem_t, narrow_n, ratio)
+    narrow_bus_t = dwidth_types.narrow_bus_t
+    wide_bus_t = dwidth_types.wide_bus_t
+    narrow_frag_t = dwidth_types.narrow_frag_t
+    wide_frag_t = dwidth_types.wide_frag_t
+    narrow_axis_intrf = dwidth_types.narrow_axis_intrf
+    wide_axis_intrf = dwidth_types.wide_axis_intrf
     # See make_dwidth_widen.
     narrow_chunk_t = make_stream_t(narrow_frag_t)
     wide_n = narrow_n * ratio
@@ -400,7 +405,7 @@ def make_dwidth_narrow(elem_t, narrow_n, ratio):
     dwidth_narrow.narrow_out_intrf = narrow_axis_intrf
     dwidth_narrow.wide_in_fb_t = wide_axis_intrf.fb_t
     dwidth_narrow.narrow_out_fb_t = narrow_axis_intrf.fb_t
-    return dwidth_narrow, wide_axis_intrf.fwd_t, narrow_axis_intrf.fwd_t
+    return dwidth_narrow
 
 
 # ── Testbench-oriented byte-stream generator/checker ────────────────────────
@@ -441,7 +446,7 @@ def make_axis_byte_source(axis_intrf, n, max_bytes):
     given padding gaps to mark not-kept (see issue #44 in wireguard-fpga: an
     AMD/Xilinx AXIS-interop stream never carries embedded null bytes).
 
-    Returns (axis_byte_source, axis_byte_source_t):
+    Returns axis_byte_source, with its complete return type at axis_byte_source.return_t:
         axis_byte_source(load: uint1_t, load_data: uint8_t[max_bytes],
                           load_len: uint32_t, stream_out_if: axis_intrf.fb_t)
             -> axis_byte_source_t
@@ -495,7 +500,7 @@ def make_axis_byte_source(axis_intrf, n, max_bytes):
         return o
 
     axis_byte_source.axis_intrf = axis_intrf
-    return axis_byte_source, axis_byte_source_t
+    return axis_byte_source
 
 
 def make_axis_byte_sink(axis_intrf, n, max_bytes):
@@ -516,7 +521,7 @@ def make_axis_byte_sink(axis_intrf, n, max_bytes):
     VHDL `assert ... severity failure` once elaborated), independent of
     whatever the caller separately checks about `frame_data`/`frame_len`.
 
-    Returns (axis_byte_sink, axis_byte_sink_t):
+    Returns axis_byte_sink, with its complete return type at axis_byte_sink.return_t:
         axis_byte_sink(stream_in_if: axis_intrf.fwd_t) -> axis_byte_sink_t
         axis_byte_sink_t fields:
           .stream_in_if (axis_intrf.fb_t) - reverse half of the sunk port
@@ -582,4 +587,4 @@ def make_axis_byte_sink(axis_intrf, n, max_bytes):
         return o
 
     axis_byte_sink.axis_intrf = axis_intrf
-    return axis_byte_sink, axis_byte_sink_t
+    return axis_byte_sink

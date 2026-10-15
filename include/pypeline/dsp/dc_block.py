@@ -48,7 +48,7 @@ def make_dc_block(
     start_latency=None,
     max_latency=None,
 ):
-    """Build a DC blocker. Returns (dc_block, dc_block_t).
+    """Build a DC blocker. Returns dc_block, with its complete return type at dc_block.return_t.
 
     data_t:    fixed_t sample format.
     k:         extra fractional bits carried by the internal mean estimate
@@ -106,12 +106,13 @@ def make_dc_block(
             return resize_fn(d)
 
     if handshake == "elastic":
-        sp_func, _sp_t = make_stream_auto_pipeline(
+        sp_func = make_stream_auto_pipeline(
             dc_block_core,
             latency=latency,
             start_latency=start_latency,
             max_latency=max_latency,
         )
+
         in_intrf = make_stream_interface(data_t)
         out_intrf = sp_func.out_intrf
 
@@ -159,7 +160,7 @@ def make_dc_block(
             rv.valid = x.valid
             return rv
 
-        dc_block_core_ap, _dc_block_core_ap_call = _auto_pipeline_with_io_regs(
+        dc_block_core_ap = _auto_pipeline_with_io_regs(
             dc_block_core_stream,
             has_input_reg=True,
             has_output_reg=True,
@@ -167,6 +168,7 @@ def make_dc_block(
             start_latency=start_latency,
             max_latency=max_latency,
         )
+        _dc_block_core_ap_call = dc_block_core_ap.auto_pipeline
         _core_ap = _dc_block_core_ap_call
 
         @hw_func
@@ -219,4 +221,4 @@ def make_dc_block(
         if handshake == "valid_only"
         else None
     )
-    return dc_block, dc_block_t
+    return dc_block

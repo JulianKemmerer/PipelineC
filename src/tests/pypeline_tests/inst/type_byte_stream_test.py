@@ -90,69 +90,76 @@ class nested_t(NamedTuple):
     tail: uint16_t
 
 
-tx_hdr, tx_hdr_t = make_type_to_byte_stream(hdr_t, N)
-rx_hdr, rx_hdr_t = make_byte_stream_to_type(hdr_t, N)
-tx_al, tx_al_t = make_type_to_byte_stream(aligned_t, N)
-rx_al, rx_al_t = make_byte_stream_to_type(aligned_t, N)
-tx_nest, tx_nest_t = make_type_to_byte_stream(nested_t, N)
-rx_nest, rx_nest_t = make_byte_stream_to_type(nested_t, N)
-tx_arr, tx_arr_t = make_type_to_byte_stream(uint16_t[4], N)
-rx_arr, rx_arr_t = make_byte_stream_to_type(uint16_t[4], N)
+tx_hdr = make_type_to_byte_stream(hdr_t, N)
+
+rx_hdr = make_byte_stream_to_type(hdr_t, N)
+
+tx_al = make_type_to_byte_stream(aligned_t, N)
+
+rx_al = make_byte_stream_to_type(aligned_t, N)
+
+tx_nest = make_type_to_byte_stream(nested_t, N)
+
+rx_nest = make_byte_stream_to_type(nested_t, N)
+
+tx_arr = make_type_to_byte_stream(uint16_t[4], N)
+
+rx_arr = make_byte_stream_to_type(uint16_t[4], N)
 
 
 @MAIN
 def tx_hdr_main(
     stream_in_if: tx_hdr.in_intrf.fwd_t, stream_out_if: tx_hdr.out_fb_t
-) -> tx_hdr_t:
+) -> tx_hdr.return_t:
     return tx_hdr(stream_in_if, stream_out_if)
 
 
 @MAIN
 def rx_hdr_main(
     stream_in_if: rx_hdr.in_intrf.fwd_t, stream_out_if: rx_hdr.out_fb_t
-) -> rx_hdr_t:
+) -> rx_hdr.return_t:
     return rx_hdr(stream_in_if, stream_out_if)
 
 
 @MAIN
 def tx_al_main(
     stream_in_if: tx_al.in_intrf.fwd_t, stream_out_if: tx_al.out_fb_t
-) -> tx_al_t:
+) -> tx_al.return_t:
     return tx_al(stream_in_if, stream_out_if)
 
 
 @MAIN
 def rx_al_main(
     stream_in_if: rx_al.in_intrf.fwd_t, stream_out_if: rx_al.out_fb_t
-) -> rx_al_t:
+) -> rx_al.return_t:
     return rx_al(stream_in_if, stream_out_if)
 
 
 @MAIN
 def tx_nest_main(
     stream_in_if: tx_nest.in_intrf.fwd_t, stream_out_if: tx_nest.out_fb_t
-) -> tx_nest_t:
+) -> tx_nest.return_t:
     return tx_nest(stream_in_if, stream_out_if)
 
 
 @MAIN
 def rx_nest_main(
     stream_in_if: rx_nest.in_intrf.fwd_t, stream_out_if: rx_nest.out_fb_t
-) -> rx_nest_t:
+) -> rx_nest.return_t:
     return rx_nest(stream_in_if, stream_out_if)
 
 
 @MAIN
 def tx_arr_main(
     stream_in_if: tx_arr.in_intrf.fwd_t, stream_out_if: tx_arr.out_fb_t
-) -> tx_arr_t:
+) -> tx_arr.return_t:
     return tx_arr(stream_in_if, stream_out_if)
 
 
 @MAIN
 def rx_arr_main(
     stream_in_if: rx_arr.in_intrf.fwd_t, stream_out_if: rx_arr.out_fb_t
-) -> rx_arr_t:
+) -> rx_arr.return_t:
     return rx_arr(stream_in_if, stream_out_if)
 
 

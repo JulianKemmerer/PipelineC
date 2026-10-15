@@ -59,57 +59,58 @@ class pt_t(NamedTuple):
     y: uint16_t
 
 
-rx_one, rx_one_t = make_axis_to_type(hdr_t, N)
-tx_one, tx_one_t = make_type_to_axis(hdr_t, N)
-rx_many, rx_many_t = make_axis_to_type(pt_t, N, frame="many_per_packet")
-tx_many, tx_many_t = make_type_to_axis(
-    pt_t, N, frame="many_per_packet", structs_per_packet=3
-)
-rx_pad, rx_pad_t = make_axis_to_type(pt_t, N, frame="many_per_packet", on_runt="zero_pad")
-rx_ignore, rx_ignore_t = make_axis_to_type(
-    pt_t, N, frame="many_per_packet", on_runt="ignore"
-)
+rx_one = make_axis_to_type(hdr_t, N)
+
+tx_one = make_type_to_axis(hdr_t, N)
+
+rx_many = make_axis_to_type(pt_t, N, frame="many_per_packet")
+
+tx_many = make_type_to_axis(pt_t, N, frame="many_per_packet", structs_per_packet=3)
+
+rx_pad = make_axis_to_type(pt_t, N, frame="many_per_packet", on_runt="zero_pad")
+
+rx_ignore = make_axis_to_type(pt_t, N, frame="many_per_packet", on_runt="ignore")
 
 
 @MAIN
 def rx_one_main(
     axis_in_if: rx_one.axis_intrf.fwd_t, stream_out_if: rx_one.out_fb_t
-) -> rx_one_t:
+) -> rx_one.return_t:
     return rx_one(axis_in_if, stream_out_if)
 
 
 @MAIN
 def tx_one_main(
     stream_in_if: tx_one.in_intrf.fwd_t, axis_out_if: tx_one.axis_fb_t
-) -> tx_one_t:
+) -> tx_one.return_t:
     return tx_one(stream_in_if, axis_out_if)
 
 
 @MAIN
 def rx_many_main(
     axis_in_if: rx_many.axis_intrf.fwd_t, stream_out_if: rx_many.out_fb_t
-) -> rx_many_t:
+) -> rx_many.return_t:
     return rx_many(axis_in_if, stream_out_if)
 
 
 @MAIN
 def tx_many_main(
     stream_in_if: tx_many.in_intrf.fwd_t, axis_out_if: tx_many.axis_fb_t
-) -> tx_many_t:
+) -> tx_many.return_t:
     return tx_many(stream_in_if, axis_out_if)
 
 
 @MAIN
 def rx_pad_main(
     axis_in_if: rx_pad.axis_intrf.fwd_t, stream_out_if: rx_pad.out_fb_t
-) -> rx_pad_t:
+) -> rx_pad.return_t:
     return rx_pad(axis_in_if, stream_out_if)
 
 
 @MAIN
 def rx_ignore_main(
     axis_in_if: rx_ignore.axis_intrf.fwd_t, stream_out_if: rx_ignore.out_fb_t
-) -> rx_ignore_t:
+) -> rx_ignore.return_t:
     return rx_ignore(axis_in_if, stream_out_if)
 
 

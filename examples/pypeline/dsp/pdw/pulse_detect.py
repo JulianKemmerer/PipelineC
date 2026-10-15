@@ -99,8 +99,7 @@ from dsp.moving_avg import make_moving_avg
 
 
 def make_pulse_detect_fsm(data_t, width_t=uint32_t, handshake="elastic"):
-    """Build the hysteresis SM / candidate-PDW extractor. Returns
-    (pulse_detect_fsm, pulse_detect_fsm_t).
+    """Build the hysteresis SM / candidate-PDW extractor. Returns pulse_detect_fsm, with its complete return type at pulse_detect_fsm.return_t.
 
     data_t:    fixed_t conditioned-power sample format (the README's power
                format is make_fixed_t(32, 0, signed=False) == uint32_t).
@@ -514,7 +513,7 @@ def make_pulse_detect_fsm(data_t, width_t=uint32_t, handshake="elastic"):
     pulse_detect_fsm.out_fb_t = out_intrf.fb_t
     pulse_detect_fsm.in_intrf = in_intrf if handshake == "elastic" else None
     pulse_detect_fsm.out_intrf = out_intrf
-    return pulse_detect_fsm, pulse_detect_fsm_t
+    return pulse_detect_fsm
 
 
 def make_delay_line(data_t, depth=64):
@@ -553,7 +552,7 @@ def make_delay_line(data_t, depth=64):
     sim_assert below fails loudly if it is ever too small (silently dropping a
     push would corrupt the alignment with no other symptom).
     """
-    fifo_func, _fifo_t = make_fifo(data_t, depth)
+    fifo_func = make_fifo(data_t, depth)
 
     @hw_func
     def delay_line(
@@ -572,13 +571,13 @@ def make_delay_line(data_t, depth=64):
 
     delay_line.data_t = data_t
     delay_line.depth = depth
-    return delay_line, data_t
+    return delay_line
 
 
 def make_pdw_gate(data_t):
     """Path A/B combinator: gates an (already delay_line-delayed) raw sample
     with the Hysteresis SM's real-time gate_valid/gate_last, producing the
-    bounded pulse sample stream. Returns (pdw_gate, gated_sample_t).
+    bounded pulse sample stream. Returns pdw_gate, with its complete return type at pdw_gate.return_t.
 
     Not an AXI-Stream struct -- data/valid/last with no ready, a real-time,
     can't-stall forwarding path (same as the gate signals it wraps); AXIS
@@ -604,7 +603,7 @@ def make_pdw_gate(data_t):
 
     pdw_gate.data_t = data_t
     pdw_gate.gated_sample_t = gated_sample_t
-    return pdw_gate, gated_sample_t
+    return pdw_gate
 
 
 def make_freq_accum(complex_t, block_k=32):
@@ -901,7 +900,7 @@ def make_freq_accum(complex_t, block_k=32):
     # pulse_detect and pulse_extract both delay their own gate_last-timed signals
     # by it, and pdw_tb.py's whole measurement alignment follows from it.
     freq_accum.latency = 3
-    return freq_accum, freq_accum_t
+    return freq_accum
 
 
 def make_pulse_detect(
@@ -917,8 +916,7 @@ def make_pulse_detect(
 ):
     """The README's Path A + Path B: magnitude -> dc_block -> moving_avg ->
     pulse_detect_fsm, plus the Path B delay line and gate, composed into one
-    hw_func. Named for gr-pdw's `pulse_detect` block. Returns
-    (pulse_detect, pulse_detect_t).
+    hw_func. Named for gr-pdw's `pulse_detect` block. Returns pulse_detect, with its complete return type at pulse_detect.return_t.
 
     rail_t:  fixed_t I/Q rail format; default make_fixed_t(16, 0, signed=True)
              (a raw int16 rail, matching pulse_gen.py's iq_t fields).
@@ -989,15 +987,22 @@ def make_pulse_detect(
     """
     rail_t_actual = rail_t or make_fixed_t(16, 0, signed=True)
 
-    magnitude, _magnitude_t = make_magnitude(rail_t_actual, handshake="valid_only")
-    dc_block, _dc_block_t = make_dc_block(magnitude.out_t, k=dc_k, handshake="valid_only")
-    moving_avg, _moving_avg_t = make_moving_avg(dc_block.out_t, ma_n, handshake="valid_only")
-    detect_fsm, detect_fsm_t = make_pulse_detect_fsm(
+    magnitude = make_magnitude(rail_t_actual, handshake="valid_only")
+
+    dc_block = make_dc_block(magnitude.out_t, k=dc_k, handshake="valid_only")
+
+    moving_avg = make_moving_avg(dc_block.out_t, ma_n, handshake="valid_only")
+
+    detect_fsm = make_pulse_detect_fsm(
         moving_avg.out_t, width_t=width_t, handshake="valid_only"
     )
-    delay_line, _delay_data_t = make_delay_line(magnitude.complex_t, depth=delay_depth)
-    pdw_gate, gated_sample_t = make_pdw_gate(magnitude.complex_t)
-    freq_accum, freq_accum_t = make_freq_accum(magnitude.complex_t, block_k=freq_block_k)
+
+    delay_line = make_delay_line(magnitude.complex_t, depth=delay_depth)
+
+    pdw_gate = make_pdw_gate(magnitude.complex_t)
+
+    freq_accum = make_freq_accum(magnitude.complex_t, block_k=freq_block_k)
+
     # The noise floor is measured on the PRE-dc_block magnitude (raw I^2+Q^2,
     # 0 fractional bits) -- see the estimator below -- so it is a different
     # type, and a different binary point, from peak_power.
@@ -1011,12 +1016,12 @@ def make_pulse_detect(
     @struct
     class pulse_detect_t(NamedTuple):
         pdw_out_if: detect_fsm.out_fwd_t
-        gated_out: gated_sample_t
+        gated_out: pdw_gate.return_t
         overflow: uint1_t
         # noise_est is captured on candidate completion. freq_acc has its own
         # completion valid; extraction joins the two transactions in order.
         # Converting to frequencies and decibels happens once per pulse.
-        freq_acc: freq_accum_t
+        freq_acc: freq_accum.return_t
         noise_est: noise_t
 
     @hw_func
@@ -1147,9 +1152,9 @@ def make_pulse_detect(
     pulse_detect.power_t = moving_avg.out_t
     pulse_detect.width_t = width_t
     pulse_detect.candidate_pdw_t = detect_fsm.candidate_pdw_t
-    pulse_detect.gated_sample_t = gated_sample_t
+    pulse_detect.gated_sample_t = pdw_gate.return_t
     pulse_detect.freq_accum = freq_accum
-    pulse_detect.freq_accum_t = freq_accum_t
+    pulse_detect.freq_accum_t = freq_accum.return_t
     pulse_detect.freq_acc_t = freq_accum.acc_t
     pulse_detect.freq_block_k = freq_block_k
     # Diagnostic/testbench timing from gate_last to freq_acc.valid. The
@@ -1193,4 +1198,4 @@ def make_pulse_detect(
     pulse_detect.get_path_b_delay = lambda: (
         pulse_detect.get_dsp_latency() + pulse_detect.gate_latency
     )
-    return pulse_detect, pulse_detect_t
+    return pulse_detect

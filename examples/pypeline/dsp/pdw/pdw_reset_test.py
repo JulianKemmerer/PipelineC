@@ -45,8 +45,8 @@ from pulse_detect import make_pulse_detect
 TB_DEPTH = 512
 TB_N_PKTS = 8
 
-_DP, _ = make_pulse_detect()
-_ENG, _ = make_pulse_extract(_DP, depth=TB_DEPTH, n_pkts=TB_N_PKTS)
+_DP = make_pulse_detect()
+_ENG = make_pulse_extract(_DP, depth=TB_DEPTH, n_pkts=TB_N_PKTS)
 
 CPLX = _DP.complex_t
 RAIL = _DP.rail_t

@@ -12,7 +12,7 @@ def make_stream_fifo(data_t, depth: int, mode: str = "fwft"):
     of stream interface ports. `make_fifo` itself stays raw — its three loose
     signals are literally the wrapped VHDL entity's ports.
 
-    Returns (stream_fifo_func, stream_fifo_t):
+    Returns stream_fifo_func, with its complete return type at stream_fifo_func.return_t:
         stream_fifo_func(in_stream_if: stream_intrf.fwd_t, out_stream_if: stream_intrf.fb_t) -> stream_fifo_t
         stream_fifo_t fields: .out_stream_if (stream_intrf.fwd_t), .in_stream_if (stream_intrf.fb_t)
 
@@ -24,7 +24,7 @@ def make_stream_fifo(data_t, depth: int, mode: str = "fwft"):
     """
     stream_intrf = make_stream_interface(data_t)
     plain_t = make_stream_t(data_t)
-    fifo_func, fifo_t = make_fifo(data_t, depth, mode)
+    fifo_func = make_fifo(data_t, depth, mode)
 
     @struct
     class stream_fifo_t(NamedTuple):
@@ -46,4 +46,4 @@ def make_stream_fifo(data_t, depth: int, mode: str = "fwft"):
     stream_fifo.fb_t = stream_intrf.fb_t
     stream_fifo.depth = depth
     stream_fifo.capacity_beats = stream_fifo_capacity_beats(depth)
-    return stream_fifo, stream_fifo_t
+    return stream_fifo

@@ -31,7 +31,7 @@ from dsp.fir import make_fir
 data_t = make_fixed_t(1, 7)
 coeff_t = make_fixed_t(2, 6)
 
-fir_sweep, fir_sweep_t = make_fir(
+fir_sweep = make_fir(
     [0.0625, 0.25, 0.375, 0.25, 0.0625],  # symmetric 5-tap
     coeff_t,
     data_t,
@@ -52,5 +52,5 @@ fir_sweep, fir_sweep_t = make_fir(
 @MAIN(60.0)
 def fir_sweep_main(
     stream_in_if: fir_sweep.in_fwd_t, stream_out_if: fir_sweep.out_fb_t
-) -> fir_sweep_t:
+) -> fir_sweep.return_t:
     return fir_sweep(stream_in_if, stream_out_if)

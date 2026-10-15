@@ -403,8 +403,9 @@ MUX_point2d_t          ← compound-type MUX is valid
 
 `_elab_call` resolves the callee (`expr.func`) in priority order: an AUTO_PIPELINE/AUTO_FSM
 tag object (detected by value, via `_try_eval_const(expr.func)` — the callee needn't be a
-literal direct-call expression for these), a cast (`dst_t(x)`), a module-qualified
-`ast.Attribute` (`module.func(x)`), then a bare `ast.Name` (`func(x)`, the common case,
+literal direct-call expression for these), a cast (`dst_t(x)`), a statically
+resolved callable attribute (`ops.add(x, y)`, including nested factory bundles),
+a module-qualified `ast.Attribute` (`module.func(x)`), then a bare `ast.Name` (`func(x)`, the common case,
 resolved against `FuncLogicLookupTable` / `module_globals`). Anything else — an indexed or
 otherwise computed expression, e.g. `LEAF_FNS[j](x)` selecting one closure from a
 closure-planned list inside an unrolled loop — falls to a final branch: if the same
@@ -418,6 +419,12 @@ indexed by an unrolled loop's ordinal) be called directly, without funneling eve
 through one shared bare-named entity the way `include/pypeline/operators/soft_cmp.py`'s
 chunk-compare leaves still deliberately do (a QoR choice — one shared, width-normalized
 entity beats N per-op ones — not a compiler limitation).
+
+Callable attributes use that same live-callable elaboration path and retain the
+function's own identity and instance label. Existing module-qualified calls keep
+their module-alias lookup. `_try_eval_const` refuses an attribute expression
+rooted in a hardware local, so a local named `ops` cannot silently resolve to an
+unrelated Python-global operation bundle.
 
 ### Bare (Void) Call Statements
 
@@ -1189,7 +1196,7 @@ argument and call it internally through their own closure variable — `make_str
 `make_stream_auto_pipeline`, and `_auto_pipeline_with_io_regs` all name that variable `func`:
 
 ```python
-divider_mcp, divider_mcp_t = make_stream_multi_cycle(divider, 16)   # divider: a plain top-level func
+divider_mcp = make_stream_multi_cycle(divider, 16)   # divider: a plain top-level func
 # make_stream_multi_cycle's internal func_mcp wrapper calls it as `func(launch)`
 ```
 
@@ -1755,6 +1762,12 @@ which it `exec`s into a synthetic module registered in `sys.modules` + `linecach
 native simulation and elaboration consume that one artifact, so they cannot disagree. Python
 3.8 compatible: no `ast.unparse` — statements are emitted from templates or copied verbatim
 with `ast.get_source_segment`.
+
+The constructor returns the generated callable itself and memoizes that
+callable, not a `(function, type)` pair. Its `.return_t` exposes the generated
+port struct. Nested interface-function compilation consumes the same callable.
+User annotations such as `Feedback[stage.return_t]` resolve to the original
+annotated type before elaboration; the metadata introduces no hardware port.
 
 **Port introspection is structural, not name-based.** A port's two halves share a name across
 args and return fields; whichever side holds the feedforward half sets the direction

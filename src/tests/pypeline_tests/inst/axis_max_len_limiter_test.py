@@ -35,32 +35,34 @@ axis_intrf = make_axis_interface(N)
 
 # max_bytes < one bus word: the case axis.h:527's `max_byte_len - (axis_bits/8)`
 # underflowed on, silently disabling the limiter entirely.
-lim_3, lim_3_t = make_axis_max_len_limiter(axis_intrf, N, 3)
+lim_3 = make_axis_max_len_limiter(axis_intrf, N, 3)
+
 # max_bytes not a multiple of the bus width: axis.h tested `counter ==
 # last_word_limit`, which such a value steps straight over.
-lim_6, lim_6_t = make_axis_max_len_limiter(axis_intrf, N, 6)
+lim_6 = make_axis_max_len_limiter(axis_intrf, N, 6)
+
 # exact multiple, the only case the old code actually handled
-lim_8, lim_8_t = make_axis_max_len_limiter(axis_intrf, N, 8)
+lim_8 = make_axis_max_len_limiter(axis_intrf, N, 8)
 
 
 @MAIN
 def lim_3_main(
     axis_in_if: axis_intrf.fwd_t, axis_out_if: axis_intrf.fb_t
-) -> lim_3_t:
+) -> lim_3.return_t:
     return lim_3(axis_in_if, axis_out_if)
 
 
 @MAIN
 def lim_6_main(
     axis_in_if: axis_intrf.fwd_t, axis_out_if: axis_intrf.fb_t
-) -> lim_6_t:
+) -> lim_6.return_t:
     return lim_6(axis_in_if, axis_out_if)
 
 
 @MAIN
 def lim_8_main(
     axis_in_if: axis_intrf.fwd_t, axis_out_if: axis_intrf.fb_t
-) -> lim_8_t:
+) -> lim_8.return_t:
     return lim_8(axis_in_if, axis_out_if)
 
 

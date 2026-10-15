@@ -39,7 +39,7 @@ SYM_TAPS = [0.25, 0.5, 0.5, 0.25]  # symmetric, even N
 HALFBAND_TAPS = [-0.03125, 0.0, 0.28125, 0.5, 0.28125, 0.0, -0.03125]
 ANTISYM_TAPS = [0.25, 0.5, 0.0, -0.5, -0.25]  # antisymmetric, odd N
 
-fir_sym, fir_sym_t = make_fir(
+fir_sym = make_fir(
     SYM_TAPS,
     coeff_t,
     data_t,
@@ -47,7 +47,8 @@ fir_sym, fir_sym_t = make_fir(
     rounding="round_half_even",
     overflow="saturate",
 )
-fir_nosym, fir_nosym_t = make_fir(
+
+fir_nosym = make_fir(
     SYM_TAPS,
     coeff_t,
     data_t,
@@ -56,7 +57,8 @@ fir_nosym, fir_nosym_t = make_fir(
     overflow="saturate",
     symmetry="none",
 )
-fir_hb, fir_hb_t = make_fir(
+
+fir_hb = make_fir(
     HALFBAND_TAPS,
     coeff_t,
     data_t,
@@ -64,7 +66,8 @@ fir_hb, fir_hb_t = make_fir(
     rounding="round_half_up",
     overflow="saturate",
 )
-fir_anti, fir_anti_t = make_fir(
+
+fir_anti = make_fir(
     ANTISYM_TAPS,
     coeff_t,
     data_t,
@@ -72,8 +75,10 @@ fir_anti, fir_anti_t = make_fir(
     rounding="truncate",
     overflow="wrap",
 )
-fir_full, fir_full_t = make_fir([0.5, -0.25, 0.125], coeff_t, data_t)  # full precision
-fir_vonly, fir_vonly_t = make_fir(
+
+fir_full = make_fir([0.5, -0.25, 0.125], coeff_t, data_t)
+# full precision
+fir_vonly = make_fir(
     SYM_TAPS,
     coeff_t,
     data_t,
@@ -87,33 +92,33 @@ fir_vonly, fir_vonly_t = make_fir(
 @MAIN(100.0)
 def fir_sym_main(
     stream_in_if: fir_sym.in_fwd_t, stream_out_if: fir_sym.out_fb_t
-) -> fir_sym_t:
+) -> fir_sym.return_t:
     return fir_sym(stream_in_if, stream_out_if)
 
 
 @MAIN(100.0)
 def fir_hb_main(
     stream_in_if: fir_hb.in_fwd_t, stream_out_if: fir_hb.out_fb_t
-) -> fir_hb_t:
+) -> fir_hb.return_t:
     return fir_hb(stream_in_if, stream_out_if)
 
 
 @MAIN(100.0)
 def fir_anti_main(
     stream_in_if: fir_anti.in_fwd_t, stream_out_if: fir_anti.out_fb_t
-) -> fir_anti_t:
+) -> fir_anti.return_t:
     return fir_anti(stream_in_if, stream_out_if)
 
 
 @MAIN(100.0)
 def fir_full_main(
     stream_in_if: fir_full.in_fwd_t, stream_out_if: fir_full.out_fb_t
-) -> fir_full_t:
+) -> fir_full.return_t:
     return fir_full(stream_in_if, stream_out_if)
 
 
 @MAIN(100.0)
-def fir_vonly_main(stream_in_if: fir_vonly.in_stream_t) -> fir_vonly_t:
+def fir_vonly_main(stream_in_if: fir_vonly.in_stream_t) -> fir_vonly.return_t:
     return fir_vonly(stream_in_if)
 
 

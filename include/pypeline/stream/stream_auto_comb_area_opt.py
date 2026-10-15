@@ -7,7 +7,7 @@ from stream.stream import make_stream_interface
 
 
 def make_stream_auto_comb_area_opt(func):
-    """Return (stream function, return type); latency 2, unstalled II 1.
+    """Return the stream function with .return_t; latency 2, unstalled II 1.
 
     Both boundaries are registered. The ready path is combinational through
     occupancy logic, and never through the computation. Each boundary holds
@@ -62,4 +62,4 @@ def _make_stream_auto_comb(tag):
     stream_auto_comb_opt.in_fb_t = in_intrf.fb_t
     stream_auto_comb_opt.out_fwd_t = out_intrf.fwd_t
     stream_auto_comb_opt.out_fb_t = out_intrf.fb_t
-    return stream_auto_comb_opt, stream_auto_comb_opt_t
+    return stream_auto_comb_opt

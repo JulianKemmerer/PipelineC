@@ -153,6 +153,20 @@ make_int_t(width: int)  → intN_t        # e.g. make_int_t(33) → int33_t
 `_make_ctype(name)` is the primitive: creates a class with `_CTypeMeta` metaclass and
 `_ctype_name = name`. Both factories call it.
 
+HDL factories return their primary object rather than a tuple of an object and
+metadata. Function factories expose the complete annotated result type as
+`.return_t`; type factories return the type itself. `_sim_type_wrap` assigns
+`fn.return_t = fn.__annotations__.get("return")` before creating any wrapper,
+so `functools.wraps` copies it onto both strict and raw simulation variants.
+Explicit metadata handles the few library callables that remain undecorated.
+Neither this attribute nor a Python call-site alias determines hardware identity.
+
+RAM and generated-interface memoization caches store the callable itself, with
+its result type attached, so cache hits preserve both function and type identity.
+The FIR core exposes its intermediate accumulator type as `.accum_t`; private
+carry-save stages expose `.is_wires` alongside `.return_t`. Constructors of
+peer types use named `SimpleNamespace` bundles instead of positional tuples.
+
 ### Floating-point types
 
 `make_float_t(E, M)` (builds a `@struct` NamedTuple type with three fields: `sign`
@@ -169,6 +183,13 @@ arithmetic/conversion factories built on it (`make_float_adder`,
 `pypeline.py` keeps the generic building blocks it's built from: `make_uint_t`,
 `make_int_t`, `struct`, and the operator-registration functions (see
 [Operator Registry](#operator-registry)).
+
+`register_float_ops` and `register_fixed_ops` return operations namespaces:
+`.operand_t`, `.add`, `.subtract`, `.multiply`, and float `.divide` or fixed
+`.negate` (`None` for unsigned fixed point). Each function's `.return_t` is
+independent of `.operand_t`, since fixed-point results can widen. Predefined
+`float16_ops`/`float32_ops`/`float64_ops` contain the registered functions;
+the existing individual arithmetic exports alias those functions.
 
 ### Predefined Types
 
@@ -1138,8 +1159,9 @@ and no-sweep builds enforce constraints is in
 The internal helper
 `_auto_pipeline_with_io_regs(func, has_input_reg, has_output_reg, *, latency=None, start_latency=None, max_latency=None, name=None)`
 wraps `AUTO_PIPELINE(func, latency=, start_latency=, max_latency=, name=)` with optional
-unconditional `Reg[T]` boundary registers. It returns `(wrapped_func, auto_pipeline_call)`
-so library code can read `.latency`. The constraints are passed through unchanged, so they
+unconditional `Reg[T]` boundary registers. It returns the wrapped callable with
+`.return_t` and `.auto_pipeline` metadata, so library code can read
+`.auto_pipeline.latency`. The constraints are passed through unchanged, so they
 cover the core only and never the boundary registers.
 
 `make_stream_auto_pipeline` uses the helper, and so do the DSP factories in valid_only
@@ -1316,8 +1338,9 @@ AUTO_PIPELINE's `.latency` feedback, with a few deliberate differences:
     `pypeline_sim.run_sim`'s design import.
   - Keys are therefore deterministic across the pin-and-confirm re-executions.
   - A library factory's tags all share its one construction line, and that line
-    number is in their keys. `make_stream_auto_multi_cycle` keeps its construction on
-    line 137 for that reason, and `factory_closure_naming_test` pins it.
+    number is in their keys. Moving the constructor in
+    `make_stream_auto_multi_cycle` invalidates unnamed latency keys;
+    `factory_closure_naming_test` checks the key against the actual source site.
   - **A named tag's key is its name** plus the `_latency_N` / `_max_latency_M` suffix
     (`start_latency` is left out). It consumes no site ordinal, so unnamed keys at the
     same site never move. `_auto_multi_cycle_names` allows one tag per name per

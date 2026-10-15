@@ -61,7 +61,7 @@ def plans_and_validation():
     )
     for mode in (None, "fixed_only", "sweep"):
         py.SET_AUTO_PIPELINE_BUILD_MODE(mode)
-        ram, _ = make_auto_pipeline_ram(py.uint32_t, 16, start_latency=3)
+        ram = make_auto_pipeline_ram(py.uint32_t, 16, start_latency=3)
         assert ram.latency == (3 if mode == "sweep" else 1)
     py.SET_AUTO_PIPELINE_BUILD_MODE(None)
 
@@ -244,7 +244,7 @@ import pypeline_sim
 root = pathlib.Path(sys.argv[1])
 template = """from pypeline import *
 from ram import make_auto_pipeline_ram
-ram, _ = make_auto_pipeline_ram(uint32_t, 1024, ports=('w', 'r'), latency=7)
+ram = make_auto_pipeline_ram(uint32_t, 1024, ports=('w', 'r'), latency=7)
 {target}
 @initial
 def check_geometry():
@@ -380,7 +380,7 @@ def measured_joint_trim_and_restoration():
 
 
 def memory_contract(latency, byte_enables=False, ports=("w", "r"), elem_t=py.uint32_t):
-    ram, _ = make_auto_pipeline_ram(
+    ram = make_auto_pipeline_ram(
         elem_t, 2049, ports=ports, latency=latency, byte_write_enables=byte_enables
     )
     py.sim_reset()
@@ -439,14 +439,14 @@ def memory_contract(latency, byte_enables=False, ports=("w", "r"), elem_t=py.uin
 
 
 def hazards_and_isolation():
-    ram, _ = make_auto_pipeline_ram(py.uint32_t, 32, latency=3)
+    ram = make_auto_pipeline_ram(py.uint32_t, 32, latency=3)
     py.sim_reset()
     py.sim_call(ram, ram.p0_in_t(addr=5, wr_data=19, wr_en=1, valid=1))
     raises(
         lambda: py.sim_call(ram, ram.p0_in_t(addr=5, wr_data=0, wr_en=0, valid=1)),
         "read_after_write_gap",
     )
-    tdp, _ = make_auto_pipeline_ram(py.uint32_t, 32, ports=("rw", "rw"))
+    tdp = make_auto_pipeline_ram(py.uint32_t, 32, ports=("rw", "rw"))
     py.sim_reset()
     raises(
         lambda: py.sim_call(
@@ -455,14 +455,14 @@ def hazards_and_isolation():
         "overlapping writes",
     )
     # Equal shapes with different initialization must have distinct identities.
-    a, _ = make_auto_pipeline_ram(py.uint32_t, 32, init={3: 7})
-    b, _ = make_auto_pipeline_ram(py.uint32_t, 32, init={3: 9})
+    a = make_auto_pipeline_ram(py.uint32_t, 32, init={3: 7})
+    b = make_auto_pipeline_ram(py.uint32_t, 32, init={3: 9})
     assert a._auto_pipeline_ram["key"] != b._auto_pipeline_ram["key"]
 
 
 def initialization_and_roms():
     init = {0: 7, 511: 17, 512: 27, 1023: 37, 2048: 47, 5002: 57}
-    rom, _ = make_auto_pipeline_ram(
+    rom = make_auto_pipeline_ram(
         py.uint16_t, 5003, ports=("r", "r", "r", "r"), init=init, latency=7
     )
     py.sim_reset()
@@ -487,7 +487,7 @@ def initialization_and_roms():
                     ) == init.get(addr, 0)
     # Two writes to disjoint byte lanes of the same word are legal. Neither
     # port may overwrite the other port's untouched lanes.
-    dual, _ = make_auto_pipeline_ram(
+    dual = make_auto_pipeline_ram(
         py.uint32_t, 32, ports=("rw", "rw"), byte_write_enables=True
     )
     py.sim_reset()
@@ -506,7 +506,7 @@ def initialization_and_roms():
 
 
 def convergence():
-    ram, _ = make_auto_pipeline_ram(py.uint32_t, 2049, ports=("w", "r"), latency=5)
+    ram = make_auto_pipeline_ram(py.uint32_t, 2049, ports=("w", "r"), latency=5)
     py.sim_reset()
     py._sim_active = True
     py._sim_reg_begin_buffer()
@@ -540,7 +540,7 @@ def convergence():
 
 
 def streaming(latency, stalled):
-    ram, _ = make_stream_auto_pipeline_ram(
+    ram = make_stream_auto_pipeline_ram(
         py.uint32_t,
         2049,
         ports=("w", "r"),

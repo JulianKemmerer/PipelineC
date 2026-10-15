@@ -53,7 +53,7 @@ coeff_t = make_fixed_t(1, 15)  # Q1.15 coefficients
 
 # Symmetric taps fold automatically (16 multipliers, not 31); output is
 # rounded convergently and saturated back to Q1.15 like the vendor cores.
-fir, fir_t = make_fir(
+fir = make_fir(
     TAPS,
     coeff_t,
     data_t,
@@ -61,6 +61,7 @@ fir, fir_t = make_fir(
     rounding="round_half_even",
     overflow="saturate",
 )
+
 
 # ── Stimulus + testbench ─
 # 8 cycles/256 samples = 0.031 f/fs (passband) + 96/256 = 0.375 f/fs (stopband)

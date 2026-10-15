@@ -30,14 +30,13 @@ from axi.axis import (
 N = 4  # narrow_n (elements per narrow beat)
 RATIO = 4  # wide_n = N * RATIO = 16
 
-(
-    narrow_bus_t,
-    wide_bus_t,
-    narrow_frag_t,
-    wide_frag_t,
-    narrow_axis_intrf,
-    wide_axis_intrf,
-) = _make_dwidth_types(uint8_t, N, RATIO)
+dwidth_types = _make_dwidth_types(uint8_t, N, RATIO)
+narrow_bus_t = dwidth_types.narrow_bus_t
+wide_bus_t = dwidth_types.wide_bus_t
+narrow_frag_t = dwidth_types.narrow_frag_t
+wide_frag_t = dwidth_types.wide_frag_t
+narrow_axis_intrf = dwidth_types.narrow_axis_intrf
+wide_axis_intrf = dwidth_types.wide_axis_intrf
 
 # Plain valid-only twin for the two purely-combinational reshuffling helpers
 # below -- they are not stream ports, so they use a genuinely one-directional
@@ -47,8 +46,12 @@ chunks_t = narrow_chunk_t[RATIO]
 
 split_to_chunks = make_split_to_chunks(N, RATIO, narrow_chunk_t, wide_frag_t)
 assemble_chunks = make_assemble_chunks(N, RATIO, narrow_chunk_t, wide_frag_t)
-dwidth_widen, _narrow_axis_t_w, _wide_axis_t_w = make_dwidth_widen(uint8_t, N, RATIO)
-dwidth_narrow, _wide_axis_t_n, _narrow_axis_t_n = make_dwidth_narrow(uint8_t, N, RATIO)
+dwidth_widen = make_dwidth_widen(uint8_t, N, RATIO)
+_narrow_axis_t_w = dwidth_widen.narrow_in_intrf.fwd_t
+_wide_axis_t_w = dwidth_widen.wide_out_intrf.fwd_t
+dwidth_narrow = make_dwidth_narrow(uint8_t, N, RATIO)
+_wide_axis_t_n = dwidth_narrow.wide_in_intrf.fwd_t
+_narrow_axis_t_n = dwidth_narrow.narrow_out_intrf.fwd_t
 
 # dwidth_widen/dwidth_narrow return an internal result struct type built inside their
 # factory (not exposed by make_dwidth_widen/make_dwidth_narrow's return tuple) — recover

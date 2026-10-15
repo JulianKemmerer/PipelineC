@@ -24,7 +24,7 @@ def selected(x: input_t) -> uint16_t:
 
 
 CORE = AUTO_COMB_AREA_OPT(selected)
-STREAM, STREAM_T = make_stream_auto_comb_area_opt(CORE)
+STREAM = make_stream_auto_comb_area_opt(CORE)
 
 
 @MAIN(5.0)

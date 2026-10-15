@@ -53,7 +53,7 @@ from pypeline import NamedTuple, Reg, hw_func, struct, uint1_t, uint32_t
 
 
 def make_error_alarm(drop_samples=4096, max_cycles=1 << 20):
-    """Build the alarm. Returns (error_alarm, error_alarm_t).
+    """Build the alarm. Returns error_alarm, with its complete return type at error_alarm.return_t.
 
         error_alarm(trig: uint1_t, en: uint1_t, in_valid: uint1_t,
                     rst: uint1_t) -> error_alarm_t
@@ -136,4 +136,4 @@ def make_error_alarm(drop_samples=4096, max_cycles=1 << 20):
     error_alarm.drop_samples = drop_samples
     error_alarm.max_cycles = max_cycles
     error_alarm.error_alarm_t = error_alarm_t
-    return error_alarm, error_alarm_t
+    return error_alarm

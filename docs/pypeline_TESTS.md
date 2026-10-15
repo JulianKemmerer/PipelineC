@@ -1131,6 +1131,17 @@ VHDL generator and one simulation model. Coverage:
 
 ## Generated-name regression coverage
 
+`factory_api_test.py` (unit) checks single-object factory returns: `.return_t`
+on original and wrapped functions in strict/raw and stateful/stateless modes,
+void returns, decorator stacking, input/output interface direction, RAM and
+generated-interface cache identity, named arithmetic bundles, widened fixed-point
+results, unsigned negation, metadata on an undecorated HDL factory callable, and
+the internal pipeline constructor's callable and `.auto_pipeline` metadata.
+`factory_api_design.py` verifies operation bundles and nested callable attributes
+in hardware ports and calls; `factory_api_shadow_design.py` checks that a hardware
+input cannot resolve to a same-named Python-global bundle. Existing native/VHDL
+designs use `.return_t` in port and state annotations.
+
 `interface_factory_two_widths_test.py` is a normal synthesis test: the same design
 instantiates broadcasts and skid buffers at four and eight byte lanes using their
 original interface objects. `generated_naming_test.py` checks structural identity,

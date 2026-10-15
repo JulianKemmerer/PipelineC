@@ -139,7 +139,7 @@ def make_log2_db(
     auto_pipeline_ram=True,
     join_depth=32,
 ):
-    """Build a linear->dB converter. Returns (log2_db, log2_db_t).
+    """Build a linear->dB converter. Returns log2_db, with its complete return type at log2_db.return_t.
 
     in_t:      a `fixed_t` (from fixed_point.make_fixed_t). Its `.frac_bits`
                sets the scaling, and a signed `in_t` is clamped at zero -- a
@@ -181,7 +181,7 @@ def make_log2_db(
 
 
 def _make_log2_db_rom(in_t, mant_bits, auto_pipeline_ram, join_depth):
-    """method="rom". Returns (log2_db, log2_db_t)."""
+    """method="rom". Returns log2_db, with its complete return type at log2_db.return_t."""
     val_t = in_t.typeof("val")
     W = len(val_t)
     F = in_t.frac_bits
@@ -213,13 +213,11 @@ def _make_log2_db_rom(in_t, mant_bits, auto_pipeline_ram, join_depth):
     constraints = (
         dict(start_latency=2) if auto_pipeline_ram else dict(read_latency=1, out_regs=1)
     )
-    log_rom, _log_rom_t = factory(
-        log_elem_t, 1 << M, ports=("r",), init=LOG_TAB, **constraints
-    )
-    exp_rom, _exp_rom_t = factory(
+    log_rom = factory(log_elem_t, 1 << M, ports=("r",), init=LOG_TAB, **constraints)
+    exp_rom = factory(
         exp_elem_t, len(EXP_TAB), ports=("r",), init=EXP_TAB, **constraints
     )
-    join, _ = make_valid_join((log_elem_t, exp_elem_t, uint1_t), join_depth)
+    join = make_valid_join((log_elem_t, exp_elem_t, uint1_t), join_depth)
 
     @struct
     class log2_db_t(NamedTuple):
@@ -319,11 +317,11 @@ def _make_log2_db_rom(in_t, mant_bits, auto_pipeline_ram, join_depth):
     # aligns the ROMs' physical outputs with its own registers, so nothing
     # outside needs aligning around them. See dsp/nco.py's identical note.
     log2_db._sim_clocked_pipeline_boundary = True
-    return log2_db, log2_db_t
+    return log2_db
 
 
 def _make_log2_db_pwl(in_t, mant_bits, seg_bits):
-    """method="pwl": the piecewise-linear converter. Returns (log2_db, log2_db_t).
+    """method="pwl": the piecewise-linear converter. Returns log2_db, with its complete return type at log2_db.return_t.
 
     in_t: a `fixed_t` (from fixed_point.make_fixed_t). Its `.frac_bits` sets
           the scaling, and a signed `in_t` is clamped at zero -- a DC-blocked
@@ -535,7 +533,7 @@ def _make_log2_db_pwl(in_t, mant_bits, seg_bits):
     log2_db.width = W
     log2_db.latency = 4
     log2_db.get_latency = lambda: 4
-    return log2_db, log2_db_t
+    return log2_db
 
 
 def golden_log2_db(block, raw):

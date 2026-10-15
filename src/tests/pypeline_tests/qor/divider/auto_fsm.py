@@ -33,7 +33,8 @@ def radix2_div(i: input_payload_t) -> output_payload_t:
 # Resource-shared divider with a real valid/ready handshake, in place of the
 # free-running (AUTO_PIPELINE-swept) combinational version's input_ready=1
 # no-flow-control passthrough.
-DIV_FSM, DIV_FSM_T = make_stream_auto_fsm(radix2_div)
+DIV_FSM = make_stream_auto_fsm(radix2_div)
+
 
 # Original AUTO_PIPELINE version's 135.5 MHz goal is unreachable here: AUTO_FSM
 # folds all 32 loop steps onto ONE shared 34-bit subtractor (that's the whole

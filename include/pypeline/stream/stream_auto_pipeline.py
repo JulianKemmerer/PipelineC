@@ -100,7 +100,7 @@ def make_stream_auto_pipeline(
         rv.valid = x.valid
         return rv
 
-    auto_pipelined_func, auto_pipeline_call = _auto_pipeline_with_io_regs(
+    auto_pipelined_func = _auto_pipeline_with_io_regs(
         func_stream,
         has_input_reg=True,
         has_output_reg=True,
@@ -109,6 +109,7 @@ def make_stream_auto_pipeline(
         max_latency=max_latency,
         name=name,
     )
+    auto_pipeline_call = auto_pipelined_func.auto_pipeline
 
     # A word's credit is out for L+5 cycles: input reg, L core regs, output
     # reg, the FIFO's 2-cycle push-to-valid, and the registered ready. That
@@ -118,7 +119,7 @@ def make_stream_auto_pipeline(
     max_in_flight = auto_pipeline_call.latency + 5
     fifo_depth = max_in_flight - 1
 
-    fifo_func, fifo_t = make_fifo(out_type, fifo_depth)
+    fifo_func = make_fifo(out_type, fifo_depth)
 
     counter_t = make_uint_t(max_in_flight.bit_length())
 
@@ -178,4 +179,4 @@ def make_stream_auto_pipeline(
     # Sizing metadata (see docstring)
     stream_auto_pipeline.auto_pipeline = auto_pipeline_call
     stream_auto_pipeline.max_in_flight = max_in_flight
-    return stream_auto_pipeline, stream_auto_pipeline_t
+    return stream_auto_pipeline

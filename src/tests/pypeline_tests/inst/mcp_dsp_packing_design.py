@@ -29,17 +29,20 @@ def dsp_chain(i: operands_t) -> uint32_t:
 
 
 word_if = make_stream_interface(operands_t)
-fixed_mcp, fixed_t = make_stream_multi_cycle(dsp_chain, 4)
-auto_mcp, auto_t = make_stream_auto_multi_cycle(
-    dsp_chain, start_latency=param("MCP_DSP_START", 1),
+fixed_mcp = make_stream_multi_cycle(dsp_chain, 4)
+
+auto_mcp = make_stream_auto_multi_cycle(
+    dsp_chain,
+    start_latency=param("MCP_DSP_START", 1),
 )
+
 BODY = AUTO_PIPELINE(dsp_chain)
 
 
 @struct
 class result_t(NamedTuple):
-    fixed: fixed_t
-    auto: auto_t
+    fixed: fixed_mcp.return_t
+    auto: auto_mcp.return_t
     body: uint32_t
     control: uint16_t
 

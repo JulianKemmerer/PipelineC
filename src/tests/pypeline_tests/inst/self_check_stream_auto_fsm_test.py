@@ -87,7 +87,7 @@ def mixed_ops(x: case_t) -> int16_t:
     return rv
 
 
-OPS_FSM, OPS_FSM_T = make_stream_auto_fsm(mixed_ops)
+OPS_FSM = make_stream_auto_fsm(mixed_ops)
 
 
 @MAIN(25.0)

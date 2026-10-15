@@ -43,7 +43,8 @@ def _check_dc_removed(state):
     print(f"dc_block: input pedestal {in_mean}, settled output mean {out_mean:.5f}")
 
 
-dcb_e, dcb_e_t = make_dc_block(data_t, k=K, out_t=data_t, overflow="saturate")
+dcb_e = make_dc_block(data_t, k=K, out_t=data_t, overflow="saturate")
+
 expected_e = golden_dc_block(dcb_e, STIM)
 tb_e = make_block_tb(
     dcb_e,
@@ -69,9 +70,10 @@ def dc_block_elastic_tb():
     tb_e.observe(o)
 
 
-dcb_v, dcb_v_t = make_dc_block(
+dcb_v = make_dc_block(
     data_t, k=K, out_t=data_t, overflow="saturate", handshake="valid_only"
 )
+
 expected_v = golden_dc_block(dcb_v, STIM)
 tb_v = make_block_tb(dcb_v, STIM, expected_v, name="dc_block_valid_only")
 

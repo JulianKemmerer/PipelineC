@@ -70,19 +70,19 @@ class pixel_t(NamedTuple):
 
 
 # Single read+write port, block-RAM read (ram.h DECL_RAM_SP_RF_1 shape).
-sp_ram, sp_ram_out_t = make_ram(
-    uint32_t, 16, ports=("rw",), read_latency=1, init=[10, 11, 12, 13]
-)
+sp_ram = make_ram(uint32_t, 16, ports=("rw",), read_latency=1, init=[10, 11, 12, 13])
+
 # Write port + read port, combinational read, struct elements, size 10 (wraps).
-lut_ram, lut_ram_out_t = make_ram(
+lut_ram = make_ram(
     pixel_t,
     10,
     ports=("w", "r"),
     read_latency=0,
     init={3: pixel_t(color=color_t.BLUE, level=9, lit=1)},
 )
+
 # Two read+write ports with an input and an output register: latency 3.
-tdp_ram, tdp_ram_out_t = make_ram(
+tdp_ram = make_ram(
     int16_t,
     8,
     ports=("rw", "rw"),
@@ -91,10 +91,12 @@ tdp_ram, tdp_ram_out_t = make_ram(
     out_regs=1,
     init=[-1, -2, 300],
 )
+
 # Register file: two combinational read ports and one write port, array elements.
-regfile, regfile_out_t = make_ram(uint8_t[4], 4, ports=("r", "r", "w"), read_latency=0)
+regfile = make_ram(uint8_t[4], 4, ports=("r", "r", "w"), read_latency=0)
+
 # CPU-style memory with per-byte write enables.
-cpu_mem, cpu_mem_out_t = make_ram(
+cpu_mem = make_ram(
     uint32_t,
     4,
     ports=("rw",),
@@ -102,10 +104,10 @@ cpu_mem, cpu_mem_out_t = make_ram(
     byte_write_enables=True,
     init=[0x11223344],
 )
+
 # A ROM of strings.
-rom, rom_out_t = make_ram(
-    char_t[8], 3, ports=("r",), read_latency=1, init=["boot", "run", "halt"]
-)
+rom = make_ram(char_t[8], 3, ports=("r",), read_latency=1, init=["boot", "run", "halt"])
+
 
 sp_ram_p0_in_t = sp_ram.p0_in_t
 lut_ram_p0_in_t = lut_ram.p0_in_t
@@ -123,42 +125,41 @@ rom_p0_in_t = rom.p0_in_t
 
 
 @MAIN
-def ram_test_sp(p0: sp_ram_p0_in_t) -> sp_ram_out_t:
+def ram_test_sp(p0: sp_ram_p0_in_t) -> sp_ram.return_t:
     return sp_ram(p0)
 
 
 @MAIN
-def ram_test_lut(p0: lut_ram_p0_in_t, p1: lut_ram_p1_in_t) -> lut_ram_out_t:
+def ram_test_lut(p0: lut_ram_p0_in_t, p1: lut_ram_p1_in_t) -> lut_ram.return_t:
     return lut_ram(p0, p1)
 
 
 @MAIN
-def ram_test_tdp(p0: tdp_ram_p0_in_t, p1: tdp_ram_p1_in_t) -> tdp_ram_out_t:
+def ram_test_tdp(p0: tdp_ram_p0_in_t, p1: tdp_ram_p1_in_t) -> tdp_ram.return_t:
     return tdp_ram(p0, p1)
 
 
 @MAIN
 def ram_test_regfile(
     p0: regfile_p0_in_t, p1: regfile_p1_in_t, p2: regfile_p2_in_t
-) -> regfile_out_t:
+) -> regfile.return_t:
     return regfile(p0, p1, p2)
 
 
 @MAIN
-def ram_test_cpu_mem(p0: cpu_mem_p0_in_t) -> cpu_mem_out_t:
+def ram_test_cpu_mem(p0: cpu_mem_p0_in_t) -> cpu_mem.return_t:
     return cpu_mem(p0)
 
 
 @MAIN
-def ram_test_rom(p0: rom_p0_in_t) -> rom_out_t:
+def ram_test_rom(p0: rom_p0_in_t) -> rom.return_t:
     return rom(p0)
 
 
 # ── Callers: a stateful one (uses the physical output) and a pure one (aligned) ──
 
-counter_ram, counter_ram_out_t = make_ram(
-    uint8_t, 4, ports=("rw",), read_latency=1, out_regs=1
-)
+counter_ram = make_ram(uint8_t, 4, ports=("rw",), read_latency=1, out_regs=1)
+
 counter_ram_p0_in_t = counter_ram.p0_in_t
 
 
@@ -170,14 +171,20 @@ def stateful_writer(x: uint8_t) -> uint8_t:
     req.wr_data = x
     req.wr_en = 1
     req.valid = 1
-    resp: counter_ram_out_t = counter_ram(req)
+    resp: counter_ram.return_t = counter_ram(req)
     n = n + 1
     return resp.p0.wr_data
 
 
-table_rom, table_rom_out_t = make_ram(
-    uint8_t, 8, ports=("r",), read_latency=1, out_regs=1, init=[i * 10 for i in range(8)]
+table_rom = make_ram(
+    uint8_t,
+    8,
+    ports=("r",),
+    read_latency=1,
+    out_regs=1,
+    init=[i * 10 for i in range(8)],
 )
+
 table_rom_p0_in_t = table_rom.p0_in_t
 
 
@@ -186,7 +193,7 @@ def pure_lookup_plus(x: uint8_t) -> uint16_t:
     req: table_rom_p0_in_t
     req.addr = x
     req.valid = 1
-    resp: table_rom_out_t = table_rom(req)
+    resp: table_rom.return_t = table_rom(req)
     return resp.p0.rd_data + x
 
 
@@ -198,11 +205,11 @@ def two_instances(x: uint32_t) -> uint32_t:
     wr.wr_data = x
     wr.wr_en = 1
     wr.valid = 1
-    first: sp_ram_out_t = sp_ram(wr)
+    first: sp_ram.return_t = sp_ram(wr)
     rd: sp_ram_p0_in_t
     rd.addr = 5
     rd.valid = 1
-    second: sp_ram_out_t = sp_ram(rd)
+    second: sp_ram.return_t = sp_ram(rd)
     toggle = ~toggle
     return (first.p0.rd_data << 16) | second.p0.rd_data
 
@@ -240,19 +247,24 @@ def test_attributes():
     assert regfile.p0_in_t._fields == ("addr", "valid")
     assert regfile.p0_out_t._fields == ("addr", "valid", "rd_data")
     assert regfile.p2_out_t._fields == ("addr", "wr_data", "wr_en", "valid")
-    assert sp_ram_out_t._fields == ("p0",) and regfile_out_t._fields == ("p0", "p1", "p2")
+    assert sp_ram.return_t._fields == ("p0",) and regfile.return_t._fields == (
+        "p0",
+        "p1",
+        "p2",
+    )
     assert str(cpu_mem.we_t) == "uint1_t[4]" and cpu_mem.byte_write_enables
     # Same configuration and contents -> the same function (one entity).
-    again, again_t = make_ram(uint32_t, 16, ports=("rw",), read_latency=1, init=[10, 11, 12, 13])
-    assert again is sp_ram and again_t is sp_ram_out_t
+    again = make_ram(uint32_t, 16, ports=("rw",), read_latency=1, init=[10, 11, 12, 13])
+
+    assert again is sp_ram and again.return_t is sp_ram.return_t
 
 
 def test_distinct_contents_distinct_functions():
-    a, _ = make_ram(uint8_t, 4, ports=("r",), read_latency=0, init=[1, 2, 3, 4])
-    b, _ = make_ram(uint8_t, 4, ports=("r",), read_latency=0, init=[4, 3, 2, 1])
-    c, _ = make_ram(uint8_t, 4, ports=("r",), read_latency=0, init=(1, 2, 3, 4))
-    zeros, _ = make_ram(uint8_t, 4, ports=("r",), read_latency=0, init=[0, 0])
-    empty, _ = make_ram(uint8_t, 4, ports=("r",), read_latency=0)
+    a = make_ram(uint8_t, 4, ports=("r",), read_latency=0, init=[1, 2, 3, 4])
+    b = make_ram(uint8_t, 4, ports=("r",), read_latency=0, init=[4, 3, 2, 1])
+    c = make_ram(uint8_t, 4, ports=("r",), read_latency=0, init=(1, 2, 3, 4))
+    zeros = make_ram(uint8_t, 4, ports=("r",), read_latency=0, init=[0, 0])
+    empty = make_ram(uint8_t, 4, ports=("r",), read_latency=0)
     assert a is c, "init as list or tuple of the same values is one RAM"
     assert zeros is empty, "an all-zero init is the same RAM as no init"
     assert a is not b and a.__name__ != b.__name__
@@ -380,13 +392,19 @@ def test_rom_of_strings():
 
 def test_init_forms():
     sim_reset()
-    r, _ = make_ram(pixel_t, 3, ports=("r",), read_latency=0, init=[{"level": 3}, (color_t.GREEN, 5, 1)])
+    r = make_ram(
+        pixel_t,
+        3,
+        ports=("r",),
+        read_latency=0,
+        init=[{"level": 3}, (color_t.GREEN, 5, 1)],
+    )
     assert plain(sim_call(r, r.p0_in_t(addr=0, valid=1)).p0.rd_data) == (0, 3, 0)
     assert plain(sim_call(r, r.p0_in_t(addr=1, valid=1)).p0.rd_data) == (1, 5, 1)
     assert plain(sim_call(r, r.p0_in_t(addr=2, valid=1)).p0.rd_data) == (0, 0, 0)
-    wrapped, _ = make_ram(uint8_t, 4, ports=("r",), read_latency=0, init=range(250, 254))
+    wrapped = make_ram(uint8_t, 4, ports=("r",), read_latency=0, init=range(250, 254))
     assert int(sim_call(wrapped, wrapped.p0_in_t(addr=3, valid=1)).p0.rd_data) == 253
-    masked, _ = make_ram(uint4_t, 2, ports=("r",), read_latency=0, init=[0x1F])
+    masked = make_ram(uint4_t, 2, ports=("r",), read_latency=0, init=[0x1F])
     assert int(sim_call(masked, masked.p0_in_t(addr=0, valid=1)).p0.rd_data) == 0xF
 
 

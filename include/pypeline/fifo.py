@@ -16,7 +16,7 @@ from pypeline import (
 def make_fifo(data_t, depth: int, mode: str = "fwft"):
     """Single-clock-domain FIFO wrapping the raw VHDL pipelinec_fifo_fwft entity.
 
-    Returns (fifo_func, fifo_t):
+    Returns fifo_func, with its complete return type at fifo_func.return_t:
         fifo_func(ready_for_data_out: uint1_t, data_in: data_t, data_in_valid: uint1_t) -> fifo_t
         fifo_t fields: .data_out (data_t), .data_out_valid (uint1_t), .data_in_ready (uint1_t)
     """
@@ -114,4 +114,4 @@ generic map(
                 data_in_ready=data_in_ready,
             )
 
-    return fifo, fifo_t
+    return fifo

@@ -58,7 +58,7 @@ from stream.valid_join import make_valid_join
 def make_pulse_measure(
     pulse_detect, cordic_iters=14, *, atan2_method=None, join_depth=32
 ):
-    """Build the per-pulse measurement block. Returns (pulse_measure, pulse_measure_t).
+    """Build the per-pulse measurement block. Returns pulse_measure, with its complete return type at pulse_measure.return_t.
 
         pulse_measure(freq_acc, noise_est, peak_power, toa, valid_in, count_pri,
                     rst) -> pulse_measure_t
@@ -95,24 +95,27 @@ def make_pulse_measure(
             env="PDW_ATAN2_METHOD",
         )
     if atan2_method == "cordic":
-        angle_unit, angle_t = make_cordic_atan2(acc_t, n_iters=cordic_iters)
+        angle_unit = make_cordic_atan2(acc_t, n_iters=cordic_iters)
+        angle_t = angle_unit.return_t
     elif atan2_method == "rom":
-        angle_unit, angle_t = make_lut_atan2(acc_t, join_depth=join_depth)
+        angle_unit = make_lut_atan2(acc_t, join_depth=join_depth)
+        angle_t = angle_unit.return_t
     else:
         raise ValueError("make_pulse_measure: atan2_method must be cordic or rom")
     # Two separate converters: peak power is the dc-blocked, moving-averaged
     # `power_t` (12 fractional bits) and the noise floor is the raw
     # `magnitude` output (0 fractional bits). Feeding both through one
     # instance would silently mis-scale one of them by 36 dB.
-    log_db, _log_db_t = make_log2_db(power_t, join_depth=join_depth)
-    log_db_noise, _log_db_noise_t = make_log2_db(noise_t, join_depth=join_depth)
+    log_db = make_log2_db(power_t, join_depth=join_depth)
+
+    log_db_noise = make_log2_db(noise_t, join_depth=join_depth)
 
     @struct
     class pri_meta_t(NamedTuple):
         pri: uint32_t
         valid: uint1_t
 
-    join, _ = make_valid_join(
+    join = make_valid_join(
         (angle_t, angle_t, log_db.out_t, log_db_noise.out_t, pri_meta_t), join_depth
     )
 
@@ -242,7 +245,7 @@ def make_pulse_measure(
     )
     pulse_measure.join_depth = join_depth
     pulse_measure._sim_clocked_pipeline_boundary = True
-    return pulse_measure, pulse_measure_t
+    return pulse_measure
 
 
 def golden_pulse_measure(

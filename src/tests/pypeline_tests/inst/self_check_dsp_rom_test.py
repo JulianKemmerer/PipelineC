@@ -25,8 +25,8 @@ from dsp.log2_db import make_log2_db, golden_log2_db
 from AUTO_PIPELINE import RamPlan
 
 power_t = make_fixed_t(34, 12, signed=True)
-nco, _ = make_lut_nco(int16_t)
-log, _ = make_log2_db(power_t)
+nco = make_lut_nco(int16_t)
+log = make_log2_db(power_t)
 swap = param("DSP_ROM_SWAP", False)
 py.SET_AUTO_PIPELINE_RAM_PLAN_CACHE(
     {
@@ -35,8 +35,8 @@ py.SET_AUTO_PIPELINE_RAM_PLAN_CACHE(
         log.exp_rom._auto_pipeline_ram["key"]: RamPlan(0, 3 if swap else 0),
     }
 )
-nco, _ = make_lut_nco(int16_t)
-log, _ = make_log2_db(power_t)
+nco = make_lut_nco(int16_t)
+log = make_log2_db(power_t)
 PHASE = tuple((i * 177777777) & 0xFFFFFFFF for i in range(32))
 AMP = tuple(i * 1777 - 32768 for i in range(32))
 POWER = tuple([-100, 0, 1, 4096] + [(i + 1) * 91919 for i in range(28)])

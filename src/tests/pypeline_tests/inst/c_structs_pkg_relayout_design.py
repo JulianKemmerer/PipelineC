@@ -10,6 +10,7 @@ lane_sel_t holds a lane index whose bit width follows the lane count, and
 pick() reads a lane through it (a dynamic array-mux leaf sized by lanes).
 The two directions' bodies differ (salt), so each has its own latency.
 """
+from types import SimpleNamespace
 import os
 import sys
 from typing import NamedTuple
@@ -69,11 +70,17 @@ def make_mac(direction: str):
         s.lane = sel
         return acc.powers.values[s.lane]
 
-    return mac, pick
+    return SimpleNamespace(mac=mac, pick=pick)
 
 
-encrypt_mac, encrypt_pick = make_mac("encrypt")
-decrypt_mac, decrypt_pick = make_mac("decrypt")
+# Paired MAC and picker functions for the encrypt direction.
+encrypt_bundle = make_mac("encrypt")
+encrypt_mac = encrypt_bundle.mac
+encrypt_pick = encrypt_bundle.pick
+# Paired MAC and picker functions for the decrypt direction.
+decrypt_bundle = make_mac("decrypt")
+decrypt_mac = decrypt_bundle.mac
+decrypt_pick = decrypt_bundle.pick
 
 
 @MAIN

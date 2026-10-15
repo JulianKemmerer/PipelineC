@@ -59,9 +59,7 @@ from ram import make_ram
 
 def make_rom_caller(signed):
     s_t = int8_t if signed else uint8_t
-    rom, _rom_t = make_ram(
-        uint8_t, 16, ports=("r",), read_latency=1, init=list(range(16))
-    )
+    rom = make_ram(uint8_t, 16, ports=("r",), read_latency=1, init=list(range(16)))
 
     @hw_func
     def rom_caller(x: uint4_t, s: s_t) -> uint8_t:
@@ -81,9 +79,7 @@ def make_rom_caller(signed):
 
 
 def make_pure_rom_caller():
-    rom, _rom_t = make_ram(
-        uint8_t, 16, ports=("r",), read_latency=1, init=list(range(16))
-    )
+    rom = make_ram(uint8_t, 16, ports=("r",), read_latency=1, init=list(range(16)))
 
     @hw_func
     def pure_rom_caller(x: uint4_t, s: int8_t) -> uint8_t:

@@ -37,19 +37,21 @@ from pypeline import MAIN, sim_call, sim_reset, uint8_t, uint16_t
 from stream.stream_ram import make_stream_ram
 
 # Single rw port, BRAM read + output register: latency 2.
-bram, bram_t = make_stream_ram(
+bram = make_stream_ram(
     uint16_t, 8, ports=("rw",), read_latency=1, out_regs=1, init=[1, 2, 3]
 )
+
 # Write port + read port, combinational read, no registers: latency 0.
-comb, comb_t = make_stream_ram(uint8_t, 4, ports=("w", "r"), read_latency=0)
+comb = make_stream_ram(uint8_t, 4, ports=("w", "r"), read_latency=0)
+
 # Write port + read port with an input register and a BRAM read: latency 2.
-sdp, sdp_t = make_stream_ram(uint8_t, 16, ports=("w", "r"), read_latency=1, in_regs=1)
+sdp = make_stream_ram(uint8_t, 16, ports=("w", "r"), read_latency=1, in_regs=1)
 
 
 @MAIN
 def stream_ram_test_bram(
     p0_req_if: bram.p0_req_intrf.fwd_t, p0_resp_if: bram.p0_resp_intrf.fb_t
-) -> bram_t:
+) -> bram.return_t:
     return bram(p0_req_if, p0_resp_if)
 
 
@@ -59,7 +61,7 @@ def stream_ram_test_comb(
     p0_resp_if: comb.p0_resp_intrf.fb_t,
     p1_req_if: comb.p1_req_intrf.fwd_t,
     p1_resp_if: comb.p1_resp_intrf.fb_t,
-) -> comb_t:
+) -> comb.return_t:
     return comb(p0_req_if, p0_resp_if, p1_req_if, p1_resp_if)
 
 
@@ -69,7 +71,7 @@ def stream_ram_test_sdp(
     p0_resp_if: sdp.p0_resp_intrf.fb_t,
     p1_req_if: sdp.p1_req_intrf.fwd_t,
     p1_resp_if: sdp.p1_resp_intrf.fb_t,
-) -> sdp_t:
+) -> sdp.return_t:
     return sdp(p0_req_if, p0_resp_if, p1_req_if, p1_resp_if)
 
 
@@ -110,7 +112,7 @@ def test_attributes():
     assert bram.p0_resp_t._fields == ("addr", "wr_data", "wr_en", "rd_data")
     assert comb.p1_req_t._fields == ("addr",) and comb.p1_resp_t._fields == ("addr", "rd_data")
     assert comb.p0_resp_t._fields == ("addr", "wr_data", "wr_en")
-    assert bram_t._fields == ("p0_resp_if", "p0_req_if")
+    assert bram.return_t._fields == ("p0_resp_if", "p0_req_if")
 
 
 def test_steady_flow_one_response_per_cycle():

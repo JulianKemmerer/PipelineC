@@ -56,7 +56,8 @@ def isqrt_u32(i: input_payload_t) -> output_payload_t:
 # Resource-shared square root with a real valid/ready handshake, in place of
 # the free-running (AUTO_PIPELINE-swept) combinational version's input_ready=1
 # no-flow-control passthrough.
-SQRT_FSM, SQRT_FSM_T = make_stream_auto_fsm(isqrt_u32)
+SQRT_FSM = make_stream_auto_fsm(isqrt_u32)
+
 
 # Original AUTO_PIPELINE version's 300 MHz goal is unreachable here: AUTO_FSM
 # folds the 16 unrolled steps' operations onto 18 shared units across 16

@@ -41,7 +41,11 @@ from fixed_point import (
 # ─────────────────────────────────────────────
 
 q4_12 = make_fixed_t(4, 12)
-q4_12_add, q4_12_sub, q4_12_mul, q4_12_neg = register_fixed_ops(q4_12)
+q4_12_ops = register_fixed_ops(q4_12)
+q4_12_add = q4_12_ops.add
+q4_12_sub = q4_12_ops.subtract
+q4_12_mul = q4_12_ops.multiply
+q4_12_neg = q4_12_ops.negate
 q4_12_sum_t = hw_return_type(q4_12_add)
 q4_12_diff_t = hw_return_type(q4_12_sub)
 q4_12_prod_t = hw_return_type(q4_12_mul)

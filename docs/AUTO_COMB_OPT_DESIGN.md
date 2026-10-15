@@ -254,7 +254,7 @@ size advisory, not a timing failure.
 from stream.stream_auto_comb_area_opt import make_stream_auto_comb_area_opt
 from stream.stream_auto_comb_delay_opt import make_stream_auto_comb_delay_opt
 
-stream, stream_t = make_stream_auto_comb_area_opt(func_or_tag)
+stream = make_stream_auto_comb_area_opt(func_or_tag)
 ```
 
 Both factories return the usual function/result-type pair and share one elastic

@@ -93,7 +93,7 @@ def make_pulse_gen(
     amplitude_t=int16_t,
     nco_table_bits=10,
 ):
-    """Build a pulse generator. Returns (pulse_gen, out_stream_t).
+    """Build a pulse generator. Returns pulse_gen, with its complete return type at pulse_gen.return_t.
 
         pulse_gen(pri, width, amplitude, freq, chirp_rate, noise_amp, rst)
             -> stream(iq_t)
@@ -119,7 +119,8 @@ def make_pulse_gen(
         valid: uint1_t
         overflow: uint1_t
 
-    nco, nco_t = make_lut_nco(amplitude_t, table_bits=nco_table_bits, phase_bits=32)
+    nco = make_lut_nco(amplitude_t, table_bits=nco_table_bits, phase_bits=32)
+
     # 4 signed bytes summed: +-512, so 11 bits signed; times a 16-bit scale.
     byte_t = make_int_t(8)  # reinterpret an LFSR byte as signed
     nsum_t = make_int_t(11)
@@ -301,7 +302,7 @@ def make_pulse_gen(
     # output: two register stages (byte sum, then scaling) plus the output
     # register.
     pulse_gen.noise_pipe = 3
-    return pulse_gen, out_stream_t
+    return pulse_gen
 
 
 def golden_pulse_gen(

@@ -27,7 +27,8 @@ from pypeline import MAIN, Reg, Wire, sim_output, uint1_t, uint32_t
 from fifo import make_fifo
 
 CAPACITY = 8  # already a power of two, no rounding ambiguity
-fifo_conv, fifo_conv_t = make_fifo(uint32_t, CAPACITY)
+fifo_conv = make_fifo(uint32_t, CAPACITY)
+
 
 push_in: Wire[uint32_t]
 fifo_ready: Wire[uint1_t]

@@ -53,7 +53,7 @@ data_t = make_fixed_t(1, 15)  # Q1.15
 # coefficient format the integer headroom for 4 * max|tap| (~1.0).
 coeff_t = make_fixed_t(2, 14)
 
-fir_interp4, fir_interp4_t = make_fir_interp(
+fir_interp4 = make_fir_interp(
     TAPS,
     coeff_t,
     INTERP,
@@ -62,6 +62,7 @@ fir_interp4, fir_interp4_t = make_fir_interp(
     rounding="round_half_even",
     overflow="saturate",
 )
+
 
 # A low-rate sine: 64 input samples -> 256 smooth output samples.
 stim = quantize_samples(sine(64, cycles=3, amplitude=0.7), data_t)
