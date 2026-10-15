@@ -69,7 +69,7 @@ Most of the compiler's main modules have an LLM-generated design document in [`d
 
 ## Verification and Testing
 
-Consult [`docs/pypeline_TESTS.md`](docs/pypeline_TESTS.md) for full descriptions of test categories, test suite layouts, and runner options.
+Consult [`docs/pypeline_TESTS.md`](docs/pypeline_TESTS.md) for full descriptions of test categories, test suite layouts, and runner options. Include information on how changes will be tested in plans.
 
 ### Test Suite Structure and Reproducers
 
