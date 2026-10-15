@@ -64,6 +64,10 @@ Most of the compiler's main modules have an LLM-generated design document in [`d
 * **Plan Bounds:** Implement agreed architectural designs faithfully. Do not introduce unrequested heuristic bounds, arbitrary floors, or behavioral limits without explicit confirmation and targeted test coverage.
 * **Parameter Handling:** Do not accept unused parameters, configuration flags, or state arguments; wire all received parameters into execution paths or remove them.
 * **Module Globals:** Document every module global variable with an explanatory single-line comment matching adjacent conventions.
+* **Declared State:** Declare results stored on `ParserState` (or any other shared object) in its `__init__`, with a one-line comment. Do not compute such state lazily on first use or branch on `hasattr`: behavior then depends on call order.
+* **No Sentinel Values in Tuned Numbers:** Do not signal a mode with a special value of a number that other code scales or nudges (for example `0.0` in a multiplier: no later multiplication can move it off zero). Use an explicit flag.
+* **Check Existing One-Time Guards:** When adding a new reason to run a step that is guarded to happen once (for example a measurement fallback), check whether that guard will block the new reason.
+* **Retire What You Replace:** When new logic replaces a rule, delete the code that can no longer run. Search `src/` and `docs/` for the old function and rule names, and fix every comment and doc that cites them, including in other modules.
 * **Console Noise:** Deduplicate compiler informational messages and warnings (`NOTE: ...`) so they display once per build phase or session rather than repeating across every candidate pass or iteration.
 * **Names And Caches Are Tricky:** Caches of synthesis results are there to reduce user synthesis runs. Try to use cached results when possible. Be careful to make sure code identifies and ignores stale pieces. Cached or remembered data must never make a build fail that would succeed without it. The synthesis sweep attributes a timing path to a function by finding the function's name inside instance labels and register names. Changing how instances, entities or functions are named, or restructuring which function is tagged, can change sweep decisions: compare the sweep's attribution and actions in sweep history before and after. If a fix invalidates cache, that is fine, do not need any complex workarounds to preserve existing old caches when things change for the better. A generated file's content must depend only on what names it (its entity name and inputs), never on planner state or the order files were written in; if two renderings can share one name, fix that rather than reproducing whichever was written first.
 
@@ -78,11 +82,15 @@ Consult [`docs/pypeline_TESTS.md`](docs/pypeline_TESTS.md) for full descriptions
 * **One Behavior per Test:** Name each test function after the behavior it checks, and split a test that checks several.
 * **Measure Before Claiming:** Report only observed results. Never summarize results before the run that measures them finishes. Reccomended changes should be based on test results.
 * **Compare Like with Like:** Gate changes against a baseline built from the same commit and cache state, so unrelated commits can neither hide nor fake a difference.
+* **Test Scope Matches Impact:** Focused tests prove the targeted code works. A change to shared planner or sweep policy (behavior that applies to every design of a kind) also needs that policy's broader test categories.
+* **Separate QoR Changes from Efficiency Changes:** If work to cut synthesis runs turns up a change to placement or trim decisions, describe and verify each change on its own, and state which results support which change.
 * **Long Hardware Verification:** Run long builds (timing sweeps, hardware runs) in the background and wait for their completion notice instead of polling. Consider building from a frozen copy of the compiler and design, so later source edits can't change a run in progress.
 
 ## Pre-Commit and Formatting
 
 We use Ruff for linting and formatting (lint rules are being enabled incrementally as the codebase is cleaned up).
+
+Format only the lines you change. Do not reformat untouched lines, even ones next to your edit, so the diff shows only behavior changes.
 
 # Future Goals
 
