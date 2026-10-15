@@ -163,7 +163,7 @@ def GET_LEAF_BIT_WIDTH(logic, parser_state):
             if c_type is None:
                 continue
             try:
-                widths.append(VHDL.GET_WIDTH_FROM_C_TYPE_STR(parser_state, c_type))
+                widths.append(LOGIC.GET_WIDTH_FROM_C_TYPE_STR(parser_state, c_type))
             except Exception:
                 continue
         return max(widths) if widths else None
@@ -174,7 +174,7 @@ def GET_LEAF_BIT_WIDTH(logic, parser_state):
         if c_type is None:
             continue
         try:
-            widths.append(VHDL.GET_WIDTH_FROM_C_TYPE_STR(parser_state, c_type))
+            widths.append(LOGIC.GET_WIDTH_FROM_C_TYPE_STR(parser_state, c_type))
         except Exception:
             continue
     return max(widths) if widths else None
@@ -399,7 +399,7 @@ def GET_RAM_RF_ARCH_DECL_TEXT(
     addr_bits = 0
     for addr_i in range(0, len(dims)):
         addr_i_t = Logic.wire_to_c_type[Logic.inputs[addr_i]]
-        width = VHDL.GET_WIDTH_FROM_C_N_BITS_INT_TYPE_STR(addr_i_t)
+        width = LOGIC.GET_WIDTH_FROM_C_N_BITS_INT_TYPE_STR(addr_i_t)
         addr_bits += width
 
     # Combine addr signal
@@ -877,14 +877,14 @@ def GET_BIN_OP_XOR_C_BUILT_IN_C_ENTITY_WIRES_DECL_AND_PROCESS_STAGES_TEXT(
     # ONLY INTS FOR NOW
     left_type = logic.wire_to_c_type[logic.inputs[0]]
     left_vhdl_type = VHDL.C_TYPE_STR_TO_VHDL_TYPE_STR(left_type, parser_state)
-    left_width = VHDL.GET_WIDTH_FROM_C_TYPE_STR(parser_state, left_type)
+    left_width = LOGIC.GET_WIDTH_FROM_C_TYPE_STR(parser_state, left_type)
     right_type = logic.wire_to_c_type[logic.inputs[1]]
     right_vhdl_type = VHDL.C_TYPE_STR_TO_VHDL_TYPE_STR(right_type, parser_state)
-    right_width = VHDL.GET_WIDTH_FROM_C_TYPE_STR(parser_state, right_type)
+    right_width = LOGIC.GET_WIDTH_FROM_C_TYPE_STR(parser_state, right_type)
     output_type = logic.wire_to_c_type[logic.outputs[0]]
     output_vhdl_type = VHDL.C_TYPE_STR_TO_VHDL_TYPE_STR(output_type, parser_state)
     max_input_width = max(left_width, right_width)
-    output_width = VHDL.GET_WIDTH_FROM_C_TYPE_STR(parser_state, output_type)
+    output_width = LOGIC.GET_WIDTH_FROM_C_TYPE_STR(parser_state, output_type)
 
     wires_decl_text = (
         """
@@ -1202,10 +1202,10 @@ def GET_UNARY_OP_NOT_C_BUILT_IN_C_ENTITY_WIRES_DECL_AND_PROCESS_STAGES_TEXT(
     # ONLY INTS FOR NOW
     input_type = logic.wire_to_c_type[logic.inputs[0]]
     input_vhdl_type = VHDL.C_TYPE_STR_TO_VHDL_TYPE_STR(input_type, parser_state)
-    input_width = VHDL.GET_WIDTH_FROM_C_TYPE_STR(parser_state, input_type)
+    input_width = LOGIC.GET_WIDTH_FROM_C_TYPE_STR(parser_state, input_type)
     output_type = logic.wire_to_c_type[logic.outputs[0]]
     output_vhdl_type = VHDL.C_TYPE_STR_TO_VHDL_TYPE_STR(output_type, parser_state)
-    output_width = VHDL.GET_WIDTH_FROM_C_TYPE_STR(parser_state, output_type)
+    output_width = LOGIC.GET_WIDTH_FROM_C_TYPE_STR(parser_state, output_type)
 
     wires_decl_text = (
         """
@@ -1282,14 +1282,14 @@ def GET_BIN_OP_AND_C_BUILT_IN_C_ENTITY_WIRES_DECL_AND_PROCESS_STAGES_TEXT(
     # ONLY INTS FOR NOW
     left_type = logic.wire_to_c_type[logic.inputs[0]]
     left_vhdl_type = VHDL.C_TYPE_STR_TO_VHDL_TYPE_STR(left_type, parser_state)
-    left_width = VHDL.GET_WIDTH_FROM_C_TYPE_STR(parser_state, left_type)
+    left_width = LOGIC.GET_WIDTH_FROM_C_TYPE_STR(parser_state, left_type)
     right_type = logic.wire_to_c_type[logic.inputs[1]]
     right_vhdl_type = VHDL.C_TYPE_STR_TO_VHDL_TYPE_STR(right_type, parser_state)
-    right_width = VHDL.GET_WIDTH_FROM_C_TYPE_STR(parser_state, right_type)
+    right_width = LOGIC.GET_WIDTH_FROM_C_TYPE_STR(parser_state, right_type)
     output_type = logic.wire_to_c_type[logic.outputs[0]]
     output_vhdl_type = VHDL.C_TYPE_STR_TO_VHDL_TYPE_STR(output_type, parser_state)
     max_input_width = max(left_width, right_width)
-    output_width = VHDL.GET_WIDTH_FROM_C_TYPE_STR(parser_state, output_type)
+    output_width = LOGIC.GET_WIDTH_FROM_C_TYPE_STR(parser_state, output_type)
 
     wires_decl_text = (
         """
@@ -1375,14 +1375,14 @@ def GET_BIN_OP_OR_C_BUILT_IN_C_ENTITY_WIRES_DECL_AND_PROCESS_STAGES_TEXT(
     # ONLY INTS FOR NOW
     left_type = logic.wire_to_c_type[logic.inputs[0]]
     left_vhdl_type = VHDL.C_TYPE_STR_TO_VHDL_TYPE_STR(left_type, parser_state)
-    left_width = VHDL.GET_WIDTH_FROM_C_TYPE_STR(parser_state, left_type)
+    left_width = LOGIC.GET_WIDTH_FROM_C_TYPE_STR(parser_state, left_type)
     right_type = logic.wire_to_c_type[logic.inputs[1]]
     right_vhdl_type = VHDL.C_TYPE_STR_TO_VHDL_TYPE_STR(right_type, parser_state)
-    right_width = VHDL.GET_WIDTH_FROM_C_TYPE_STR(parser_state, right_type)
+    right_width = LOGIC.GET_WIDTH_FROM_C_TYPE_STR(parser_state, right_type)
     output_type = logic.wire_to_c_type[logic.outputs[0]]
     output_vhdl_type = VHDL.C_TYPE_STR_TO_VHDL_TYPE_STR(output_type, parser_state)
     max_input_width = max(left_width, right_width)
-    output_width = VHDL.GET_WIDTH_FROM_C_TYPE_STR(parser_state, output_type)
+    output_width = LOGIC.GET_WIDTH_FROM_C_TYPE_STR(parser_state, output_type)
 
     wires_decl_text = (
         """
@@ -1485,19 +1485,19 @@ def GET_BIN_OP_EQ_NEQ_C_BUILT_IN_C_ENTITY_WIRES_DECL_AND_PROCESS_STAGES_TEXT(
 
     # Only ints+floats for now, check all inputs
     if (
-        VHDL.WIRES_ARE_INT_N(logic.inputs, logic)
-        or VHDL.WIRES_ARE_UINT_N(logic.inputs, logic)
-        or VHDL.WIRES_ARE_ENUM(logic.inputs, logic, parser_state)
+        LOGIC.WIRES_ARE_INT_N(logic.inputs, logic)
+        or LOGIC.WIRES_ARE_UINT_N(logic.inputs, logic)
+        or LOGIC.WIRES_ARE_ENUM(logic.inputs, logic, parser_state)
     ):
         # HACK OH GOD NO dont look up enums
-        left_width = VHDL.GET_WIDTH_FROM_C_TYPE_STR(parser_state, left_type)
-        right_width = VHDL.GET_WIDTH_FROM_C_TYPE_STR(parser_state, right_type)
+        left_width = LOGIC.GET_WIDTH_FROM_C_TYPE_STR(parser_state, left_type)
+        right_width = LOGIC.GET_WIDTH_FROM_C_TYPE_STR(parser_state, right_type)
         max_width = max(left_width, right_width)
         left_cast_toks = ["std_logic_vector(resize(", "," + str(max_width) + "))"]
         right_cast_toks = ["std_logic_vector(resize(", "," + str(max_width) + "))"]
     elif LOGIC.C_TYPES_ARE_FLOAT_TYPES([left_type, right_type]):
-        left_width = VHDL.GET_WIDTH_FROM_C_TYPE_STR(parser_state, left_type)
-        right_width = VHDL.GET_WIDTH_FROM_C_TYPE_STR(parser_state, right_type)
+        left_width = LOGIC.GET_WIDTH_FROM_C_TYPE_STR(parser_state, left_type)
+        right_width = LOGIC.GET_WIDTH_FROM_C_TYPE_STR(parser_state, right_type)
         max_width = max(left_width, right_width)
         left_cast_toks = ["", ""]
         right_cast_toks = ["", ""]
@@ -1640,10 +1640,10 @@ def GET_BIN_OP_MINUS_C_BUILT_IN_INT_N_C_ENTITY_WIRES_DECL_AND_PACKAGE_STAGES_TEX
     left_type = logic.wire_to_c_type[logic.inputs[0]]
     right_type = logic.wire_to_c_type[logic.inputs[1]]
     output_type = logic.wire_to_c_type[logic.outputs[0]]
-    left_width = VHDL.GET_WIDTH_FROM_C_TYPE_STR(parser_state, left_type)
-    right_width = VHDL.GET_WIDTH_FROM_C_TYPE_STR(parser_state, right_type)
+    left_width = LOGIC.GET_WIDTH_FROM_C_TYPE_STR(parser_state, left_type)
+    right_width = LOGIC.GET_WIDTH_FROM_C_TYPE_STR(parser_state, right_type)
     max_input_width = max(left_width, right_width)
-    output_width = VHDL.GET_WIDTH_FROM_C_TYPE_STR(parser_state, output_type)
+    output_width = LOGIC.GET_WIDTH_FROM_C_TYPE_STR(parser_state, output_type)
     wires_decl_text = (
         """
   carry : std_logic_vector(0 downto 0);
@@ -1878,10 +1878,10 @@ def GET_BIN_OP_MINUS_C_BUILT_IN_UINT_N_C_ENTITY_WIRES_DECL_AND_PACKAGE_STAGES_TE
     left_type = logic.wire_to_c_type[logic.inputs[0]]
     right_type = logic.wire_to_c_type[logic.inputs[1]]
     output_type = logic.wire_to_c_type[logic.outputs[0]]
-    left_width = VHDL.GET_WIDTH_FROM_C_TYPE_STR(parser_state, left_type)
-    right_width = VHDL.GET_WIDTH_FROM_C_TYPE_STR(parser_state, right_type)
+    left_width = LOGIC.GET_WIDTH_FROM_C_TYPE_STR(parser_state, left_type)
+    right_width = LOGIC.GET_WIDTH_FROM_C_TYPE_STR(parser_state, right_type)
     max_input_width = max(left_width, right_width)
-    output_width = VHDL.GET_WIDTH_FROM_C_TYPE_STR(parser_state, output_type)
+    output_width = LOGIC.GET_WIDTH_FROM_C_TYPE_STR(parser_state, output_type)
     wires_decl_text = (
         """
   carry : std_logic_vector(0 downto 0);
@@ -2063,11 +2063,11 @@ def GET_BIN_OP_MINUS_C_BUILT_IN_C_ENTITY_WIRES_DECL_AND_PROCESS_STAGES_TEXT(
 
     # Binary operation between what two types?
     # Only ints for now, check all inputs
-    if VHDL.WIRES_ARE_UINT_N(logic.inputs, logic):
+    if LOGIC.WIRES_ARE_UINT_N(logic.inputs, logic):
         return GET_BIN_OP_MINUS_C_BUILT_IN_UINT_N_C_ENTITY_WIRES_DECL_AND_PACKAGE_STAGES_TEXT(
             logic, parser_state, timing_params
         )
-    elif VHDL.WIRES_ARE_INT_N(logic.inputs, logic):
+    elif LOGIC.WIRES_ARE_INT_N(logic.inputs, logic):
         return GET_BIN_OP_MINUS_C_BUILT_IN_INT_N_C_ENTITY_WIRES_DECL_AND_PACKAGE_STAGES_TEXT(
             logic, parser_state, timing_params
         )
@@ -2262,10 +2262,10 @@ def GET_BIN_OP_PLUS_C_BUILT_IN_UINT_N_C_ENTITY_WIRES_DECL_AND_PACKAGE_STAGES_TEX
     left_type = logic.wire_to_c_type[logic.inputs[0]]
     right_type = logic.wire_to_c_type[logic.inputs[1]]
     output_type = logic.wire_to_c_type[logic.outputs[0]]
-    left_width = VHDL.GET_WIDTH_FROM_C_TYPE_STR(parser_state, left_type)
-    right_width = VHDL.GET_WIDTH_FROM_C_TYPE_STR(parser_state, right_type)
+    left_width = LOGIC.GET_WIDTH_FROM_C_TYPE_STR(parser_state, left_type)
+    right_width = LOGIC.GET_WIDTH_FROM_C_TYPE_STR(parser_state, right_type)
     max_input_width = max(left_width, right_width)
-    output_width = VHDL.GET_WIDTH_FROM_C_TYPE_STR(parser_state, output_type)
+    output_width = LOGIC.GET_WIDTH_FROM_C_TYPE_STR(parser_state, output_type)
     wires_decl_text = (
         """
   carry : std_logic_vector(0 downto 0);
@@ -2524,14 +2524,14 @@ def GET_BIN_OP_PLUS_C_BUILT_IN_INT_N_C_ENTITY_WIRES_DECL_AND_PACKAGE_STAGES_TEXT
     left_type = logic.wire_to_c_type[logic.inputs[0]]
     right_type = logic.wire_to_c_type[logic.inputs[1]]
     output_type = logic.wire_to_c_type[logic.outputs[0]]
-    left_width = VHDL.GET_WIDTH_FROM_C_TYPE_STR(parser_state, left_type)
-    right_width = VHDL.GET_WIDTH_FROM_C_TYPE_STR(parser_state, right_type)
+    left_width = LOGIC.GET_WIDTH_FROM_C_TYPE_STR(parser_state, left_type)
+    right_width = LOGIC.GET_WIDTH_FROM_C_TYPE_STR(parser_state, right_type)
     max_input_width = max(left_width, right_width)
 
     # Do each bit over a clock cycle
     width = max_input_width + 1
 
-    output_width = VHDL.GET_WIDTH_FROM_C_TYPE_STR(parser_state, output_type)
+    output_width = LOGIC.GET_WIDTH_FROM_C_TYPE_STR(parser_state, output_type)
     wires_decl_text = (
         """
   carry : std_logic_vector(0 downto 0);
@@ -2775,9 +2775,9 @@ def GET_BIN_OP_MULT_C_BUILT_IN_C_ENTITY_WIRES_DECL_AND_PROCESS_STAGES_TEXT(
     output_type = logic.wire_to_c_type[logic.outputs[0]]
     output_vhdl_type = VHDL.C_TYPE_STR_TO_VHDL_TYPE_STR(output_type, parser_state)
     """
-  output_width = VHDL.GET_WIDTH_FROM_C_TYPE_STR(parser_state, output_type)
-  left_width = VHDL.GET_WIDTH_FROM_C_TYPE_STR(parser_state, left_type)
-  right_width = VHDL.GET_WIDTH_FROM_C_TYPE_STR(parser_state, right_type)
+  output_width = LOGIC.GET_WIDTH_FROM_C_TYPE_STR(parser_state, output_type)
+  left_width = LOGIC.GET_WIDTH_FROM_C_TYPE_STR(parser_state, left_type)
+  right_width = LOGIC.GET_WIDTH_FROM_C_TYPE_STR(parser_state, right_type)
   max_input_width = max(left_width,right_width)
   """
 
@@ -2855,11 +2855,11 @@ def GET_ACCUM_C_BUILT_IN_C_ENTITY_WIRES_DECL_AND_PROCESS_STAGES_TEXT(
     logic, parser_state, timing_params
 ):
     # Accum only for uint for now?
-    if VHDL.WIRES_ARE_UINT_N(logic.inputs, logic):
+    if LOGIC.WIRES_ARE_UINT_N(logic.inputs, logic):
         return GET_ACCUM_UINT_C_BUILT_IN_C_ENTITY_WIRES_DECL_AND_PACKAGE_STAGES_TEXT(
             logic, parser_state, timing_params
         )
-    elif VHDL.WIRES_ARE_INT_N([logic.inputs[0]], logic):
+    elif LOGIC.WIRES_ARE_INT_N([logic.inputs[0]], logic):
         return GET_ACCUM_INT_C_BUILT_IN_C_ENTITY_WIRES_DECL_AND_PACKAGE_STAGES_TEXT(
             logic, parser_state, timing_params
         )
@@ -2874,9 +2874,9 @@ def GET_ACCUM_UINT_C_BUILT_IN_C_ENTITY_WIRES_DECL_AND_PACKAGE_STAGES_TEXT(
     accum_type = logic.wire_to_c_type[logic.inputs[0]]
     reset_type = logic.wire_to_c_type[logic.inputs[1]]
     output_type = logic.wire_to_c_type[logic.outputs[0]]
-    accum_width = VHDL.GET_WIDTH_FROM_C_TYPE_STR(parser_state, accum_type)
-    reset_width = VHDL.GET_WIDTH_FROM_C_TYPE_STR(parser_state, reset_type)
-    output_width = VHDL.GET_WIDTH_FROM_C_TYPE_STR(parser_state, output_type)
+    accum_width = LOGIC.GET_WIDTH_FROM_C_TYPE_STR(parser_state, accum_type)
+    reset_width = LOGIC.GET_WIDTH_FROM_C_TYPE_STR(parser_state, reset_type)
+    output_width = LOGIC.GET_WIDTH_FROM_C_TYPE_STR(parser_state, output_type)
     # Reuses names from adder -
     # trying to fit state into stateless write_pipe style pipelines will be fucky...
     # Oh shit theres no way to give the accum reg an initial value?
@@ -3090,9 +3090,9 @@ def GET_ACCUM_INT_C_BUILT_IN_C_ENTITY_WIRES_DECL_AND_PACKAGE_STAGES_TEXT(
     accum_type = logic.wire_to_c_type[logic.inputs[0]]
     reset_type = logic.wire_to_c_type[logic.inputs[1]]
     output_type = logic.wire_to_c_type[logic.outputs[0]]
-    accum_width = VHDL.GET_WIDTH_FROM_C_TYPE_STR(parser_state, accum_type)
-    reset_width = VHDL.GET_WIDTH_FROM_C_TYPE_STR(parser_state, reset_type)
-    output_width = VHDL.GET_WIDTH_FROM_C_TYPE_STR(parser_state, output_type)
+    accum_width = LOGIC.GET_WIDTH_FROM_C_TYPE_STR(parser_state, accum_type)
+    reset_width = LOGIC.GET_WIDTH_FROM_C_TYPE_STR(parser_state, reset_type)
+    output_width = LOGIC.GET_WIDTH_FROM_C_TYPE_STR(parser_state, output_type)
     max_input_width = accum_width
 
     # Do each bit over a clock cycle
@@ -3100,7 +3100,7 @@ def GET_ACCUM_INT_C_BUILT_IN_C_ENTITY_WIRES_DECL_AND_PACKAGE_STAGES_TEXT(
     # YEah this whole business with signed numbers treated as unsigned is f'd below and in int add
     # Especially with use of min(, accum_width-1) below
 
-    output_width = VHDL.GET_WIDTH_FROM_C_TYPE_STR(parser_state, output_type)
+    output_width = LOGIC.GET_WIDTH_FROM_C_TYPE_STR(parser_state, output_type)
     wires_decl_text = (
         """
   carry : std_logic_vector(0 downto 0);
@@ -3325,11 +3325,11 @@ def GET_BIN_OP_PLUS_C_BUILT_IN_C_ENTITY_WIRES_DECL_AND_PROCESS_STAGES_TEXT(
     LogicInstLookupTable = parser_state.LogicInstLookupTable
     # Binary operation between what two types?
     # Only ints for now, check all inputs
-    if VHDL.WIRES_ARE_INT_N(logic.inputs, logic):
+    if LOGIC.WIRES_ARE_INT_N(logic.inputs, logic):
         return GET_BIN_OP_PLUS_C_BUILT_IN_INT_N_C_ENTITY_WIRES_DECL_AND_PACKAGE_STAGES_TEXT(
             logic, parser_state, timing_params
         )
-    elif VHDL.WIRES_ARE_UINT_N(logic.inputs, logic):
+    elif LOGIC.WIRES_ARE_UINT_N(logic.inputs, logic):
         return GET_BIN_OP_PLUS_C_BUILT_IN_UINT_N_C_ENTITY_WIRES_DECL_AND_PACKAGE_STAGES_TEXT(
             logic, parser_state, timing_params
         )
@@ -3344,11 +3344,11 @@ def GET_BIN_OP_LT_LTE_C_BUILT_IN_C_ENTITY_WIRES_DECL_AND_PROCESS_STAGES_TEXT(
     LogicInstLookupTable = parser_state.LogicInstLookupTable
     # Binary operation between what two types?
     # Only ints for now, check all inputs
-    if VHDL.WIRES_ARE_INT_N(logic.inputs, logic):
+    if LOGIC.WIRES_ARE_INT_N(logic.inputs, logic):
         return GET_BIN_OP_LT_LTE_C_BUILT_IN_INT_N_C_ENTITY_WIRES_DECL_AND_PACKAGE_STAGES_TEXT(
             logic, parser_state, timing_params, op_str
         )
-    elif VHDL.WIRES_ARE_UINT_N(logic.inputs, logic):
+    elif LOGIC.WIRES_ARE_UINT_N(logic.inputs, logic):
         return GET_BIN_OP_LT_LTE_C_BUILT_IN_UINT_N_C_ENTITY_WIRES_DECL_AND_PACKAGE_STAGES_TEXT(
             logic, parser_state, timing_params, op_str
         )
@@ -3364,11 +3364,11 @@ def GET_BIN_OP_GT_GTE_C_BUILT_IN_C_ENTITY_WIRES_DECL_AND_PROCESS_STAGES_TEXT(
     LogicInstLookupTable = parser_state.LogicInstLookupTable
     # Binary operation between what two types?
     # Only ints for now, check all inputs
-    if VHDL.WIRES_ARE_INT_N(logic.inputs, logic):
+    if LOGIC.WIRES_ARE_INT_N(logic.inputs, logic):
         return GET_BIN_OP_GT_GTE_C_BUILT_IN_INT_N_C_ENTITY_WIRES_DECL_AND_PACKAGE_STAGES_TEXT(
             logic, parser_state, timing_params, op_str
         )
-    elif VHDL.WIRES_ARE_UINT_N(logic.inputs, logic):
+    elif LOGIC.WIRES_ARE_UINT_N(logic.inputs, logic):
         return GET_BIN_OP_GT_GTE_C_BUILT_IN_UINT_N_C_ENTITY_WIRES_DECL_AND_PACKAGE_STAGES_TEXT(
             logic, parser_state, timing_params, op_str
         )
@@ -3382,8 +3382,8 @@ def GET_BIN_OP_GT_GTE_C_BUILT_IN_INT_N_C_ENTITY_WIRES_DECL_AND_PACKAGE_STAGES_TE
 ):
     left_type = logic.wire_to_c_type[logic.inputs[0]]
     right_type = logic.wire_to_c_type[logic.inputs[1]]
-    left_width = VHDL.GET_WIDTH_FROM_C_TYPE_STR(parser_state, left_type)
-    right_width = VHDL.GET_WIDTH_FROM_C_TYPE_STR(parser_state, right_type)
+    left_width = LOGIC.GET_WIDTH_FROM_C_TYPE_STR(parser_state, left_type)
+    right_width = LOGIC.GET_WIDTH_FROM_C_TYPE_STR(parser_state, right_type)
     max_width = max(left_width, right_width)
     wires_decl_text = (
         """ 
@@ -3560,8 +3560,8 @@ def GET_BIN_OP_LT_LTE_C_BUILT_IN_INT_N_C_ENTITY_WIRES_DECL_AND_PACKAGE_STAGES_TE
 ):
     left_type = logic.wire_to_c_type[logic.inputs[0]]
     right_type = logic.wire_to_c_type[logic.inputs[1]]
-    left_width = VHDL.GET_WIDTH_FROM_C_TYPE_STR(parser_state, left_type)
-    right_width = VHDL.GET_WIDTH_FROM_C_TYPE_STR(parser_state, right_type)
+    left_width = LOGIC.GET_WIDTH_FROM_C_TYPE_STR(parser_state, left_type)
+    right_width = LOGIC.GET_WIDTH_FROM_C_TYPE_STR(parser_state, right_type)
     max_width = max(left_width, right_width)
     wires_decl_text = (
         """ 
@@ -3713,8 +3713,8 @@ def GET_BIN_OP_LT_LTE_C_BUILT_IN_UINT_N_C_ENTITY_WIRES_DECL_AND_PACKAGE_STAGES_T
     LogicInstLookupTable = parser_state.LogicInstLookupTable
     left_type = logic.wire_to_c_type[logic.inputs[0]]
     right_type = logic.wire_to_c_type[logic.inputs[1]]
-    left_width = VHDL.GET_WIDTH_FROM_C_TYPE_STR(parser_state, left_type)
-    right_width = VHDL.GET_WIDTH_FROM_C_TYPE_STR(parser_state, right_type)
+    left_width = LOGIC.GET_WIDTH_FROM_C_TYPE_STR(parser_state, left_type)
+    right_width = LOGIC.GET_WIDTH_FROM_C_TYPE_STR(parser_state, right_type)
     max_width = max(left_width, right_width)
     wires_decl_text = (
         """
@@ -3852,8 +3852,8 @@ def GET_BIN_OP_GT_GTE_C_BUILT_IN_UINT_N_C_ENTITY_WIRES_DECL_AND_PACKAGE_STAGES_T
     LogicInstLookupTable = parser_state.LogicInstLookupTable
     left_type = logic.wire_to_c_type[logic.inputs[0]]
     right_type = logic.wire_to_c_type[logic.inputs[1]]
-    left_width = VHDL.GET_WIDTH_FROM_C_TYPE_STR(parser_state, left_type)
-    right_width = VHDL.GET_WIDTH_FROM_C_TYPE_STR(parser_state, right_type)
+    left_width = LOGIC.GET_WIDTH_FROM_C_TYPE_STR(parser_state, left_type)
+    right_width = LOGIC.GET_WIDTH_FROM_C_TYPE_STR(parser_state, right_type)
     max_width = max(left_width, right_width)
     wires_decl_text = (
         """ 
@@ -4163,12 +4163,12 @@ def GET_CAST_C_BUILT_IN_C_ENTITY_WIRES_DECL_AND_PROCESS_STAGES_TEXT(
     # ONLY INTS FOR NOW
     in_type = logic.wire_to_c_type[logic.inputs[0]]
     in_vhdl_type = VHDL.C_TYPE_STR_TO_VHDL_TYPE_STR(in_type, parser_state)
-    in_width = VHDL.GET_WIDTH_FROM_C_TYPE_STR(parser_state, in_type)
-    in_signed = VHDL.C_TYPE_IS_INT_N(in_type)
+    in_width = LOGIC.GET_WIDTH_FROM_C_TYPE_STR(parser_state, in_type)
+    in_signed = LOGIC.C_TYPE_IS_INT_N(in_type)
     output_type = logic.wire_to_c_type[logic.outputs[0]]
     output_vhdl_type = VHDL.C_TYPE_STR_TO_VHDL_TYPE_STR(output_type, parser_state)
-    output_width = VHDL.GET_WIDTH_FROM_C_TYPE_STR(parser_state, output_type)
-    out_signed = VHDL.C_TYPE_IS_INT_N(output_type)
+    output_width = LOGIC.GET_WIDTH_FROM_C_TYPE_STR(parser_state, output_type)
+    out_signed = LOGIC.C_TYPE_IS_INT_N(output_type)
 
     wires_decl_text = (
         """
@@ -4344,7 +4344,7 @@ def GET_FLOAT_SIGN_C_ENTITY_WIRES_DECL_AND_PACKAGE_STAGES_TEXT(
 ):
     in_type = logic.wire_to_c_type[logic.inputs[0]]
     in_vhdl_type = VHDL.C_TYPE_STR_TO_VHDL_TYPE_STR(in_type, parser_state)
-    in_width = VHDL.GET_WIDTH_FROM_C_TYPE_STR(parser_state, in_type)
+    in_width = LOGIC.GET_WIDTH_FROM_C_TYPE_STR(parser_state, in_type)
     out_type = "uint1_t"
     out_vhdl_type = VHDL.C_TYPE_STR_TO_VHDL_TYPE_STR(out_type, parser_state)
 
@@ -4377,7 +4377,7 @@ def GET_FLOAT_ABS_C_ENTITY_WIRES_DECL_AND_PACKAGE_STAGES_TEXT(
 ):
     in_type = logic.wire_to_c_type[logic.inputs[0]]
     in_vhdl_type = VHDL.C_TYPE_STR_TO_VHDL_TYPE_STR(in_type, parser_state)
-    in_width = VHDL.GET_WIDTH_FROM_C_TYPE_STR(parser_state, in_type)
+    in_width = LOGIC.GET_WIDTH_FROM_C_TYPE_STR(parser_state, in_type)
     out_type = logic.wire_to_c_type[logic.outputs[0]]
     out_vhdl_type = VHDL.C_TYPE_STR_TO_VHDL_TYPE_STR(out_type, parser_state)
 
@@ -4411,7 +4411,7 @@ def GET_FLOAT_UINT_CONSTRUCT_C_ENTITY_WIRES_DECL_AND_PACKAGE_STAGES_TEXT(
 ):
     in_type = logic.wire_to_c_type[logic.inputs[0]]
     in_vhdl_type = VHDL.C_TYPE_STR_TO_VHDL_TYPE_STR(in_type, parser_state)
-    in_width = VHDL.GET_WIDTH_FROM_C_TYPE_STR(parser_state, in_type)
+    in_width = LOGIC.GET_WIDTH_FROM_C_TYPE_STR(parser_state, in_type)
     out_width = in_width
     out_vhdl_type = "std_logic_vector(" + str(out_width - 1) + " downto 0)"
 
@@ -4452,9 +4452,9 @@ def GET_FLOAT_SEM_CONSTRUCT_C_ENTITY_WIRES_DECL_AND_PACKAGE_STAGES_TEXT(
     s_vhdl_type = VHDL.C_TYPE_STR_TO_VHDL_TYPE_STR(s_type, parser_state)
     e_vhdl_type = VHDL.C_TYPE_STR_TO_VHDL_TYPE_STR(e_type, parser_state)
     m_vhdl_type = VHDL.C_TYPE_STR_TO_VHDL_TYPE_STR(m_type, parser_state)
-    s_width = VHDL.GET_WIDTH_FROM_C_TYPE_STR(parser_state, s_type)
-    e_width = VHDL.GET_WIDTH_FROM_C_TYPE_STR(parser_state, e_type)
-    m_width = VHDL.GET_WIDTH_FROM_C_TYPE_STR(parser_state, m_type)
+    s_width = LOGIC.GET_WIDTH_FROM_C_TYPE_STR(parser_state, s_type)
+    e_width = LOGIC.GET_WIDTH_FROM_C_TYPE_STR(parser_state, e_type)
+    m_width = LOGIC.GET_WIDTH_FROM_C_TYPE_STR(parser_state, m_type)
     out_width = s_width + e_width + m_width
     out_vhdl_type = "std_logic_vector(" + str(out_width - 1) + " downto 0)"
 
@@ -4498,8 +4498,8 @@ def GET_BIT_CONCAT_C_ENTITY_WIRES_DECL_AND_PACKAGE_STAGES_TEXT(
     y_type = logic.wire_to_c_type[logic.inputs[1]]
     x_vhdl_type = VHDL.C_TYPE_STR_TO_VHDL_TYPE_STR(x_type, parser_state)
     y_vhdl_type = VHDL.C_TYPE_STR_TO_VHDL_TYPE_STR(y_type, parser_state)
-    x_width = VHDL.GET_WIDTH_FROM_C_TYPE_STR(parser_state, x_type)
-    y_width = VHDL.GET_WIDTH_FROM_C_TYPE_STR(parser_state, y_type)
+    x_width = LOGIC.GET_WIDTH_FROM_C_TYPE_STR(parser_state, x_type)
+    y_width = LOGIC.GET_WIDTH_FROM_C_TYPE_STR(parser_state, y_type)
     out_width = x_width + y_width
     out_vhdl_type = "unsigned(" + str(out_width - 1) + " downto 0)"
 
@@ -4541,7 +4541,7 @@ def GET_BYTE_SWAP_C_ENTITY_WIRES_DECL_AND_PACKAGE_STAGES_TEXT(
     # print "logic.inputs",logic.inputs
     x_type = logic.wire_to_c_type[logic.inputs[0]]
     x_vhdl_type = VHDL.C_TYPE_STR_TO_VHDL_TYPE_STR(x_type, parser_state)
-    x_width = VHDL.GET_WIDTH_FROM_C_TYPE_STR(parser_state, x_type)
+    x_width = LOGIC.GET_WIDTH_FROM_C_TYPE_STR(parser_state, x_type)
 
     wires_decl_text = (
         """
@@ -4576,20 +4576,20 @@ def GET_BIT_ASSIGN_C_ENTITY_WIRES_DECL_AND_PACKAGE_STAGES_TEXT(
 ):
     LogicInstLookupTable = parser_state.LogicInstLookupTable
     toks = logic.func_name.split("_")
-    input_bit_width = VHDL.GET_WIDTH_FROM_C_TYPE_STR(parser_state, toks[0] + "_t")
-    assign_width = VHDL.GET_WIDTH_FROM_C_TYPE_STR(parser_state, toks[1] + "_t")
+    input_bit_width = LOGIC.GET_WIDTH_FROM_C_TYPE_STR(parser_state, toks[0] + "_t")
+    assign_width = LOGIC.GET_WIDTH_FROM_C_TYPE_STR(parser_state, toks[1] + "_t")
     low_index = int(toks[2])
     high_index = low_index + assign_width - 1
     result_width = input_bit_width
 
     in_type = logic.wire_to_c_type[logic.inputs[0]]
     in_vhdl_type = VHDL.C_TYPE_STR_TO_VHDL_TYPE_STR(in_type, parser_state)
-    in_width = VHDL.GET_WIDTH_FROM_C_TYPE_STR(parser_state, in_type)
+    in_width = LOGIC.GET_WIDTH_FROM_C_TYPE_STR(parser_state, in_type)
 
     # print "logic.inputs",logic.inputs
     x_type = logic.wire_to_c_type[logic.inputs[1]]
     x_vhdl_type = VHDL.C_TYPE_STR_TO_VHDL_TYPE_STR(x_type, parser_state)
-    x_width = VHDL.GET_WIDTH_FROM_C_TYPE_STR(parser_state, x_type)
+    x_width = LOGIC.GET_WIDTH_FROM_C_TYPE_STR(parser_state, x_type)
 
     intermediate_width = max(in_width, low_index + assign_width)
     intermediate_vhdl_type = "unsigned(" + str(intermediate_width - 1) + " downto 0)"
@@ -4659,8 +4659,8 @@ def GET_CONST_SHIFT_C_BUILT_IN_C_ENTITY_WIRES_DECL_AND_PROCESS_STAGES_TEXT(
     # ONLY INTS FOR NOW
     x_type = logic.wire_to_c_type[logic.inputs[0]]
     x_vhdl_type = VHDL.C_TYPE_STR_TO_VHDL_TYPE_STR(x_type, parser_state)
-    x_width = VHDL.GET_WIDTH_FROM_C_TYPE_STR(parser_state, x_type)
-    x_is_signed = VHDL.C_TYPE_IS_INT_N(x_type)
+    x_width = LOGIC.GET_WIDTH_FROM_C_TYPE_STR(parser_state, x_type)
+    x_is_signed = LOGIC.C_TYPE_IS_INT_N(x_type)
 
     # Shift functions are found in numeric_std package file
     # Shift functions can perform both logical (zero-fill) and arithmetic (keep sign) shifts
@@ -4727,7 +4727,7 @@ def GET_BIT_SLICE_C_ENTITY_WIRES_DECL_AND_PACKAGE_STAGES_TEXT(
     # ONLY INTS FOR NOW
     x_type = logic.wire_to_c_type[logic.inputs[0]]
     x_vhdl_type = VHDL.C_TYPE_STR_TO_VHDL_TYPE_STR(x_type, parser_state)
-    x_width = VHDL.GET_WIDTH_FROM_C_TYPE_STR(parser_state, x_type)
+    x_width = LOGIC.GET_WIDTH_FROM_C_TYPE_STR(parser_state, x_type)
 
     if high >= low:
         out_width = high - low + 1
@@ -4872,7 +4872,7 @@ def GET_BIT_DUP_C_ENTITY_WIRES_DECL_AND_PACKAGE_STAGES_TEXT(
     # ONLY INTS FOR NOW
     x_type = logic.wire_to_c_type[logic.inputs[0]]
     x_vhdl_type = VHDL.C_TYPE_STR_TO_VHDL_TYPE_STR(x_type, parser_state)
-    x_width = VHDL.GET_WIDTH_FROM_C_TYPE_STR(parser_state, x_type)
+    x_width = LOGIC.GET_WIDTH_FROM_C_TYPE_STR(parser_state, x_type)
     # Multiplier
     multiplier = int(logic.func_name.split("_")[1])
     out_width = x_width * multiplier
@@ -4921,7 +4921,7 @@ def GET_ROTL_C_ENTITY_WIRES_DECL_AND_PACKAGE_STAGES_TEXT(
     # ONLY INTS FOR NOW
     x_type = logic.wire_to_c_type[logic.inputs[0]]
     x_vhdl_type = VHDL.C_TYPE_STR_TO_VHDL_TYPE_STR(x_type, parser_state)
-    x_width = VHDL.GET_WIDTH_FROM_C_TYPE_STR(parser_state, x_type)
+    x_width = LOGIC.GET_WIDTH_FROM_C_TYPE_STR(parser_state, x_type)
     # Rotate amount
     rot_amount = int(logic.func_name.split("_")[1])
     out_width = x_width
@@ -4963,7 +4963,7 @@ def GET_ROTR_C_ENTITY_WIRES_DECL_AND_PACKAGE_STAGES_TEXT(
     # ONLY INTS FOR NOW
     x_type = logic.wire_to_c_type[logic.inputs[0]]
     x_vhdl_type = VHDL.C_TYPE_STR_TO_VHDL_TYPE_STR(x_type, parser_state)
-    x_width = VHDL.GET_WIDTH_FROM_C_TYPE_STR(parser_state, x_type)
+    x_width = LOGIC.GET_WIDTH_FROM_C_TYPE_STR(parser_state, x_type)
     # Rotate amount
     rot_amount = int(logic.func_name.split("_")[1])
     out_width = x_width

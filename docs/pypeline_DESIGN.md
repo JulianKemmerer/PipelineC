@@ -53,16 +53,91 @@ one paragraph per change.
 
 - [Overview](#overview)
 - [C Type System](#c-type-system)
+  - [`_CTypeMeta` Metaclass](#_ctypemeta-metaclass)
+  - [Type Factories](#type-factories)
+  - [Floating-point types](#floating-point-types)
+  - [Predefined Types](#predefined-types)
+  - [`_INT_CTYPE_RE`](#_int_ctype_re)
 - [Type Utilities](#type-utilities)
+  - [`_ctype_is_int(c_type: str) → bool`](#_ctype_is_intc_type-str--bool)
+  - [`_ctype_info(c_type: str) → (is_signed: bool, width: int)`](#_ctype_infoc_type-str--is_signed-bool-width-int)
+  - [`_int_ctype(signed: bool, width: int) → str`](#_int_ctypesigned-bool-width-int--str)
+  - [`_infer_literal_ctype(val: int) → str`](#_infer_literal_ctypeval-int--str)
+  - [`_arith_promote(l_type: str, r_type: str) → (eff_l: str, eff_r: str)`](#_arith_promotel_type-str-r_type-str--eff_l-str-eff_r-str)
+  - [`_arith_output_ctype(op: str, eff_l: str, eff_r: str, result_signed: bool) → ctype`](#_arith_output_ctypeop-str-eff_l-str-eff_r-str-result_signed-bool--ctype)
+  - [`_is_scalar_pypeline_int(ctype) → bool`](#_is_scalar_pypeline_intctype--bool)
+  - [`_ctype_str(t) → str`](#_ctype_strt--str)
 - [Naming Metadata](#naming-metadata)
+  - [User names (`name=`)](#user-names-name)
 - [Struct Support](#struct-support)
+  - [`NamedTuple`](#namedtuple)
+  - [`@struct` Decorator](#struct-decorator)
+- [Enum Support](#enum-support)
+  - [`@enum` Decorator](#enum-decorator)
+  - [`_enum_bit_width(enum_cls) → int`](#_enum_bit_widthenum_cls--int)
+  - [`_is_scalar_pypeline_int(ctype)` — Enum Path](#_is_scalar_pypeline_intctype--enum-path)
+  - [Parameterizable Enums](#parameterizable-enums)
+  - [`PypelineEnum` Base Class](#pypelineenum-base-class)
+  - [Introspection API](#introspection-api)
+- [Char Array Support](#char-array-support)
+  - [`char_t` — Predefined Scalar Type](#char_t--predefined-scalar-type)
+  - [String Literal Initializers](#string-literal-initializers)
+  - [`strlen(arr)` Builtin](#strlenarr-builtin)
+  - [Known Limitation: `Reg[T]` Initializers](#known-limitation-regt-initializers)
+- [Type ↔ Bytes Conversion](#type--bytes-conversion)
+  - [One walk, three consumers](#one-walk-three-consumers)
+  - [The host-export registry](#the-host-export-registry)
+- [Byte-Stream Serialization](#byte-stream-serialization)
 - [Annotation Types](#annotation-types)
+  - [`Reg[T]` / `_RegType`](#regt--_regtype)
+  - [`Feedback[T]` / `_FeedbackType`](#feedbackt--_feedbacktype)
+  - [`Wire[T]` / `_WireType`](#wiret--_wiretype)
+  - [Pipeline timing: aligned globals and `VOLATILE`](#pipeline-timing-aligned-globals-and-volatile)
+  - [`Input[T]` / `_InputType`](#inputt--_inputtype)
+  - [`Output[T]` / `_OutputType`](#outputt--_outputtype)
 - [`PART()` and `@MAIN` Pragmas](#part-and-main-pragmas)
+  - [`PART(part_string)`](#partpart_string)
+  - [`@MAIN` / `@MAIN(mhz)` — Three-Form Decorator](#main--mainmhz--three-form-decorator)
+  - [`make_clock(mhz)` — Naming a Clock (`CLK_MHZ` Equivalent)](#make_clockmhz--naming-a-clock-clk_mhz-equivalent)
+  - [`AUTO_PIPELINE(func, latency=None, start_latency=None, max_latency=None)` — Forced Submodule Pipelining with `.latency`](#auto_pipelinefunc-latencynone-start_latencynone-max_latencynone--forced-submodule-pipelining-with-latency)
+  - [`AUTO_COMB_AREA_OPT(func)` — Zero-Cycle Resource Sharing](#auto_comb_area_optfunc--zero-cycle-resource-sharing)
+  - [`AUTO_FSM(func)` — Resource-Shared State Machines with `.latency`](#auto_fsmfunc--resource-shared-state-machines-with-latency)
+  - [`MULTI_CYCLE[ncycles]` — Multi-Cycle Path Tag](#multi_cyclencycles--multi-cycle-path-tag)
+  - [`AUTO_MULTI_CYCLE(...)` — Tool-Tuned Multi-Cycle Path Tag](#auto_multi_cycle--tool-tuned-multi-cycle-path-tag)
+  - [Fixed User Pipelines](#fixed-user-pipelines)
+  - [`wires(func)` — Just-Wires Synthesis Hint](#wiresfunc--just-wires-synthesis-hint)
+  - [Registries](#registries)
 - [Design Parameters (`param()`, `-D`)](#design-parameters-param--d)
 - [Operator Registry](#operator-registry)
+  - [Op String Values](#op-string-values)
+  - [Global Registries](#global-registries)
+  - [Generic (Matcher-Based) Registrations](#generic-matcher-based-registrations)
+  - [MUX Registry](#mux-registry)
+  - [Scoped Registrations](#scoped-registrations)
+  - [The Native-Sim Dispatch Gate](#the-native-sim-dispatch-gate)
+  - [`SIM_SOFT_OPS`](#sim_soft_ops)
+  - [Scoped Generic Registrations Are Not Memoized Globally](#scoped-generic-registrations-are-not-memoized-globally)
+  - [Struct-Type Operator Dispatch](#struct-type-operator-dispatch)
 - [Casting](#casting)
+  - [Scalar int/char: a language primitive, not a registered cast](#scalar-intchar-a-language-primitive-not-a-registered-cast)
+  - [Compound casts: `register_cast` / `@cast`](#compound-casts-register_cast--cast)
+  - [Interface-half casts bend three checks, deliberately](#interface-half-casts-bend-three-checks-deliberately)
+  - [Interface wrap/unwrap casts (`stream.make_stream_interface`)](#interface-wrapunwrap-casts-streammake_stream_interface)
+- [Soft Operator Library (`include/pypeline/operators/`)](#soft-operator-library-includepypelineoperators)
+  - [Activation](#activation)
+  - [Current defaults](#current-defaults)
+  - [Default replacements for C-generated operators](#default-replacements-for-c-generated-operators)
+  - [What is *not* routed through the registry](#what-is-not-routed-through-the-registry)
 - [`SimVal` — Typed Simulation Integer](#simval--typed-simulation-integer)
+  - [Core Design](#core-design)
+  - [`__getitem__` — Hardware Bit Slicing](#__getitem__--hardware-bit-slicing)
+  - [Operator Dispatch](#operator-dispatch)
+  - [Hardware-Accurate Arithmetic (`SIM_STRICT_ARITH=True`)](#hardware-accurate-arithmetic-sim_strict_arithtrue)
+  - [Allocation Helpers](#allocation-helpers)
+  - [`_RawField(int)` — Raw Mode Struct Fields](#_rawfieldint--raw-mode-struct-fields)
+  - [Type Invariant](#type-invariant)
 - [`concat(*args)` — Bit Concatenation](#concatargs--bit-concatenation)
+  - [`BIT_MANIP_FUNC_NAMES`](#bit_manip_func_names)
 - [`vhdl(text)` — Raw VHDL Passthrough](#vhdltext--raw-vhdl-passthrough)
 - [Reference: `pypeline.py` Public API](#reference-pypelinepy-public-api)
 - [Tests](#tests)
@@ -361,7 +436,7 @@ documentation.
   comments and `name_index.log`. A named type's identity also covers its name.
 - **Where names are allowed.** `@hw_func(name=)` takes only factory-produced functions
   (a `.<locals>.` qualname). A top-level function's key comes from PARSE_FILE's
-  pre-registration (`_hw_func_name`), and its Python name already is its name.
+  pre-registration (`HW_FUNC_NAME`), and its Python name already is its name.
   `@hw_func(name=)` on an already-wrapped function is an error too: give the name where
   the function is first decorated.
 - **The capture rule.** `capture_factory_args` and `_exec_generated_func`'s frame
@@ -1474,7 +1549,7 @@ injected constants in hardware bodies, provenance) is in
     process, at its first `param()` call, so every parse and every simulation import
     returns the same value, and an `env=` variable is read once;
   - `_design_param_decls` holds the declarations of the current import.
-    `PARSE_FILE` and `pypeline_sim._import_design` reset it
+    `PARSE_FILE` and `pypeline_sim.import_design` reset it
     (`RESET_DESIGN_PARAM_DECLARATIONS`), and the re-executed design re-registers.
 - **Injected globals.** `SET_DESIGN_PARAMS` also installs every `-D` name in
   `builtins` (parsed as a Python literal, else a string), saving whatever it replaced.
@@ -2068,7 +2143,7 @@ registration they would reach `C_TO_LOGIC.BUILD_LOGIC_AS_C_CODE` — the C front
 generation, shelled out through `cpp` and pycparser: int unary `NEGATE`, int
 `GT`/`GTE`/`LT`/`LTE`, `DIV`, `MOD`, and
 variable-amount shift (`SL`/`SR` with a non-constant right operand). `PY_TO_LOGIC.PARSE_FILE`
-and `pypeline_sim.py`'s `_import_design` both call
+and `pypeline_sim.py`'s `import_design` both call
 `operators.soft.register_sw_lib_replacements()` once per process, globally, *before* the
 design file itself is imported — so a later, more specific registration in the design
 (an exact pin, a different flavor, or `INFERRED`) still wins, since generic resolution

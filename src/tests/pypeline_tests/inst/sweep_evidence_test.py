@@ -9,6 +9,7 @@ from types import SimpleNamespace
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "../../.."))
 import AUTO_PIPELINE
+import LOGIC
 import SWEEP
 import SYN
 import VIVADO
@@ -376,7 +377,7 @@ def test_scripted_shared_clock_freezes_unimplicated_and_skips_noops():
                 (SYN, "WRITE_AREA_ESTIMATE_FILE", noop),
                 (SYN, "ESTIMATE_DESIGN_AREA", lambda *a: {"total_area": 0}),
                 (SYN, "PRINT_MEASURED_AREA_IF_AVAILABLE", noop),
-                (SYN, "FUNC_SRC_LOC_STR", lambda *a: ""),
+                (LOGIC, "FUNC_SRC_LOC_STR", lambda *a: ""),
                 (AUTO_PIPELINE, "GET_ZERO_ADDED_CLKS_TIMING_PARAMS_LOOKUP", fresh),
                 (AUTO_PIPELINE, "COLLECT_AUTO_PIPELINE_REGIONS", lambda *a: []),
                 (AUTO_PIPELINE, "CHECK_ADDED_LATENCY_CONTEXT", noop),
@@ -761,7 +762,7 @@ def _scripted_sweep_patches(backend, fresh, extra=()):
         (SYN, "WRITE_AREA_ESTIMATE_FILE", noop),
         (SYN, "ESTIMATE_DESIGN_AREA", lambda *a: {"total_area": 0}),
         (SYN, "PRINT_MEASURED_AREA_IF_AVAILABLE", noop),
-        (SYN, "FUNC_SRC_LOC_STR", lambda *a: ""),
+        (LOGIC, "FUNC_SRC_LOC_STR", lambda *a: ""),
         (AUTO_PIPELINE, "GET_ZERO_ADDED_CLKS_TIMING_PARAMS_LOOKUP", fresh),
         (AUTO_PIPELINE, "COLLECT_AUTO_PIPELINE_REGIONS", lambda *a: []),
         (AUTO_PIPELINE, "CHECK_ADDED_LATENCY_CONTEXT", noop),

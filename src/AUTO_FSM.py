@@ -4329,7 +4329,7 @@ def DEL_AUTO_FSM_SUBTREE_CACHE():
     _FUNC_SUBTREE_HAS_AUTO_FSM_cache = {}
 
 
-def _AUTO_FSM_MUX_ENTITIES(parser_state):
+def AUTO_FSM_MUX_ENTITIES(parser_state):
     # Operand multiplexers inside generated AUTO_FSM state machines.
     #
     # A generated FSM holds state, so its geometry stays estimated. Its muxes

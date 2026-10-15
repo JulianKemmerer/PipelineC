@@ -30,6 +30,9 @@ software == native-sim hardware == VHDL hardware.
 WHAT LANDS WHERE. One file, `<out_dir>/host/pypeline_host_types.py`, written by
 `write_host_types()` from `src/pipelinec` after parsing a `.py` design. Nothing
 is written when a design serializes no struct.
+
+Design notes: docs/pypeline_DESIGN.md, "One walk, three consumers". User guide:
+docs/pypeline_guide.md, "Host Type Export Declarations".
 """
 
 import os

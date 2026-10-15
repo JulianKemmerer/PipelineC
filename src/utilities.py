@@ -1,3 +1,8 @@
+"""Small helpers every compiler module may import (tool lookup, shell commands, repo
+paths, version string, regex matching). They import nothing from the compiler, so any
+module can use them without joining an import cycle. No design doc of its own.
+"""
+
 import os
 import re
 import shlex
@@ -31,6 +36,16 @@ def REPO_ABS_DIR():
         os.path.dirname(os.path.realpath(__file__)) + "/../"
     )
     return _REPO_ABS_DIR
+
+
+def DISPLAY_SOURCE(source):
+    """Portable source paths in generated HDL; absolute paths remain in index."""
+    # abspath (not REPO_ABS_DIR's realpath): design paths are compared unresolved
+    root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+    if source.startswith(root + os.sep):
+        return os.path.relpath(source, root)
+    # Synthetic sources and external designs do not embed the scratch root.
+    return os.path.basename(source)
 
 
 def _GIT(argv) -> Optional[str]:

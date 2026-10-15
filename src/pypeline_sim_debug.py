@@ -24,6 +24,9 @@ inspected afterward without re-running either sim -- the GHDL run in
 particular is slow. On mismatch, the report also prints +/- --context cycles
 of debug-tagged lines around the first divergence, side by side, from both
 logs -- no manual grep round-trip needed.
+
+Design notes: docs/pypeline_sim_DESIGN.md (`sim_print(..., debug=True)` and
+"pypeline_sim_debug.py under non---comb"). User docs: docs/README.md.
 """
 
 import argparse

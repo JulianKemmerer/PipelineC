@@ -19,12 +19,15 @@ Also asserts, specific to the post-restructure `docs/pypeline_guide.md`:
     `#11-types`-style numbered anchors from the old numbered-heading scheme).
 
 And asserts the docs/ directory reads as reference material, not a logbook
-(see "Documentation conventions" in docs/README.md):
+(see "Documentation conventions" in docs/pypeline_DESIGN.md):
   - no heading under docs/ names a date, outside a '## History' section.
   - no body text under docs/ names an ISO date, outside a '## History'
     section or a fenced code block.
   - every docs/*.md design doc and guide carries the convention note, and
-    docs/README.md itself carries the anchor that note links to.
+    docs/pypeline_DESIGN.md itself carries the anchor that note links to.
+
+And that every docs/*_DESIGN.md has a '## Table of Contents' linking each of
+its '##' headings, in document order.
 
 Run standalone: python3 doc_links_test.py
 """
@@ -252,6 +255,7 @@ _DOCS_WITH_CONVENTION_NOTE = [
     "PY_TO_LOGIC_DESIGN.md",
     "RAW_VHDL_DESIGN.md",
     "SWEEP_DESIGN.md",
+    "SIM_DESIGN.md",
     "SYN_DESIGN.md",
     "VHDL_DESIGN.md",
     "pipelinec_to_pypeline.md",
@@ -364,6 +368,77 @@ def test_docs_have_convention_note():
         raise AssertionError(
             "Documentation convention note check failed:\n  " + "\n  ".join(missing)
         )
+
+
+def _ordered_headings(text: str) -> list:
+    """(level, anchor, line_no) for each heading outside code fences, in
+    document order, with the same GitHub '-1', '-2' de-duplication as
+    _anchor_set."""
+    seen_counts = {}
+    out = []
+    in_fence = False
+    for i, line in enumerate(text.split("\n"), start=1):
+        stripped = line.strip()
+        if stripped.startswith("```") or stripped.startswith("~~~"):
+            in_fence = not in_fence
+            continue
+        if in_fence:
+            continue
+        m = _HEADING_RE.match(line)
+        if not m:
+            continue
+        base = _slugify(m.group(2))
+        if base == "":
+            continue
+        if base in seen_counts:
+            seen_counts[base] += 1
+            slug = f"{base}-{seen_counts[base]}"
+        else:
+            seen_counts[base] = 0
+            slug = base
+        out.append((len(m.group(1)), slug, i))
+    return out
+
+
+def test_design_docs_have_complete_toc():
+    """Every docs/*_DESIGN.md has a '## Table of Contents' (ended by the next
+    '---' rule or heading) whose in-page links cover each '##' heading after
+    it, in document order, and every TOC link resolves (checked here too: a
+    heading like `Wire[T]` makes link text test_no_broken_markdown_links cannot
+    parse). Deeper entries are optional."""
+    problems = []
+    for path in sorted(
+        os.path.join(DOCS_DIR, n) for n in os.listdir(DOCS_DIR) if n.endswith("_DESIGN.md")
+    ):
+        name = os.path.basename(path)
+        with open(path, encoding="utf-8") as fh:
+            text = fh.read()
+        headings = _ordered_headings(text)
+        toc = [h for h in headings if h[0] == 2 and h[1] == "table-of-contents"]
+        if not toc:
+            problems.append(f"{name}: no '## Table of Contents'")
+            continue
+        toc_line = toc[0][2]
+        lines = text.split("\n")
+        toc_links = []
+        for line in lines[toc_line:]:
+            if line.strip() == "---" or _HEADING_RE.match(line):
+                break
+            toc_links += [t[1:] for t in re.findall(r"\]\((#[^)\s]+)\)", line)]
+        anchors = {slug for level, slug, i in headings}
+        unresolved = [slug for slug in toc_links if slug not in anchors]
+        if unresolved:
+            problems.append(f"{name}: TOC links to missing anchor(s): {', '.join(unresolved)}")
+        wanted = [slug for level, slug, i in headings if level == 2 and i > toc_line]
+        missing = [slug for slug in wanted if slug not in toc_links]
+        if missing:
+            problems.append(f"{name}: TOC misses ## heading(s): {', '.join(missing)}")
+            continue
+        listed = [slug for slug in toc_links if slug in wanted]
+        if listed != wanted:
+            problems.append(f"{name}: TOC lists ## headings out of document order")
+    if problems:
+        raise AssertionError("Design-doc table of contents check failed:\n  " + "\n  ".join(problems))
 
 
 if __name__ == "__main__":

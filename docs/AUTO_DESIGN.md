@@ -23,6 +23,18 @@ representation is [`AUTO_PIPELINE_DESIGN.md`](AUTO_PIPELINE_DESIGN.md).
 > has one, rather than appending a new one. See
 > [documentation conventions](pypeline_DESIGN.md#documentation-conventions).
 
+## Table of Contents
+
+- [1. The typed combinational DAG](#1-the-typed-combinational-dag)
+- [2. Graph utilities and the candidate search](#2-graph-utilities-and-the-candidate-search)
+- [3. Delay: rewrites, heuristics and the timing model](#3-delay-rewrites-heuristics-and-the-timing-model)
+- [4. Area](#4-area)
+- [5. Emitting source](#5-emitting-source)
+- [6. Errors and versions](#6-errors-and-versions)
+- [7. Tests](#7-tests)
+
+---
+
 ---
 
 ## 1. The typed combinational DAG

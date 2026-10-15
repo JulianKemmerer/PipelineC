@@ -16,31 +16,76 @@ For the shared pypeline.py type system and `SimVal` foundations, see
 
 ## Table of Contents
 
-**In-Process Sim Layer (`pypeline.py`)**
 - [Overview](#overview)
 - [`_sim_cast(val, ctype)`](#_sim_castval-ctype)
 - [`@hw_func` / `_sim_type_wrap` — Per-Function Type Propagation](#hw_func--_sim_type_wrap--per-function-type-propagation)
+  - [`has_state=False` — Fast Combinational Path](#has_statefalse--fast-combinational-path)
+  - [`has_state=True` — State-Aware Path](#has_statetrue--state-aware-path)
+  - [Hardware Transparency](#hardware-transparency)
+  - [Usage in Factory Functions](#usage-in-factory-functions)
 - [`_sim_active` Guard — Elaborator-Probing Protection](#_sim_active-guard--elaborator-probing-protection)
 - [`sim_call(func, *args)` — Simulation Entry Point](#sim_callfunc-args--simulation-entry-point)
+  - [`sys.path` bootstrap — and the one case it doesn't cover](#syspath-bootstrap--and-the-one-case-it-doesnt-cover)
 - [Bit-Accurate Arithmetic](#bit-accurate-arithmetic)
   - [`SIM_STRICT_ARITH` — Typed Arithmetic Promotion](#sim_strict_arith--typed-arithmetic-promotion)
+  - [Bitwise Operators (`&`, `|`, `^`) — `_ctype` Preservation and Masking](#bitwise-operators-----_ctype-preservation-and-masking)
   - [`_TypedAnnAssignRewriter` — Truncation at Every Typed Assignment](#_typedannassignrewriter--truncation-at-every-typed-assignment)
+  - [`_sim_cast_deep(value, ctype)` — Typed Casting Through Arrays](#_sim_cast_deepvalue-ctype--typed-casting-through-arrays)
+  - [Char Arrays — `CharArray` and Unified Deep Casting](#char-arrays--chararray-and-unified-deep-casting)
+  - [`_sim_lens_set(obj, path, value)` — Immutable-Aware Deep Set](#_sim_lens_setobj-path-value--immutable-aware-deep-set)
 - [`_build_reg_sim_func` — AST Transformation at Decoration Time](#_build_reg_sim_func--ast-transformation-at-decoration-time)
+  - [Transformed Function Body Pattern](#transformed-function-body-pattern)
+  - [Closure Variable Caveat](#closure-variable-caveat)
+  - [Traceback Line Numbers](#traceback-line-numbers)
 - [`_GlobalWireRewriter` — Wire Read/Write Interception](#_globalwirerewriter--wire-readwrite-interception)
+  - [Field/index lens writes: `_sim_wire_lens_write` / `_sim_wire_lens_read`](#fieldindex-lens-writes-_sim_wire_lens_write--_sim_wire_lens_read)
+  - [Per-invocation zero-reset via runtime claim tracking](#per-invocation-zero-reset-via-runtime-claim-tracking)
 - [`Reg[T]` Simulation — Stateful Registers Across Clock Cycles](#regt-simulation--stateful-registers-across-clock-cycles)
+  - [Instance Path Stack](#instance-path-stack)
+  - [Per-Instance Register State](#per-instance-register-state)
+  - [Multi-Instance Trace Example](#multi-instance-trace-example)
 - [`Feedback[T]` Simulation — Combinatorial Convergence](#feedbackt-simulation--combinatorial-convergence)
+  - [Transformation](#transformation)
+  - [Interaction with `Reg[T]`](#interaction-with-regt)
 - [`sim_model` — Python Simulation Models](#sim_model--python-simulation-models)
-
-**Multi-MAIN Runner (`pypeline_sim.py`)**
+  - [Model Routing Cell](#model-routing-cell)
+  - [Evaluation Semantics (`_call_sim_model`)](#evaluation-semantics-_call_sim_model)
+- [`make_fifo` Simulation Model (`_FifoFwftModel`)](#make_fifo-simulation-model-_fifofwftmodel)
+- [`make_ram` / `make_stream_ram` Simulation Model](#make_ram--make_stream_ram-simulation-model)
 - [`Wire[T]` / `Input[T]` / `Output[T]` Global Wire Simulation](#wiret--inputt--outputt-global-wire-simulation)
+  - [Global Wire State](#global-wire-state)
 - [`pypeline_sim.py` — Multi-MAIN Clock-Cycle Simulation](#pypeline_simpy--multi-main-clock-cycle-simulation)
-- [Simulation Modes](#simulation-modes)
+  - [Per Clock Cycle](#per-clock-cycle)
+  - [Delta-Cycle Convergence Queue](#delta-cycle-convergence-queue)
+  - [Register Commit Timing](#register-commit-timing)
+  - [`@sim_output` — Controlled Side Effects](#sim_output--controlled-side-effects)
+  - [`@sim_input` — Driving Simulation Inputs](#sim_input--driving-simulation-inputs)
+  - [`sim_print` — printf-style Console + Hardware Output](#sim_print--printf-style-console--hardware-output)
+  - [`sim_print(..., debug=True)` — tagged prints for `pypeline_sim_debug.py`](#sim_print-debugtrue--tagged-prints-for-pypeline_sim_debugpy)
+  - [`sim_assert` / `sim_finish` — simulation control builtins](#sim_assert--sim_finish--simulation-control-builtins)
+  - [`@initial` / `@final` — start/end-of-run hooks](#initial--final--startend-of-run-hooks)
+  - [Invocation via `pipelinec --sim --run N`](#invocation-via-pipelinec---sim---run-n)
+  - [Pipelined native sim (non-`--comb` `pipelinec --sim`)](#pipelined-native-sim-non---comb-pipelinec---sim)
 - [Fixed User Pipelines](#fixed-user-pipelines)
-
-**Reference**
+  - [Activation and compatibility](#activation-and-compatibility)
+  - [Preparation and timing sources](#preparation-and-timing-sources)
+  - [Stage execution](#stage-execution)
+  - [Limitations of the existing output-delay model](#limitations-of-the-existing-output-delay-model)
+- [Simulation Modes](#simulation-modes)
+  - [Raw Mode Detail](#raw-mode-detail)
+- [Software-Side Byte Conversion in Testbenches](#software-side-byte-conversion-in-testbenches)
 - [Limitations](#limitations)
 - [Simulation Performance — Hot Paths and Key Optimizations](#simulation-performance--hot-paths-and-key-optimizations)
+  - [1. `_sim_cast` Hot Path (~6 M calls / 1000 cycles)](#1-_sim_cast-hot-path-6-m-calls--1000-cycles)
+  - [2. `SimVal` Arithmetic Operators](#2-simval-arithmetic-operators)
+  - [3. Operator Dispatch Bypass](#3-operator-dispatch-bypass)
+  - [4. `_push_scoped_registrations` Short-Circuit](#4-_push_scoped_registrations-short-circuit)
+  - [5. Two-Path `_sim_type_wrap`](#5-two-path-_sim_type_wrap)
+  - [6. Raw Mode Path (`SIM_RAW_INTS=True`)](#6-raw-mode-path-sim_raw_intstrue)
+  - [Summary](#summary)
 - [Tests](#tests)
+- [History](#history)
+  - [Bitwise operator ctype preservation and masking](#bitwise-operator-ctype-preservation-and-masking)
 
 ---
 
@@ -299,13 +344,13 @@ and never resets `_sim_active` between cycles, so `sim_call(main_fn)` always see
 ### `sys.path` bootstrap — and the one case it doesn't cover
 
 Both `pypelinec` (real builds, via `PY_TO_LOGIC.py`) and `pypelinec --sim` (native sim, via
-`pypeline_sim.py`'s `_import_design`) insert two directories onto `sys.path` before importing
+`pypeline_sim.py`'s `import_design`) insert two directories onto `sys.path` before importing
 the design file: the design file's own directory (so its local sibling imports work) and the
 repo's `include/pypeline` directory (so `from stream import ...`, `from dsp.fir import ...`,
 etc. resolve without any manual setup). This means a normal install only needs the repo's
 `src/` directory on `PATH` for the `pypelinec` command — see the [Quick Start](README.md).
 Invoking `pypeline_sim.py` directly (`python3 src/pypeline_sim.py my_design.py --run 1000`)
-goes through the same `_import_design` bootstrap and needs no separate setup either.
+goes through the same `import_design` bootstrap and needs no separate setup either.
 
 **The one case that does need manual `PYTHONPATH`** is `sim_call`-style usage as described
 above: running a design file itself as a plain script (`python3 my_design.py`), calling
@@ -1530,7 +1575,7 @@ hooks (see [Start/end-of-run hooks](#initial--final--startend-of-run-hooks) belo
 
 `-D NAME=VALUE` sets design parameters, as for `pypelinec` (see
 [Build Parameters](pypeline_guide.md#build-parameters-param-and--d)). `main` installs
-the table with `pypeline.SET_DESIGN_PARAMS` before the import. `_import_design` resets
+the table with `pypeline.SET_DESIGN_PARAMS` before the import. `import_design` resets
 the `param()` declarations, then runs the same post-import `-D` checks as `PARSE_FILE`
 and prints the parameter table once per process. In the `pypelinec --sim` flow the
 table is the one the build installed, so the simulation sees the build's values.
@@ -1810,7 +1855,7 @@ and puts end-of-run checking in an `@final(sim=True)` hook, which runs after all
 plain decorators, not `_sim_type_wrap`ped: the function is returned unchanged, marked
 `_is_pypeline_hook = True`, and appended as `(fn, when, sim, syn)` to
 `pypeline._hook_registry`. That registry is cleared together with `_main_registry` on
-every design (re)import (`pypeline_sim._import_design`, `PY_TO_LOGIC.PARSE_FILE`), so it
+every design (re)import (`pypeline_sim.import_design`, `PY_TO_LOGIC.PARSE_FILE`), so it
 always holds exactly the current import's hooks. Decoration rejects a hook with required
 parameters and `sim=False, syn=False`.
 
@@ -1843,43 +1888,14 @@ end to attach them to. Syn hooks are the driver's (see `PY_TO_LOGIC_DESIGN.md`).
 
 ### Invocation via `pipelinec --sim --run N`
 
-`pypeline_sim.py`'s multi-MAIN runner is also reachable through the main compiler driver,
-`src/pipelinec`, without naming it explicitly:
-
-```
-python3 src/pipelinec my_design.py --sim --run 1000
-```
-
-is equivalent to `python3 src/pypeline_sim.py my_design.py --run 1000` **plus a full build
-first when `--comb` is absent** (see the next section). Simulator selection is implemented in
-`src/SIM.py`:
-
-- `SET_SIM_TOOL(cmd_line_args, source_file)` defaults `SIM_TOOL` to the `pypeline_sim` module
-  itself (used as a module-identity sentinel, the same pattern as `COCOTB`/`EDAPLAY`/etc.) when
-  `source_file` ends in `.py` and none of the explicit backend flags were passed. Native sim is
-  thus the *implicit* default for a `.py` design — there is no `--native` flag, because absence
-  of every other simulator flag already selects it. `.c` sources keep defaulting to `EDAPLAY` —
-  behavior is unchanged there.
-- `DO_OPTIONAL_SIM(...)` calls `pypeline_sim.run_sim(...)` in-process (no subprocess) when
-  `SIM_TOOL is pypeline_sim`, passing the final per-MAIN latencies
-  (`SIM.GET_MAIN_FUNC_LATENCIES`) and the converged AUTO_PIPELINE harvest
-  (`AUTO_PIPELINE.HARVEST_AUTO_PIPELINE_LATENCIES`) whenever a build's `parser_state`/timing params are
-  available — all zeros/None on the comb path.
-- `src/pipelinec` checks `SIM.NATIVE_SIM_SKIPS_BUILD(args)` right after tool selection — true
-  when `SIM_TOOL is pypeline_sim` and **comb** simulation was requested (`--sim --comb`/
-  `--sim_comb`, or `--no_synth`) — and if so calls `DO_OPTIONAL_SIM` and exits immediately —
-  **no VHDL elaboration or synthesis happens on this path**, mirroring how `pypeline_sim.py`
-  works standalone. A non-`--comb` `--sim` run instead
-  falls through to the full build (path-delay measurement → throughput sweep → AUTO_PIPELINE
-  pin-and-confirm), and the native sim launches at the end with the discovered latencies
-  emulated — the same "no `--comb` means pipelined" rule the VHDL simulators follow. (If no
-  synthesis tool is installed, the run degrades to the comb zero-latency sim with a warning.)
-
-Explicitly requesting `--cocotb --ghdl` (or any other backend) on a `.py` design is unaffected
-and still goes through the full elaboration → VHDL → cocotb path described elsewhere in this
-document and in `PY_TO_LOGIC_DESIGN.md` — the two simulation systems remain independent. There
-is currently no `pipelinec` equivalent of `pypeline_sim.py`'s `--mode` flag; the native path
-always runs at the default `strict` accuracy.
+`pypeline_sim.py`'s multi-MAIN runner is also reachable through the main compiler driver:
+`python3 src/pipelinec my_design.py --sim --run 1000` selects it by default for a `.py`
+design and runs it in-process, with no build for `--comb` and after the full build
+otherwise. Simulator selection, when the run happens, and what the build hands
+`run_sim` are documented in [`SIM_DESIGN.md`](SIM_DESIGN.md#3-when-simulation-runs).
+Explicitly requesting `--cocotb --ghdl` (or any other backend) on a `.py` design still goes
+through the full elaboration → VHDL → HDL simulator path; the two simulation systems remain
+independent.
 
 ### Pipelined native sim (non-`--comb` `pipelinec --sim`)
 
@@ -1935,7 +1951,7 @@ Before importing the design, `run_sim`:
 - calls `_evict_design_modules()`, which deletes from `sys.modules` every module imported since
   `PY_TO_LOGIC._modules_before_first_parse` (the snapshot taken at the first `PARSE_FILE`). The
   build already imported the design's submodules **in non-sim mode** (with `_sim_active` False
-  and an empty/older cache); without eviction, `_import_design`'s re-import would silently reuse
+  and an empty/older cache); without eviction, `import_design`'s re-import would silently reuse
   those stale modules and the `@hw_func` decorators would never rebuild their sim bodies. The
   helper is a self-guarding no-op in every other context (pure native runs never import
   `PY_TO_LOGIC`; the comb short-circuit runs before any parse, leaving the snapshot `None`).
@@ -2005,7 +2021,7 @@ Key implementation points:
 A **pure** `@MAIN` (no `Reg[T]`/`Feedback[T]` — checked via the `wrapper._pypeline_has_state`
 flag set in `_sim_type_wrap`) that the sweep sliced to latency N > 0 gets *write-side* delay
 emulation. `run_sim` maps each final MAIN hw name back to its registry function via
-`PY_TO_LOGIC._hw_func_name(prefix, fn.__name__)` (prefix `None` for the top file loaded as
+`PY_TO_LOGIC.HW_FUNC_NAME(prefix, fn.__name__)` (prefix `None` for the top file loaded as
 `"pypeline_design"`, else the sub-module name with dots→underscores — the same mangling
 elaboration uses) and fills:
 
@@ -2287,35 +2303,9 @@ refused rather than silently mis-simulated); the rest are constraints on how you
   reads clean. Broken, it does not raise or warn — the print simply never appears in the VHDL log
   (present in native sim, absent in VHDL); see `src/tests/pypeline_tests/inst/
   sim_finish_debug_print_race_test.py` for a direct reproduction, and [#361](https://github.com/JulianKemmerer/PipelineC/issues/361).
-- **cocotb's own pass/fail verdict, not `make`'s exit code.** `std.env.finish` (from
-  `sim_finish()`) terminates GHDL out from under cocotb's still-awaiting test coroutine; cocotb
-  cannot distinguish that from a real crash on its own, and its makefile cannot set an exit code
-  at all (`Makefile.inc`: *"since we can't set an exit code from cocotb"*). `src/COCOTB.py`
-  generates the `--run all` testbench with `expect_error=SimFailure` so cocotb's regression
-  manager scores a clean `sim_finish()` stop as a genuine PASS, then reads the verdict from
-  cocotb's own `results.xml` rather than `make`'s exit code or any console-text heuristic. A real
-  failure (e.g. a firing `sim_assert`) still fails the build — GHDL itself exits nonzero in that
-  case, which `make` (and `COCOTB.DO_SIM`) propagates. See `COCOTB.CHECK_COCOTB_RESULTS`'s
-  docstring and `src/tests/pypeline_tests/inst/cocotb_verdict_test.py`, the regression guard for
-  both halves.
-- **`VHDL_SOURCES` is a GHDL `@file` response file, not an inlined list.** `COCOTB.GET_MAKEFILE_TEXT`
-  sets `VHDL_SOURCES += @$(PIPELINEC_VHDL_FILES_TXT)` rather than the more obvious
-  `$(shell cat vhdl_files.txt)`. cocotb's `Makefile.ghdl` writes its `analyse` target as one
-  backslash-continued logical recipe line, so `make` hands the whole thing to the shell as a
-  *single* argv string; Linux caps any one argv/envp string at `MAX_ARG_STRLEN`
-  (`PAGE_SIZE * 32` = 131072 bytes here), independent of the much larger overall `ARG_MAX` — a
-  large design's own VHDL file list, once every absolute path is inlined, can exceed that on its
-  own (`make[1]: execvp: bash: Argument list too long`, failing before GHDL even starts). GHDL's
-  `@file` response-file syntax is whitespace-split like a normal argv, so the existing
-  space-separated `vhdl_files.txt` works unmodified as one. The `@...` token names no real file,
-  so it must be declared `.PHONY` (a phony target is never "missing") or `make` refuses it as an
-  unbuildable prerequisite; real dependency tracking moves to `CUSTOM_COMPILE_DEPS`, which
-  cocotb's `Makefile.inc` also wires into `analyse`. Every other GHDL/yosys call site with the
-  same shape (`OPEN_TOOLS`/`CXXRTL`/`PYRTL`/`CC_TOOLS`/`DEVICE_MODELS` writing a
-  `yosys -p '<huge ghdl file list>'` shell one-liner) hits the identical limit and is fixed the
-  same way via `OPEN_TOOLS.WRITE_YOSYS_SCRIPT`, which writes the commands to a `.ys` script file
-  and passes `-s <path>` instead of `-p '<commands>'` — a script file's contents are never one
-  exec argv, regardless of length. See `src/tests/pypeline_tests/inst/long_file_list_arg_len_test.py`.
+- **cocotb verdicts and long file lists.** How cocotb's PASS/FAIL is read from
+  `results.xml` after `sim_finish()` and why `VHDL_SOURCES` is a GHDL `@file` response file
+  are in [`SIM_DESIGN.md`](SIM_DESIGN.md#cocotb-cocotbpy).
 
 #### AUTO_COMB_AREA_OPT call sites
 
@@ -2383,7 +2373,7 @@ detail, invisible at the call-site boundary this model has to match.
 
 Schedules reach the simulator exactly the way AUTO_PIPELINE latencies do —
 `SIM.DO_OPTIONAL_SIM` → `run_sim(auto_fsm_schedules=...)` →
-`SET_AUTO_FSM_SCHEDULE_CACHE` **before** `_import_design`, because the tag
+`SET_AUTO_FSM_SCHEDULE_CACHE` **before** `import_design`, because the tag
 captures its schedule at construction and any `.latency`-derived Python sizing
 must elaborate the same way it did for the build. With no schedule installed
 (plain native sim, `--comb`) the call site is a zero-latency passthrough.
@@ -2442,7 +2432,7 @@ sims concurrently in `<out_dir>/native` and `<out_dir>/vhdl` from the start.
 | `loose` | `False` | `False` | `SimVal` objects preserved (bit-indexing works) but no bit-width masking on arithmetic |
 | `raw` | `False` | `True` | Maximum speed — plain Python ints throughout; use for structural tests where overflow is not needed |
 
-Both flags are set in `run_sim` **before** `_import_design` is called, because `@hw_func`
+Both flags are set in `run_sim` **before** `import_design` is called, because `@hw_func`
 decorators read them at decoration time to select which wrapper variant to emit.
 
 ### Raw Mode Detail
@@ -2656,7 +2646,7 @@ body shifts by a constant — and takes `DIV`/`MOD` down with it, since the divi
 internally.
 
 **What actually dispatches, and when.** `PY_TO_LOGIC.PARSE_FILE` and `pypeline_sim.py`'s
-`_import_design` both register the default soft replacements for int
+`import_design` both register the default soft replacements for int
 `NEGATE`/compare/`DIV`/`MOD`/variable-shift globally before the design is elaborated or
 simulated. Those are all *matcher* (`any_integer_t`) registrations, and for a long time the
 matcher branch of `register_*_operator` returned before recording the op name — so none of

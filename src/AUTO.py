@@ -23,6 +23,7 @@ import copy
 import hashlib
 import json
 
+import DEVICE_MODELS
 import LOGIC
 import SYN
 
@@ -2192,7 +2193,7 @@ def _area_unit_scale(parser_state):
     if FORCE_ABSTRACT_AREA:
         return 1.0
     try:
-        if SYN.SYN_TOOL is SYN.DEVICE_MODELS:
+        if SYN.SYN_TOOL is DEVICE_MODELS:
             return UM2_PER_ABSTRACT_AREA_UNIT
     except Exception:
         pass
@@ -2255,8 +2256,6 @@ def _ff_area_um2(parser_state):
     scale = _area_unit_scale(parser_state)
     if scale != 1.0:
         try:
-            import DEVICE_MODELS
-
             value, _unit = DEVICE_MODELS.GET_SEQUENTIAL_CELL_AREA()
             if value > 0.0:
                 return value

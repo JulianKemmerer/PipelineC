@@ -9,14 +9,12 @@ import sys
 
 import C_TO_LOGIC
 import LOGIC
-import CXXRTL
 import QUARTUS
 import RAW_VHDL
-import SIM
 import SYN
-import VERILATOR
 import VIVADO
 from pycparser import c_ast
+from utilities import DISPLAY_SOURCE, REPO_ABS_DIR
 
 VHDL_FILE_EXT = ".vhd"
 VHDL_PKG_EXT = ".pkg" + VHDL_FILE_EXT
@@ -63,8 +61,6 @@ def SOURCE_COMMENT(name, parser_state):
         return ""
     comment = names.source_comment(name)
     if not comment:
-        import PY_TO_LOGIC
-
         logic = parser_state.FuncLogicLookupTable.get(name)
         meta = getattr(logic, "ast_meta", None)
         # A C built-in operator entity (BIN_OP_AND_uint1_t_uint1_t, ...) is
@@ -72,7 +68,7 @@ def SOURCE_COMMENT(name, parser_state):
         # site a parse pass elaborated first. Naming it would make the
         # entity file differ between passes of one run.
         if meta is not None and not logic.is_c_built_in:
-            comment = f"-- Source: {PY_TO_LOGIC.display_source(meta.src_file)}:{meta.line}\n"
+            comment = f"-- Source: {DISPLAY_SOURCE(meta.src_file)}:{meta.line}\n"
     return comment
 
 
@@ -364,18 +360,6 @@ def CLK_EXT_STR(main_func, parser_state):
     return CLK_MHZ_GROUP_TEXT(mhz, group)
 
 
-def GLOBAL_WIRE_SUB_C_TYPE(c_type, path_tok, parser_state):
-    """One step of a global-wire driven-path walk: struct field (str token) or
-    constant array index (int token) -> the sub-element's c type string."""
-    if isinstance(path_tok, str):
-        return parser_state.struct_to_field_type_dict[c_type][path_tok]
-    elem_t, dims = LOGIC.C_ARRAY_TYPE_TO_ELEM_TYPE_AND_DIMS(c_type)
-    sub_t = elem_t
-    for d in dims[1:]:
-        sub_t += f"[{d}]"
-    return sub_t
-
-
 def BUILD_MULTI_WRITER_REGIONS(base_c_type, writer_to_driven_paths, parser_state):
     """Split a multi-writer global wire's type tree into the coarsest list of
     regions each owned by exactly one writer function (or by nobody -> zeros).
@@ -557,9 +541,9 @@ attribute dont_touch : string;
     has_module_to_global = False
     for main_func in parser_state.main_mhz:
         main_func_logic = parser_state.LogicInstLookupTable[main_func]
-        if LOGIC_NEEDS_GLOBAL_TO_MODULE(main_func_logic, parser_state):
+        if LOGIC.LOGIC_NEEDS_GLOBAL_TO_MODULE(main_func_logic, parser_state):
             has_global_to_module = True
-        if LOGIC_NEEDS_MODULE_TO_GLOBAL(main_func_logic, parser_state):
+        if LOGIC.LOGIC_NEEDS_MODULE_TO_GLOBAL(main_func_logic, parser_state):
             has_module_to_global = True
     if has_module_to_global:
         text += """
@@ -874,10 +858,10 @@ begin
         main_needs_clk_en = LOGIC.LOGIC_NEEDS_CLOCK_ENABLE(
             main_func_logic, parser_state
         )
-        main_needs_global_to_module = LOGIC_NEEDS_GLOBAL_TO_MODULE(
+        main_needs_global_to_module = LOGIC.LOGIC_NEEDS_GLOBAL_TO_MODULE(
             main_func_logic, parser_state
         )  # , multimain_timing_params.TimingParamsLookupTable)
-        main_needs_module_to_global = LOGIC_NEEDS_MODULE_TO_GLOBAL(
+        main_needs_module_to_global = LOGIC.LOGIC_NEEDS_MODULE_TO_GLOBAL(
             main_func_logic, parser_state
         )  # , multimain_timing_params.TimingParamsLookupTable)
 
@@ -1357,7 +1341,7 @@ begin
         part_of_inst_array = (var_name in parser_state.inst_array_dict.keys()) or (
             var_name in parser_state.inst_array_dict.values()
         )
-        if GLOBAL_VAR_IS_SHARED(var_name, parser_state) and not part_of_inst_array:
+        if LOGIC.GLOBAL_VAR_IS_SHARED(var_name, parser_state) and not part_of_inst_array:
             shared_global_vars.add(var_name)
     if len(shared_global_vars) > 0:
         text += """
@@ -1557,7 +1541,7 @@ begin
     # WRITE SIDE connections for instance array special multi driver global wires, etc
     write_inst_array_vars = set()
     for var_name, var_info in parser_state.global_vars.items():
-        if GLOBAL_VAR_IS_SHARED(var_name, parser_state) and (
+        if LOGIC.GLOBAL_VAR_IS_SHARED(var_name, parser_state) and (
             var_name in parser_state.inst_array_dict.keys()
         ):
             # "Write"-like if not used as read only
@@ -1691,7 +1675,7 @@ begin
     # READ SIDE connections for instance array special multi driver global wires, etc
     read_inst_array_vars = set()
     for var_name, var_info in parser_state.global_vars.items():
-        if GLOBAL_VAR_IS_SHARED(var_name, parser_state) and (
+        if LOGIC.GLOBAL_VAR_IS_SHARED(var_name, parser_state) and (
             var_name in parser_state.inst_array_dict.keys()
         ):
             is_rd_only = True
@@ -1977,10 +1961,10 @@ def WRITE_LOGIC_TOP(
         inst_name, Logic, parser_state, TimingParamsLookupTable
     )
     needs_clk_en = LOGIC.LOGIC_NEEDS_CLOCK_ENABLE(Logic, parser_state)
-    needs_global_to_module = LOGIC_NEEDS_GLOBAL_TO_MODULE(
+    needs_global_to_module = LOGIC.LOGIC_NEEDS_GLOBAL_TO_MODULE(
         Logic, parser_state
     )  # , TimingParamsLookupTable)
-    needs_module_to_global = LOGIC_NEEDS_MODULE_TO_GLOBAL(
+    needs_module_to_global = LOGIC.LOGIC_NEEDS_MODULE_TO_GLOBAL(
         Logic, parser_state
     )  # , TimingParamsLookupTable)
     entity_name = GET_ENTITY_NAME(
@@ -2293,332 +2277,20 @@ def WRITE_LOGIC_TOP(
     WRITE_TEXT_IF_CHANGED(output_directory + "/" + filename, RENDER_TEXT(rv, parser_state))
 
 
-def GET_WIDTH_FROM_C_N_BITS_INT_TYPE_STR(c_type_str):
-    if not (C_TYPE_IS_INT_N(c_type_str) or C_TYPE_IS_UINT_N(c_type_str)):
-        print("Cant GET_WIDTH_FROM_C_TYPE_STR since isnt int/uint N", c_type_str)
-        print(0 / 0)
-        sys.exit(-1)
-
-    # Chars?
-    if c_type_str == "char":
-        return 8
-
-    return int(c_type_str.replace("uint", "").replace("int", "").replace("_t", ""))
-
-
-# 'Width' is apparently a integer like concept?
-def GET_WIDTH_FROM_C_TYPE_STR(parser_state, c_type_str, allow_fail=False):
-    if C_TYPE_IS_INT_N(c_type_str) or C_TYPE_IS_UINT_N(c_type_str):
-        return GET_WIDTH_FROM_C_N_BITS_INT_TYPE_STR(c_type_str)
-    elif LOGIC.C_TYPE_IS_FLOAT_TYPE(c_type_str):
-        e, m = LOGIC.C_FLOAT_E_M_TYPE_TO_E_M(c_type_str)
-        return 1 + e + m
-    elif LOGIC.C_TYPE_IS_ENUM(c_type_str, parser_state):
-        # Enum type
-        return GET_WIDTH_FROM_C_N_BITS_INT_TYPE_STR(
-            parser_state.enum_info_dict[c_type_str].int_c_type
-        )
-    else:
-        if not allow_fail:
-            print("Cant GET_WIDTH_FROM_C_TYPE_STR for ", c_type_str)
-            print(0 / 0)
-            sys.exit(-1)
-        return None
-
-
-def C_TYPE_IS_UINT_N(type_str):
-    try:
-        width = int(type_str.replace("uint", "").replace("_t", ""))
-        return True
-    except:
-        # Chars?
-        if type_str == "char":
-            return True
-
-        return False
-
-
-def C_TYPE_IS_INT_N(type_str):
-    try:
-        width = int(type_str.replace("int", "").replace("_t", ""))
-        return True
-    except:
-        return False
-
-
-# Includes intN and uintN
-def C_TYPES_ARE_INTEGERS(c_types):
-    for c_type in c_types:
-        # No dummy, arrays are not ints? You hacky hoe
-        """
-        if LOGIC.C_TYPE_IS_ARRAY(c_type):
-          elem_type, dims = LOGIC.C_ARRAY_TYPE_TO_ELEM_TYPE_AND_DIMS(c_type)
-          c_type = elem_type
-          #print "c_type",c_type
-        """
-        if not (C_TYPE_IS_INT_N(c_type) or C_TYPE_IS_UINT_N(c_type)):
-            return False
-    return True
-
-
-# Includes intN and uintN
-def C_TYPES_ARE_TYPE(c_types, the_type):
-    for c_type in c_types:
-        if c_type != the_type:
-            return False
-    return True
-
-
-# Benchmark-only escape hatch for src/tests/pypeline_tests/op_qor_bench.py:
-# when set, routes integer GT/GTE/LT/LTE to the (otherwise dead,
-# RAW_VHDL.py:3050-3665) sliced hand-pipelined comparator generators instead
-# of a soft-operator-library implementation, so the QoR bench can measure
-# "revived raw sliced" head to head against the soft flavors. Never set
-# outside that harness -- it does not change canonical entity names (only
-# what VHDL gets generated for the same name), so mixing settings within one
-# process/output directory would produce inconsistent cached artifacts.
-FORCE_RAW_INT_CMP_FOR_QOR_BENCH = os.environ.get("PYPELINE_FORCE_RAW_INT_CMP") == "1"
-
-
-def C_BUILT_IN_FUNC_IS_RAW_HDL(
-    logic_func_name, input_c_types, output_c_type, parser_state
-):
-    if (
-        FORCE_RAW_INT_CMP_FOR_QOR_BENCH
-        and C_TYPES_ARE_INTEGERS(input_c_types)
-        and any(
-            logic_func_name.startswith(LOGIC.BIN_OP_LOGIC_NAME_PREFIX + "_" + op)
-            for op in (
-                LOGIC.BIN_OP_GTE_NAME,
-                LOGIC.BIN_OP_LTE_NAME,
-                LOGIC.BIN_OP_LT_NAME,
-                LOGIC.BIN_OP_GT_NAME,
-            )
-        )
-    ):
-        return True
-    # IS RAW VHDL
-    if (
-        logic_func_name == LOGIC.VHDL_FUNC_NAME
-        or LOGIC.IS_BIT_MANIP_NAME(logic_func_name)
-        or LOGIC.IS_SIM_CTRL_FUNC_NAME(logic_func_name)
-        or logic_func_name.startswith(LOGIC.ACCUM_FUNC_NAME)
-        or logic_func_name.startswith(LOGIC.CONST_REF_RD_FUNC_NAME_PREFIX + "_")
-        or (
-            logic_func_name.startswith(
-                LOGIC.CONST_PREFIX + LOGIC.BIN_OP_SL_NAME + "_"
-            )
-            and C_TYPES_ARE_INTEGERS(input_c_types)
-        )
-        or (
-            logic_func_name.startswith(
-                LOGIC.CONST_PREFIX + LOGIC.BIN_OP_SR_NAME + "_"
-            )
-            and C_TYPES_ARE_INTEGERS(input_c_types)
-        )
-        or (
-            logic_func_name.startswith(
-                LOGIC.UNARY_OP_LOGIC_NAME_PREFIX
-                + "_"
-                + LOGIC.UNARY_OP_NOT_NAME
-            )
-            and C_TYPES_ARE_INTEGERS(input_c_types)
-        )
-        or (
-            logic_func_name.startswith(
-                LOGIC.UNARY_OP_LOGIC_NAME_PREFIX
-                + "_"
-                + LOGIC.UNARY_OP_NEGATE_NAME
-            )
-            and LOGIC.C_TYPES_ARE_FLOAT_TYPES(input_c_types)
-        )
-        or (
-            logic_func_name.startswith(
-                LOGIC.BIN_OP_LOGIC_NAME_PREFIX
-                + "_"
-                + LOGIC.BIN_OP_INFERRED_MULT_NAME
-            )
-            and C_TYPES_ARE_INTEGERS(input_c_types)
-        )
-        or (
-            logic_func_name.startswith(
-                LOGIC.BIN_OP_LOGIC_NAME_PREFIX + "_" + LOGIC.BIN_OP_PLUS_NAME
-            )
-            and C_TYPES_ARE_INTEGERS(input_c_types)
-        )
-        or (
-            logic_func_name.startswith(
-                LOGIC.BIN_OP_LOGIC_NAME_PREFIX + "_" + LOGIC.BIN_OP_MINUS_NAME
-            )
-            and C_TYPES_ARE_INTEGERS(input_c_types)
-        )
-        or (
-            logic_func_name.startswith(
-                LOGIC.BIN_OP_LOGIC_NAME_PREFIX + "_" + LOGIC.BIN_OP_EQ_NAME
-            )
-        )
-        or (  # and C_TYPES_ARE_INTEGERS(input_c_types)
-            logic_func_name.startswith(
-                LOGIC.BIN_OP_LOGIC_NAME_PREFIX + "_" + LOGIC.BIN_OP_NEQ_NAME
-            )
-        )
-        or (  # and C_TYPES_ARE_INTEGERS(input_c_types)
-            logic_func_name.startswith(
-                LOGIC.BIN_OP_LOGIC_NAME_PREFIX + "_" + LOGIC.BIN_OP_AND_NAME
-            )
-            and C_TYPES_ARE_INTEGERS(input_c_types)
-        )
-        or (
-            logic_func_name.startswith(
-                LOGIC.BIN_OP_LOGIC_NAME_PREFIX + "_" + LOGIC.BIN_OP_OR_NAME
-            )
-            and C_TYPES_ARE_INTEGERS(input_c_types)
-        )
-        or (
-            logic_func_name.startswith(
-                LOGIC.BIN_OP_LOGIC_NAME_PREFIX + "_" + LOGIC.BIN_OP_XOR_NAME
-            )
-            and C_TYPES_ARE_INTEGERS(input_c_types)
-        )
-        or (
-            logic_func_name.startswith(LOGIC.CAST_FUNC_NAME_PREFIX)
-            and C_TYPES_ARE_INTEGERS(input_c_types)
-            and C_TYPES_ARE_INTEGERS([output_c_type])
-        )
-        or (logic_func_name.startswith(LOGIC.MUX_LOGIC_NAME))
-    ):  # or
-        return True
-
-    # IS NOT RAW VHDL
-    elif (
-        logic_func_name.startswith(LOGIC.VAR_REF_RD_FUNC_NAME_PREFIX + "_")
-        or logic_func_name.startswith(LOGIC.VAR_REF_ASSIGN_FUNC_NAME_PREFIX + "_")
-        or (
-            logic_func_name.startswith(
-                LOGIC.UNARY_OP_LOGIC_NAME_PREFIX
-                + "_"
-                + LOGIC.UNARY_OP_NEGATE_NAME
-            )
-            and C_TYPES_ARE_INTEGERS(input_c_types)
-        )
-        or logic_func_name.startswith(LOGIC.CAST_FUNC_NAME_PREFIX + "_")
-        or logic_func_name.startswith(
-            LOGIC.BIN_OP_LOGIC_NAME_PREFIX + "_" + LOGIC.BIN_OP_DIV_NAME
-        )
-        or logic_func_name.startswith(
-            LOGIC.BIN_OP_LOGIC_NAME_PREFIX + "_" + LOGIC.BIN_OP_MULT_NAME
-        )
-        or logic_func_name.startswith(
-            LOGIC.BIN_OP_LOGIC_NAME_PREFIX + "_" + LOGIC.BIN_OP_MOD_NAME
-        )
-        or (
-            logic_func_name.startswith(
-                LOGIC.BIN_OP_LOGIC_NAME_PREFIX
-                + "_"
-                + LOGIC.BIN_OP_INFERRED_MULT_NAME
-            )
-            and LOGIC.C_TYPE_IS_FLOAT_TYPE(output_c_type)
-        )
-        or (
-            logic_func_name.startswith(
-                LOGIC.BIN_OP_LOGIC_NAME_PREFIX + "_" + LOGIC.BIN_OP_SL_NAME
-            )
-        )
-        or (
-            logic_func_name.startswith(
-                LOGIC.BIN_OP_LOGIC_NAME_PREFIX + "_" + LOGIC.BIN_OP_SR_NAME
-            )
-        )
-        or (
-            logic_func_name.startswith(
-                LOGIC.BIN_OP_LOGIC_NAME_PREFIX + "_" + LOGIC.BIN_OP_GT_NAME
-            )
-            and LOGIC.C_TYPES_ARE_FLOAT_TYPES(input_c_types)
-        )
-        or (
-            logic_func_name.startswith(
-                LOGIC.BIN_OP_LOGIC_NAME_PREFIX + "_" + LOGIC.BIN_OP_GTE_NAME
-            )
-            and LOGIC.C_TYPES_ARE_FLOAT_TYPES(input_c_types)
-        )
-        or (
-            logic_func_name.startswith(
-                LOGIC.BIN_OP_LOGIC_NAME_PREFIX + "_" + LOGIC.BIN_OP_LT_NAME
-            )
-            and LOGIC.C_TYPES_ARE_FLOAT_TYPES(input_c_types)
-        )
-        or (
-            logic_func_name.startswith(
-                LOGIC.BIN_OP_LOGIC_NAME_PREFIX + "_" + LOGIC.BIN_OP_LTE_NAME
-            )
-            and LOGIC.C_TYPES_ARE_FLOAT_TYPES(input_c_types)
-        )
-        or (
-            logic_func_name.startswith(
-                LOGIC.BIN_OP_LOGIC_NAME_PREFIX + "_" + LOGIC.BIN_OP_PLUS_NAME
-            )
-            and LOGIC.C_TYPES_ARE_FLOAT_TYPES(input_c_types)
-        )
-        or (
-            logic_func_name.startswith(
-                LOGIC.BIN_OP_LOGIC_NAME_PREFIX + "_" + LOGIC.BIN_OP_MINUS_NAME
-            )
-            and LOGIC.C_TYPES_ARE_FLOAT_TYPES(input_c_types)
-        )
-        or (logic_func_name.startswith(LOGIC.ONE_HOT_EQ_LOGIC_NAME))
-        or (
-            logic_func_name.startswith(
-                LOGIC.BIN_OP_LOGIC_NAME_PREFIX + "_" + LOGIC.BIN_OP_GTE_NAME
-            )
-            and C_TYPES_ARE_INTEGERS(input_c_types)
-        )
-        or (
-            logic_func_name.startswith(
-                LOGIC.BIN_OP_LOGIC_NAME_PREFIX + "_" + LOGIC.BIN_OP_LTE_NAME
-            )
-            and C_TYPES_ARE_INTEGERS(input_c_types)
-        )
-        or (
-            logic_func_name.startswith(
-                LOGIC.BIN_OP_LOGIC_NAME_PREFIX + "_" + LOGIC.BIN_OP_LT_NAME
-            )
-            and C_TYPES_ARE_INTEGERS(input_c_types)
-        )
-        or (
-            logic_func_name.startswith(
-                LOGIC.BIN_OP_LOGIC_NAME_PREFIX + "_" + LOGIC.BIN_OP_GT_NAME
-            )
-            and C_TYPES_ARE_INTEGERS(input_c_types)
-        )
-    ):
-        return False
-
-    else:
-        raise Exception(
-            "Is built in C function named",
-            logic_func_name,
-            "with input types",
-            input_c_types,
-            "raw VHDL or not?",
-        )
-
-
 def GET_ENTITY_PROCESS_STAGES_TEXT(
     inst_name, logic, parser_state, TimingParamsLookupTable, pipeline_hdl_params
 ):
-    import AUTO_PIPELINE
-
     LogicInstLookupTable = parser_state.LogicInstLookupTable
 
     timing_params = TimingParamsLookupTable[inst_name]
     package_file_text = ""
     # Raw hdl logic is static in the stages code here but coded as generic
-    if LOGIC_IS_RAW_HDL(logic, parser_state):  # not in parser_state.main_mhz:
+    if LOGIC.LOGIC_IS_RAW_HDL(logic, parser_state):  # not in parser_state.main_mhz:
         package_file_text = RAW_VHDL.GET_RAW_HDL_ENTITY_PROCESS_STAGES_TEXT(
             inst_name, logic, parser_state, timing_params
         )
     else:
-        package_file_text = AUTO_PIPELINE.GET_C_ENTITY_PROCESS_STAGES_TEXT(
+        package_file_text = GET_C_ENTITY_PROCESS_STAGES_TEXT(
             inst_name, logic, parser_state, TimingParamsLookupTable, pipeline_hdl_params
         )
 
@@ -3680,33 +3352,11 @@ port map
     WRITE_TEXT_IF_CHANGED(path, RENDER_TEXT(text, parser_state))
 
 
-def GLOBAL_VAR_IS_SHARED(var_name, parser_state):
-    if var_name in parser_state.output_wires:
-        return True
-    if var_name in parser_state.input_wires:
-        return True
-    # # Async wires assumed shared
-    # if var_name in parser_state.async_wires:
-    #   return True
-    # Clock wires assumed shared
-    if var_name in parser_state.clk_mhz:
-        return True
-    # Otherwise check where used
-    if var_name not in parser_state.global_vars:
-        return False
-    var_info = parser_state.global_vars[var_name]
-    # Instance array stuff wont appear used normally is special case
-    part_of_inst_array = (var_name in parser_state.inst_array_dict.values()) or (
-        var_name in parser_state.inst_array_dict.keys()
-    )
-    return len(var_info.used_in_funcs) > 1 or part_of_inst_array
-
-
 def NEEDS_GLOBAL_WIRES_VHDL_PACKAGE(parser_state):
     # Do nothing if no clock crossings or no shared globals
     found_multi_use_global = False
     for global_var_name, var_info in parser_state.global_vars.items():
-        if GLOBAL_VAR_IS_SHARED(global_var_name, parser_state):
+        if LOGIC.GLOBAL_VAR_IS_SHARED(global_var_name, parser_state):
             found_multi_use_global = True
             break
     if not found_multi_use_global and len(parser_state.clk_cross_var_info) <= 0:
@@ -3735,9 +3385,9 @@ package global_wires_pkg is
     # And funcs that are themselves the clock crossing (dont need port)
     for func_name in parser_state.FuncLogicLookupTable:
         func_logic = parser_state.FuncLogicLookupTable[func_name]
-        if not LOGIC_NEEDS_GLOBAL_TO_MODULE(func_logic, parser_state):
+        if not LOGIC.LOGIC_NEEDS_GLOBAL_TO_MODULE(func_logic, parser_state):
             read_funcs_written.add(func_name)
-        if not LOGIC_NEEDS_MODULE_TO_GLOBAL(func_logic, parser_state):
+        if not LOGIC.LOGIC_NEEDS_MODULE_TO_GLOBAL(func_logic, parser_state):
             write_funcs_written.add(func_name)
         if func_logic.is_clock_crossing:
             if "_READ" in func_name:
@@ -3754,7 +3404,7 @@ package global_wires_pkg is
         for func_name in parser_state.FuncLogicLookupTable:
             func_logic = parser_state.FuncLogicLookupTable[func_name]
             # Read?
-            if not LOGIC_NEEDS_GLOBAL_TO_MODULE(func_logic, parser_state):
+            if not LOGIC.LOGIC_NEEDS_GLOBAL_TO_MODULE(func_logic, parser_state):
                 continue
             # Done already?
             if func_name in read_funcs_written:
@@ -3813,7 +3463,7 @@ package global_wires_pkg is
                 sub_logic = parser_state.FuncLogicLookupTable[sub_func]
                 if sub_logic.is_clock_crossing:
                     continue
-                if LOGIC_NEEDS_GLOBAL_TO_MODULE(sub_logic, parser_state):
+                if LOGIC.LOGIC_NEEDS_GLOBAL_TO_MODULE(sub_logic, parser_state):
                     text += (
                         """
     """
@@ -3833,7 +3483,7 @@ package global_wires_pkg is
         for func_name in parser_state.FuncLogicLookupTable:
             func_logic = parser_state.FuncLogicLookupTable[func_name]
             # Write?
-            if not LOGIC_NEEDS_MODULE_TO_GLOBAL(func_logic, parser_state):
+            if not LOGIC.LOGIC_NEEDS_MODULE_TO_GLOBAL(func_logic, parser_state):
                 continue
             # Done already?
             if func_name in write_funcs_written:
@@ -3893,7 +3543,7 @@ package global_wires_pkg is
             for var_name, var_info in func_logic.state_regs.items():
                 if (
                     var_info in parser_state.global_vars.values()
-                    and GLOBAL_VAR_IS_SHARED(var_name, parser_state)
+                    and LOGIC.GLOBAL_VAR_IS_SHARED(var_name, parser_state)
                 ):
                     text += (
                         "     "
@@ -3903,7 +3553,7 @@ package global_wires_pkg is
                         + ";\n"
                     )
             for var_name, var_info in func_logic.write_only_global_wires.items():
-                if GLOBAL_VAR_IS_SHARED(var_name, parser_state):
+                if LOGIC.GLOBAL_VAR_IS_SHARED(var_name, parser_state):
                     text += (
                         "     "
                         + var_name
@@ -3918,7 +3568,7 @@ package global_wires_pkg is
                 sub_logic = parser_state.FuncLogicLookupTable[sub_func]
                 if sub_logic.is_clock_crossing:
                     continue
-                if LOGIC_NEEDS_MODULE_TO_GLOBAL(sub_logic, parser_state):
+                if LOGIC.LOGIC_NEEDS_MODULE_TO_GLOBAL(sub_logic, parser_state):
                     text += (
                         """
     """
@@ -3939,7 +3589,7 @@ package global_wires_pkg is
     read_text = ""
     for main_func in parser_state.main_mhz:
         main_logic = parser_state.FuncLogicLookupTable[main_func]
-        if LOGIC_NEEDS_GLOBAL_TO_MODULE(main_logic, parser_state):
+        if LOGIC.LOGIC_NEEDS_GLOBAL_TO_MODULE(main_logic, parser_state):
             read_text += (
                 """
     """
@@ -3959,7 +3609,7 @@ package global_wires_pkg is
     write_text = ""
     for main_func in parser_state.main_mhz:
         main_logic = parser_state.FuncLogicLookupTable[main_func]
-        if LOGIC_NEEDS_MODULE_TO_GLOBAL(main_logic, parser_state):
+        if LOGIC.LOGIC_NEEDS_MODULE_TO_GLOBAL(main_logic, parser_state):
             write_text += (
                 """
     """
@@ -4001,7 +3651,7 @@ use ieee.numeric_std.all;
 package c_structs_pkg is
 """
     # Type defs defining. ex. unsigned(31 downto 0)==uint32_t
-    max_bit_width = 2048  # Stolen from GENERATE_INT_N_HEADERS that was once run
+    max_bit_width = 2048  # Widest uintN_t/intN_t subtype declared
     for i in range(max_bit_width):
         text += f"subtype uint{i+1}_t is unsigned({i} downto 0);\n"
         text += (
@@ -4203,7 +3853,7 @@ end function;
             if enum_name not in types_written:
                 is_one_hot = enum_name in parser_state.marked_onehot
                 enum_info = parser_state.enum_info_dict[enum_name]
-                width = GET_WIDTH_FROM_C_N_BITS_INT_TYPE_STR(enum_info.int_c_type)
+                width = LOGIC.GET_WIDTH_FROM_C_N_BITS_INT_TYPE_STR(enum_info.int_c_type)
                 done = False
                 types_written.append(enum_name)
                 type_chunk_marks.append((enum_name, len(text), len(pkg_body_text)))
@@ -4931,77 +4581,6 @@ def SCOPED_C_STRUCTS_PACKAGE(vhdl_paths, parser_state):
     return path
 
 
-def LOGIC_NEEDS_GLOBAL_TO_MODULE(Logic, parser_state):
-    needs_global_to_module = False
-
-    # Submodules determine if logic needs clk cross port
-    for inst in Logic.submodule_instances:
-        submodule_logic_name = Logic.submodule_instances[inst]
-        if submodule_logic_name in parser_state.FuncLogicLookupTable:
-            submodule_logic = parser_state.FuncLogicLookupTable[submodule_logic_name]
-            if submodule_logic.is_clock_crossing:
-                var_name = LOGIC.CLK_CROSS_FUNC_TO_VAR_NAME(submodule_logic_name)
-                clk_cross_info = parser_state.clk_cross_var_info[var_name]
-                needs_global_to_module = (
-                    needs_global_to_module
-                    or ("_READ" in submodule_logic_name)
-                    or clk_cross_info.flow_control
-                )
-            if needs_global_to_module:
-                return True
-            # Then check sub-sub modules
-            needs_global_to_module = (
-                needs_global_to_module
-                or LOGIC_NEEDS_GLOBAL_TO_MODULE(submodule_logic, parser_state)
-            )
-            if needs_global_to_module:
-                return True
-
-    # Or if logic is reading a global reg
-    if len(Logic.read_only_global_wires) > 0:
-        return True
-
-    return needs_global_to_module
-
-
-def LOGIC_NEEDS_MODULE_TO_GLOBAL(Logic, parser_state):
-    needs_module_to_global = False
-    # Submodules determine if logic needs clock cross port
-    for inst in Logic.submodule_instances:
-        submodule_logic_name = Logic.submodule_instances[inst]
-        if submodule_logic_name in parser_state.FuncLogicLookupTable:
-            submodule_logic = parser_state.FuncLogicLookupTable[submodule_logic_name]
-            if submodule_logic.is_clock_crossing:
-                var_name = LOGIC.CLK_CROSS_FUNC_TO_VAR_NAME(submodule_logic_name)
-                clk_cross_info = parser_state.clk_cross_var_info[var_name]
-                needs_module_to_global = (
-                    needs_module_to_global
-                    or ("_WRITE" in submodule_logic_name)
-                    or clk_cross_info.flow_control
-                )
-            if needs_module_to_global:
-                return True
-            # Then check sub-sub modules
-            needs_module_to_global = (
-                needs_module_to_global
-                or LOGIC_NEEDS_MODULE_TO_GLOBAL(submodule_logic, parser_state)
-            )
-            if needs_module_to_global:
-                return True
-
-    # Or if logic is writing a global reg with muliple reads
-    for state_reg_var, var_info in Logic.state_regs.items():
-        if var_info in parser_state.global_vars.values() and GLOBAL_VAR_IS_SHARED(
-            state_reg_var, parser_state
-        ):
-            return True
-    for state_reg_var, var_info in Logic.write_only_global_wires.items():
-        if GLOBAL_VAR_IS_SHARED(state_reg_var, parser_state):
-            return True
-
-    return needs_module_to_global
-
-
 def LOGIC_NEEDS_CLOCK(inst_name, Logic, parser_state, TimingParamsLookupTable):
     timing_params = TimingParamsLookupTable[inst_name]
     latency = timing_params.GET_TOTAL_LATENCY(parser_state, TimingParamsLookupTable)
@@ -5190,14 +4769,12 @@ end if;\n"""
 def GET_ARCH_DECL_TEXT(
     inst_name, Logic, parser_state, TimingParamsLookupTable, pipeline_hdl_params
 ):
-    import AUTO_PIPELINE
-
     if LOGIC.IS_MEM(Logic):
         return RAW_VHDL.GET_MEM_ARCH_DECL_TEXT(
             Logic, parser_state, TimingParamsLookupTable
         )
     else:
-        return AUTO_PIPELINE.GET_PIPELINE_ARCH_DECL_TEXT(
+        return GET_PIPELINE_ARCH_DECL_TEXT(
             inst_name, Logic, parser_state, TimingParamsLookupTable, pipeline_hdl_params
         )
 
@@ -5315,7 +4892,7 @@ def GET_FIXED_FLOAT_PKG_INCLUDE_TEXT():
         ]
         for f in pro_files:
             shutil.copy(
-                f"{C_TO_LOGIC.REPO_ABS_DIR()}/src/vhdl/ieee/{f}",
+                f"{REPO_ABS_DIR()}/src/vhdl/ieee/{f}",
                 ieee_pro_dir + "/" + f"{f}",
             )
         # And write vhdl using those proposed files
@@ -5366,10 +4943,10 @@ def WRITE_LOGIC_ENTITY(
         inst_name, Logic, parser_state, TimingParamsLookupTable
     )
     needs_clk_en = LOGIC.LOGIC_NEEDS_CLOCK_ENABLE(Logic, parser_state)
-    needs_global_to_module = LOGIC_NEEDS_GLOBAL_TO_MODULE(
+    needs_global_to_module = LOGIC.LOGIC_NEEDS_GLOBAL_TO_MODULE(
         Logic, parser_state
     )  # , TimingParamsLookupTable)
-    needs_module_to_global = LOGIC_NEEDS_MODULE_TO_GLOBAL(
+    needs_module_to_global = LOGIC.LOGIC_NEEDS_MODULE_TO_GLOBAL(
         Logic, parser_state
     )  # , TimingParamsLookupTable)
 
@@ -5589,10 +5166,10 @@ def WRITE_LOGIC_ENTITY(
                 submodule_needs_clk_en = LOGIC.LOGIC_NEEDS_CLOCK_ENABLE(
                     submodule_logic, parser_state
                 )
-                submodule_needs_global_to_module = LOGIC_NEEDS_GLOBAL_TO_MODULE(
+                submodule_needs_global_to_module = LOGIC.LOGIC_NEEDS_GLOBAL_TO_MODULE(
                     submodule_logic, parser_state
                 )
-                submodule_needs_module_to_global = LOGIC_NEEDS_MODULE_TO_GLOBAL(
+                submodule_needs_module_to_global = LOGIC.LOGIC_NEEDS_MODULE_TO_GLOBAL(
                     submodule_logic, parser_state
                 )
                 submodule_instance_text.append(
@@ -5647,7 +5224,7 @@ def WRITE_LOGIC_ENTITY(
             )
         else:
             # Regular comb logic pipeline
-            rv += AUTO_PIPELINE.GET_PIPELINE_LOGIC_COMB_PROCESS_TEXT(
+            rv += GET_PIPELINE_LOGIC_COMB_PROCESS_TEXT(
                 inst_name,
                 Logic,
                 parser_state,
@@ -5668,26 +5245,9 @@ def WRITE_LOGIC_ENTITY(
     WRITE_TEXT_IF_CHANGED(output_directory + "/" + filename, RENDER_TEXT(rv, parser_state))
 
 
-def LOGIC_IS_RAW_HDL(Logic, parser_state):
-    if Logic.is_c_built_in:
-        input_types = []
-        for in_port in Logic.inputs:
-            input_types.append(Logic.wire_to_c_type[in_port])
-        output_type = Logic.wire_to_c_type[LOGIC.RETURN_WIRE_NAME]
-        return C_BUILT_IN_FUNC_IS_RAW_HDL(
-            Logic.func_name, input_types, output_type, parser_state
-        )
-    else:
-        if LOGIC.IS_BIT_MANIP(Logic):
-            return True
-        if LOGIC.IS_MEM(Logic):
-            return True
-    return False
-
-
 def LOGIC_NEEDS_MANUAL_REGS(inst_name, Logic, parser_state, TimingParamsLookupTable):
     timing_params = TimingParamsLookupTable[inst_name]
-    if LOGIC_IS_RAW_HDL(Logic, parser_state) and LOGIC_NEEDS_REGS(
+    if LOGIC.LOGIC_IS_RAW_HDL(Logic, parser_state) and LOGIC_NEEDS_REGS(
         inst_name, Logic, parser_state, TimingParamsLookupTable
     ):
         return True
@@ -5704,7 +5264,7 @@ def VHDL_TYPE_TO_SLV_TOKS(vhdl_type, parser_state):
     elif LOGIC.C_TYPE_IS_ENUM(
         vhdl_type, parser_state
     ):  # same name as c type hacky
-        width = GET_WIDTH_FROM_C_N_BITS_INT_TYPE_STR(
+        width = LOGIC.GET_WIDTH_FROM_C_N_BITS_INT_TYPE_STR(
             parser_state.enum_info_dict[vhdl_type].int_c_type
         )
         return [vhdl_type + "_to_slv(", ")"]
@@ -5742,26 +5302,26 @@ def TYPE_RESOLVE_ASSIGNMENT_RHS(RHS, logic, driving_wire, driven_wire, parser_st
     resize_toks = []
 
     # Enums are encoded as u/int so include with logic for u/int stuff
-    left_is_int = WIRES_ARE_INT_N([driven_wire], logic)
-    left_is_uint = WIRES_ARE_UINT_N([driven_wire], logic)
+    left_is_int = LOGIC.WIRES_ARE_INT_N([driven_wire], logic)
+    left_is_uint = LOGIC.WIRES_ARE_UINT_N([driven_wire], logic)
     if LOGIC.C_TYPE_IS_ENUM(left_type, parser_state):
         enum_int_c_type = parser_state.enum_info_dict[left_type].int_c_type
-        left_is_int = C_TYPE_IS_INT_N(enum_int_c_type)
-        left_is_uint = C_TYPE_IS_UINT_N(enum_int_c_type)
-    right_is_int = WIRES_ARE_INT_N([driving_wire], logic)
-    right_is_uint = WIRES_ARE_UINT_N([driving_wire], logic)
+        left_is_int = LOGIC.C_TYPE_IS_INT_N(enum_int_c_type)
+        left_is_uint = LOGIC.C_TYPE_IS_UINT_N(enum_int_c_type)
+    right_is_int = LOGIC.WIRES_ARE_INT_N([driving_wire], logic)
+    right_is_uint = LOGIC.WIRES_ARE_UINT_N([driving_wire], logic)
     if LOGIC.C_TYPE_IS_ENUM(right_type, parser_state):
         enum_int_c_type = parser_state.enum_info_dict[right_type].int_c_type
-        right_is_int = C_TYPE_IS_INT_N(enum_int_c_type)
-        right_is_uint = C_TYPE_IS_UINT_N(enum_int_c_type)
+        right_is_int = LOGIC.C_TYPE_IS_INT_N(enum_int_c_type)
+        right_is_uint = LOGIC.C_TYPE_IS_UINT_N(enum_int_c_type)
     uint_driving_int = left_is_int and right_is_uint
     int_driving_uint = left_is_uint and right_is_int
 
     # If both are of same signedness type then VHDL resize should work
     if (left_is_int and right_is_int) or (left_is_uint and right_is_uint):
         # Do integer promotion conversion
-        right_width = GET_WIDTH_FROM_C_TYPE_STR(parser_state, right_type)
-        left_width = GET_WIDTH_FROM_C_TYPE_STR(parser_state, left_type)
+        right_width = LOGIC.GET_WIDTH_FROM_C_TYPE_STR(parser_state, right_type)
+        left_width = LOGIC.GET_WIDTH_FROM_C_TYPE_STR(parser_state, left_type)
         if right_width == left_width:
             return RHS
         elif left_is_int and right_is_int and left_width < right_width:
@@ -5781,8 +5341,8 @@ def TYPE_RESOLVE_ASSIGNMENT_RHS(RHS, logic, driving_wire, driven_wire, parser_st
     # Otherwise need to resize and change signedness
     # UINT driving INT
     elif uint_driving_int:
-        right_width = GET_WIDTH_FROM_C_TYPE_STR(parser_state, right_type)
-        left_width = GET_WIDTH_FROM_C_TYPE_STR(parser_state, left_type)
+        right_width = LOGIC.GET_WIDTH_FROM_C_TYPE_STR(parser_state, right_type)
+        left_width = LOGIC.GET_WIDTH_FROM_C_TYPE_STR(parser_state, left_type)
         # Just need to add sign bit
         # signed(std_logic_vector(resize(x,left_width)))
         resize_toks = [
@@ -5792,8 +5352,8 @@ def TYPE_RESOLVE_ASSIGNMENT_RHS(RHS, logic, driving_wire, driven_wire, parser_st
 
     # INT driving UINT
     elif int_driving_uint:
-        right_width = GET_WIDTH_FROM_C_TYPE_STR(parser_state, right_type)
-        left_width = GET_WIDTH_FROM_C_TYPE_STR(parser_state, left_type)
+        right_width = LOGIC.GET_WIDTH_FROM_C_TYPE_STR(parser_state, right_type)
+        left_width = LOGIC.GET_WIDTH_FROM_C_TYPE_STR(parser_state, left_type)
 
         # Dont infer sign extend - why not past me? Were you smarter? Does this break mult?
         if left_width > right_width:
@@ -5875,55 +5435,6 @@ def TYPE_RESOLVE_ASSIGNMENT_RHS(RHS, logic, driving_wire, driven_wire, parser_st
     RHS = resize_toks[0] + RHS + resize_toks[1]
 
     return RHS
-
-
-def WIRES_ARE_ENUM(wires, logic, parser_state):
-    for wire in wires:
-        # print "wire",wire,"logic.wire_to_c_type[wire]",logic.wire_to_c_type[wire]
-        if not LOGIC.WIRE_IS_ENUM(wire, logic, parser_state):
-            return False
-    return True
-
-
-def WIRES_ARE_C_TYPE(wires, c_type_str, logic):
-    for wire in wires:
-        # print "wire",wire,"logic.wire_to_c_type[wire]",logic.wire_to_c_type[wire]
-        if c_type_str != logic.wire_to_c_type[wire]:
-            return False
-    return True
-
-
-def WIRES_ARE_UINT_N(wires, logic):
-    for wire in wires:
-        # print("wire",wire,"logic.wire_to_c_type[wire]",logic.wire_to_c_type[wire])
-        if not C_TYPE_IS_UINT_N(logic.wire_to_c_type[wire]):
-            return False
-    return True
-
-
-def WIRES_ARE_INT_N(wires, logic):
-    for wire in wires:
-        # print "wire",wire,"logic.wire_to_c_type[wire]",logic.wire_to_c_type[wire]
-        if not C_TYPE_IS_INT_N(logic.wire_to_c_type[wire]):
-            return False
-    return True
-
-
-def WIRES_TO_C_INT_BIT_WIDTH(wires, logic):
-    rv_width = None
-    for wire in wires:
-        c_type = logic.wire_to_c_type[wire]
-        width = GET_WIDTH_FROM_C_TYPE_STR(parser_state, c_type)
-        if rv_width is None:
-            rv_width = width
-        else:
-            if rv_width != width:
-                print("Inputs not all same width for C int?", logic.func_name)
-                print(logic.wire_to_c_type)
-                print("rv_width, width", rv_width, width)
-                print(0 / 0)
-                sys.exit(-1)
-    return rv_width
 
 
 def GET_RHS(
@@ -6010,7 +5521,7 @@ def CONST_VAL_STR_TO_VHDL(val_str, c_type, parser_state, wire_name=None, ast_nod
             print("TODO negated enums?")
             sys.exit(-1)
         enum_int_type = parser_state.enum_info_dict[c_type].int_c_type
-        if C_TYPE_IS_INT_N(enum_int_type):
+        if LOGIC.C_TYPE_IS_INT_N(enum_int_type):
             return "signed(" + c_type + "_to_slv(" + val_str + "))"
         else:
             return "unsigned(" + c_type + "_to_slv(" + val_str + "))"
@@ -6051,8 +5562,8 @@ def CONST_VAL_STR_TO_VHDL(val_str, c_type, parser_state, wire_name=None, ast_nod
     #  print("Oh no!",val_str, c_type_str, c_type, parser_state.existing_logic.c_ast_node.coord)
     #  sys.exit(-1)
 
-    if C_TYPE_IS_UINT_N(c_type):
-        width = GET_WIDTH_FROM_C_TYPE_STR(parser_state, c_type)
+    if LOGIC.C_TYPE_IS_UINT_N(c_type):
+        width = LOGIC.GET_WIDTH_FROM_C_TYPE_STR(parser_state, c_type)
         # Hack hacky?
         # A VHDL integer is defined from range -2147483648 to +2147483647
         if value_num > 2147483647:
@@ -6072,8 +5583,8 @@ def CONST_VAL_STR_TO_VHDL(val_str, c_type, parser_state, wire_name=None, ast_nod
                 return "unsigned'(" + hex_str + ")"  # No extra resizing needed
         else:
             return "to_unsigned(" + str(value_num) + ", " + str(width) + ")"
-    elif C_TYPE_IS_INT_N(c_type):
-        width = GET_WIDTH_FROM_C_TYPE_STR(parser_state, c_type)
+    elif LOGIC.C_TYPE_IS_INT_N(c_type):
+        width = LOGIC.GET_WIDTH_FROM_C_TYPE_STR(parser_state, c_type)
         if not -2147483648 <= value_num <= 2147483647:
             # numeric_std.to_signed takes a VHDL integer, even when its result
             # is wider. Emit the two's-complement bits for wide constants.
@@ -6512,13 +6023,13 @@ def C_ARRAY_TYPE_STR_TO_VHDL_TYPE_STR(c_array_type_str):
 
 def C_TYPE_STR_TO_VHDL_TYPE_STR(c_type_str, parser_state):
     # Check for int types
-    if C_TYPE_IS_INT_N(c_type_str):
+    if LOGIC.C_TYPE_IS_INT_N(c_type_str):
         # Get bit width
-        width = GET_WIDTH_FROM_C_TYPE_STR(parser_state, c_type_str)
+        width = LOGIC.GET_WIDTH_FROM_C_TYPE_STR(parser_state, c_type_str)
         return "signed(" + str(width - 1) + " downto 0)"
-    elif C_TYPE_IS_UINT_N(c_type_str):
+    elif LOGIC.C_TYPE_IS_UINT_N(c_type_str):
         # Get bit width
-        width = GET_WIDTH_FROM_C_TYPE_STR(parser_state, c_type_str)
+        width = LOGIC.GET_WIDTH_FROM_C_TYPE_STR(parser_state, c_type_str)
         return "unsigned(" + str(width - 1) + " downto 0)"
     elif c_type_str == LOGIC.BOOL_C_TYPE:
         return "unsigned(0 downto 0)"
@@ -6541,7 +6052,7 @@ def C_TYPE_STR_TO_VHDL_TYPE_STR(c_type_str, parser_state):
 
 
 def C_TYPE_STR_TO_VHDL_SLV_LEN_STR(c_type_str, parser_state):
-    width = GET_WIDTH_FROM_C_TYPE_STR(parser_state, c_type_str, allow_fail=True)
+    width = LOGIC.GET_WIDTH_FROM_C_TYPE_STR(parser_state, c_type_str, allow_fail=True)
     if width is not None:
         return str(width)
     if LOGIC.C_TYPE_IS_STRUCT(c_type_str, parser_state):
@@ -6558,7 +6069,7 @@ def C_TYPE_STR_TO_VHDL_SLV_LEN_STR(c_type_str, parser_state):
 # Past me is like not so bad...
 #   God? - The Dodos
 def C_TYPE_STR_TO_VHDL_SLV_LEN_NUM(c_type_str, parser_state):
-    width = GET_WIDTH_FROM_C_TYPE_STR(parser_state, c_type_str, allow_fail=True)
+    width = LOGIC.GET_WIDTH_FROM_C_TYPE_STR(parser_state, c_type_str, allow_fail=True)
     if width is not None:
         return width
     if LOGIC.C_TYPE_IS_STRUCT(c_type_str, parser_state):
@@ -6583,11 +6094,11 @@ def C_TYPE_STR_TO_VHDL_SLV_LEN_NUM(c_type_str, parser_state):
 
 def C_TYPE_STR_TO_VHDL_NULL_STR(c_type_str, parser_state):
     # Check for int types
-    if C_TYPE_IS_INT_N(c_type_str):
-        width = GET_WIDTH_FROM_C_N_BITS_INT_TYPE_STR(c_type_str)
+    if LOGIC.C_TYPE_IS_INT_N(c_type_str):
+        width = LOGIC.GET_WIDTH_FROM_C_N_BITS_INT_TYPE_STR(c_type_str)
         return f"to_signed(0, {width})"
-    elif C_TYPE_IS_UINT_N(c_type_str):
-        width = GET_WIDTH_FROM_C_N_BITS_INT_TYPE_STR(c_type_str)
+    elif LOGIC.C_TYPE_IS_UINT_N(c_type_str):
+        width = LOGIC.GET_WIDTH_FROM_C_N_BITS_INT_TYPE_STR(c_type_str)
         return f"to_unsigned(0, {width})"
     elif LOGIC.C_TYPE_IS_FLOAT_TYPE(c_type_str):
         e, m = LOGIC.C_FLOAT_E_M_TYPE_TO_E_M(c_type_str)
@@ -6599,7 +6110,7 @@ def C_TYPE_STR_TO_VHDL_NULL_STR(c_type_str, parser_state):
     elif LOGIC.C_TYPE_IS_ENUM(c_type_str, parser_state):
         # Null is always first,left value, converted to u/int
         int_type = parser_state.enum_info_dict[c_type_str].int_c_type
-        if C_TYPE_IS_INT_N(int_type):
+        if LOGIC.C_TYPE_IS_INT_N(int_type):
             return "signed(" + c_type_str + "_to_slv(" + c_type_str + "'left))"
         else:
             return "unsigned(" + c_type_str + "_to_slv(" + c_type_str + "'left))"
@@ -6619,3 +6130,1342 @@ def C_TYPE_STR_TO_VHDL_NULL_STR(c_type_str, parser_state):
         print("Unknown VHDL null str for C type: '" + c_type_str + "'")
         print(0 / 0)
         sys.exit(-1)
+
+
+# ─────────────────────────────────────────────
+# Pipelined VHDL architecture text: stage records and signals, the combinational
+# stage process, stage-to-stage and IO registers, and submodule instances placed
+# at their stage. Rendered from the decisions AUTO_PIPELINE.py makes (TimingParams,
+# GET_PIPELINE_MAP, PiplineHDLParams register lifetimes, aligned global wires).
+# ─────────────────────────────────────────────
+
+
+def GLOBAL_IO_REG_NAME(wire, Logic):
+    # Prefixed so a global can never collide with an argument of the same name
+    return "global_" + WIRE_TO_VHDL_NAME(wire, Logic)
+
+
+def IO_REG_BANKS(timing_params, Logic, parser_state, pipeline_hdl_params):
+    """(input bank exists, output bank exists): a bank exists only when the sweep
+    placed it and it holds something (args/clock enable/aligned global reads, or
+    return/aligned global writes). One definition for declarations and logic."""
+    import AUTO_PIPELINE
+
+    needs_clk_en = LOGIC.LOGIC_NEEDS_CLOCK_ENABLE(Logic, parser_state)
+    has_in = timing_params._has_input_regs and (
+        len(Logic.inputs) > 0
+        or needs_clk_en
+        or len(AUTO_PIPELINE.ALIGNED_GLOBAL_READS(Logic, pipeline_hdl_params)) > 0
+    )
+    has_out = timing_params._has_output_regs and (
+        len(Logic.outputs) > 0 or len(AUTO_PIPELINE.ALIGNED_GLOBAL_WRITES(Logic, parser_state)) > 0
+    )
+    return has_in, has_out
+
+
+def GET_PIPELINE_ARCH_DECL_TEXT(
+    inst_name, Logic, parser_state, TimingParamsLookupTable, pipeline_hdl_params
+):
+    import AUTO_MULTI_CYCLE
+    import AUTO_PIPELINE
+
+    timing_params = TimingParamsLookupTable[inst_name]
+    total_latency = timing_params.GET_TOTAL_LATENCY(
+        parser_state, TimingParamsLookupTable
+    )
+    pipeline_latency = timing_params.GET_PIPELINE_LOGIC_ADDED_LATENCY(
+        parser_state, TimingParamsLookupTable
+    )
+    needs_clk = LOGIC_NEEDS_CLOCK(
+        inst_name, Logic, parser_state, TimingParamsLookupTable
+    )
+    needs_clk_en = LOGIC.LOGIC_NEEDS_CLOCK_ENABLE(Logic, parser_state)
+    needs_regs = LOGIC_NEEDS_REGS(
+        inst_name, Logic, parser_state, TimingParamsLookupTable
+    )
+    is_raw_hdl = LOGIC.LOGIC_IS_RAW_HDL(Logic, parser_state)
+    needs_manual_regs = LOGIC_NEEDS_MANUAL_REGS(
+        inst_name, Logic, parser_state, TimingParamsLookupTable
+    )
+
+    rv = ""
+    # Stuff originally in package
+    rv += "-- Types and such\n"
+    rv += "-- Declarations\n"
+    rv += "attribute mark_debug : string;\n"
+    mcp_endpoint_regs = AUTO_MULTI_CYCLE.MCP_ENDPOINT_REGS(Logic)
+    if mcp_endpoint_regs:
+        rv += "attribute dont_touch : string;\n"
+
+    # Declare latency for just the pipeline portion of logic, not io regs
+    rv += (
+        "constant ADDED_PIPELINE_LATENCY : integer := " + str(pipeline_latency) + ";\n"
+    )
+
+    # TODO built in raw vhdl still uses write pipe stuff
+
+    # Raw HDL functions are done differently
+    # Raw vhdl still uses write pipe
+    wrote_variables_t = False
+    wrote_variables_NULL = False
+    if is_raw_hdl:
+        # Type for wires/variables
+        varables_t_pre = ""
+        varables_t_pre += "\n"
+        varables_t_pre += "-- One struct to represent this modules variables\n"
+        varables_t_pre += "type raw_hdl_variables_t is record\n"
+        varables_t_pre += " -- All of the wires in function\n"
+        text = RAW_VHDL.GET_RAW_HDL_WIRES_DECL_TEXT(
+            inst_name, Logic, parser_state, timing_params
+        )
+        if text != "":
+            rv += varables_t_pre
+            rv += text
+            rv += "end record;\n"
+            wrote_variables_t = True
+        rv += """
+-- Type for this modules register pipeline
+type raw_hdl_register_pipeline_t is array(0 to ADDED_PIPELINE_LATENCY) of raw_hdl_variables_t;
+  """
+    else:
+        # For each stage make reg and comb signal as needed
+        rv += "-- All of the wires/regs in function\n"
+        for stage in range(0, pipeline_latency):
+            rv += f"-- Stage {stage}\n"
+            for prefix in ["REG", "COMB"]:
+                for wire_name in pipeline_hdl_params.wires_to_decl:
+                    (
+                        start_stage,
+                        end_stage,
+                    ) = pipeline_hdl_params.wire_to_reg_stage_start_end[wire_name]
+                    if start_stage is None or end_stage is None:
+                        continue
+                    if stage in range(start_stage, end_stage + 1):
+                        # print("wire_name", wire_name)
+                        vhdl_type_str = WIRE_TO_VHDL_TYPE_STR(
+                            wire_name, Logic, parser_state
+                        )
+                        # print "wire_name",wire_name
+                        write_pipe_wire_var_vhdl = WIRE_TO_VHDL_NAME(wire_name, Logic)
+                        sig_name = (
+                            prefix
+                            + "_"
+                            + "STAGE"
+                            + str(stage)
+                            + "_"
+                            + write_pipe_wire_var_vhdl
+                        )
+                        rv += "signal " + sig_name + " : " + vhdl_type_str + ";\n"
+                        # Mark debug?
+                        local_mark_debug = False
+                        if wire_name in Logic.debug_names:
+                            local_mark_debug = True
+                        if wire_name in Logic.alias_to_orig_var_name:
+                            orig_var_name = Logic.alias_to_orig_var_name[wire_name]
+                            if orig_var_name in Logic.debug_names:
+                                local_mark_debug = True
+                        global_mark_debug = (
+                            Logic.func_name in parser_state.func_marked_debug
+                        )
+                        if (local_mark_debug or global_mark_debug) and prefix == "REG":
+                            rv += (
+                                """attribute mark_debug of """
+                                + sig_name
+                                + """ : signal is "true";\n"""
+                            )
+    # Input registers
+    if timing_params._has_input_regs:
+        in_regs_rec = ""
+        for input_port in Logic.inputs:
+            vhdl_type_str = WIRE_TO_VHDL_TYPE_STR(input_port, Logic, parser_state)
+            vhdl_name = WIRE_TO_VHDL_NAME(input_port, Logic)
+            in_regs_rec += " " + vhdl_name + " : " + vhdl_type_str + ";\n"
+        if needs_clk_en:
+            in_regs_rec += (
+                " " + LOGIC.CLOCK_ENABLE_NAME + " : unsigned(0 downto 0);\n"
+            )
+        # Aligned global reads are sampled with the args
+        for global_wire in AUTO_PIPELINE.ALIGNED_GLOBAL_READS(Logic, pipeline_hdl_params):
+            vhdl_type_str = WIRE_TO_VHDL_TYPE_STR(global_wire, Logic, parser_state)
+            in_regs_rec += (
+                " " + GLOBAL_IO_REG_NAME(global_wire, Logic) + " : " + vhdl_type_str + ";\n"
+            )
+        if in_regs_rec != "":
+            rv += """
+-- Type holding all input registers
+type input_registers_t is record\n"""
+            rv += in_regs_rec
+            rv += "end record;\n"
+
+    # Output registers
+    if timing_params._has_output_regs:
+        out_regs_rec = ""
+        for output_port in Logic.outputs:
+            vhdl_type_str = WIRE_TO_VHDL_TYPE_STR(output_port, Logic, parser_state)
+            vhdl_name = WIRE_TO_VHDL_NAME(output_port, Logic)
+            out_regs_rec += " " + vhdl_name + " : " + vhdl_type_str + ";\n"
+        # Aligned global writes are published with the return
+        for global_wire in AUTO_PIPELINE.ALIGNED_GLOBAL_WRITES(Logic, parser_state):
+            vhdl_type_str = WIRE_TO_VHDL_TYPE_STR(global_wire, Logic, parser_state)
+            out_regs_rec += (
+                " " + GLOBAL_IO_REG_NAME(global_wire, Logic) + " : " + vhdl_type_str + ";\n"
+            )
+        if out_regs_rec != "":
+            rv += """
+-- Type holding all output registers
+type output_registers_t is record\n"""
+            rv += out_regs_rec
+            rv += "end record;\n"
+
+    # State registers
+    if len(Logic.state_regs) > 0:
+        rv += """
+-- All user state registers\n"""
+        for state_reg in Logic.state_regs:
+            vhdl_type_str = WIRE_TO_VHDL_TYPE_STR(state_reg, Logic, parser_state)
+            vhdl_name = WIRE_TO_VHDL_NAME(state_reg, Logic)
+            rv += (
+                "signal "
+                + vhdl_name
+                + " : "
+                + vhdl_type_str
+                + " := "
+                + STATE_REG_TO_VHDL_INIT_STR(state_reg, Logic, parser_state)
+                + ";\n"
+            )
+            if state_reg in mcp_endpoint_regs:
+                rv += f'attribute dont_touch of {vhdl_name} : signal is "true";\n'
+            # Mark debug?
+            local_mark_debug = state_reg in Logic.debug_names
+            global_mark_debug = Logic.func_name in parser_state.func_marked_debug
+            if local_mark_debug or global_mark_debug:
+                rv += (
+                    """attribute mark_debug of """
+                    + vhdl_name
+                    + """ : signal is "true";\n"""
+                )
+        for state_reg in Logic.state_regs:
+            vhdl_type_str = WIRE_TO_VHDL_TYPE_STR(state_reg, Logic, parser_state)
+            vhdl_name = WIRE_TO_VHDL_NAME(state_reg, Logic)
+            rv += "signal " + "REG_COMB_" + vhdl_name + " : " + vhdl_type_str + ";\n"
+        rv += "\n"
+
+    # Feedback wires
+    if len(Logic.feedback_vars) > 0:
+        rv += """
+-- Type holding all locally declared (feedback) wires of the func 
+type feedback_vars_t is record"""
+        rv += """
+  -- Feedback vars\n"""
+        for feedback_var in Logic.feedback_vars:
+            vhdl_type_str = WIRE_TO_VHDL_TYPE_STR(feedback_var, Logic, parser_state)
+            vhdl_name = WIRE_TO_VHDL_NAME(feedback_var, Logic)
+            rv += " " + vhdl_name + " : " + vhdl_type_str + ";\n"
+        rv += "end record;\n"
+
+    has_in_regs, has_out_regs = IO_REG_BANKS(
+        timing_params, Logic, parser_state, pipeline_hdl_params
+    )
+    has_io_regs = has_in_regs or has_out_regs
+    if has_io_regs:
+        record_text = ""
+        # Input regs
+        if has_in_regs:
+            record_text += """
+    input_regs : input_registers_t;"""
+        # Output regs
+        if has_out_regs:
+            record_text += """
+    output_regs : output_registers_t;"""
+        if record_text != "":
+            rv += """ 
+  -- Type holding all IO regs (not part of body slicing)
+  type io_registers_t is record"""
+            rv += record_text
+            # End
+            rv += """ 
+  end record;
+  """
+
+    # ALL MANUAL REGISTERS
+    if needs_manual_regs:
+        record_text = ""
+        # Self regs
+        if wrote_variables_t and is_raw_hdl:
+            record_text += """
+    raw_hdl_pipeline : raw_hdl_register_pipeline_t;"""
+        if record_text != "":
+            rv += """ 
+  -- Type holding all manually (not auto generated in pipelining) registers for this function
+  --  RAW HDL pipeline, user state regs
+  type manual_registers_t is record"""
+            rv += record_text
+            # End
+            rv += """ 
+  end record;
+  """
+
+    # Func for nulling out IO regs
+    if has_io_regs:
+        func_text = ""
+        # Input regs
+        if timing_params._has_input_regs:
+            for input_port in Logic.inputs:
+                func_text += (
+                    " rv.input_regs."
+                    + WIRE_TO_VHDL_NAME(input_port, Logic)
+                    + " := "
+                    + WIRE_TO_VHDL_NULL_STR(input_port, Logic, parser_state)
+                    + ";\n"
+                )
+            # Clock enable
+            if needs_clk_en:
+                func_text += (
+                    " rv.input_regs."
+                    + LOGIC.CLOCK_ENABLE_NAME
+                    + " := "
+                    + WIRE_TO_VHDL_NULL_STR(
+                        LOGIC.CLOCK_ENABLE_NAME, Logic, parser_state
+                    )
+                    + ";\n"
+                )
+            for global_wire in AUTO_PIPELINE.ALIGNED_GLOBAL_READS(Logic, pipeline_hdl_params):
+                func_text += (
+                    " rv.input_regs."
+                    + GLOBAL_IO_REG_NAME(global_wire, Logic)
+                    + " := "
+                    + WIRE_TO_VHDL_NULL_STR(global_wire, Logic, parser_state)
+                    + ";\n"
+                )
+
+        # Output regs
+        if timing_params._has_output_regs:
+            for output_port in Logic.outputs:
+                func_text += (
+                    " rv.output_regs."
+                    + WIRE_TO_VHDL_NAME(output_port, Logic)
+                    + " := "
+                    + WIRE_TO_VHDL_NULL_STR(output_port, Logic, parser_state)
+                    + ";\n"
+                )
+            for global_wire in AUTO_PIPELINE.ALIGNED_GLOBAL_WRITES(Logic, parser_state):
+                func_text += (
+                    " rv.output_regs."
+                    + GLOBAL_IO_REG_NAME(global_wire, Logic)
+                    + " := "
+                    + WIRE_TO_VHDL_NULL_STR(global_wire, Logic, parser_state)
+                    + ";\n"
+                )
+        # Function to null out IO regs
+        rv += "\n-- Function to null out IO regs \n"
+        rv += "function io_registers_NULL return io_registers_t is\n"
+        rv += """ variable rv : io_registers_t;
+  begin
+"""
+        rv += func_text
+        rv += """
+  return rv;
+end function;\n
+"""
+    # Special resolved to be input reg or not internal clock enable
+    if needs_clk_en:
+        rv += "-- Resolved maybe from input reg clock enable\n"
+        rv += "signal clk_en_internal : std_logic;\n"
+
+    if has_io_regs:
+        rv += """-- IO regs and signals for this function\n"""
+        # Comb signal
+        rv += "signal " + "io_registers : io_registers_t;\n"
+        # Regs nulled out
+        rv += "signal " + "io_registers_r : io_registers_t := io_registers_NULL;\n"
+        # Mark debug?
+        if Logic.func_name in parser_state.func_marked_debug:
+            rv += """attribute mark_debug of io_registers_r : signal is "true";\n"""
+        rv += "\n"
+
+    # Func for nulling out manual regs
+    if needs_manual_regs:
+        func_text = ""
+        # Raw hdl regs
+        if wrote_variables_NULL and is_raw_hdl:
+            func_text += "-- Not nulling raw hdl\n"
+        # Function to null out manual regs
+        rv += "\n-- Function to null out manual regs \n"
+        rv += "function manual_registers_NULL return manual_registers_t is\n"
+        rv += """ variable rv : manual_registers_t;
+  begin
+"""
+        rv += func_text
+        rv += """
+  return rv;
+end function;\n
+"""
+
+    if needs_manual_regs:
+        rv += """-- Manual (not auto pipeline) registers and signals for this function\n"""
+        # Comb signal of main regs
+        rv += "signal " + "manual_registers : manual_registers_t;\n"
+        # Main regs nulled out
+        rv += (
+            "signal "
+            + "manual_registers_r : manual_registers_t := manual_registers_NULL;\n"
+        )
+        # Mark debug?
+        if Logic.func_name in parser_state.func_marked_debug:
+            rv += """attribute mark_debug of manual_registers_r : signal is "true";\n"""
+        rv += "\n"
+
+    if len(Logic.feedback_vars) > 0:
+        rv += """-- Feedback vars in the func\n"""
+        rv += "signal " + "feedback_vars : feedback_vars_t;\n"
+
+    # Signals for submodule ports
+    if len(Logic.submodule_instances) > 0:
+        rv += """-- Each function instance gets signals\n"""
+    for inst in Logic.submodule_instances:
+        instance_name = inst_name + LOGIC.SUBMODULE_MARKER + inst
+        submodule_logic_name = Logic.submodule_instances[inst]
+        submodule_logic = parser_state.LogicInstLookupTable[instance_name]
+        submodule_logic_needs_clk_en = LOGIC.LOGIC_NEEDS_CLOCK_ENABLE(
+            submodule_logic, parser_state
+        )
+
+        # Skip VHDL
+        if submodule_logic.is_vhdl_func or submodule_logic.is_vhdl_expr:
+            continue
+        # Skip clock cross
+        if submodule_logic.is_clock_crossing:
+            continue
+
+        rv += "-- " + inst + "\n"
+        # Clock enable
+        if submodule_logic_needs_clk_en:
+            ce_wire = inst + LOGIC.SUBMODULE_MARKER + LOGIC.CLOCK_ENABLE_NAME
+            vhdl_type_str = WIRE_TO_VHDL_TYPE_STR(ce_wire, Logic, parser_state)
+            rv += (
+                "signal "
+                + WIRE_TO_VHDL_NAME(ce_wire, Logic)
+                + " : "
+                + vhdl_type_str
+                + ";\n"
+            )
+        # Inputs
+        for in_port in submodule_logic.inputs:
+            in_wire = inst + LOGIC.SUBMODULE_MARKER + in_port
+            vhdl_type_str = WIRE_TO_VHDL_TYPE_STR(in_wire, Logic, parser_state)
+            rv += (
+                "signal "
+                + WIRE_TO_VHDL_NAME(in_wire, Logic)
+                + " : "
+                + vhdl_type_str
+                + ";\n"
+            )
+        # Outputs
+        for out_port in submodule_logic.outputs:
+            out_wire = inst + LOGIC.SUBMODULE_MARKER + out_port
+            vhdl_type_str = WIRE_TO_VHDL_TYPE_STR(out_wire, Logic, parser_state)
+            rv += (
+                "signal "
+                + WIRE_TO_VHDL_NAME(out_wire, Logic)
+                + " : "
+                + vhdl_type_str
+                + ";\n"
+            )
+        rv += "\n"
+
+    # Certain submodules are always 0 delay "IS_VHDL_FUNC"
+    rv += GET_VHDL_FUNC_SUBMODULE_DECLS(
+        inst_name, Logic, parser_state, TimingParamsLookupTable
+    )
+
+    rv += "\n"
+
+    return rv
+
+
+# TODO raw vhdl parts of this are a mess
+# Hey Ya! - OutKast
+def GET_PIPELINE_LOGIC_COMB_PROCESS_TEXT(
+    inst_name, Logic, parser_state, TimingParamsLookupTable, pipeline_hdl_params
+):
+    import AUTO_PIPELINE
+
+    # Comb Logic pipeline
+    timing_params = TimingParamsLookupTable[inst_name]
+    total_latency = timing_params.GET_TOTAL_LATENCY(
+        parser_state, TimingParamsLookupTable
+    )
+    pipeline_latency = timing_params.GET_PIPELINE_LOGIC_ADDED_LATENCY(
+        parser_state, TimingParamsLookupTable
+    )
+    needs_clk = LOGIC_NEEDS_CLOCK(
+        inst_name, Logic, parser_state, TimingParamsLookupTable
+    )
+    needs_clk_en = LOGIC.LOGIC_NEEDS_CLOCK_ENABLE(Logic, parser_state)
+    needs_regs = LOGIC_NEEDS_REGS(
+        inst_name, Logic, parser_state, TimingParamsLookupTable
+    )
+    is_raw_hdl = LOGIC.LOGIC_IS_RAW_HDL(Logic, parser_state)
+    needs_manual_regs = LOGIC_NEEDS_MANUAL_REGS(
+        inst_name, Logic, parser_state, TimingParamsLookupTable
+    )
+    needs_global_to_module = LOGIC.LOGIC_NEEDS_GLOBAL_TO_MODULE(
+        Logic, parser_state
+    )  # , TimingParamsLookupTable)
+    # needs_module_to_global = LOGIC_NEEDS_MODULE_TO_GLOBAL(Logic, parser_state)#, TimingParamsLookupTable)
+    has_in_regs, has_out_regs = IO_REG_BANKS(
+        timing_params, Logic, parser_state, pipeline_hdl_params
+    )
+    has_io_regs = has_in_regs or has_out_regs
+    aligned_global_reads = AUTO_PIPELINE.ALIGNED_GLOBAL_READS(Logic, pipeline_hdl_params)
+    aligned_global_writes = AUTO_PIPELINE.ALIGNED_GLOBAL_WRITES(Logic, parser_state)
+    rv = ""
+    rv += "\n"
+
+    # Resolve what clock enable to use for user logic
+    # the clock enable port, of input delayed reg version
+    if needs_clk_en:
+        rv += "-- Resolve what clock enable to use for user logic\n"
+        if timing_params._has_input_regs:
+            rv += (
+                "clk_en_internal <= io_registers_r.input_regs."
+                + LOGIC.CLOCK_ENABLE_NAME
+                + "(0);\n"
+            )
+        else:
+            rv += "clk_en_internal <= " + LOGIC.CLOCK_ENABLE_NAME + "(0);\n"
+
+    rv += "-- Combinatorial process for pipeline stages\n"
+    rv += "process "
+    process_sens_list = ""
+    if needs_clk_en:
+        process_sens_list += "CLOCK_ENABLE,\n"
+        process_sens_list += "clk_en_internal,\n"
+    if len(Logic.inputs) > 0:
+        process_sens_list += " -- Inputs\n"
+        for input_wire in Logic.inputs:
+            vhdl_type_str = WIRE_TO_VHDL_TYPE_STR(input_wire, Logic, parser_state)
+            process_sens_list += " " + WIRE_TO_VHDL_NAME(input_wire, Logic) + ",\n"
+    if len(Logic.feedback_vars) > 0:
+        process_sens_list += " -- Feedback vars\n"
+        process_sens_list += " " + "feedback_vars,\n"
+    if needs_regs:
+        process_sens_list += " -- Registers\n"
+        # User state registers
+        for state_reg in Logic.state_regs:
+            vhdl_name = WIRE_TO_VHDL_NAME(state_reg, Logic)
+            process_sens_list += " " + vhdl_name + ",\n"
+        # Auto gen pipeline regs?
+        if not is_raw_hdl:
+            for stage in range(0, pipeline_latency):
+                process_sens_list += f" -- Stage {stage}\n"
+                for wire_name in pipeline_hdl_params.wires_to_decl:
+                    (
+                        start_stage,
+                        end_stage,
+                    ) = pipeline_hdl_params.wire_to_reg_stage_start_end[wire_name]
+                    if start_stage is None or end_stage is None:
+                        continue
+                    if stage in range(start_stage, end_stage + 1):
+                        vhdl_type_str = WIRE_TO_VHDL_TYPE_STR(
+                            wire_name, Logic, parser_state
+                        )
+                        write_pipe_wire_var_vhdl = WIRE_TO_VHDL_NAME(wire_name, Logic)
+                        process_sens_list += (
+                            " "
+                            + "REG_STAGE"
+                            + str(stage)
+                            + "_"
+                            + write_pipe_wire_var_vhdl
+                            + ",\n"
+                        )
+        if has_io_regs:
+            process_sens_list += " " + "io_registers_r,\n"
+        if needs_manual_regs:
+            process_sens_list += " " + "manual_registers_r,\n"
+    if needs_global_to_module:
+        process_sens_list += " -- Clock cross input\n"
+        process_sens_list += " " + "global_to_module,\n"
+    submodule_text = ""
+    has_submodules_to_print = False
+    if len(Logic.submodule_instances) > 0:
+        submodule_text += " -- All submodule outputs\n"
+        # All submodules
+        for inst in Logic.submodule_instances:
+            instance_name = inst_name + LOGIC.SUBMODULE_MARKER + inst
+            submodule_logic_name = Logic.submodule_instances[inst]
+            submodule_logic = parser_state.FuncLogicLookupTable[submodule_logic_name]
+
+            # Skip vhdl
+            if submodule_logic.is_vhdl_func or submodule_logic.is_vhdl_expr:
+                continue
+            # Skip clock cross
+            if submodule_logic.is_clock_crossing:
+                continue
+
+            new_inst_name = LOGIC.LEAF_NAME(instance_name, do_submodule_split=True)
+            if len(submodule_logic.outputs) > 0:
+                has_submodules_to_print = True
+                # submodule_text += " -- " + new_inst_name + "\n"
+                # Outputs
+                for out_port in submodule_logic.outputs:
+                    out_wire = inst + LOGIC.SUBMODULE_MARKER + out_port
+                    submodule_text += " " + WIRE_TO_VHDL_NAME(out_wire, Logic) + ",\n"
+
+    if has_submodules_to_print:
+        process_sens_list += submodule_text
+
+    if process_sens_list != "":
+        rv += "(\n"
+        # Remove last two chars
+        process_sens_list = process_sens_list[0 : len(process_sens_list) - 2]
+        rv += process_sens_list
+        rv += ")\n"
+    else:
+        # Some tools assume wait is needed if empty sens list
+        # Use all in sens list if nothing else
+        # GHDL->Yosys needs?
+        # if (SIM.SIM_TOOL == VERILATOR) or (SIM.SIM_TOOL == CXXRTL):
+        rv += "(all)\n"
+
+    rv += "is \n"
+
+    # Variables for between pipeline stages
+    # Raw vhdl still uses write pipe
+    if is_raw_hdl:
+        # READ PIPE
+        rv += " -- Read and write variables to do register transfers per clock\n"
+        rv += " -- from the previous to next stage\n"
+        rv += " " + "variable read_pipe : raw_hdl_variables_t;\n"
+        rv += " " + "variable write_pipe : raw_hdl_variables_t;\n"
+        # Self regs
+        rv += """
+ -- This modules self pipeline registers read once per clock
+ variable read_raw_hdl_pipeline_regs : raw_hdl_register_pipeline_t;
+ variable write_raw_hdl_pipeline_regs : raw_hdl_register_pipeline_t;
+  """
+    else:
+        if len(pipeline_hdl_params.wires_to_decl) > 0:
+            rv += " " + "-- All of the wires in function\n"
+            for wire_name in pipeline_hdl_params.wires_to_decl:
+                vhdl_type_str = WIRE_TO_VHDL_TYPE_STR(wire_name, Logic, parser_state)
+                write_pipe_wire_var_vhdl = WIRE_TO_VHDL_NAME(wire_name, Logic)
+                rv += (
+                    " "
+                    + "variable VAR_"
+                    + write_pipe_wire_var_vhdl
+                    + " : "
+                    + vhdl_type_str
+                    + ";\n"
+                )
+
+    # State regs
+    if len(Logic.state_regs) > 0:
+        rv += " " + "-- State registers comb logic variables\n"
+        for state_reg in Logic.state_regs:
+            vhdl_type_str = WIRE_TO_VHDL_TYPE_STR(state_reg, Logic, parser_state)
+            vhdl_name = WIRE_TO_VHDL_NAME(state_reg, Logic)
+            rv += "variable REG_VAR_" + vhdl_name + " : " + vhdl_type_str + ";\n"
+
+    # BEGIN BEGIN BEGIN
+    rv += "begin\n"
+
+    # Input regs
+    if timing_params._has_input_regs:
+        rv += " -- Input regs\n"
+        for input_port in Logic.inputs:
+            rv += (
+                """ io_registers.input_regs."""
+                + WIRE_TO_VHDL_NAME(input_port, Logic)
+                + """ <= """
+                + WIRE_TO_VHDL_NAME(input_port, Logic)
+                + """;\n"""
+            )
+        if needs_clk_en:
+            rv += (
+                """ io_registers.input_regs."""
+                + LOGIC.CLOCK_ENABLE_NAME
+                + """ <= """
+                + LOGIC.CLOCK_ENABLE_NAME
+                + """;\n"""
+            )
+        for global_wire in aligned_global_reads:
+            rv += (
+                """ io_registers.input_regs."""
+                + GLOBAL_IO_REG_NAME(global_wire, Logic)
+                + """ <= global_to_module."""
+                + WIRE_TO_VHDL_NAME(global_wire, Logic)
+                + """;\n"""
+            )
+
+    if is_raw_hdl and needs_regs:
+        # Raw hdl regs
+        rv += """
+ -- Raw hdl REGS
+ -- Default read raw hdl regs once per clock
+ read_raw_hdl_pipeline_regs := manual_registers_r.raw_hdl_pipeline;
+ -- Default write contents of raw hdl regs
+ write_raw_hdl_pipeline_regs := read_raw_hdl_pipeline_regs;
+  """
+
+    # Globals
+    if len(Logic.state_regs) > 0:
+        rv += """
+  -- STATE REGS
+  -- Default read regs into vars\n"""
+        for state_reg in Logic.state_regs:
+            vhdl_type_str = WIRE_TO_VHDL_TYPE_STR(state_reg, Logic, parser_state)
+            vhdl_name = WIRE_TO_VHDL_NAME(state_reg, Logic)
+            rv += "  REG_VAR_" + vhdl_name + " := " + vhdl_name + ";\n"
+
+    # Is there a pseudo stage of constant prop?
+    if pipeline_hdl_params.pipeline_map.const_network_stage_info is not None:
+        const_stage_info = pipeline_hdl_params.pipeline_map.const_network_stage_info
+        rv += " " + "-- Constants and things derived from constants alone\n"
+        # Write the text for each submodule level ~logic level in this stage
+        for submodule_level_info in const_stage_info.submodule_level_infos:
+            rv += GET_SUBMODULE_LEVEL_TEXT(
+                inst_name,
+                Logic,
+                parser_state,
+                TimingParamsLookupTable,
+                submodule_level_info,
+                pipeline_hdl_params,
+            )
+
+    # Is there a pseudo stage of non vol read only global prop?
+    if pipeline_hdl_params.pipeline_map.read_only_global_network_stage_info is not None:
+        nonvol_ro_stage_info = (
+            pipeline_hdl_params.pipeline_map.read_only_global_network_stage_info
+        )
+        rv += " " + "-- Reads from global variables\n"
+        # Read each global into VAR_ variable
+        for ro_var in Logic.read_only_global_wires:
+            # Trimming can leave no variable for an unused read (ex. readback)
+            if (
+                not is_raw_hdl
+                and ro_var not in pipeline_hdl_params.wire_to_reg_stage_start_end
+            ):
+                continue
+            # Aligned reads sampled with the args go through the input regs too
+            if has_in_regs and ro_var in aligned_global_reads:
+                source = "io_registers_r.input_regs." + GLOBAL_IO_REG_NAME(ro_var, Logic)
+            else:
+                source = "global_to_module." + WIRE_TO_VHDL_NAME(ro_var, Logic)
+            rv += (
+                "     "
+                + "VAR_"
+                + WIRE_TO_VHDL_NAME(ro_var, Logic)
+                + " := "
+                + source
+                + ";\n"
+            )
+        # Write the text for each submodule level ~logic level in this stage
+        for submodule_level_info in nonvol_ro_stage_info.submodule_level_infos:
+            rv += GET_SUBMODULE_LEVEL_TEXT(
+                inst_name,
+                Logic,
+                parser_state,
+                TimingParamsLookupTable,
+                submodule_level_info,
+                pipeline_hdl_params,
+            )
+
+    # The stages of pipeline
+    rv += "\n"
+    rv += " -- Loop to construct simultaneous register transfers for each of the pipeline stages\n"
+    rv += " -- LATENCY=0 is combinational Logic\n"
+    rv += " " + "for STAGE in 0 to ADDED_PIPELINE_LATENCY loop\n"
+
+    # Raw hdl still write pipe
+    if is_raw_hdl:
+        rv += " " + " " + "-- Input to first stage are inputs to function\n"
+        rv += " " + " " + "if STAGE=0 then\n"
+
+        if needs_clk_en:
+            rv += " " + " " + " " + "-- Raw hdl mux in clock enable\n"
+            rv += (
+                " "
+                + " "
+                + " "
+                + "read_pipe."
+                + WIRE_TO_VHDL_NAME(LOGIC.CLOCK_ENABLE_NAME, Logic)
+                + "(0) := clk_en_internal;\n"
+            )
+
+        if len(Logic.inputs) > 0:
+            rv += " " + " " + " " + "-- raw hdl mux in inputs\n"
+            for input_wire in Logic.inputs:
+                if timing_params._has_input_regs:
+                    rv += (
+                        " "
+                        + " "
+                        + " "
+                        + "read_pipe."
+                        + WIRE_TO_VHDL_NAME(input_wire, Logic)
+                        + " := io_registers_r.input_regs."
+                        + WIRE_TO_VHDL_NAME(input_wire, Logic)
+                        + ";\n"
+                    )
+                else:
+                    rv += (
+                        " "
+                        + " "
+                        + " "
+                        + "read_pipe."
+                        + WIRE_TO_VHDL_NAME(input_wire, Logic)
+                        + " := "
+                        + WIRE_TO_VHDL_NAME(input_wire, Logic)
+                        + ";\n"
+                    )
+
+        # Also mux volatile global regs into wire - act like regular wire
+        # Does this make sense for raw vhdl? ever used?
+        for state_reg in Logic.state_regs:
+            if Logic.state_regs[state_reg].is_volatile:
+                rv += (
+                    " "
+                    + " "
+                    + " "
+                    + "read_pipe."
+                    + WIRE_TO_VHDL_NAME(state_reg, Logic)
+                    + " := REG_VAR_"
+                    + WIRE_TO_VHDL_NAME(state_reg, Logic)
+                    + ";\n"
+                )
+
+        rv += " " + " " + "else\n"
+        rv += " " + " " + " " + "-- Default read from previous stage\n"
+        rv += (
+            " " + " " + " " + "read_pipe := " + "read_raw_hdl_pipeline_regs(STAGE-1);\n"
+        )
+        rv += " " + " " + "end if;\n"
+        rv += " " + " " + "-- Default write contents of previous stage\n"
+        rv += " " + " " + "write_pipe := read_pipe;\n"
+        rv += "\n"
+
+    # C built in Logic is static in the stages code here but coded as generic
+    rv += GET_ENTITY_PROCESS_STAGES_TEXT(
+        inst_name, Logic, parser_state, TimingParamsLookupTable, pipeline_hdl_params
+    )
+
+    # Raw hdl still write pipe
+    if is_raw_hdl:
+        rv += " " + " " + "-- Write to stage reg\n"
+        rv += " " + " " + "write_raw_hdl_pipeline_regs(STAGE) := write_pipe;\n"
+
+    rv += " " + "end loop;\n"
+    rv += "\n"
+
+    # Raw hdl still write pipe
+    if is_raw_hdl:
+        # Self regs
+        if needs_regs:
+            rv += (
+                " "
+                + "manual_registers.raw_hdl_pipeline <= write_raw_hdl_pipeline_regs;\n"
+            )
+        # Outputs
+        if len(Logic.outputs) > 0:
+            rv += (
+                " "
+                + "-- raw hdl last stage of pipeline return wire to return port/reg\n"
+            )
+            for output_wire in Logic.outputs:
+                if timing_params._has_output_regs:
+                    rv += (
+                        " "
+                        + "io_registers.output_regs."
+                        + WIRE_TO_VHDL_NAME(output_wire, Logic)
+                        + " <= "
+                        + "write_raw_hdl_pipeline_regs(ADDED_PIPELINE_LATENCY)."
+                        + WIRE_TO_VHDL_NAME(output_wire, Logic)
+                        + ";\n"
+                    )
+                else:
+                    rv += (
+                        " "
+                        + WIRE_TO_VHDL_NAME(output_wire, Logic)
+                        + " <= "
+                        + "write_raw_hdl_pipeline_regs(ADDED_PIPELINE_LATENCY)."
+                        + WIRE_TO_VHDL_NAME(output_wire, Logic)
+                        + ";\n"
+                    )
+
+    # State regs
+    if len(Logic.state_regs) > 0:
+        rv += """-- Write regs vars to comb logic\n"""
+        for state_reg in Logic.state_regs:
+            vhdl_type_str = WIRE_TO_VHDL_TYPE_STR(state_reg, Logic, parser_state)
+            vhdl_name = WIRE_TO_VHDL_NAME(state_reg, Logic)
+            rv += "REG_COMB_" + vhdl_name + " <= " + "REG_VAR_" + vhdl_name + ";\n"
+
+    # Shared write only globals: volatile/legacy drive from 'when fully driven last'
+    # anywhere in pipeline, aligned ones from the last stage (PiplineHDLParams
+    # registers them there) and through the output regs with the return.
+    if len(Logic.write_only_global_wires) > 0:
+        rv += "-- Global wires driven various places in pipeline\n"
+        for var_name in Logic.write_only_global_wires:
+            # # Do final read of global wire
+            # driver_of_global_wire = logic.wire_driven_by[var_name]
+            # text += "     " + "VAR_" + WIRE_TO_VHDL_NAME(var_name, logic) + " := " + GET_RHS(driver_of_global_wire, inst_name, logic, parser_state, TimingParamsLookupTable) + ";\n"
+            # Do final write into wire var
+            if LOGIC.GLOBAL_VAR_IS_SHARED(var_name, parser_state):
+                if has_out_regs and var_name in aligned_global_writes:
+                    dest = "io_registers.output_regs." + GLOBAL_IO_REG_NAME(
+                        var_name, Logic
+                    )
+                else:
+                    dest = "module_to_global." + WIRE_TO_VHDL_NAME(var_name, Logic)
+                if needs_clk_en:
+                    rv += (
+                        "if clk_en_internal='1' then\n"
+                        + "  "
+                        + dest
+                        + " <= VAR_"
+                        + WIRE_TO_VHDL_NAME(var_name, Logic)
+                        + ";\n"
+                        + "else\n"
+                        + "  "
+                        + dest
+                        + " <= "
+                        + STATE_REG_TO_VHDL_INIT_STR(var_name, Logic, parser_state)
+                        + ";\n"
+                        + "end if;\n"
+                    )
+                else:
+                    rv += (
+                        dest
+                        + " <= VAR_"
+                        + WIRE_TO_VHDL_NAME(var_name, Logic)
+                        + ";\n"
+                    )
+
+    # Add wait statement if nothing in sensitivity list for simulation?
+    # GHDL->Yosys doesnt like?
+    """if (
+        process_sens_list == ""
+        and (SIM.SIM_TOOL != VERILATOR)
+        and (SIM.SIM_TOOL != CXXRTL)
+    ):
+        rv += " " + "-- For simulation? \n"
+        rv += " " + "wait;\n"
+    """
+    rv += "end process;\n"
+
+    # Register IO regs, only delaying signals clock enable - not responding to them
+    if has_io_regs:
+        rv += """-- Register IO reg signal
+io_registers_r <= io_registers when rising_edge(clk);
+"""
+
+    # Register comb pipelining signals
+    if needs_regs:
+        rv += """
+-- Register comb signals
+process(clk) is
+begin
+ if rising_edge(clk) then\n"""
+        if needs_clk_en:
+            rv += " if clk_en_internal='1' then\n"
+
+        if len(Logic.state_regs) > 0:
+            for state_reg in Logic.state_regs:
+                vhdl_type_str = WIRE_TO_VHDL_TYPE_STR(state_reg, Logic, parser_state)
+                vhdl_name = WIRE_TO_VHDL_NAME(state_reg, Logic)
+                rv += "     " + vhdl_name + " <= REG_COMB_" + vhdl_name + ";\n"
+
+        if needs_manual_regs:
+            rv += """
+     manual_registers_r <= manual_registers;
+"""
+        # Autogen pipeline regs
+        if not is_raw_hdl:
+            for stage in range(0, pipeline_latency):
+                rv += f"     -- Stage {stage}\n"
+                for wire_name in pipeline_hdl_params.wires_to_decl:
+                    (
+                        start_stage,
+                        end_stage,
+                    ) = pipeline_hdl_params.wire_to_reg_stage_start_end[wire_name]
+                    if start_stage is None or end_stage is None:
+                        continue
+                    if stage in range(start_stage, end_stage + 1):
+                        vhdl_type_str = WIRE_TO_VHDL_TYPE_STR(
+                            wire_name, Logic, parser_state
+                        )
+                        write_pipe_wire_var_vhdl = WIRE_TO_VHDL_NAME(wire_name, Logic)
+                        rv += (
+                            "     "
+                            + "REG_STAGE"
+                            + str(stage)
+                            + "_"
+                            + write_pipe_wire_var_vhdl
+                            + " <= COMB_STAGE"
+                            + str(stage)
+                            + "_"
+                            + write_pipe_wire_var_vhdl
+                            + ";\n"
+                        )
+
+        if needs_clk_en:
+            rv += " end if;\n"
+        rv += """ end if;
+end process;
+"""
+
+    # Connect io_registers_r.output_regs. to output port
+    if timing_params._has_output_regs:
+        rv += " -- Output regs\n"
+        for output_wire in Logic.outputs:
+            rv += (
+                " "
+                + WIRE_TO_VHDL_NAME(output_wire, Logic)
+                + " <= "
+                + "io_registers_r.output_regs."
+                + WIRE_TO_VHDL_NAME(output_wire, Logic)
+                + ";\n"
+            )
+        # Aligned global writes leave through the output regs with the return
+        for global_wire in AUTO_PIPELINE.ALIGNED_GLOBAL_WRITES(Logic, parser_state):
+            rv += (
+                " module_to_global."
+                + WIRE_TO_VHDL_NAME(global_wire, Logic)
+                + " <= "
+                + "io_registers_r.output_regs."
+                + GLOBAL_IO_REG_NAME(global_wire, Logic)
+                + ";\n"
+            )
+
+    # Connect shared globals to global bus
+    shared_global_regs = set()
+    for state_reg, var_info in Logic.state_regs.items():
+        if var_info in parser_state.global_vars.values() and LOGIC.GLOBAL_VAR_IS_SHARED(
+            state_reg, parser_state
+        ):
+            shared_global_regs.add(state_reg)
+    if len(shared_global_regs) > 0:
+        rv += "-- Shared global regs\n"
+        for state_reg in shared_global_regs:
+            vhdl_type_str = WIRE_TO_VHDL_TYPE_STR(state_reg, Logic, parser_state)
+            vhdl_name = WIRE_TO_VHDL_NAME(state_reg, Logic)
+            rv += "module_to_global." + vhdl_name + " <= " + "REG_COMB_" + vhdl_name
+            if needs_clk_en:
+                rv += " when clk_en_internal='1' else " + vhdl_name
+            rv += ";\n"
+
+    return rv
+
+
+def GET_C_ENTITY_PROCESS_STAGES_TEXT(
+    inst_name, logic, parser_state, TimingParamsLookupTable, pipeline_hdl_params
+):
+    timing_params = TimingParamsLookupTable[inst_name]
+    pipeline_latency = timing_params.GET_PIPELINE_LOGIC_ADDED_LATENCY(
+        parser_state, TimingParamsLookupTable
+    )
+    text = "  " + " "
+    for stage in range(0, pipeline_latency + 1):  # 0 latency is 1 comb stage
+        is_first_stage = stage == 0
+        is_last_stage = stage == pipeline_latency
+        text += f"if STAGE = {stage} then\n"
+        if len(pipeline_hdl_params.pipeline_map.stage_infos) <= stage:
+            raise Exception(
+                f"There is no stage {stage} in {logic.func_name} pipeline_latency={pipeline_latency}"
+            )
+        stage_info = pipeline_hdl_params.pipeline_map.stage_infos[stage]
+        text += GET_STAGE_TEXT(
+            inst_name,
+            logic,
+            parser_state,
+            TimingParamsLookupTable,
+            stage_info,
+            pipeline_hdl_params,
+            is_first_stage,
+            is_last_stage,
+        )
+        if is_last_stage:
+            text += "  " + " " + "end if;\n"
+        else:
+            text += "  " + " " + "els"
+
+    return text
+
+
+def GET_STAGE_TEXT(
+    inst_name,
+    logic,
+    parser_state,
+    TimingParamsLookupTable,
+    stage_info,
+    pipeline_hdl_params,
+    is_first_stage,
+    is_last_stage,
+):
+    timing_params = TimingParamsLookupTable[inst_name]
+    needs_clk_en = LOGIC.LOGIC_NEEDS_CLOCK_ENABLE(logic, parser_state)
+    text = ""
+    vol_state_regs = []
+    for state_reg in logic.state_regs:
+        if logic.state_regs[state_reg].is_volatile:
+            vol_state_regs.append(state_reg)
+    if is_first_stage:
+        # First stage reads from inputs
+        if needs_clk_en:
+            text += "     " + "-- Mux in clock enable\n"
+            text += (
+                "     "
+                + "VAR_"
+                + WIRE_TO_VHDL_NAME(LOGIC.CLOCK_ENABLE_NAME, logic)
+                + "(0) := clk_en_internal;\n"
+            )
+
+        if len(logic.inputs) > 0:
+            text += "     " + "-- Mux in inputs\n"
+            for input_wire in logic.inputs:
+                if timing_params._has_input_regs:
+                    text += (
+                        "     "
+                        + "VAR_"
+                        + WIRE_TO_VHDL_NAME(input_wire, logic)
+                        + " := io_registers_r.input_regs."
+                        + WIRE_TO_VHDL_NAME(input_wire, logic)
+                        + ";\n"
+                    )
+                else:
+                    text += (
+                        "     "
+                        + "VAR_"
+                        + WIRE_TO_VHDL_NAME(input_wire, logic)
+                        + " := "
+                        + WIRE_TO_VHDL_NAME(input_wire, logic)
+                        + ";\n"
+                    )
+
+        # Also mux volatile global regs into wire - act like regular wire
+        if len(vol_state_regs) > 0:
+            text += (
+                "     "
+                + "-- Volatiles read from regs, written to pipe in first stage\n"
+            )
+            for state_reg in vol_state_regs:
+                text += (
+                    "     "
+                    + "VAR_"
+                    + WIRE_TO_VHDL_NAME(state_reg, logic)
+                    + " := REG_VAR_"
+                    + WIRE_TO_VHDL_NAME(state_reg, logic)
+                    + ";\n"
+                )
+    else:
+        # Not first stage typical reg from prev stage
+        text += "     -- Read from prev stage\n"
+        for wire_name in pipeline_hdl_params.wires_to_decl:
+            start_stage, end_stage = pipeline_hdl_params.wire_to_reg_stage_start_end[
+                wire_name
+            ]
+            if start_stage is None or end_stage is None:
+                continue
+            if stage_info.stage_num - 1 in range(start_stage, end_stage + 1):
+                write_pipe_wire_var_vhdl = WIRE_TO_VHDL_NAME(wire_name, logic)
+                text += (
+                    "     "
+                    + "VAR_"
+                    + write_pipe_wire_var_vhdl
+                    + f" := REG_STAGE{stage_info.stage_num-1}_"
+                    + write_pipe_wire_var_vhdl
+                    + ";\n"
+                )
+
+    # Output port connections of completing previous submodule instantiations
+    if len(stage_info.submodule_output_ports) > 0:
+        text += "     " + "-- Submodule outputs\n"
+    for submodule_output_port_wire in stage_info.submodule_output_ports:
+        text += (
+            "     "
+            + GET_WRITE_PIPE_WIRE_VHDL(submodule_output_port_wire, logic, parser_state)
+            + " := "
+            + WIRE_TO_VHDL_NAME(submodule_output_port_wire, logic)
+            + ";\n"
+        )
+
+    # Write the text for each submodule level ~logic level in this stage
+    text += "\n"
+    for submodule_level_info in stage_info.submodule_level_infos:
+        text += GET_SUBMODULE_LEVEL_TEXT(
+            inst_name,
+            logic,
+            parser_state,
+            TimingParamsLookupTable,
+            submodule_level_info,
+            pipeline_hdl_params,
+        )
+
+    if is_last_stage:
+        # -- Last stage of pipeline volatile global wires write to function volatile global regs
+        if len(vol_state_regs) > 0:
+            text += (
+                "     " + "-- Volatiles read from pipe written to regs in last stage\n"
+            )
+            for state_reg in vol_state_regs:
+                # Do final read of vol wire
+                driver_of_vol_wire = logic.wire_driven_by[state_reg]
+                text += (
+                    "     "
+                    + "VAR_"
+                    + WIRE_TO_VHDL_NAME(state_reg, logic)
+                    + " := "
+                    + GET_RHS(
+                        driver_of_vol_wire,
+                        inst_name,
+                        logic,
+                        parser_state,
+                        TimingParamsLookupTable,
+                    )
+                    + ";\n"
+                )
+                # Do final write into reg
+                text += (
+                    "     "
+                    + "REG_VAR_"
+                    + WIRE_TO_VHDL_NAME(state_reg, logic)
+                    + " := VAR_"
+                    + WIRE_TO_VHDL_NAME(state_reg, logic)
+                    + ";\n"
+                )
+
+        # Outputs
+        if len(logic.outputs) > 0:
+            text += (
+                "     " + "-- Last stage of pipeline return wire to return port/reg\n"
+            )
+            for output_wire in logic.outputs:
+                if timing_params._has_output_regs:
+                    text += (
+                        "     "
+                        + "io_registers.output_regs."
+                        + WIRE_TO_VHDL_NAME(output_wire, logic)
+                        + " <= "
+                        + "VAR_"
+                        + WIRE_TO_VHDL_NAME(output_wire, logic)
+                        + ";\n"
+                    )
+                else:
+                    text += (
+                        "     "
+                        + WIRE_TO_VHDL_NAME(output_wire, logic)
+                        + " <= "
+                        + "VAR_"
+                        + WIRE_TO_VHDL_NAME(output_wire, logic)
+                        + ";\n"
+                    )
+    else:
+        # Is not last stage typical write to comb signals
+        text += "     -- Write to comb signals\n"
+        for wire_name in pipeline_hdl_params.wires_to_decl:
+            start_stage, end_stage = pipeline_hdl_params.wire_to_reg_stage_start_end[
+                wire_name
+            ]
+            if start_stage is None or end_stage is None:
+                continue
+            if stage_info.stage_num in range(start_stage, end_stage + 1):
+                write_pipe_wire_var_vhdl = WIRE_TO_VHDL_NAME(wire_name, logic)
+                text += (
+                    "     "
+                    + f"COMB_STAGE{stage_info.stage_num}_"
+                    + write_pipe_wire_var_vhdl
+                    + " <= VAR_"
+                    + write_pipe_wire_var_vhdl
+                    + ";\n"
+                )
+
+    return text
+
+
+def RENDER_TEXT_FROM_DRIVER_DRIVEN_PAIR(
+    driving_wire, driven_wire, inst_name, logic, parser_state, TimingParamsLookupTable
+):
+    # Dont write text connecting VHDL input ports
+    # (connected directly in func call params)
+    if LOGIC.WIRE_IS_VHDL_EXPR_SUBMODULE_INPUT_PORT(
+        driven_wire, logic, parser_state
+    ):
+        return None
+    if LOGIC.WIRE_IS_VHDL_FUNC_SUBMODULE_INPUT_PORT(
+        driven_wire, logic, parser_state
+    ):
+        return None
+
+    ### WRITE VHDL TEXT
+    # If the driving wire is a submodule output AND LATENCY>0 then RHS uses register style
+    # as way to ensure correct multi clock behavior
+    RHS = GET_RHS(driving_wire, inst_name, logic, parser_state, TimingParamsLookupTable)
+    # Submodule or not LHS is write pipe wire
+    LHS = GET_LHS(driven_wire, logic, parser_state)
+    # print "logic.func_name",logic.func_name
+    # print "driving_wire, driven_wire",driving_wire, driven_wire
+    # Need VHDL conversions for this type assignment?
+    TYPE_RESOLVED_RHS = TYPE_RESOLVE_ASSIGNMENT_RHS(
+        RHS, logic, driving_wire, driven_wire, parser_state
+    )
+
+    # Typical wires using := assignment, but feedback wires need <=
+    ass_op = ":="
+    if driven_wire in logic.feedback_vars:
+        ass_op = "<="
+    text = LHS + " " + ass_op + " " + TYPE_RESOLVED_RHS + ";" + "\n"
+    return text
+
+
+def GET_SUBMODULE_LEVEL_TEXT(
+    inst_name,
+    logic,
+    parser_state,
+    TimingParamsLookupTable,
+    submodule_level_info,
+    pipeline_hdl_params,
+):
+    timing_params = TimingParamsLookupTable[inst_name]
+    # Starts with wires driving other wires
+    text = f"     -- Submodule level {submodule_level_info.level_num}\n"
+    for driver_driven_wire_pair in submodule_level_info.driver_driven_wire_pairs:
+        driving_wire, driven_wire = driver_driven_wire_pair
+        pair_text = RENDER_TEXT_FROM_DRIVER_DRIVEN_PAIR(
+            driving_wire,
+            driven_wire,
+            inst_name,
+            logic,
+            parser_state,
+            TimingParamsLookupTable,
+        )
+        if pair_text is not None:
+            text += "     " + pair_text
+
+    # Ends with submodule logic connections
+    for submodule_inst in submodule_level_info.submodule_insts:
+        submodule_inst_name = inst_name + LOGIC.SUBMODULE_MARKER + submodule_inst
+        submodule_logic = parser_state.LogicInstLookupTable[submodule_inst_name]
+        submodule_latency_from_container_logic = timing_params.GET_SUBMODULE_LATENCY(
+            submodule_inst_name, parser_state, TimingParamsLookupTable
+        )
+        text += (
+            " "
+            + " "
+            + "   -- "
+            + LOGIC.LEAF_NAME(submodule_inst, True)
+            + " LATENCY="
+            + str(submodule_latency_from_container_logic)
+            + "\n"
+        )
+        entity_connection_text = GET_ENTITY_CONNECTION_TEXT(
+            submodule_logic,
+            submodule_inst,
+            inst_name,
+            logic,
+            TimingParamsLookupTable,
+            parser_state,
+            submodule_latency_from_container_logic,
+        )
+        text += entity_connection_text + "\n"
+
+    return text

@@ -1,3 +1,7 @@
+"""Lattice Diamond synthesis backend (ice40 parts when installed). Its primitive hooks
+forward to OPEN_TOOLS. See docs/SYN_DESIGN.md, "Choosing a tool" and "The backend contract".
+"""
+
 import os
 import sys
 

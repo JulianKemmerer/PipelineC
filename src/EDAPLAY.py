@@ -1,3 +1,7 @@
+"""Collects the generated VHDL into one directory for edaplayground.com.
+See docs/SIM_DESIGN.md, "EDA Playground".
+"""
+
 import os
 import shutil
 

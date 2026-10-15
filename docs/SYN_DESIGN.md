@@ -20,6 +20,39 @@ elsewhere and only calls into this layer.
 > than appending a new one. See
 > [documentation conventions](pypeline_DESIGN.md#documentation-conventions).
 
+## Table of Contents
+
+- [1. Who does what](#1-who-does-what)
+- [2. Choosing a tool](#2-choosing-a-tool)
+- [3. The backend contract](#3-the-backend-contract)
+- [4. Kinds of synthesis runs](#4-kinds-of-synthesis-runs)
+- [5. Scoped synthesis and delay estimates](#5-scoped-synthesis-and-delay-estimates)
+  - [Consumers and caller context](#consumers-and-caller-context)
+  - [Measurements and estimates](#measurements-and-estimates)
+  - [Fallback and explicit modes](#fallback-and-explicit-modes)
+- [6. Caches](#6-caches)
+  - [Shared operator cache (`cache/`)](#shared-operator-cache-cache)
+  - [Synthesis logs in the output directory](#synthesis-logs-in-the-output-directory)
+  - [Shared synthesis store (`--syn_cache DIR`)](#shared-synthesis-store---syn_cache-dir)
+  - [Stored measurements](#stored-measurements)
+- [7. Constraints and output files](#7-constraints-and-output-files)
+  - [Build output: `name_index.log`](#build-output-name_indexlog)
+  - [Also produced: source locations on stdout/`[sweep]` messages](#also-produced-source-locations-on-stdoutsweep-messages)
+  - [Also produced: elapsed time on stdout](#also-produced-elapsed-time-on-stdout)
+- [8. Command line](#8-command-line)
+  - [The build driver (`src/pipelinec`)](#the-build-driver-srcpipelinec)
+- [9. Operator QoR benchmark](#9-operator-qor-benchmark)
+  - [Harness](#harness)
+- [10. Limitations and future work](#10-limitations-and-future-work)
+- [History](#history)
+  - [Comparator implementation selection](#comparator-implementation-selection)
+  - [Barrel shifter shape](#barrel-shifter-shape)
+  - [Karatsuba base-case threshold](#karatsuba-base-case-threshold)
+  - [Karatsuba with inferred leaves](#karatsuba-with-inferred-leaves)
+  - [Carry-save multiplier: default, and why it replaced shift-and-add](#carry-save-multiplier-default-and-why-it-replaced-shift-and-add)
+
+---
+
 ## 1. Who does what
 
 | file | role |
@@ -27,14 +60,18 @@ elsewhere and only calls into this layer.
 | `src/SYN.py` | The synthesis API: tool selection, the run kinds of §4, report handling, delay/area caches, constraint and final output files, pre-synthesis area/register estimates. |
 | backend modules (§2) | Run one tool and parse its output into the report objects of §3. |
 | `src/SWEEP.py` | Throughput sweeps: plan registers, run synthesis, react to reports ([`SWEEP_DESIGN.md`](SWEEP_DESIGN.md)). |
-| `src/AUTO_PIPELINE.py` | Pipeline representation (`TimingParams`), pipelined VHDL, and the AUTO_PIPELINE build loop, including measured BRAM register/bank-tree search ([`AUTO_PIPELINE_DESIGN.md`](AUTO_PIPELINE_DESIGN.md)). |
+| `src/AUTO_PIPELINE.py` | Pipeline representation (`TimingParams`), stage map and register lifetimes, and the AUTO_PIPELINE build loop, including measured BRAM register/bank-tree search ([`AUTO_PIPELINE_DESIGN.md`](AUTO_PIPELINE_DESIGN.md)). |
 | `src/AUTO_MULTI_CYCLE.py` | Multi-cycle path constraints and AUTO_MULTI_CYCLE counts ([`AUTO_MULTI_CYCLE_DESIGN.md`](AUTO_MULTI_CYCLE_DESIGN.md)). |
 | `src/AUTO_FSM.py`, `src/AUTO_COMB_OPT.py`, `src/AUTO.py` | The other AUTO features and their shared machinery ([`AUTO_FSM_DESIGN.md`](AUTO_FSM_DESIGN.md), [`AUTO_COMB_OPT_DESIGN.md`](AUTO_COMB_OPT_DESIGN.md), [`AUTO_DESIGN.md`](AUTO_DESIGN.md)). |
 
 `SYN.py` imports every backend at module level and never imports `SWEEP`.
 Where one of its functions needs the pipeline representation
 (`AUTO_PIPELINE`) or multi-cycle constraints (`AUTO_MULTI_CYCLE`), it imports
-that module inside the function, so importing `SYN` stays cycle-free.
+that module inside the function, so importing `SYN` does not load them. `SYN`,
+`VHDL` and the backends still import each other at module level; that works
+because none of them reads another's attributes while it is being imported
+(`src_module_import_test.py` imports every src module first in a fresh
+interpreter).
 
 ## 2. Choosing a tool
 
@@ -105,6 +142,12 @@ never through a copied name, so a later assignment is seen everywhere.
 
 ## 3. The backend contract
 
+The backend modules (`src/VIVADO.py`, `src/QUARTUS.py`, `src/DIAMOND.py`,
+`src/GOWIN.py`, `src/EFINITY.py`, `src/OPEN_TOOLS.py`, `src/CC_TOOLS.py`,
+`src/PYRTL.py`) have no design documents of their own: §2 and this section are
+their design documentation. `src/DEVICE_MODELS.py` has
+[`DEVICE_MODELS_DESIGN.md`](DEVICE_MODELS_DESIGN.md).
+
 A backend module provides these module-level names:
 
 - `TOOL_EXE` and its resolved install path — looked up on `PATH` first
@@ -131,7 +174,10 @@ and these functions:
 - optionally `FUNC_IS_PRIMITIVE` / `GET_PRIMITIVE_MODULE_TEXT`, for tools with
   vendor primitives that `VHDL.py` instantiates directly. Callers ask through
   `SYN.FUNC_IS_PRIMITIVE(func_name, parser_state)`, which selects the part's tool
-  and answers False for a backend without the hook.
+  and answers False for a backend without the hook. `OPEN_TOOLS.py` holds the
+  Lattice ECP5 `MULT{n}X{n}D` DSP primitive text for the `ECP5_MUL*` functions of
+  `include/primitives/ecp5.c`, and `DIAMOND.py` forwards both hooks to it.
+  `QUARTUS.py` provides `LPM_MULT`; `GOWIN.py`'s hooks match nothing.
 
 A per-function run decides on reuse through `SYN.REUSE_SYNTHESIS_LOG` or
 `SYN.SYNTHESIS_STORE_FETCH`, and calls `SYN.REUSE_ONLY_MISS()` before any other
@@ -656,7 +702,7 @@ the index uses whatever source and timing information is available.
 
 ### Also produced: source locations on stdout/`[sweep]` messages
 
-`SYN.FUNC_SRC_LOC_STR(parser_state, func_name)` appends `" [file.py:line]"` (from the same
+`LOGIC.FUNC_SRC_LOC_STR(parser_state, func_name)` appends `" [file.py:line]"` (from the same
 `Logic.ast_meta` `name_index.log` reads, empty string when there is none) to every stdout
 line that names a function without a location: `"Synthesizing function:"`,
 `"Isolated effective stage-delay estimate ..."`, and every `[sweep]` WARNING/NOTE
@@ -710,6 +756,33 @@ observation, `fit_status` is `unknown`.
 
 Sweep flags (`--coarse`, `--no_sweep`, `--pipeline_min_effort`, ...) are in
 [`SWEEP_DESIGN.md`](SWEEP_DESIGN.md#6-command-line).
+
+### The build driver (`src/pipelinec`)
+
+`src/pipelinec` (also reachable as `pypelinec`) is the command-line script. It has
+no design document of its own; this subsection describes it. In order, it:
+
+1. parses the arguments and sets the module globals the rest of the compiler reads
+   (`SYN.*`, `SWEEP.*`, `C_TO_LOGIC.MULT_STYLE`, `OPEN_TOOLS.YOSYS_JSON_ONLY`,
+   `AUTO.FORCE_ABSTRACT_AREA`), selects the simulator (`SIM.SET_SIM_TOOL`), and, for
+   `-D`, the Pypeline design parameters. A comb-only native simulation of a `.py`
+   design stops here and simulates without building (`SIM.NATIVE_SIM_SKIPS_BUILD`);
+2. parses the design with `C_TO_LOGIC.PARSE_FILE` or `PY_TO_LOGIC.PARSE_FILE` (a
+   `.py` design's sources are frozen first, and its host software types are
+   written after);
+3. settles part and tool with `RESOLVE_PART_AND_TOOL` (§2), then writes the
+   zero-added-latency files with `AUTO_PIPELINE.WRITE_0_ADDED_CLKS_INIT_FILES`;
+4. for `--comb` / `--no_synth`, writes the final files with any fixed
+   `AUTO_PIPELINE(latency=)` call sites
+   (`AUTO_PIPELINE.BUILD_FIXED_AUTO_PIPELINE_TIMING_PARAMS`). Otherwise it runs
+   `AUTO_PIPELINE.DO_PIPELINED_BUILD`
+   ([build entry points](AUTO_PIPELINE_DESIGN.md#4-build-entry-points)), writes the
+   sweep history and final files, and exits non-zero if a timing goal was missed;
+5. generates the bitstream (`--pins`), runs the requested simulation
+   (`SIM.DO_OPTIONAL_SIM`, see [`SIM_DESIGN.md`](SIM_DESIGN.md)), and writes
+   `name_index.log` (§7).
+
+With no synthesis tool for the part, it falls back to `--comb --no_synth`.
 
 ## 9. Operator QoR benchmark
 

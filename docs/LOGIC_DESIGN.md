@@ -16,6 +16,18 @@ VHDL generation ([`VHDL_DESIGN.md`](VHDL_DESIGN.md)) work only on that represent
 > has one, rather than appending a new one. See
 > [documentation conventions](pypeline_DESIGN.md#documentation-conventions).
 
+## Table of Contents
+
+- [1. What lives where](#1-what-lives-where)
+- [2. The `Logic()` object](#2-the-logic-object)
+  - [Latency tags](#latency-tags)
+- [3. `ParserState` — the global compiler context](#3-parserstate--the-global-compiler-context)
+- [4. Source locations: `ASTMeta`](#4-source-locations-astmeta)
+- [5. Names and C type strings](#5-names-and-c-type-strings)
+- [6. Shared passes and helpers](#6-shared-passes-and-helpers)
+
+---
+
 ## 1. What lives where
 
 | module | role |
@@ -25,19 +37,22 @@ VHDL generation ([`VHDL_DESIGN.md`](VHDL_DESIGN.md)) work only on that represent
 | `src/PY_TO_LOGIC.py` | the Python front end, plus the native-sim model for user fixed-latency pipelines |
 | `src/AUTO_PIPELINE.py` | `WRITE_0_ADDED_CLKS_INIT_FILES`, the first output either front end's `ParserState` reaches |
 | `src/SYN.py` | `FUNC_IS_PRIMITIVE` and the float/integer instance reports |
-| `src/utilities.py` | `GET_SHELL_CMD_OUTPUT`, `EXE_ABS_DIR`, `FIND_REGEX_MATCHES` |
+| `src/utilities.py` | `GET_SHELL_CMD_OUTPUT`, `EXE_ABS_DIR`, `FIND_REGEX_MATCHES`, `DISPLAY_SOURCE` |
 
 **Import rules.** `LOGIC.py` sits at the bottom of the compiler's import graph. At module
 level it imports only the standard library and `utilities`. `AUTO.py` and `PY_TO_LOGIC.py`
 read its constants (`BIN_OP_*_NAME`, `UNARY_OP_*_NAME`) while they themselves are being
-imported, so `LOGIC` has to finish loading before anything that imports it. The four
-functions that need other compiler modules import them locally:
-`Logic.WIRE_DO_NOT_COLLAPSE`, `C_TYPE_SIZE` and `INFER_CLOCK_DOMAINS` import `VHDL`, and
-`BUILD_C_BUILT_IN_SUBMODULE_FUNC_LOGIC` imports `VHDL` and `C_TO_LOGIC`. Code shared by both
-front ends belongs in `LOGIC.py` and must not reach the C front end except through that one
-built-in fallback (§6). Modules other than the C front end call `LOGIC.X`; only code that
-really needs C syntax trees calls `C_TO_LOGIC.X` (for example `VHDL.py`'s use of
-`C_TO_LOGIC.ID_IS_ENUM_CONST`, and `RAW_VHDL.py`'s use of the C reference-token helpers).
+imported, so `LOGIC` has to finish loading before anything that imports it. Only one
+function imports another compiler module: `BUILD_C_BUILT_IN_SUBMODULE_FUNC_LOGIC` imports
+`C_TO_LOGIC` locally for its C-code fallback (§6). Code shared by both front ends belongs in
+`LOGIC.py`, including predicates over C type strings and `Logic` that later stages share
+(§5, §6), and must not reach the C front end except through that one built-in fallback.
+Modules other than the C front end call `LOGIC.X`; only code that really needs C syntax
+trees calls `C_TO_LOGIC.X` (for example `VHDL.py`'s use of `C_TO_LOGIC.ID_IS_ENUM_CONST`
+and its literal parser, and `RAW_VHDL.py`'s use of the C reference-token helpers).
+Importing `C_TO_LOGIC` does not need `cpp`: the C front end checks for it
+(`C_TO_LOGIC.REQUIRE_CPP`) when it first preprocesses, so Pypeline builds that load
+`C_TO_LOGIC` for those helpers run without a C preprocessor.
 
 ## 2. The `Logic()` object
 
@@ -164,9 +179,11 @@ strings, so a naming change can change sweep decisions (see
 [CONTRIBUTING.md](../CONTRIBUTING.md#implementation-and-code-hygiene)).
 
 Types are plain C type strings (`"uint32_t"`, `"uint32_t[4]"`, `"point_t"`, `"float"`) in
-`Logic.wire_to_c_type`. The `C_TYPE_IS_*` / `C_TYPES_ARE_*` predicates,
-`C_ARRAY_TYPE_TO_ELEM_TYPE_AND_DIMS`, the float helpers and `C_TYPE_SIZE` read them for both
-front ends. So do the origin checks `IS_BIT_MANIP` / `IS_BIT_MANIP_NAME`, `IS_MEM`,
+`Logic.wire_to_c_type`. The `C_TYPE_IS_*` / `C_TYPES_ARE_*` predicates (including
+`C_TYPE_IS_UINT_N`, `C_TYPE_IS_INT_N` and `C_TYPES_ARE_INTEGERS`), the `WIRES_ARE_ENUM` /
+`WIRES_ARE_UINT_N` / `WIRES_ARE_INT_N` wire checks, `GET_WIDTH_FROM_C_TYPE_STR` /
+`GET_WIDTH_FROM_C_N_BITS_INT_TYPE_STR`, `C_ARRAY_TYPE_TO_ELEM_TYPE_AND_DIMS`, the float
+helpers and `C_TYPE_SIZE` read them for both front ends. So do the origin checks `IS_BIT_MANIP` / `IS_BIT_MANIP_NAME`, `IS_MEM`,
 `IS_BIT_MATH`, `IS_AUTO_GENERATED`, `FUNC_NAME_INCLUDES_TYPES`, `GET_MEM_NAME` and
 `C_TYPE_IS_ARRAY_STRUCT`, which classify a `Logic` by name or by the generated header it
 came from.
@@ -176,7 +193,7 @@ came from.
 - **Wire graph.** `CONNECT_WIRES_LOGIC(logic, driving_wire, driven_wire_names)` adds the
   wires and records `wire_drives` / `wire_driven_by`, with no type checks. The C front end's
   `C_TO_LOGIC.APPLY_CONNECT_WIRES_LOGIC` checks types and inserts casts first, then calls
-  it. `FIND_DANGLING_LOGIC`, `PRINT_DRIVER_WIRE_TRACE`, `FIND_CONST_DRIVING_WIRE`,
+  it. `FIND_DANGLING_LOGIC`, `FIND_CONST_DRIVING_WIRE`,
   `GET_SUBMODULE_INPUT_PORT_DRIVING_WIRE` and the `WIRE_IS_*` predicates read the graph.
 - **Trim and collapse.** `TRIM_COLLAPSE_FUNC_DEFS_RECURSIVE` (gated by
   `TRIM_COLLAPSE_LOGIC`) removes wires that drive nothing and merges duplicate submodule
@@ -189,9 +206,19 @@ came from.
   Python front end calls it with empty crossing maps after building its call graph.
 - **Clock enables.** `LOGIC_NEEDS_CLOCK_ENABLE(logic, parser_state)` decides whether a
   function gets a `CLOCK_ENABLE` port.
+- **Global wires.** `GLOBAL_VAR_IS_SHARED` (a top-level IO or clock wire, or a global
+  used by more than one function), `LOGIC_NEEDS_GLOBAL_TO_MODULE` and `LOGIC_NEEDS_MODULE_TO_GLOBAL` decide whether a
+  function gets the `global_to_module` / `module_to_global` records.
+- **Raw HDL.** `LOGIC_IS_RAW_HDL` says whether a `Logic` is emitted as hand-written VHDL
+  (bit manipulation, memories, raw-HDL built-ins) instead of from its wire graph. For a
+  built-in operator it asks `C_BUILT_IN_FUNC_IS_RAW_HDL`, which `FORCE_RAW_INT_CMP_FOR_QOR_BENCH`
+  (environment variable `PYPELINE_FORCE_RAW_INT_CMP=1`, set only by the operator QoR bench)
+  extends to the sliced integer comparators.
+- **Source locations in messages.** `FUNC_SRC_LOC_STR(parser_state, func_name)` returns
+  `" [file.py:line]"` from a function's `ast_meta`, for console and sweep messages.
 - **Built-in operators.** `BUILD_C_BUILT_IN_SUBMODULE_FUNC_LOGIC` builds the `Logic` of a
   built-in operator instance (ports, types, whether it is a VHDL function). Built-ins with
-  raw HDL (`VHDL.C_BUILT_IN_FUNC_IS_RAW_HDL`) stop there. The rest fall back to
+  raw HDL (`LOGIC.C_BUILT_IN_FUNC_IS_RAW_HDL`) stop there. The rest fall back to
   `C_TO_LOGIC.BUILD_LOGIC_AS_C_CODE`, which generates C, preprocesses it with `cpp` and
   parses it. `PY_TO_LOGIC.PARSE_FILE` sets `PYPELINE_NO_SW_LIB_GUARD`, and while it is set
   that fallback raises instead; Pypeline registers soft implementations for those operators

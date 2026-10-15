@@ -1,3 +1,8 @@
+"""PyRTL synthesis backend: a software gate-delay model with no FPGA part.
+See docs/SYN_DESIGN.md, "Choosing a tool" and "The backend contract".
+docs/DEVICE_MODELS_DESIGN.md explains how the sky130 backend's delay model differs.
+"""
+
 import os
 
 import importlib.util

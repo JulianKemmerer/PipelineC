@@ -1,3 +1,6 @@
+"""Efinix Efinity synthesis backend. See docs/SYN_DESIGN.md, "Choosing a tool" and "The backend contract".
+"""
+
 import os
 import sys
 

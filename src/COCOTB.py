@@ -1,12 +1,14 @@
+"""cocotb + GHDL simulation backend: generated Makefile and testbench, run and verdict.
+See docs/SIM_DESIGN.md, "cocotb".
+"""
+
 import os
 import subprocess
 import sys
 
-import C_TO_LOGIC
 import pypeline_sim
 import SIM
 import SYN
-import VHDL
 from utilities import GET_TOOL_PATH
 
 

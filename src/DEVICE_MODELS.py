@@ -10,7 +10,7 @@
 # NOTE: only for integer operations (not floats)
 
 import hashlib
-import os, re, math
+import os, re
 import shlex
 import time
 
@@ -72,38 +72,6 @@ def func_name_to_op_and_widths(func_name):
         widths = [int(w[3:]) for w in widths]  # cut 'int'
         return op, widths
     return None
-
-
-def process_delays(dir_path):
-    print("real\top\testimation\twidths")
-    mindelay = 1e6
-    total = count = 0
-    for path in os.listdir(dir_path):
-        full = os.path.join(dir_path, path)
-        if os.path.isfile(full):
-            op_and_widths = func_name_to_op_and_widths(path)
-            if op_and_widths is not None:
-                op, widths = op_and_widths
-                estim_ns = estimate_int_timing(op, widths)
-                with open(full, "r") as file:
-                    time_ns = float(file.read())
-
-                if estim_ns is not None:
-                    if time_ns < mindelay:
-                        mindelay = time_ns
-                    total += (time_ns - estim_ns) ** 2
-                    count += 1
-                    print(
-                        str(time_ns)
-                        + "\t"
-                        + op
-                        + "\t"
-                        + str(estim_ns)
-                        + "\t".join([str(w) for w in widths])
-                    )
-
-    rms = math.sqrt(total / count)
-    print("Count:", count, ", minimum delay (ns):", mindelay, ", RMS error (ns):", rms)
 
 
 # ═══════════════════════════════════════════════════════════════════════════

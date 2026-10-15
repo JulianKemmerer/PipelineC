@@ -160,7 +160,7 @@ def _import_fresh(path):
     # pypelinec evicts a design's modules between imports; do the same here
     for name in [m for m in sys.modules if m.startswith("dp_")]:
         del sys.modules[name]
-    return pypeline_sim._import_design(path)
+    return pypeline_sim.import_design(path)
 
 
 def test_injected_name_checks():

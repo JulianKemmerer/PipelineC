@@ -580,11 +580,11 @@ def test_struct_factory_param_suffix_overflow_collapses_safely():
 def test_hw_func_name_elides_redundant_module_prefix():
     # The stuttering "append_auth_tag_append_auth_tag" shape (a module's own
     # entry-point function sharing the module's name) drops its prefix.
-    assert P._hw_func_name("append_auth_tag", "append_auth_tag") == "append_auth_tag"
+    assert P.HW_FUNC_NAME("append_auth_tag", "append_auth_tag") == "append_auth_tag"
     # A prefix-of shape also elides.
-    assert P._hw_func_name("chacha20", "chacha20_block") == "chacha20_block"
+    assert P.HW_FUNC_NAME("chacha20", "chacha20_block") == "chacha20_block"
     # A genuinely distinct pair still gets prefixed.
-    assert P._hw_func_name("chacha20", "quarter_round") == "chacha20_quarter_round"
+    assert P.HW_FUNC_NAME("chacha20", "quarter_round") == "chacha20_quarter_round"
     print("test_hw_func_name_elides_redundant_module_prefix PASS")
 
 

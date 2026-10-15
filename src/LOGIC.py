@@ -17,8 +17,8 @@ from typing import Any, Optional
 from utilities import FIND_REGEX_MATCHES
 
 # LOGIC sits at the bottom of the compiler's import graph: AUTO and PY_TO_LOGIC read its
-# constants at import time, so it must load completely before anything else. The few
-# functions that need VHDL or the C front end import those modules locally.
+# constants at import time, so it must load completely before anything else. Its only
+# other src import is the C front end, imported locally by the one fallback that needs it.
 
 
 @dataclass(eq=False)
@@ -1332,7 +1332,6 @@ class Logic:
         return False
 
     def WIRE_DO_NOT_COLLAPSE(self, wire, parser_state):
-        import VHDL
 
         if wire in self.variable_names:
             return True
@@ -1364,11 +1363,11 @@ class Logic:
             # If self or any submodules uses clock crossings
             if sub_func_logic.is_clock_crossing:
                 return True
-            # if VHDL.LOGIC_NEEDS_GLOBAL_TO_MODULE(sub_func_logic, parser_state)
+            # if LOGIC_NEEDS_GLOBAL_TO_MODULE(sub_func_logic, parser_state)
             #  return True
             # Only need to check if has outputs
             # inputs to something with no outputs still rips up
-            if VHDL.LOGIC_NEEDS_MODULE_TO_GLOBAL(sub_func_logic, parser_state):
+            if LOGIC_NEEDS_MODULE_TO_GLOBAL(sub_func_logic, parser_state):
                 return True
 
         return False
@@ -1800,6 +1799,257 @@ def WIRE_IS_VHDL_FUNC_SUBMODULE_INPUT_PORT(wire, Logic, parser_state):
     return False
 
 
+# Benchmark-only escape hatch for src/tests/pypeline_tests/op_qor_bench.py:
+# when set, routes integer GT/GTE/LT/LTE to the (otherwise dead,
+# RAW_VHDL.py:3050-3665) sliced hand-pipelined comparator generators instead
+# of a soft-operator-library implementation, so the QoR bench can measure
+# "revived raw sliced" head to head against the soft flavors. Never set
+# outside that harness -- it does not change canonical entity names (only
+# what VHDL gets generated for the same name), so mixing settings within one
+# process/output directory would produce inconsistent cached artifacts.
+FORCE_RAW_INT_CMP_FOR_QOR_BENCH = os.environ.get("PYPELINE_FORCE_RAW_INT_CMP") == "1"
+
+
+def C_BUILT_IN_FUNC_IS_RAW_HDL(
+    logic_func_name, input_c_types, output_c_type, parser_state
+):
+    if (
+        FORCE_RAW_INT_CMP_FOR_QOR_BENCH
+        and C_TYPES_ARE_INTEGERS(input_c_types)
+        and any(
+            logic_func_name.startswith(BIN_OP_LOGIC_NAME_PREFIX + "_" + op)
+            for op in (
+                BIN_OP_GTE_NAME,
+                BIN_OP_LTE_NAME,
+                BIN_OP_LT_NAME,
+                BIN_OP_GT_NAME,
+            )
+        )
+    ):
+        return True
+    # IS RAW VHDL
+    if (
+        logic_func_name == VHDL_FUNC_NAME
+        or IS_BIT_MANIP_NAME(logic_func_name)
+        or IS_SIM_CTRL_FUNC_NAME(logic_func_name)
+        or logic_func_name.startswith(ACCUM_FUNC_NAME)
+        or logic_func_name.startswith(CONST_REF_RD_FUNC_NAME_PREFIX + "_")
+        or (
+            logic_func_name.startswith(
+                CONST_PREFIX + BIN_OP_SL_NAME + "_"
+            )
+            and C_TYPES_ARE_INTEGERS(input_c_types)
+        )
+        or (
+            logic_func_name.startswith(
+                CONST_PREFIX + BIN_OP_SR_NAME + "_"
+            )
+            and C_TYPES_ARE_INTEGERS(input_c_types)
+        )
+        or (
+            logic_func_name.startswith(
+                UNARY_OP_LOGIC_NAME_PREFIX
+                + "_"
+                + UNARY_OP_NOT_NAME
+            )
+            and C_TYPES_ARE_INTEGERS(input_c_types)
+        )
+        or (
+            logic_func_name.startswith(
+                UNARY_OP_LOGIC_NAME_PREFIX
+                + "_"
+                + UNARY_OP_NEGATE_NAME
+            )
+            and C_TYPES_ARE_FLOAT_TYPES(input_c_types)
+        )
+        or (
+            logic_func_name.startswith(
+                BIN_OP_LOGIC_NAME_PREFIX
+                + "_"
+                + BIN_OP_INFERRED_MULT_NAME
+            )
+            and C_TYPES_ARE_INTEGERS(input_c_types)
+        )
+        or (
+            logic_func_name.startswith(
+                BIN_OP_LOGIC_NAME_PREFIX + "_" + BIN_OP_PLUS_NAME
+            )
+            and C_TYPES_ARE_INTEGERS(input_c_types)
+        )
+        or (
+            logic_func_name.startswith(
+                BIN_OP_LOGIC_NAME_PREFIX + "_" + BIN_OP_MINUS_NAME
+            )
+            and C_TYPES_ARE_INTEGERS(input_c_types)
+        )
+        or (
+            logic_func_name.startswith(
+                BIN_OP_LOGIC_NAME_PREFIX + "_" + BIN_OP_EQ_NAME
+            )
+        )
+        or (  # and C_TYPES_ARE_INTEGERS(input_c_types)
+            logic_func_name.startswith(
+                BIN_OP_LOGIC_NAME_PREFIX + "_" + BIN_OP_NEQ_NAME
+            )
+        )
+        or (  # and C_TYPES_ARE_INTEGERS(input_c_types)
+            logic_func_name.startswith(
+                BIN_OP_LOGIC_NAME_PREFIX + "_" + BIN_OP_AND_NAME
+            )
+            and C_TYPES_ARE_INTEGERS(input_c_types)
+        )
+        or (
+            logic_func_name.startswith(
+                BIN_OP_LOGIC_NAME_PREFIX + "_" + BIN_OP_OR_NAME
+            )
+            and C_TYPES_ARE_INTEGERS(input_c_types)
+        )
+        or (
+            logic_func_name.startswith(
+                BIN_OP_LOGIC_NAME_PREFIX + "_" + BIN_OP_XOR_NAME
+            )
+            and C_TYPES_ARE_INTEGERS(input_c_types)
+        )
+        or (
+            logic_func_name.startswith(CAST_FUNC_NAME_PREFIX)
+            and C_TYPES_ARE_INTEGERS(input_c_types)
+            and C_TYPES_ARE_INTEGERS([output_c_type])
+        )
+        or (logic_func_name.startswith(MUX_LOGIC_NAME))
+    ):  # or
+        return True
+
+    # IS NOT RAW VHDL
+    elif (
+        logic_func_name.startswith(VAR_REF_RD_FUNC_NAME_PREFIX + "_")
+        or logic_func_name.startswith(VAR_REF_ASSIGN_FUNC_NAME_PREFIX + "_")
+        or (
+            logic_func_name.startswith(
+                UNARY_OP_LOGIC_NAME_PREFIX
+                + "_"
+                + UNARY_OP_NEGATE_NAME
+            )
+            and C_TYPES_ARE_INTEGERS(input_c_types)
+        )
+        or logic_func_name.startswith(CAST_FUNC_NAME_PREFIX + "_")
+        or logic_func_name.startswith(
+            BIN_OP_LOGIC_NAME_PREFIX + "_" + BIN_OP_DIV_NAME
+        )
+        or logic_func_name.startswith(
+            BIN_OP_LOGIC_NAME_PREFIX + "_" + BIN_OP_MULT_NAME
+        )
+        or logic_func_name.startswith(
+            BIN_OP_LOGIC_NAME_PREFIX + "_" + BIN_OP_MOD_NAME
+        )
+        or (
+            logic_func_name.startswith(
+                BIN_OP_LOGIC_NAME_PREFIX
+                + "_"
+                + BIN_OP_INFERRED_MULT_NAME
+            )
+            and C_TYPE_IS_FLOAT_TYPE(output_c_type)
+        )
+        or (
+            logic_func_name.startswith(
+                BIN_OP_LOGIC_NAME_PREFIX + "_" + BIN_OP_SL_NAME
+            )
+        )
+        or (
+            logic_func_name.startswith(
+                BIN_OP_LOGIC_NAME_PREFIX + "_" + BIN_OP_SR_NAME
+            )
+        )
+        or (
+            logic_func_name.startswith(
+                BIN_OP_LOGIC_NAME_PREFIX + "_" + BIN_OP_GT_NAME
+            )
+            and C_TYPES_ARE_FLOAT_TYPES(input_c_types)
+        )
+        or (
+            logic_func_name.startswith(
+                BIN_OP_LOGIC_NAME_PREFIX + "_" + BIN_OP_GTE_NAME
+            )
+            and C_TYPES_ARE_FLOAT_TYPES(input_c_types)
+        )
+        or (
+            logic_func_name.startswith(
+                BIN_OP_LOGIC_NAME_PREFIX + "_" + BIN_OP_LT_NAME
+            )
+            and C_TYPES_ARE_FLOAT_TYPES(input_c_types)
+        )
+        or (
+            logic_func_name.startswith(
+                BIN_OP_LOGIC_NAME_PREFIX + "_" + BIN_OP_LTE_NAME
+            )
+            and C_TYPES_ARE_FLOAT_TYPES(input_c_types)
+        )
+        or (
+            logic_func_name.startswith(
+                BIN_OP_LOGIC_NAME_PREFIX + "_" + BIN_OP_PLUS_NAME
+            )
+            and C_TYPES_ARE_FLOAT_TYPES(input_c_types)
+        )
+        or (
+            logic_func_name.startswith(
+                BIN_OP_LOGIC_NAME_PREFIX + "_" + BIN_OP_MINUS_NAME
+            )
+            and C_TYPES_ARE_FLOAT_TYPES(input_c_types)
+        )
+        or (logic_func_name.startswith(ONE_HOT_EQ_LOGIC_NAME))
+        or (
+            logic_func_name.startswith(
+                BIN_OP_LOGIC_NAME_PREFIX + "_" + BIN_OP_GTE_NAME
+            )
+            and C_TYPES_ARE_INTEGERS(input_c_types)
+        )
+        or (
+            logic_func_name.startswith(
+                BIN_OP_LOGIC_NAME_PREFIX + "_" + BIN_OP_LTE_NAME
+            )
+            and C_TYPES_ARE_INTEGERS(input_c_types)
+        )
+        or (
+            logic_func_name.startswith(
+                BIN_OP_LOGIC_NAME_PREFIX + "_" + BIN_OP_LT_NAME
+            )
+            and C_TYPES_ARE_INTEGERS(input_c_types)
+        )
+        or (
+            logic_func_name.startswith(
+                BIN_OP_LOGIC_NAME_PREFIX + "_" + BIN_OP_GT_NAME
+            )
+            and C_TYPES_ARE_INTEGERS(input_c_types)
+        )
+    ):
+        return False
+
+    else:
+        raise Exception(
+            "Is built in C function named",
+            logic_func_name,
+            "with input types",
+            input_c_types,
+            "raw VHDL or not?",
+        )
+
+
+def LOGIC_IS_RAW_HDL(Logic, parser_state):
+    if Logic.is_c_built_in:
+        input_types = []
+        for in_port in Logic.inputs:
+            input_types.append(Logic.wire_to_c_type[in_port])
+        output_type = Logic.wire_to_c_type[RETURN_WIRE_NAME]
+        return C_BUILT_IN_FUNC_IS_RAW_HDL(
+            Logic.func_name, input_types, output_type, parser_state
+        )
+    else:
+        if IS_BIT_MANIP(Logic):
+            return True
+        if IS_MEM(Logic):
+            return True
+    return False
+
+
 # Set by PY_TO_LOGIC.PARSE_FILE around a Pypeline build so BUILD_C_BUILT_IN_SUBMODULE_FUNC_LOGIC
 # below raises instead of silently falling back to the C front end's
 # C_TO_LOGIC.BUILD_LOGIC_AS_C_CODE (C code generation, cpp, pycparser). Pypeline builds
@@ -1814,7 +2064,6 @@ def BUILD_C_BUILT_IN_SUBMODULE_FUNC_LOGIC(
 ):
     # Construct a fake 'submodule_logic' with correct name, inputs, outputs
     import C_TO_LOGIC
-    import VHDL
 
     submodule_logic = Logic()
     submodule_logic.is_c_built_in = True
@@ -1939,7 +2188,7 @@ def BUILD_C_BUILT_IN_SUBMODULE_FUNC_LOGIC(
     # Casts of ints are vhdl funcs too
     if submodule_logic_name.startswith(
         CAST_FUNC_NAME_PREFIX
-    ) and VHDL.C_TYPES_ARE_INTEGERS(input_types + [c_type]):
+    ) and C_TYPES_ARE_INTEGERS(input_types + [c_type]):
         submodule_logic.is_vhdl_func = True
 
     # Bit manip is VHDL func too
@@ -1947,7 +2196,7 @@ def BUILD_C_BUILT_IN_SUBMODULE_FUNC_LOGIC(
         submodule_logic.is_vhdl_func = True
 
     # Also do submodule instances for built in logic that is not raw VHDL
-    if VHDL.C_BUILT_IN_FUNC_IS_RAW_HDL(
+    if C_BUILT_IN_FUNC_IS_RAW_HDL(
         submodule_logic_name, input_types, c_type, parser_state
     ):
         # IS RAW VHDL
@@ -2091,6 +2340,98 @@ def C_ARRAY_TYPE_TO_ELEM_TYPE_AND_DIMS(input_array_type):
     return elem_type, dims
 
 
+def GET_WIDTH_FROM_C_N_BITS_INT_TYPE_STR(c_type_str):
+    if not (C_TYPE_IS_INT_N(c_type_str) or C_TYPE_IS_UINT_N(c_type_str)):
+        print("Cant GET_WIDTH_FROM_C_TYPE_STR since isnt int/uint N", c_type_str)
+        print(0 / 0)
+        sys.exit(-1)
+
+    # Chars?
+    if c_type_str == "char":
+        return 8
+
+    return int(c_type_str.replace("uint", "").replace("int", "").replace("_t", ""))
+
+
+# 'Width' is apparently a integer like concept?
+def GET_WIDTH_FROM_C_TYPE_STR(parser_state, c_type_str, allow_fail=False):
+    if C_TYPE_IS_INT_N(c_type_str) or C_TYPE_IS_UINT_N(c_type_str):
+        return GET_WIDTH_FROM_C_N_BITS_INT_TYPE_STR(c_type_str)
+    elif C_TYPE_IS_FLOAT_TYPE(c_type_str):
+        e, m = C_FLOAT_E_M_TYPE_TO_E_M(c_type_str)
+        return 1 + e + m
+    elif C_TYPE_IS_ENUM(c_type_str, parser_state):
+        # Enum type
+        return GET_WIDTH_FROM_C_N_BITS_INT_TYPE_STR(
+            parser_state.enum_info_dict[c_type_str].int_c_type
+        )
+    else:
+        if not allow_fail:
+            print("Cant GET_WIDTH_FROM_C_TYPE_STR for ", c_type_str)
+            print(0 / 0)
+            sys.exit(-1)
+        return None
+
+
+def C_TYPE_IS_UINT_N(type_str):
+    try:
+        width = int(type_str.replace("uint", "").replace("_t", ""))
+        return True
+    except:
+        # Chars?
+        if type_str == "char":
+            return True
+
+        return False
+
+
+def C_TYPE_IS_INT_N(type_str):
+    try:
+        width = int(type_str.replace("int", "").replace("_t", ""))
+        return True
+    except:
+        return False
+
+
+# Includes intN and uintN
+def C_TYPES_ARE_INTEGERS(c_types):
+    for c_type in c_types:
+        # No dummy, arrays are not ints? You hacky hoe
+        """
+        if C_TYPE_IS_ARRAY(c_type):
+          elem_type, dims = C_ARRAY_TYPE_TO_ELEM_TYPE_AND_DIMS(c_type)
+          c_type = elem_type
+          #print "c_type",c_type
+        """
+        if not (C_TYPE_IS_INT_N(c_type) or C_TYPE_IS_UINT_N(c_type)):
+            return False
+    return True
+
+
+def WIRES_ARE_ENUM(wires, logic, parser_state):
+    for wire in wires:
+        # print "wire",wire,"logic.wire_to_c_type[wire]",logic.wire_to_c_type[wire]
+        if not WIRE_IS_ENUM(wire, logic, parser_state):
+            return False
+    return True
+
+
+def WIRES_ARE_UINT_N(wires, logic):
+    for wire in wires:
+        # print("wire",wire,"logic.wire_to_c_type[wire]",logic.wire_to_c_type[wire])
+        if not C_TYPE_IS_UINT_N(logic.wire_to_c_type[wire]):
+            return False
+    return True
+
+
+def WIRES_ARE_INT_N(wires, logic):
+    for wire in wires:
+        # print "wire",wire,"logic.wire_to_c_type[wire]",logic.wire_to_c_type[wire]
+        if not C_TYPE_IS_INT_N(logic.wire_to_c_type[wire]):
+            return False
+    return True
+
+
 # WTF enums
 # Bullshit.
 #
@@ -2203,6 +2544,19 @@ def LEAF_NAME(name, do_submodule_split=True):
     return new_name
 
 
+def FUNC_SRC_LOC_STR(parser_state, func_name):
+    """' [file.py:line]' for a function's true source location, or '' when
+    none is known (built-ins, raw-HDL, etc.) -- for appending to stdout/
+    [sweep] messages that name a function, so a reader isn't left grepping a
+    second, much larger log file for a line number. Logic.ast_meta already
+    carries this; nothing printed it before now."""
+    logic = parser_state.FuncLogicLookupTable.get(func_name)
+    ast_meta = getattr(logic, "ast_meta", None)
+    if ast_meta is None:
+        return ""
+    return f" [{os.path.basename(ast_meta.src_file)}:{ast_meta.line}]"
+
+
 # func_name -> whether that func's Logic needs a CLOCK_ENABLE input port
 _LOGIC_NEEDS_CLOCK_ENABLE_cache = {}
 
@@ -2219,7 +2573,7 @@ def LOGIC_NEEDS_CLOCK_ENABLE(logic, parser_state):
     # or WRITE side on wires that will default hold value
     # Almost covered by LOGIC_NEEDS_MODULE_TO_GLOBAL but thats for submodules
     if logic.is_clock_crossing:
-        # i_need = VHDL.LOGIC_NEEDS_MODULE_TO_GLOBAL(logic, parser_state)
+        # i_need = LOGIC_NEEDS_MODULE_TO_GLOBAL(logic, parser_state)
         clk_cross_var = CLK_CROSS_FUNC_TO_VAR_NAME(logic.func_name)
         clk_cross_info = parser_state.clk_cross_var_info[clk_cross_var]
         i_need = ("_WRITE" in logic.func_name) or clk_cross_info.flow_control
@@ -2252,6 +2606,99 @@ def LOGIC_NEEDS_CLOCK_ENABLE(logic, parser_state):
     _LOGIC_NEEDS_CLOCK_ENABLE_cache[logic.func_name] = needs
 
     return needs
+
+
+def GLOBAL_VAR_IS_SHARED(var_name, parser_state):
+    if var_name in parser_state.output_wires:
+        return True
+    if var_name in parser_state.input_wires:
+        return True
+    # # Async wires assumed shared
+    # if var_name in parser_state.async_wires:
+    #   return True
+    # Clock wires assumed shared
+    if var_name in parser_state.clk_mhz:
+        return True
+    # Otherwise check where used
+    if var_name not in parser_state.global_vars:
+        return False
+    var_info = parser_state.global_vars[var_name]
+    # Instance array stuff wont appear used normally is special case
+    part_of_inst_array = (var_name in parser_state.inst_array_dict.values()) or (
+        var_name in parser_state.inst_array_dict.keys()
+    )
+    return len(var_info.used_in_funcs) > 1 or part_of_inst_array
+
+
+def LOGIC_NEEDS_GLOBAL_TO_MODULE(Logic, parser_state):
+    needs_global_to_module = False
+
+    # Submodules determine if logic needs clk cross port
+    for inst in Logic.submodule_instances:
+        submodule_logic_name = Logic.submodule_instances[inst]
+        if submodule_logic_name in parser_state.FuncLogicLookupTable:
+            submodule_logic = parser_state.FuncLogicLookupTable[submodule_logic_name]
+            if submodule_logic.is_clock_crossing:
+                var_name = CLK_CROSS_FUNC_TO_VAR_NAME(submodule_logic_name)
+                clk_cross_info = parser_state.clk_cross_var_info[var_name]
+                needs_global_to_module = (
+                    needs_global_to_module
+                    or ("_READ" in submodule_logic_name)
+                    or clk_cross_info.flow_control
+                )
+            if needs_global_to_module:
+                return True
+            # Then check sub-sub modules
+            needs_global_to_module = (
+                needs_global_to_module
+                or LOGIC_NEEDS_GLOBAL_TO_MODULE(submodule_logic, parser_state)
+            )
+            if needs_global_to_module:
+                return True
+
+    # Or if logic is reading a global reg
+    if len(Logic.read_only_global_wires) > 0:
+        return True
+
+    return needs_global_to_module
+
+
+def LOGIC_NEEDS_MODULE_TO_GLOBAL(Logic, parser_state):
+    needs_module_to_global = False
+    # Submodules determine if logic needs clock cross port
+    for inst in Logic.submodule_instances:
+        submodule_logic_name = Logic.submodule_instances[inst]
+        if submodule_logic_name in parser_state.FuncLogicLookupTable:
+            submodule_logic = parser_state.FuncLogicLookupTable[submodule_logic_name]
+            if submodule_logic.is_clock_crossing:
+                var_name = CLK_CROSS_FUNC_TO_VAR_NAME(submodule_logic_name)
+                clk_cross_info = parser_state.clk_cross_var_info[var_name]
+                needs_module_to_global = (
+                    needs_module_to_global
+                    or ("_WRITE" in submodule_logic_name)
+                    or clk_cross_info.flow_control
+                )
+            if needs_module_to_global:
+                return True
+            # Then check sub-sub modules
+            needs_module_to_global = (
+                needs_module_to_global
+                or LOGIC_NEEDS_MODULE_TO_GLOBAL(submodule_logic, parser_state)
+            )
+            if needs_module_to_global:
+                return True
+
+    # Or if logic is writing a global reg with muliple reads
+    for state_reg_var, var_info in Logic.state_regs.items():
+        if var_info in parser_state.global_vars.values() and GLOBAL_VAR_IS_SHARED(
+            state_reg_var, parser_state
+        ):
+            return True
+    for state_reg_var, var_info in Logic.write_only_global_wires.items():
+        if GLOBAL_VAR_IS_SHARED(state_reg_var, parser_state):
+            return True
+
+    return needs_module_to_global
 
 
 def BUILD_FUNC_NAME(func_base_name, output_type, input_driver_types, base_name_is_name):
@@ -2356,7 +2803,6 @@ def PRTINTF_STRING_TO_FORMATS(format_string):
 
 
 def C_TYPE_SIZE(c_type, parser_state, allow_fail=False, c_ast_node=None):
-    import VHDL
 
     if C_TYPE_IS_ARRAY(c_type):
         elem_t, dims = C_ARRAY_TYPE_TO_ELEM_TYPE_AND_DIMS(c_type)
@@ -2371,15 +2817,15 @@ def C_TYPE_SIZE(c_type, parser_state, allow_fail=False, c_ast_node=None):
             field_type = field_to_type_dict[field]
             field_size = C_TYPE_SIZE(field_type, parser_state)
             byte_size = byte_size + field_size
-    elif VHDL.C_TYPES_ARE_INTEGERS([c_type]):
-        bit_width = VHDL.GET_WIDTH_FROM_C_N_BITS_INT_TYPE_STR(c_type)
+    elif C_TYPES_ARE_INTEGERS([c_type]):
+        bit_width = GET_WIDTH_FROM_C_N_BITS_INT_TYPE_STR(c_type)
         byte_size = int(math.ceil(float(bit_width) / float(8)))
     elif C_TYPE_IS_FLOAT_TYPE(c_type):
         e, m = C_FLOAT_E_M_TYPE_TO_E_M(c_type)
         bit_width = 1 + e + m
         byte_size = int(math.ceil(float(bit_width) / float(8)))
     elif C_TYPE_IS_ENUM(c_type, parser_state):
-        bit_width = VHDL.GET_WIDTH_FROM_C_TYPE_STR(parser_state, c_type)
+        bit_width = GET_WIDTH_FROM_C_TYPE_STR(parser_state, c_type)
         byte_size = int(math.ceil(float(bit_width) / float(8)))
     else:
         if not allow_fail:
@@ -2415,23 +2861,6 @@ def GET_SUBMODULE_INPUT_PORT_DRIVING_WIRE(logic, submodule_inst, input_port_name
     # print logic.wire_driven_by
     driving_wire = logic.wire_driven_by[name]
     return driving_wire
-
-
-def PRINT_DRIVER_WIRE_TRACE(start, logic, wires_driven_so_far=None):
-    text = ""
-    while start is not None:
-        if wires_driven_so_far is None:
-            text += start + " <= "
-        else:
-            text += start + "(driven? " + str(start in wires_driven_so_far) + ") <= "
-
-        if start in logic.wire_driven_by:
-            start = logic.wire_driven_by[start]
-        else:
-            text += "has no driver!!!!?"
-            start = None
-    print(text)
-    return start
 
 
 def FIND_DANGLING_LOGIC(logic):
@@ -3020,7 +3449,6 @@ def INFER_CLOCK_DOMAINS(
     (no C-style clock-crossing variables exist there).
     Returns var_to_rw_mhz_groups dict (needed by GET_CLK_CROSSING_INFO for object construction).
     """
-    import VHDL
 
     inferring = True
     var_to_rw_mhz_groups = {}
@@ -3029,7 +3457,7 @@ def INFER_CLOCK_DOMAINS(
         # Do pass over all shared globals (same domain) trying to match domains
         for global_var, global_var_state_reg_info in parser_state.global_vars.items():
             # Shared globals only here
-            if not VHDL.GLOBAL_VAR_IS_SHARED(global_var, parser_state):
+            if not GLOBAL_VAR_IS_SHARED(global_var, parser_state):
                 continue
             # Cannot do inferring for async wires
             if global_var in parser_state.async_wires:

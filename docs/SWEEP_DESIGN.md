@@ -26,6 +26,33 @@ same nonzero-exit timing-failure gate as an ordinary pipeline search.
 > than appending a new one. See
 > [documentation conventions](pypeline_DESIGN.md#documentation-conventions).
 
+## Table of Contents
+
+- [1. Who does what](#1-who-does-what)
+- [2. Concepts: cut subtrees, landscapes, and cut planning](#2-concepts-cut-subtrees-landscapes-and-cut-planning)
+  - [A running example](#a-running-example)
+  - [Cut subtree](#cut-subtree)
+  - [Landscape, segments, and typed candidates](#landscape-segments-and-typed-candidates)
+  - [Flat functions, fixed placements, and traces](#flat-functions-fixed-placements-and-traces)
+  - [Floor](#floor)
+  - [Concrete hotspot locks](#concrete-hotspot-locks)
+  - [Plan](#plan)
+- [3. The refinement loop](#3-the-refinement-loop)
+- [4. Feature-specific feedback in the loop](#4-feature-specific-feedback-in-the-loop)
+- [5. Latency memory](#5-latency-memory)
+- [6. Command line](#6-command-line)
+- [7. Tests](#7-tests)
+- [8. Limitations and future work](#8-limitations-and-future-work)
+- [History](#history)
+  - [Why the planned sweep replaced the middle-out sweep](#why-the-planned-sweep-replaced-the-middle-out-sweep)
+  - [Mux select-fanout cliff](#mux-select-fanout-cliff)
+  - [Divider acceptance and the 48-slice intermediate level](#divider-acceptance-and-the-48-slice-intermediate-level)
+  - [Hard floors need path evidence](#hard-floors-need-path-evidence)
+  - [start_latency regions and mini-sweeps](#start_latency-regions-and-mini-sweeps)
+  - [Cross-MAIN handshake paths](#cross-main-handshake-paths)
+
+---
+
 ## 1. Who does what
 
 | file | role in a sweep |

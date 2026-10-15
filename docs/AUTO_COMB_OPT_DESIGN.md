@@ -27,6 +27,22 @@ smaller vendor-mapped area, or faster post-route hardware.
 > than appending a new one. See
 > [documentation conventions](pypeline_DESIGN.md#documentation-conventions).
 
+## Table of Contents
+
+- [1. Contract and composition](#1-contract-and-composition)
+- [2. Architecture](#2-architecture)
+- [3. Area objective](#3-area-objective)
+- [4. Delay objective](#4-delay-objective)
+- [5. Search limits](#5-search-limits)
+- [6. FSM integration](#6-fsm-integration)
+- [7. Stream wrappers and simulation](#7-stream-wrappers-and-simulation)
+- [8. Reports and tests](#8-reports-and-tests)
+- [History](#history)
+  - [Why reconvergent glue walks use visited sets](#why-reconvergent-glue-walks-use-visited-sets)
+  - [Why the tags are named by objective](#why-the-tags-are-named-by-objective)
+
+---
+
 ---
 
 ## 1. Contract and composition

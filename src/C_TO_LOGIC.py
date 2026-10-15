@@ -7,7 +7,6 @@ import pickle
 import re
 import shlex
 import sys
-import re
 from collections import OrderedDict
 from subprocess import PIPE, Popen
 
@@ -24,10 +23,6 @@ from utilities import (
     REPO_ABS_DIR,
 )
 
-# Detect cpp install
-if GET_TOOL_PATH("cpp") is None:
-    # TODO fall back to clang tools?
-    raise Exception("'cpp' C preprocessor is not installed!")
 
 # Global default constants for inferring different VHDL implementations of operators
 MULT_STYLE_INFERRED = "infer"
@@ -35,6 +30,10 @@ MULT_STYLE_FABRIC = "fabric"
 MULT_STYLE = None
 STRLEN_FUNC_NAME = "strlen"
 TEMP_HACKY_C_AST_NODE_ID = True
+# Suffix of the generated FSM version of a __clk() function, its header and its static
+# output regs. Defined here, not in C_TO_FSM, because FSM_CLK_HEADER below reads it while
+# this module is being imported.
+FSM_EXT = "_FSM"
 
 
 def GET_CPP_INCLUDES_LIST():  # -> list[str]: needs typing library?
@@ -72,6 +71,14 @@ def GET_CPP_INCLUDES_LIST():  # -> list[str]: needs typing library?
     return path_list
 
 
+# Checked when cpp is first run, not at import: Pypeline (.py) builds import this module
+# (VHDL.py, RAW_VHDL.py and pipelinec use its helpers) but never preprocess C.
+def REQUIRE_CPP():
+    if GET_TOOL_PATH("cpp") is None:
+        # TODO fall back to clang tools?
+        raise Exception("'cpp' C preprocessor is not installed!")
+
+
 # TAKEN FROM https://github.com/eliben/pycparser/blob/c5463bd43adef3206c79520812745b368cd6ab21/pycparser/__init__.py
 def preprocess_file(filename, cpp_path="cpp", cpp_args=""):
     """Preprocess a file using cpp.
@@ -84,6 +91,7 @@ def preprocess_file(filename, cpp_path="cpp", cpp_args=""):
     When successful, returns the preprocessed file's contents.
     Errors from cpp will be printed out.
     """
+    REQUIRE_CPP()
     path_list = [cpp_path]
     if isinstance(cpp_args, list):
         path_list += cpp_args
@@ -129,6 +137,7 @@ def preprocess_text(text, cpp_path="cpp"):
     When successful, returns the preprocessed file's contents.
     Errors from cpp will be printed out.
     """
+    REQUIRE_CPP()
 
     path_list = [cpp_path]
 
@@ -163,6 +172,7 @@ def preprocess_text(text, cpp_path="cpp"):
 # that need to be code gen'd again
 # DOES NOT INCLUDE to-be-generated missing files
 def get_included_files(c_filename):
+    REQUIRE_CPP()
     includes_list = GET_CPP_INCLUDES_LIST()
     includes_text = " ".join(includes_list)
     cmd = "cpp -MM -MG " + includes_text + " " + c_filename
@@ -184,12 +194,6 @@ main.o: main.c examples/aws-fpga-dma/aws_fpga_dma.c \
     # print toks[1:]
     files = toks[1:]
     return set(files)
-
-
-# gcc -fpreprocessed -dD -E main.c
-def READ_FILE_REMOVE_COMMENTS(c_filename):
-    cmd = "gcc -E -fpreprocessed -dD " + c_filename
-    return GET_SHELL_CMD_OUTPUT(cmd)
 
 
 def casthelp(arg):
@@ -677,22 +681,9 @@ def GET_NAMES_LIST_FROM_STRUCTREF(c_ast_structref):
     return rv
 
 
-def GET_LEAF_FIELD_NAME_FROM_STRUCTREF(c_ast_structref):
-    names_list = GET_NAMES_LIST_FROM_STRUCTREF(c_ast_structref)
-    return names_list[len(names_list) - 1]
-
-
 def GET_BASE_VARIABLE_NAME_FROM_STRUCTREF(c_ast_structref):
     names_list = GET_NAMES_LIST_FROM_STRUCTREF(c_ast_structref)
     return names_list[0]
-
-
-def ORIG_VAR_NAME_TO_MOST_RECENT_ALIAS(orig_var_name, existing_logic):
-    if existing_logic is not None:
-        most_recent_alias = GET_MOST_RECENT_ALIAS(existing_logic, orig_var_name)
-        return most_recent_alias
-    else:
-        return orig_var_name
 
 
 def C_AST_REF_TOK_IS_CONST(ref_tok):
@@ -773,32 +764,6 @@ def C_AST_REF_TOKS_TO_NEXT_WIRE_ASSIGNMENT_ALIAS(
         i = i + 1
         alias = alias_base + "_" + str(i)
     return alias
-
-
-def ORIG_WIRE_NAME_TO_NEXT_WIRE_ASSIGNMENT_ALIAS(
-    orig_wire_name, c_ast_node, existing_logic
-):
-    # Alias will include location in src
-    coord_str = C_AST_NODE_COORD_STR(c_ast_node)
-    # Base name
-    alias_base = orig_wire_name + "_" + coord_str + "_"
-
-    # Check existing logic for alias
-    # First one to try is "0"
-    i = 0
-    alias = alias_base + str(i)
-    if existing_logic is not None:
-        if orig_wire_name in existing_logic.wire_aliases_over_time:
-            aliases = existing_logic.wire_aliases_over_time[orig_wire_name]
-            while alias in aliases:
-                i = i + 1
-                alias = alias_base + str(i)
-
-    return alias
-
-
-def C_AST_CONSTANT_TO_ORIG_WIRE_NAME(c_ast_node):
-    return str(c_ast_node.value)
 
 
 def GET_MOST_RECENT_ALIAS(logic, orig_var_name):
@@ -1539,16 +1504,6 @@ def C_AST_CONSTANT_LHS_ASSIGNMENT_TO_LOGIC(
     parser_state.existing_logic.wire_aliases_over_time[lhs_orig_var_name] = new_aliases
 
     return parser_state.existing_logic
-
-
-def C_AST_NODE_TO_ORIG_VAR_NAME(c_ast_node):
-    if type(c_ast_node) == c_ast.ID:
-        return C_AST_ID_TO_ORIG_WIRE_NAME(c_ast_node)
-    elif type(c_ast_node) == c_ast.StructRef:
-        return GET_BASE_VARIABLE_NAME_FROM_STRUCTREF(c_ast_node)
-    else:
-        print("WHat C_AST_NODE_TO_ORIG_VAR_NAME", c_ast_node)
-        sys.exit(-1)
 
 
 def EXPAND_REF_TOKS_OR_STRS(ref_toks_or_strs, c_ast_ref, parser_state):
@@ -4885,7 +4840,7 @@ def TRY_CONST_REDUCE_C_AST_N_ARG_FUNC_INST_TO_LOGIC(
             # print("rhs_val, rhs_c_type",rhs_val, rhs_c_type)
 
             # First check for integer arguments
-            is_ints = VHDL.C_TYPES_ARE_INTEGERS([lhs_c_type, rhs_c_type])
+            is_ints = LOGIC.C_TYPES_ARE_INTEGERS([lhs_c_type, rhs_c_type])
 
             # Then allow for floats, if either float then treat boths as floats
             is_floats = LOGIC.C_TYPE_IS_FLOAT_TYPE(lhs_c_type) or LOGIC.C_TYPE_IS_FLOAT_TYPE(
@@ -4948,8 +4903,8 @@ def TRY_CONST_REDUCE_C_AST_N_ARG_FUNC_INST_TO_LOGIC(
                 ):
                     # Output type is type of LHS
                     c_type = parser_state.existing_logic.wire_to_c_type[lhs_wire]
-                    width = VHDL.GET_WIDTH_FROM_C_TYPE_STR(parser_state, c_type)
-                    signed = VHDL.C_TYPE_IS_INT_N(c_type)
+                    width = LOGIC.GET_WIDTH_FROM_C_TYPE_STR(parser_state, c_type)
+                    signed = LOGIC.C_TYPE_IS_INT_N(c_type)
                     # lhs_val >> rhs_val
                     lhs_bin_str = int2bin(lhs_val, width)
                     fill_bit = "0"
@@ -4968,8 +4923,8 @@ def TRY_CONST_REDUCE_C_AST_N_ARG_FUNC_INST_TO_LOGIC(
                     # uint32 = 1 << 3;
                     #          ^1b constant , needs be sized to atleast 4 bits
                     lhs_type = parser_state.existing_logic.wire_to_c_type[lhs_wire]
-                    lhs_width = VHDL.GET_WIDTH_FROM_C_TYPE_STR(parser_state, lhs_type)
-                    signed = VHDL.C_TYPE_IS_INT_N(lhs_type)
+                    lhs_width = LOGIC.GET_WIDTH_FROM_C_TYPE_STR(parser_state, lhs_type)
+                    signed = LOGIC.C_TYPE_IS_INT_N(lhs_type)
                     width = lhs_width + rhs_val
                     # lhs_val << rhs_val
                     lhs_bin_str = int2bin(lhs_val, width)
@@ -4981,7 +4936,7 @@ def TRY_CONST_REDUCE_C_AST_N_ARG_FUNC_INST_TO_LOGIC(
                     # print(lhs_bin_str,"<<",rhs_val, const_val_str)
                 elif (
                     LOGIC.C_TYPE_IS_FLOAT_TYPE(lhs_c_type)
-                    and VHDL.C_TYPES_ARE_INTEGERS([rhs_c_type])
+                    and LOGIC.C_TYPES_ARE_INTEGERS([rhs_c_type])
                     and func_base_name
                     == (LOGIC.BIN_OP_LOGIC_NAME_PREFIX + "_" + LOGIC.BIN_OP_SL_NAME)
                 ):
@@ -4989,7 +4944,7 @@ def TRY_CONST_REDUCE_C_AST_N_ARG_FUNC_INST_TO_LOGIC(
                     const_val_str = str(lhs_val * pow(2, rhs_val))
                 elif (
                     LOGIC.C_TYPE_IS_FLOAT_TYPE(lhs_c_type)
-                    and VHDL.C_TYPES_ARE_INTEGERS([rhs_c_type])
+                    and LOGIC.C_TYPES_ARE_INTEGERS([rhs_c_type])
                     and func_base_name
                     == (LOGIC.BIN_OP_LOGIC_NAME_PREFIX + "_" + LOGIC.BIN_OP_SL_NAME)
                 ):
@@ -5052,8 +5007,8 @@ def TRY_CONST_REDUCE_C_AST_N_ARG_FUNC_INST_TO_LOGIC(
                     sys.exit(-1)
             else:
                 # Ints
-                signed = VHDL.C_TYPE_IS_INT_N(in_c_type)
-                in_width = VHDL.GET_WIDTH_FROM_C_TYPE_STR(parser_state, in_c_type)
+                signed = LOGIC.C_TYPE_IS_INT_N(in_c_type)
+                in_width = LOGIC.GET_WIDTH_FROM_C_TYPE_STR(parser_state, in_c_type)
                 # What op?
                 if func_base_name == (
                     LOGIC.UNARY_OP_LOGIC_NAME_PREFIX + "_" + LOGIC.UNARY_OP_NOT_NAME
@@ -5092,11 +5047,11 @@ def TRY_CONST_REDUCE_C_AST_N_ARG_FUNC_INST_TO_LOGIC(
             )
             if LOGIC.C_TYPES_ARE_FLOAT_TYPES([in_t, out_t]):
                 const_val_str = str(float(in_val_str))
-            elif VHDL.C_TYPES_ARE_INTEGERS([in_t]) and LOGIC.C_TYPE_IS_FLOAT_TYPE(out_t):
+            elif LOGIC.C_TYPES_ARE_INTEGERS([in_t]) and LOGIC.C_TYPE_IS_FLOAT_TYPE(out_t):
                 const_val_str = str(float(in_val_str))
-            elif LOGIC.C_TYPE_IS_FLOAT_TYPE(in_t) and VHDL.C_TYPES_ARE_INTEGERS([out_t]):
+            elif LOGIC.C_TYPE_IS_FLOAT_TYPE(in_t) and LOGIC.C_TYPES_ARE_INTEGERS([out_t]):
                 const_val_str = str(int(float(in_val_str)))
-            elif VHDL.C_TYPES_ARE_INTEGERS([in_t, out_t]):
+            elif LOGIC.C_TYPES_ARE_INTEGERS([in_t, out_t]):
                 (
                     signed,
                     left_width,
@@ -5245,7 +5200,7 @@ def TRY_CONST_REDUCE_C_AST_N_ARG_FUNC_INST_TO_LOGIC(
     # TODO other things
     # CONSTANT SHIFT LEFT on INT
     if (
-        VHDL.C_TYPES_ARE_INTEGERS([input_driver_types[0]])
+        LOGIC.C_TYPES_ARE_INTEGERS([input_driver_types[0]])
         and func_base_name.startswith(LOGIC.BIN_OP_LOGIC_NAME_PREFIX + "_" + LOGIC.BIN_OP_SL_NAME)
         and const_input_wires[1] is not None
     ):
@@ -5269,7 +5224,7 @@ def TRY_CONST_REDUCE_C_AST_N_ARG_FUNC_INST_TO_LOGIC(
         is_reducable = True
     # CONSTANT SHIFT RIGHT on INT
     elif (
-        VHDL.C_TYPES_ARE_INTEGERS([input_driver_types[0]])
+        LOGIC.C_TYPES_ARE_INTEGERS([input_driver_types[0]])
         and func_base_name.startswith(LOGIC.BIN_OP_LOGIC_NAME_PREFIX + "_" + LOGIC.BIN_OP_SR_NAME)
         and const_input_wires[1] is not None
     ):
@@ -5547,7 +5502,7 @@ def C_AST_N_ARG_FUNC_INST_TO_LOGIC(
         output_type = input_driver_types[1]  # [0] is cond for mux
         parser_state.existing_logic.wire_to_c_type[output_wire_name] = output_type
     # Or muxing integers, take max size
-    elif func_base_name == LOGIC.MUX_LOGIC_NAME and VHDL.C_TYPES_ARE_INTEGERS(
+    elif func_base_name == LOGIC.MUX_LOGIC_NAME and LOGIC.C_TYPES_ARE_INTEGERS(
         input_driver_types[1:3]
     ):
         # print("output type for func",func_base_name, input_driver_types, func_c_ast_node.coord)
@@ -5884,7 +5839,7 @@ def C_AST_VAR_AS_FUNC_CALL_TO_LOGIC(
     # As is tradition, do the easiest possible thing first
     # and see what happens for future me
     is_bit_sel = False
-    if VHDL.C_TYPES_ARE_INTEGERS([c_type]) or LOGIC.C_TYPES_ARE_FLOAT_TYPES([c_type]):
+    if LOGIC.C_TYPES_ARE_INTEGERS([c_type]) or LOGIC.C_TYPES_ARE_FLOAT_TYPES([c_type]):
         if len(args) == 1 or len(args) == 2:
             is_bit_sel = True
     if is_bit_sel:
@@ -6398,7 +6353,7 @@ def C_AST_UNARY_OP_TO_LOGIC(
                 output_c_type = expr_type
             else:
                 # Integer types
-                input_width = VHDL.GET_WIDTH_FROM_C_N_BITS_INT_TYPE_STR(expr_type)
+                input_width = LOGIC.GET_WIDTH_FROM_C_N_BITS_INT_TYPE_STR(expr_type)
                 output_c_type = "int" + str(input_width + 1) + "_t"
         else:
             print("Output C type for c_ast_unary_op_str '" + c_ast_unary_op_str + "'?")
@@ -6446,39 +6401,39 @@ def GET_INTEGER_MAX_SIZE_INFO(c_integer_types):
     for i, c_type in enumerate(c_integer_types):
         if i == 0:
             # Left
-            if VHDL.C_TYPE_IS_INT_N(c_type):
-                left_width = VHDL.GET_WIDTH_FROM_C_N_BITS_INT_TYPE_STR(c_type)
+            if LOGIC.C_TYPE_IS_INT_N(c_type):
+                left_width = LOGIC.GET_WIDTH_FROM_C_N_BITS_INT_TYPE_STR(c_type)
                 left_min_val = (pow(2, left_width) / 2) * -1
                 left_max_val = (pow(2, left_width) / 2) - 1
                 left_unsigned_width = left_width - 1
                 signed = True
             else:
-                left_width = VHDL.GET_WIDTH_FROM_C_N_BITS_INT_TYPE_STR(c_type)
+                left_width = LOGIC.GET_WIDTH_FROM_C_N_BITS_INT_TYPE_STR(c_type)
                 left_unsigned_width = left_width
                 left_min_val = 0
                 left_max_val = pow(2, left_unsigned_width) - 1
         if i == 1:
             # Right
-            if VHDL.C_TYPE_IS_INT_N(c_type):
-                right_width = VHDL.GET_WIDTH_FROM_C_N_BITS_INT_TYPE_STR(c_type)
+            if LOGIC.C_TYPE_IS_INT_N(c_type):
+                right_width = LOGIC.GET_WIDTH_FROM_C_N_BITS_INT_TYPE_STR(c_type)
                 right_min_val = (pow(2, right_width) / 2) * -1
                 right_max_val = (pow(2, right_width) / 2) - 1
                 right_unsigned_width = right_width - 1
                 signed = True
             else:
-                right_width = VHDL.GET_WIDTH_FROM_C_N_BITS_INT_TYPE_STR(c_type)
+                right_width = LOGIC.GET_WIDTH_FROM_C_N_BITS_INT_TYPE_STR(c_type)
                 right_unsigned_width = right_width
                 right_min_val = 0
                 right_max_val = pow(2, right_unsigned_width) - 1
         # Normal >2 args case
         unsigned_width = None
         width = None
-        if VHDL.C_TYPE_IS_INT_N(c_type):
-            width = VHDL.GET_WIDTH_FROM_C_N_BITS_INT_TYPE_STR(c_type)
+        if LOGIC.C_TYPE_IS_INT_N(c_type):
+            width = LOGIC.GET_WIDTH_FROM_C_N_BITS_INT_TYPE_STR(c_type)
             unsigned_width = width - 1
             signed = True
         else:
-            width = VHDL.GET_WIDTH_FROM_C_N_BITS_INT_TYPE_STR(c_type)
+            width = LOGIC.GET_WIDTH_FROM_C_N_BITS_INT_TYPE_STR(c_type)
             unsigned_width = width
 
         # Max?
@@ -6619,11 +6574,11 @@ def C_AST_BINARY_OP_TO_LOGIC(
     # If types are integers then check signed/unsigned matches
     #   Change type from unsigned to sign by adding bit to type
     #   Never change signed to unsigned dumb
-    if VHDL.C_TYPES_ARE_INTEGERS([left_type, right_type]) and not is_bit_shift:
-        left_signed = VHDL.C_TYPE_IS_INT_N(left_type)
-        right_signed = VHDL.C_TYPE_IS_INT_N(right_type)
-        left_width = VHDL.GET_WIDTH_FROM_C_N_BITS_INT_TYPE_STR(left_type)
-        right_width = VHDL.GET_WIDTH_FROM_C_N_BITS_INT_TYPE_STR(right_type)
+    if LOGIC.C_TYPES_ARE_INTEGERS([left_type, right_type]) and not is_bit_shift:
+        left_signed = LOGIC.C_TYPE_IS_INT_N(left_type)
+        right_signed = LOGIC.C_TYPE_IS_INT_N(right_type)
+        left_width = LOGIC.GET_WIDTH_FROM_C_N_BITS_INT_TYPE_STR(left_type)
+        right_width = LOGIC.GET_WIDTH_FROM_C_N_BITS_INT_TYPE_STR(right_type)
         if left_signed != right_signed:
             if left_signed:
                 # Update right
@@ -6705,9 +6660,9 @@ def C_AST_BINARY_OP_TO_LOGIC(
         parser_state.existing_logic.wire_to_c_type[bin_op_right_input] = right_type
 
     # Force int bit shifts to have uint RHS (neg shift undefined)
-    right_signed = VHDL.C_TYPE_IS_INT_N(right_type)
-    if VHDL.C_TYPES_ARE_INTEGERS([left_type]) and is_bit_shift and right_signed:
-        right_width = VHDL.GET_WIDTH_FROM_C_TYPE_STR(parser_state, right_type)
+    right_signed = LOGIC.C_TYPE_IS_INT_N(right_type)
+    if LOGIC.C_TYPES_ARE_INTEGERS([left_type]) and is_bit_shift and right_signed:
+        right_width = LOGIC.GET_WIDTH_FROM_C_TYPE_STR(parser_state, right_type)
         resized_prefix = "uint" + str(right_width)
         resized_t = resized_prefix + "_t"
         right_type = resized_t
@@ -6836,12 +6791,12 @@ def C_AST_BINARY_OP_TO_LOGIC(
             elif (
                 is_bit_shift
                 and LOGIC.C_TYPE_IS_FLOAT_TYPE(left_type)
-                and VHDL.C_TYPES_ARE_INTEGERS([right_type])
+                and LOGIC.C_TYPES_ARE_INTEGERS([right_type])
             ):
                 output_c_type = left_type
             else:
                 # Ints only
-                if VHDL.C_TYPES_ARE_INTEGERS([left_type, right_type]):
+                if LOGIC.C_TYPES_ARE_INTEGERS([left_type, right_type]):
                     (
                         signed,
                         left_width,
@@ -6880,13 +6835,13 @@ def C_AST_BINARY_OP_TO_LOGIC(
                 # SUB
                 elif c_ast_bin_op_str == "-":
                     # uint - uint
-                    if VHDL.C_TYPE_IS_UINT_N(left_type) and VHDL.C_TYPE_IS_UINT_N(
+                    if LOGIC.C_TYPE_IS_UINT_N(left_type) and LOGIC.C_TYPE_IS_UINT_N(
                         right_type
                     ):
                         # Width doesnt increase - is equal to LHS size
                         output_c_type = "uint" + str(left_unsigned_width) + "_t"
                     # int - uint
-                    elif VHDL.C_TYPE_IS_INT_N(left_type) and VHDL.C_TYPE_IS_UINT_N(
+                    elif LOGIC.C_TYPE_IS_INT_N(left_type) and LOGIC.C_TYPE_IS_UINT_N(
                         right_type
                     ):
                         # Width doesnt increase - is equal to LHS signed size
@@ -6958,10 +6913,10 @@ def C_AST_BINARY_OP_TO_LOGIC(
                         driven_out_type = parser_state.existing_logic.wire_to_c_type[
                             driven_wire_names[0]
                         ]
-                        driven_out_width = VHDL.GET_WIDTH_FROM_C_N_BITS_INT_TYPE_STR(
+                        driven_out_width = LOGIC.GET_WIDTH_FROM_C_N_BITS_INT_TYPE_STR(
                             driven_out_type
                         )
-                        left_width = VHDL.GET_WIDTH_FROM_C_N_BITS_INT_TYPE_STR(
+                        left_width = LOGIC.GET_WIDTH_FROM_C_N_BITS_INT_TYPE_STR(
                             left_type
                         )
                         if driven_out_width >= left_width:
@@ -7099,22 +7054,22 @@ def APPLY_CONNECT_WIRES_LOGIC(
                 # Chars are essentially uint8_t
                 # if CAST_HANDLED_IN_VHDL(driven_wire_type, rhs_type, parser_state):
                 if (
-                    VHDL.WIRES_ARE_INT_N(
+                    LOGIC.WIRES_ARE_INT_N(
                         [driven_wire_name], parser_state.existing_logic
                     )
-                    or VHDL.WIRES_ARE_UINT_N(
+                    or LOGIC.WIRES_ARE_UINT_N(
                         [driven_wire_name], parser_state.existing_logic
                     )
                 ) and (
-                    VHDL.C_TYPE_IS_INT_N(rhs_type) or VHDL.C_TYPE_IS_UINT_N(rhs_type)
+                    LOGIC.C_TYPE_IS_INT_N(rhs_type) or LOGIC.C_TYPE_IS_UINT_N(rhs_type)
                 ):
                     continue
                 # Enum driving U/INT is fine
                 elif (
-                    VHDL.WIRES_ARE_UINT_N(
+                    LOGIC.WIRES_ARE_UINT_N(
                         [driven_wire_name], parser_state.existing_logic
                     )
-                    or VHDL.WIRES_ARE_INT_N(
+                    or LOGIC.WIRES_ARE_INT_N(
                         [driven_wire_name], parser_state.existing_logic
                     )
                 ) and LOGIC.WIRE_IS_ENUM(
@@ -7125,8 +7080,8 @@ def APPLY_CONNECT_WIRES_LOGIC(
                 elif LOGIC.WIRE_IS_ENUM(
                     driven_wire_name, parser_state.existing_logic, parser_state
                 ) and (
-                    VHDL.WIRES_ARE_UINT_N([driving_wire], parser_state.existing_logic)
-                    or VHDL.WIRES_ARE_INT_N([driving_wire], parser_state.existing_logic)
+                    LOGIC.WIRES_ARE_UINT_N([driving_wire], parser_state.existing_logic)
+                    or LOGIC.WIRES_ARE_INT_N([driving_wire], parser_state.existing_logic)
                 ):
                     continue
 
@@ -7193,15 +7148,15 @@ def APPLY_CONNECT_WIRES_LOGIC(
                 # DONT do uint = float since force int cast for now
                 if (
                     (
-                        VHDL.C_TYPE_IS_INT_N(rhs_type)
+                        LOGIC.C_TYPE_IS_INT_N(rhs_type)
                         and LOGIC.C_TYPE_IS_FLOAT_TYPE(driven_wire_type)
                     )
                     or (
                         LOGIC.C_TYPE_IS_FLOAT_TYPE(rhs_type)
-                        and VHDL.C_TYPE_IS_INT_N(driven_wire_type)
+                        and LOGIC.C_TYPE_IS_INT_N(driven_wire_type)
                     )
                     or (
-                        VHDL.C_TYPE_IS_UINT_N(rhs_type)
+                        LOGIC.C_TYPE_IS_UINT_N(rhs_type)
                         and LOGIC.C_TYPE_IS_FLOAT_TYPE(driven_wire_type)
                     )
                 ):
@@ -7617,9 +7572,9 @@ def GET_FUNC_NAME_TO_FROM_FUNC_CALLS_LOOKUPS(parser_state):
     # Also include FSM funcs as always included
     # and operator overload funcs that wont look like func call
     for func_name in func_name_to_calls:
-        if func_name + C_TO_FSM.FSM_EXT in func_name_to_calls:
+        if func_name + FSM_EXT in func_name_to_calls:
             submodule_func_names.add(func_name)
-            submodule_func_names.add(func_name + C_TO_FSM.FSM_EXT)
+            submodule_func_names.add(func_name + FSM_EXT)
         if LOGIC.FUNC_IS_OP_OVERLOAD(func_name):
             submodule_func_names.add(func_name)
     # print("submodule_func_names",submodule_func_names)
@@ -8032,7 +7987,7 @@ def GET_GLOBAL_VAR_INFO(parser_state):
     # but really is just generated copy
     for var_name, var_info in parser_state.global_vars.items():
         for func_name in set(var_info.used_in_funcs):
-            if func_name + C_TO_FSM.FSM_EXT in var_info.used_in_funcs:
+            if func_name + FSM_EXT in var_info.used_in_funcs:
                 var_info.used_in_funcs.remove(func_name)
 
     return parser_state
@@ -8255,7 +8210,7 @@ def GET_CLK_CROSSING_INFO(preprocessed_c_text, parser_state):
         # Search for what container funcs call this read and write funcs
         for func_name in parser_state.func_name_to_calls:
             # Skip looking inside funcitons that have a _FSM copy
-            fsm_dup_func = func_name + C_TO_FSM.FSM_EXT
+            fsm_dup_func = func_name + FSM_EXT
             if (
                 func_name != fsm_dup_func
                 and fsm_dup_func in parser_state.func_name_to_calls
@@ -8526,9 +8481,9 @@ def GET_ENUM_INFO_DICT(c_file_ast, parser_state):
             # print(id_str, val)
 
             # Accum max width and sign
-            width = VHDL.GET_WIDTH_FROM_C_N_BITS_INT_TYPE_STR(c_type)
+            width = LOGIC.GET_WIDTH_FROM_C_N_BITS_INT_TYPE_STR(c_type)
             max_width = max(max_width, width)
-            signed |= VHDL.C_TYPE_IS_INT_N(c_type)
+            signed |= LOGIC.C_TYPE_IS_INT_N(c_type)
 
             # Next value
             maybe_enum_index_or_val = next_index_or_val
@@ -9195,7 +9150,7 @@ def GET_TYPE_FROM_LIST(py_type, list):
 CLOCK_CROSS_HEADER = "var_clock_cross.h"
 TYPE_ARRAY_N_T_HEADER = "type_array_N_t.h"
 TYPE_BYTES_T_HEADER = "type_bytes_t.h"
-FSM_CLK_HEADER = "func" + C_TO_FSM.FSM_EXT + ".h"
+FSM_CLK_HEADER = "func" + FSM_EXT + ".h"
 SINGLE_INST_HEADER = "func_SINGLE_INST.h"
 GENERATED_HEADER_DIRS = [
     CLOCK_CROSS_HEADER,
@@ -9461,8 +9416,6 @@ def GEN_EMPTY_SINGLE_INST_FUNC_HEADERS(
 
 def GEN_EMPTY_CLOCK_CROSS_HEADERS(all_code_files, inital_missing_files):
     new_regenerate_files = set()
-    # for f in all_code_files:
-    #  text = READ_FILE_REMOVE_COMMENTS(f)
     for inital_missing_file in inital_missing_files:
         # Regex search c_text for "clock_crossing/<type>/<var>.h"
         r = ".*clock_crossing.*"
@@ -9512,8 +9465,6 @@ def GEN_EMPTY_CLOCK_CROSS_HEADERS(all_code_files, inital_missing_files):
 
 def GEN_EMPTY_TYPE_ARRAY_N_HEADERS(all_code_files, inital_missing_files):
     new_regenerate_files = set()
-    # for f in all_code_files:
-    #  text = READ_FILE_REMOVE_COMMENTS(f)
     for inital_missing_file in inital_missing_files:
         # Regex search c_text for "<type>_array_<num>_t.h"
         r = rf"\w+_array_N_t.h"
@@ -9542,8 +9493,6 @@ def GEN_EMPTY_TYPE_ARRAY_N_HEADERS(all_code_files, inital_missing_files):
 
 def GEN_EMPTY_TYPE_BYTES_HEADERS(all_code_files, inital_missing_files):
     new_regenerate_files = set()
-    # for f in all_code_files:
-    #  text = READ_FILE_REMOVE_COMMENTS(f)
     for inital_missing_file in inital_missing_files:
         # Regex search c_text for "<type>_bytes_t.h"
         r = rf"\w+_bytes_t.h"
@@ -9572,16 +9521,14 @@ def GEN_EMPTY_TYPE_BYTES_HEADERS(all_code_files, inital_missing_files):
 
 def GEN_EMPTY_FSM_CLK_FUNC_HEADERS(all_code_files, inital_missing_files, parser_state):
     new_regenerate_files = set()
-    # for f in all_code_files:
-    #  text = READ_FILE_REMOVE_COMMENTS(f)
     for inital_missing_file in inital_missing_files:
         # Regex search c_text
-        r = rf"\w+" + C_TO_FSM.FSM_EXT + ".h"
+        r = rf"\w+" + FSM_EXT + ".h"
         str_quotes = FIND_REGEX_MATCHES(r, inital_missing_file)
         var_names = []
         for str_quote in str_quotes:
             header = str_quote.strip('"')
-            toks = header.split(C_TO_FSM.FSM_EXT + ".h")
+            toks = header.split(FSM_EXT + ".h")
             func_name = toks[0]
             dir_name = (
                 SYN.SYN_OUTPUT_DIRECTORY
@@ -9589,10 +9536,10 @@ def GEN_EMPTY_FSM_CLK_FUNC_HEADERS(all_code_files, inital_missing_files, parser_
                 + FSM_CLK_HEADER
                 + "/"
                 + func_name
-                + C_TO_FSM.FSM_EXT
+                + FSM_EXT
                 + ".h"
             )
-            path = dir_name + "/" + func_name + C_TO_FSM.FSM_EXT + ".h"
+            path = dir_name + "/" + func_name + FSM_EXT + ".h"
             if not os.path.exists(dir_name):
                 os.makedirs(dir_name)
             if not os.path.exists(path):
@@ -9668,12 +9615,12 @@ void """
 
 def GEN_POST_PREPROCESS_FSM_CLK_HEADERS(preprocessed_c_text, regenerate_files):
     # Regex search c_text for <type>_bytes_t
-    r = rf"\w+" + C_TO_FSM.FSM_EXT
+    r = rf"\w+" + FSM_EXT
     func_names = FIND_REGEX_MATCHES(r, preprocessed_c_text)
 
     # #define replacing  Typedef each one
     for func_name in func_names:
-        toks = func_name.split(C_TO_FSM.FSM_EXT)
+        toks = func_name.split(FSM_EXT)
         fsm_clk_func_name = toks[0]
 
         # We are beyond asking for help
@@ -9698,12 +9645,12 @@ typedef uint8_t """
             + FSM_CLK_HEADER
             + "/"
             + fsm_clk_func_name
-            + C_TO_FSM.FSM_EXT
+            + FSM_EXT
             + ".h"
         )
         if not os.path.exists(out_dir):
             os.makedirs(out_dir)
-        path = out_dir + "/" + fsm_clk_func_name + C_TO_FSM.FSM_EXT + ".h"
+        path = out_dir + "/" + fsm_clk_func_name + FSM_EXT + ".h"
         if not os.path.exists(path) or "#pragma once\n" not in open(path, "r").read():
             open(path, "w").write(text)
 
@@ -9726,12 +9673,12 @@ def GEN_POST_PREPROCESS_WITH_NONFUNCDEFS_FSM_CLK_FUNC_HEADERS(
                 + FSM_CLK_HEADER
                 + "/"
                 + func_name
-                + C_TO_FSM.FSM_EXT
+                + FSM_EXT
                 + ".h"
             )
             if not os.path.exists(out_dir):
                 os.makedirs(out_dir)
-            path = out_dir + "/" + func_name + C_TO_FSM.FSM_EXT + ".h"
+            path = out_dir + "/" + func_name + FSM_EXT + ".h"
             open(path, "w").write(text)
 
     # FSM clks do not introduce extra code gen - based on existing user code
@@ -9959,8 +9906,8 @@ def GEN_POST_PREPROCESS_WITH_NONFUNCDEFS_TYPE_BYTES_HEADERS(
 """
                     )
 
-        elif VHDL.C_TYPES_ARE_INTEGERS([type_t]):
-            width = VHDL.GET_WIDTH_FROM_C_N_BITS_INT_TYPE_STR(type_t)
+        elif LOGIC.C_TYPES_ARE_INTEGERS([type_t]):
+            width = LOGIC.GET_WIDTH_FROM_C_N_BITS_INT_TYPE_STR(type_t)
             typeprefix = type_t.split("_t")[0]
             low_i = 0
             high_i = 7
@@ -9998,7 +9945,7 @@ def GEN_POST_PREPROCESS_WITH_NONFUNCDEFS_TYPE_BYTES_HEADERS(
                 text += f"rv.data[{float_byte_i}] = {type_t}_{((float_byte_i+1)*8)-1}_{float_byte_i*8}(x);\n"
         elif LOGIC.C_TYPE_IS_ENUM(type_t, parser_state):
             # How many bytes
-            width = VHDL.GET_WIDTH_FROM_C_TYPE_STR(parser_state, type_t)
+            width = LOGIC.GET_WIDTH_FROM_C_TYPE_STR(parser_state, type_t)
             typeprefix = "uint" + str(width)
             int_type = typeprefix + "_t"
             # Convert to uint
@@ -10197,8 +10144,8 @@ for("""
                         + "_bytes);\n"
                     )
 
-        elif VHDL.C_TYPES_ARE_INTEGERS([type_t]):
-            width = VHDL.GET_WIDTH_FROM_C_N_BITS_INT_TYPE_STR(type_t)
+        elif LOGIC.C_TYPES_ARE_INTEGERS([type_t]):
+            width = LOGIC.GET_WIDTH_FROM_C_N_BITS_INT_TYPE_STR(type_t)
             typeprefix = type_t.split("_t")[0]
             low_i = 0
             high_i = 7
@@ -10249,7 +10196,7 @@ for("""
 
         elif LOGIC.C_TYPE_IS_ENUM(type_t, parser_state):
             # How many bytes
-            width = VHDL.GET_WIDTH_FROM_C_TYPE_STR(parser_state, type_t)
+            width = LOGIC.GET_WIDTH_FROM_C_TYPE_STR(parser_state, type_t)
             typeprefix = "uint" + str(width)
             int_type = typeprefix + "_t"
             # Convert to uint like uint case
@@ -10407,8 +10354,8 @@ void """
                     )
                     text += "pos = pos + " + str(field_size) + "; // not sizeof()\n"
 
-        elif VHDL.C_TYPES_ARE_INTEGERS([type_t]):
-            width = VHDL.GET_WIDTH_FROM_C_N_BITS_INT_TYPE_STR(type_t)
+        elif LOGIC.C_TYPES_ARE_INTEGERS([type_t]):
+            width = LOGIC.GET_WIDTH_FROM_C_N_BITS_INT_TYPE_STR(type_t)
             typeprefix = type_t.split("_t")[0]
             low_i = 0
             high_i = 7
@@ -10535,8 +10482,8 @@ void bytes_to_"""
                     )
                     text += "pos = pos + " + str(field_size) + "; // not sizeof()\n"
 
-        elif VHDL.C_TYPES_ARE_INTEGERS([type_t]):
-            width = VHDL.GET_WIDTH_FROM_C_N_BITS_INT_TYPE_STR(type_t)
+        elif LOGIC.C_TYPES_ARE_INTEGERS([type_t]):
+            width = LOGIC.GET_WIDTH_FROM_C_N_BITS_INT_TYPE_STR(type_t)
             typeprefix = type_t.split("_t")[0]
             low_i = 0
             high_i = 7
@@ -10912,30 +10859,6 @@ def GET_MEM_H_LOGIC_LOOKUP(parser_state):
     else:
         # No code, no funcs
         return {}
-
-
-def MEM_NAME_TO_LATENCY(mem_name):
-    if mem_name == LOGIC.RAM_SP_RF + "_0":
-        return 0
-    elif mem_name == LOGIC.RAM_SP_RF + "_1":
-        return 1
-    elif mem_name == LOGIC.RAM_SP_RF + "_2":
-        return 2
-    elif mem_name == LOGIC.RAM_DP_RF + "_0":
-        return 0
-    elif mem_name == LOGIC.RAM_DP_RF + "_1":
-        return 1
-    elif mem_name == LOGIC.RAM_DP_RF + "_2":
-        return 2
-    else:
-        print("MEM_NAME_TO_LATENCY for mem_name", mem_name, "?")
-        sys.exit(-1)
-
-
-def GET_BIT_MATH_H_LOGIC_LOOKUP_FROM_FUNC_NAMES(func_names, parser_state):
-    # TODO dont do string search at all - do 'in' list checks?
-    c_text = "(".join(func_names) + "("  # hacky af to keep regex matches minimal
-    return GET_BIT_MATH_H_LOGIC_LOOKUP_FROM_CODE_TEXT(c_text, parser_state)
 
 
 def GET_BIT_MATH_H_LOGIC_LOOKUP_FROM_CODE_TEXT(c_text, parser_state):
@@ -11791,20 +11714,6 @@ typedef uint8_t """
 
         ## NEED MANIP in MATH
 
-        """ SWITCH OVER TO ONCE NOT DOING REG EX SEARCH
-    # FUNC NAME BASED
-    preprocessed_text = preprocess_text(text)
-    c_file_ast = GET_C_FILE_AST_FROM_PREPROCESSED_TEXT(preprocessed_text, "auto_gen_bit_math_fake_filename.c")
-    func_call_nodes = C_AST_NODE_RECURSIVE_FIND_NODE_TYPE(c_file_ast, c_ast.FuncCall)
-    # get list of function names
-    func_names = set()
-    for func_call_node in func_call_nodes:
-      func_name = str(func_call_node.name.name)
-      func_names.add(func_name)
-    bit_manip_func_name_logic_lookup = GET_BIT_MANIP_H_LOGIC_LOOKUP_FROM_FUNC_NAMES(func_names,parser_state)
-    parser_state_copy.FuncLogicLookupTable = bit_manip_func_name_logic_lookup # {} 
-    """
-
         # C TEXT NAME BASED
         bit_manip_func_name_logic_lookup = GET_BIT_MANIP_H_LOGIC_LOOKUP_FROM_CODE_TEXT(
             text, parser_state
@@ -11867,13 +11776,6 @@ def BIT_SEL_FUNC_TO_INPUTS_TYPES_OUTPUT_TYPE(bit_sel_func_name):
     return (["x"], [in_t], result_t)
 
 
-def GET_BIT_MANIP_H_LOGIC_LOOKUP_FROM_FUNC_NAMES(func_names, parser_state):
-    # TODO dont do string search at all - do 'in' list checks?
-    c_text = "(".join(func_names) + "("  # hacky af to keep regex matches minimal
-    # print("manip func_names",func_names, flush=True)
-    return GET_BIT_MANIP_H_LOGIC_LOOKUP_FROM_CODE_TEXT(c_text, parser_state)
-
-
 def GET_BIT_MANIP_H_LOGIC_LOOKUP_FROM_CODE_TEXT(c_text, parser_state):
     # TODO: Do bit select and bit dup as "const int"?
 
@@ -11933,8 +11835,8 @@ def GET_BIT_MANIP_H_LOGIC_LOOKUP_FROM_CODE_TEXT(c_text, parser_state):
     for bit_concat_func_name in bit_concat_func_names:
         bit_concat_func_name = bit_concat_func_name.strip("(").strip()
         toks = bit_concat_func_name.split("_")
-        first_bit_width = VHDL.GET_WIDTH_FROM_C_TYPE_STR(parser_state, toks[0] + "_t")
-        second_bit_width = VHDL.GET_WIDTH_FROM_C_TYPE_STR(parser_state, toks[1] + "_t")
+        first_bit_width = LOGIC.GET_WIDTH_FROM_C_TYPE_STR(parser_state, toks[0] + "_t")
+        second_bit_width = LOGIC.GET_WIDTH_FROM_C_TYPE_STR(parser_state, toks[1] + "_t")
         result_width = first_bit_width + second_bit_width
         result_t = "uint" + str(result_width) + "_t"
         first_in_prefix = toks[0]
@@ -11974,7 +11876,7 @@ def GET_BIT_MANIP_H_LOGIC_LOOKUP_FROM_CODE_TEXT(c_text, parser_state):
         # if not(bit_dup_func_name in bit_sel_func_names):
         bit_dup_func_name = bit_dup_func_name.strip("(").strip()
         toks = bit_dup_func_name.split("_")
-        input_bit_width = VHDL.GET_WIDTH_FROM_C_TYPE_STR(parser_state, toks[0] + "_t")
+        input_bit_width = LOGIC.GET_WIDTH_FROM_C_TYPE_STR(parser_state, toks[0] + "_t")
         mult = int(toks[1])
         if mult == 0:
             continue
@@ -12013,7 +11915,7 @@ def GET_BIT_MANIP_H_LOGIC_LOOKUP_FROM_CODE_TEXT(c_text, parser_state):
         toks = rotl_func_name.split("_")
         in_prefix = "uint" + toks[0].replace("rotl", "")
         in_t = in_prefix + "_t"
-        input_bit_width = VHDL.GET_WIDTH_FROM_C_TYPE_STR(parser_state, in_t)
+        input_bit_width = LOGIC.GET_WIDTH_FROM_C_TYPE_STR(parser_state, in_t)
         rot_amount = int(toks[1])
         result_width = input_bit_width
         result_t = "uint" + str(result_width) + "_t"
@@ -12046,7 +11948,7 @@ def GET_BIT_MANIP_H_LOGIC_LOOKUP_FROM_CODE_TEXT(c_text, parser_state):
         toks = rotr_func_name.split("_")
         in_prefix = "uint" + toks[0].replace("rotr", "")
         in_t = in_prefix + "_t"
-        input_bit_width = VHDL.GET_WIDTH_FROM_C_TYPE_STR(parser_state, in_t)
+        input_bit_width = LOGIC.GET_WIDTH_FROM_C_TYPE_STR(parser_state, in_t)
         rot_amount = int(toks[1])
         result_width = input_bit_width
         result_t = "uint" + str(result_width) + "_t"
@@ -12078,8 +11980,8 @@ def GET_BIT_MANIP_H_LOGIC_LOOKUP_FROM_CODE_TEXT(c_text, parser_state):
     for bit_ass_func_name in bit_ass_func_names:
         bit_ass_func_name = bit_ass_func_name.strip("(").strip()
         toks = bit_ass_func_name.split("_")
-        input_bit_width = VHDL.GET_WIDTH_FROM_C_TYPE_STR(parser_state, toks[0] + "_t")
-        assign_width = VHDL.GET_WIDTH_FROM_C_TYPE_STR(parser_state, toks[1] + "_t")
+        input_bit_width = LOGIC.GET_WIDTH_FROM_C_TYPE_STR(parser_state, toks[0] + "_t")
+        assign_width = LOGIC.GET_WIDTH_FROM_C_TYPE_STR(parser_state, toks[1] + "_t")
         low_index = int(toks[2])
         high_index = low_index + assign_width - 1
         result_width = input_bit_width
@@ -12373,40 +12275,6 @@ def GET_BIT_MANIP_H_LOGIC_LOOKUP_FROM_CODE_TEXT(c_text, parser_state):
         return {}
 
 
-def GENERATE_INT_N_HEADERS(max_bit_width=2048):
-    # Do signed and unsigned two files
-    for u in ["", "u"]:
-        text = "#pragma once\n"
-        text += "#include <stdint.h>\n"
-        min_width = 1
-        # if u=="":
-        # min_width = 2
-        for bitwidth in range(min_width, max_bit_width + 1):
-            standard_type = u + "int8_t"
-            if bitwidth > 8:
-                standard_type = u + "int16_t"
-            if bitwidth > 16:
-                standard_type = u + "int32_t"
-            if bitwidth > 32:
-                standard_type = u + "int64_t"
-
-            the_type = u + "int" + str(bitwidth) + "_t"
-
-            # Comment out standard types
-            if the_type == standard_type:
-                text += "//"
-
-            text += "typedef " + standard_type + " " + the_type + ";\n"
-
-        # print "GENERATE_INT_N_HEADERS"
-        # print text
-
-        filename = u + "intN_t.h"
-        f = open(filename, "w")
-        f.write(text)
-        f.close()
-
-
 def GET_CAST_C_CODE(
     partially_complete_logic, containing_func_logic, out_dir, parser_state
 ):
@@ -12414,11 +12282,11 @@ def GET_CAST_C_CODE(
     in_t = partially_complete_logic.wire_to_c_type[input_wire]
     output_wire = partially_complete_logic.outputs[0]
     out_t = partially_complete_logic.wire_to_c_type[output_wire]
-    if LOGIC.C_TYPE_IS_FLOAT_TYPE(in_t) and VHDL.C_TYPE_IS_INT_N(out_t):
+    if LOGIC.C_TYPE_IS_FLOAT_TYPE(in_t) and LOGIC.C_TYPE_IS_INT_N(out_t):
         return GET_CAST_FLOAT_TO_INT_C_CODE(
             partially_complete_logic, containing_func_logic, out_dir, parser_state
         )
-    elif VHDL.C_TYPES_ARE_INTEGERS([in_t]) and LOGIC.C_TYPE_IS_FLOAT_TYPE(out_t):
+    elif LOGIC.C_TYPES_ARE_INTEGERS([in_t]) and LOGIC.C_TYPE_IS_FLOAT_TYPE(out_t):
         return GET_CAST_INT_UINT_TO_FLOAT_C_CODE(
             partially_complete_logic, containing_func_logic, out_dir, parser_state
         )
@@ -12433,7 +12301,7 @@ def GET_UNARY_OP_NEGATE_C_CODE(
 ):
     input_wire = partially_complete_logic.inputs[0]
     in_t = partially_complete_logic.wire_to_c_type[input_wire]
-    if VHDL.C_TYPES_ARE_INTEGERS([in_t]):
+    if LOGIC.C_TYPES_ARE_INTEGERS([in_t]):
         return GET_UNARY_OP_NEGATE_INT_UINT_C_CODE(
             partially_complete_logic, containing_func_logic, out_dir, parser_state
         )
@@ -12448,8 +12316,8 @@ def GET_UNARY_OP_NEGATE_INT_UINT_C_CODE(
 ):
     input_wire = partially_complete_logic.inputs[0]
     in_t = partially_complete_logic.wire_to_c_type[input_wire]
-    in_width = VHDL.GET_WIDTH_FROM_C_N_BITS_INT_TYPE_STR(in_t)
-    is_int = VHDL.C_TYPE_IS_INT_N(in_t)
+    in_width = LOGIC.GET_WIDTH_FROM_C_N_BITS_INT_TYPE_STR(in_t)
+    is_int = LOGIC.C_TYPE_IS_INT_N(in_t)
     result_t = "int" + str(in_width + 1) + "_t"
     result_uint_t = "uint" + str(in_width + 1) + "_t"
 
@@ -12503,8 +12371,8 @@ def GET_CAST_INT_UINT_TO_FLOAT_C_CODE(
     # Int to float
     input_wire = partially_complete_logic.inputs[0]
     in_t = partially_complete_logic.wire_to_c_type[input_wire]
-    input_width = VHDL.GET_WIDTH_FROM_C_N_BITS_INT_TYPE_STR(in_t)
-    is_int = VHDL.C_TYPE_IS_INT_N(in_t)
+    input_width = LOGIC.GET_WIDTH_FROM_C_N_BITS_INT_TYPE_STR(in_t)
+    is_int = LOGIC.C_TYPE_IS_INT_N(in_t)
     output_wire = partially_complete_logic.outputs[0]
     out_t = partially_complete_logic.wire_to_c_type[output_wire]
     fp_t = out_t
@@ -12863,7 +12731,7 @@ def GET_CAST_FLOAT_TO_INT_C_CODE(
     # 24th bit is 1 so need to include that when shifting
     # Output width of cast limits how far we should bother shifting before overflowing into undefined output
     # Casting to int so actual unsigned width is less
-    out_width = VHDL.GET_WIDTH_FROM_C_N_BITS_INT_TYPE_STR(out_t)
+    out_width = LOGIC.GET_WIDTH_FROM_C_N_BITS_INT_TYPE_STR(out_t)
     unsigned_width = out_width - 1
     total_shift_max = unsigned_width
     shift_bit_size = int(math.ceil(math.log(total_shift_max + 1, 2.0)))
@@ -12949,7 +12817,7 @@ def GET_ONE_HOT_EQ_C_CODE(
     input_t = partially_complete_logic.wire_to_c_type[
         partially_complete_logic.inputs[0]
     ]
-    bit_width = VHDL.GET_WIDTH_FROM_C_N_BITS_INT_TYPE_STR(input_t)
+    bit_width = LOGIC.GET_WIDTH_FROM_C_N_BITS_INT_TYPE_STR(input_t)
     text = ""
     text += '''
 #include "intN_t.h"
@@ -13182,7 +13050,7 @@ def GET_VAR_REF_RD_C_CODE(
     # print "var_dim_input_wires",var_dim_input_wires
     for var_dim_i in range(0, len(var_dim_input_wires)):
         c_type = var_dim_types[var_dim_i]
-        var_dim_width = VHDL.GET_WIDTH_FROM_C_TYPE_STR(parser_state, c_type)
+        var_dim_width = LOGIC.GET_WIDTH_FROM_C_TYPE_STR(parser_state, c_type)
         var_dim_size = var_dims[var_dim_i]
         # print "var_dim_width",var_dim_width
         # print "var_dim_size",var_dim_size
@@ -13231,7 +13099,7 @@ def GET_VAR_REF_RD_C_CODE(
     var_dim_input_widths = []
     for var_dim_input_wire in var_dim_input_wires:
         var_dim_c_type = partially_complete_logic.wire_to_c_type[var_dim_input_wire]
-        var_dim_width = VHDL.GET_WIDTH_FROM_C_TYPE_STR(parser_state, var_dim_c_type)
+        var_dim_width = LOGIC.GET_WIDTH_FROM_C_TYPE_STR(parser_state, var_dim_c_type)
         sel_width += var_dim_width
         var_dim_input_widths.append(var_dim_width)
     sel_prefix = "uint" + str(sel_width)
@@ -13832,9 +13700,9 @@ def GET_BIN_OP_SR_C_CODE(
         right_input_wire, containing_func_logic
     )
 
-    if VHDL.WIRES_ARE_INT_N(
+    if LOGIC.WIRES_ARE_INT_N(
         [partially_complete_logic.inputs[0]], partially_complete_logic
-    ) or VHDL.WIRES_ARE_UINT_N(
+    ) or LOGIC.WIRES_ARE_UINT_N(
         [partially_complete_logic.inputs[0]], partially_complete_logic
     ):
         if right_const_driving_wire is not None:
@@ -13888,9 +13756,9 @@ def GET_BIN_OP_SL_C_CODE(
         right_input_wire, containing_func_logic
     )
 
-    if VHDL.WIRES_ARE_INT_N(
+    if LOGIC.WIRES_ARE_INT_N(
         [partially_complete_logic.inputs[0]], partially_complete_logic
-    ) or VHDL.WIRES_ARE_UINT_N(
+    ) or LOGIC.WIRES_ARE_UINT_N(
         [partially_complete_logic.inputs[0]], partially_complete_logic
     ):
         if right_const_driving_wire is not None:
@@ -13945,11 +13813,11 @@ def GET_BIN_OP_MOD_C_CODE(partially_complete_logic, out_dir, parser_state):
     right_t = partially_complete_logic.wire_to_c_type[
         partially_complete_logic.inputs[1]
     ]
-    if VHDL.WIRES_ARE_INT_N(partially_complete_logic.inputs, partially_complete_logic):
+    if LOGIC.WIRES_ARE_INT_N(partially_complete_logic.inputs, partially_complete_logic):
         return GET_BIN_OP_MOD_INT_N_C_CODE(
             partially_complete_logic, out_dir, parser_state
         )
-    elif VHDL.WIRES_ARE_UINT_N(
+    elif LOGIC.WIRES_ARE_UINT_N(
         partially_complete_logic.inputs, partially_complete_logic
     ):
         return GET_BIN_OP_MOD_UINT_N_C_CODE(
@@ -13966,11 +13834,11 @@ def GET_BIN_OP_DIV_C_CODE(partially_complete_logic, out_dir, parser_state):
     right_t = partially_complete_logic.wire_to_c_type[
         partially_complete_logic.inputs[1]
     ]
-    if VHDL.WIRES_ARE_UINT_N(partially_complete_logic.inputs, partially_complete_logic):
+    if LOGIC.WIRES_ARE_UINT_N(partially_complete_logic.inputs, partially_complete_logic):
         return GET_BIN_OP_DIV_UINT_N_C_CODE(
             partially_complete_logic, out_dir, parser_state
         )
-    elif VHDL.WIRES_ARE_INT_N(
+    elif LOGIC.WIRES_ARE_INT_N(
         partially_complete_logic.inputs, partially_complete_logic
     ):
         return GET_BIN_OP_DIV_INT_N_C_CODE(
@@ -13990,13 +13858,13 @@ def GET_BIN_OP_MULT_C_CODE(partially_complete_logic, out_dir, parser_state):
     right_t = partially_complete_logic.wire_to_c_type[
         partially_complete_logic.inputs[1]
     ]
-    if VHDL.WIRES_ARE_UINT_N(partially_complete_logic.inputs, partially_complete_logic):
+    if LOGIC.WIRES_ARE_UINT_N(partially_complete_logic.inputs, partially_complete_logic):
         return GET_BIN_OP_MULT_UINT_N_C_CODE(
             partially_complete_logic, out_dir, parser_state
         )
     elif LOGIC.C_TYPES_ARE_FLOAT_TYPES([left_t, right_t]):
         return GET_BIN_OP_MULT_FLOAT_N_C_CODE(partially_complete_logic, out_dir)
-    elif VHDL.WIRES_ARE_INT_N(
+    elif LOGIC.WIRES_ARE_INT_N(
         partially_complete_logic.inputs, partially_complete_logic
     ):
         return GET_BIN_OP_MULT_INT_N_C_CODE(
@@ -14427,9 +14295,9 @@ def GET_BIN_OP_LT_LTE_C_CODE(partially_complete_logic, out_dir, op_str):
     ]
     if LOGIC.C_TYPES_ARE_FLOAT_TYPES([left_t, right_t]):
         return GET_BIN_OP_LT_LTE_FLOAT_C_CODE(partially_complete_logic, out_dir, op_str)
-    elif VHDL.C_TYPE_IS_UINT_N(left_t) and VHDL.C_TYPE_IS_UINT_N(right_t):
+    elif LOGIC.C_TYPE_IS_UINT_N(left_t) and LOGIC.C_TYPE_IS_UINT_N(right_t):
         return GET_BIN_OP_GT_GTE_LT_LTE_UINT_C_CODE(partially_complete_logic, op_str)
-    elif VHDL.C_TYPE_IS_INT_N(left_t) and VHDL.C_TYPE_IS_INT_N(right_t):
+    elif LOGIC.C_TYPE_IS_INT_N(left_t) and LOGIC.C_TYPE_IS_INT_N(right_t):
         return GET_BIN_OP_GT_GTE_LT_LTE_INT_C_CODE(partially_complete_logic, op_str)
     else:
         raise Exception("GET_BIN_OP_LT_LTE_C_CODE for types!", [left_t, right_t])
@@ -14638,9 +14506,9 @@ def GET_BIN_OP_GT_GTE_C_CODE(partially_complete_logic, out_dir, op_str):
     ]
     if LOGIC.C_TYPES_ARE_FLOAT_TYPES([left_t, right_t]):
         return GET_BIN_OP_GT_GTE_FLOAT_C_CODE(partially_complete_logic, out_dir, op_str)
-    elif VHDL.C_TYPE_IS_UINT_N(left_t) and VHDL.C_TYPE_IS_UINT_N(right_t):
+    elif LOGIC.C_TYPE_IS_UINT_N(left_t) and LOGIC.C_TYPE_IS_UINT_N(right_t):
         return GET_BIN_OP_GT_GTE_LT_LTE_UINT_C_CODE(partially_complete_logic, op_str)
-    elif VHDL.C_TYPE_IS_INT_N(left_t) and VHDL.C_TYPE_IS_INT_N(right_t):
+    elif LOGIC.C_TYPE_IS_INT_N(left_t) and LOGIC.C_TYPE_IS_INT_N(right_t):
         return GET_BIN_OP_GT_GTE_LT_LTE_INT_C_CODE(partially_complete_logic, op_str)
     else:
         raise Exception("GET_BIN_OP_GT_GTE_C_CODE for types!", [left_t, right_t])
@@ -14658,8 +14526,8 @@ def GET_BIN_OP_GT_GTE_LT_LTE_INT_C_CODE(partially_complete_logic, op_str):
     output_t = partially_complete_logic.wire_to_c_type[
         partially_complete_logic.outputs[0]
     ]
-    left_width = VHDL.GET_WIDTH_FROM_C_N_BITS_INT_TYPE_STR(left_t)
-    right_width = VHDL.GET_WIDTH_FROM_C_N_BITS_INT_TYPE_STR(right_t)
+    left_width = LOGIC.GET_WIDTH_FROM_C_N_BITS_INT_TYPE_STR(left_t)
+    right_width = LOGIC.GET_WIDTH_FROM_C_N_BITS_INT_TYPE_STR(right_t)
     max_width = max(left_width, right_width)
     left_has_extra_bits = left_width > right_width
     right_has_extra_bits = right_width > left_width
@@ -14785,8 +14653,8 @@ def GET_BIN_OP_GT_GTE_LT_LTE_UINT_C_CODE(partially_complete_logic, op_str):
     output_t = partially_complete_logic.wire_to_c_type[
         partially_complete_logic.outputs[0]
     ]
-    left_width = VHDL.GET_WIDTH_FROM_C_N_BITS_INT_TYPE_STR(left_t)
-    right_width = VHDL.GET_WIDTH_FROM_C_N_BITS_INT_TYPE_STR(right_t)
+    left_width = LOGIC.GET_WIDTH_FROM_C_N_BITS_INT_TYPE_STR(left_t)
+    right_width = LOGIC.GET_WIDTH_FROM_C_N_BITS_INT_TYPE_STR(right_t)
     left_has_extra_bits = left_width > right_width
     right_has_extra_bits = right_width > left_width
     has_extra_bits = left_has_extra_bits or right_has_extra_bits
@@ -14799,7 +14667,7 @@ def GET_BIN_OP_GT_GTE_LT_LTE_UINT_C_CODE(partially_complete_logic, op_str):
     left_sized_out_t = "int" + str(left_sized_out_t_width) + "_t"
     left_t_signed = left_t
     left_t_signed_width = left_width
-    if not VHDL.C_TYPE_IS_INT_N(left_t):
+    if not LOGIC.C_TYPE_IS_INT_N(left_t):
         left_t_signed_width = left_width + 1
         left_t_signed = "int" + str(left_t_signed_width) + "_t"
         left_sized_out_t_width = left_t_signed_width
@@ -14808,7 +14676,7 @@ def GET_BIN_OP_GT_GTE_LT_LTE_UINT_C_CODE(partially_complete_logic, op_str):
     right_sized_out_t = "int" + str(right_sized_out_t_width) + "_t"
     right_t_signed = right_t
     right_t_signed_width = right_width
-    if not VHDL.C_TYPE_IS_INT_N(right_t):
+    if not LOGIC.C_TYPE_IS_INT_N(right_t):
         right_t_signed_width = right_width + 1
         right_t_signed = "int" + str(right_t_signed_width) + "_t"
         right_sized_out_t_width = right_t_signed_width
@@ -15918,22 +15786,22 @@ def GET_BIN_OP_SR_INT_UINT_C_CODE(
 ):
     left_t = partially_complete_logic.wire_to_c_type[partially_complete_logic.inputs[0]]
     left_prefix = left_t.replace("_t", "")
-    is_signed = VHDL.C_TYPE_IS_INT_N(left_t)
+    is_signed = LOGIC.C_TYPE_IS_INT_N(left_t)
     right_t = partially_complete_logic.wire_to_c_type[
         partially_complete_logic.inputs[1]
     ]
     output_t = partially_complete_logic.wire_to_c_type[
         partially_complete_logic.outputs[0]
     ]
-    left_width = VHDL.GET_WIDTH_FROM_C_TYPE_STR(parser_state, left_t)
-    right_width = VHDL.GET_WIDTH_FROM_C_TYPE_STR(parser_state, right_t)
-    if VHDL.C_TYPE_IS_INT_N(right_t):
+    left_width = LOGIC.GET_WIDTH_FROM_C_TYPE_STR(parser_state, left_t)
+    right_width = LOGIC.GET_WIDTH_FROM_C_TYPE_STR(parser_state, right_t)
+    if LOGIC.C_TYPE_IS_INT_N(right_t):
         right_max_val = pow(2, right_width - 1) - 1
         right_unsigned_width = right_width - 1
     else:
         right_max_val = pow(2, right_width) - 1
         right_unsigned_width = right_width
-    output_width = VHDL.GET_WIDTH_FROM_C_TYPE_STR(parser_state, output_t)
+    output_width = LOGIC.GET_WIDTH_FROM_C_TYPE_STR(parser_state, output_t)
     output_prefix = output_t.replace("_t", "")
 
     # TODO: FIX THIS
@@ -16075,22 +15943,22 @@ def GET_BIN_OP_SL_INT_UINT_C_CODE(
     partially_complete_logic, out_dir, containing_func_logic, parser_state
 ):
     left_t = partially_complete_logic.wire_to_c_type[partially_complete_logic.inputs[0]]
-    # is_signed = VHDL.C_TYPE_IS_INT_N(left_t)
+    # is_signed = LOGIC.C_TYPE_IS_INT_N(left_t)
     right_t = partially_complete_logic.wire_to_c_type[
         partially_complete_logic.inputs[1]
     ]
     output_t = partially_complete_logic.wire_to_c_type[
         partially_complete_logic.outputs[0]
     ]
-    left_width = VHDL.GET_WIDTH_FROM_C_TYPE_STR(parser_state, left_t)
-    right_width = VHDL.GET_WIDTH_FROM_C_TYPE_STR(parser_state, right_t)
-    if VHDL.C_TYPE_IS_INT_N(right_t):
+    left_width = LOGIC.GET_WIDTH_FROM_C_TYPE_STR(parser_state, left_t)
+    right_width = LOGIC.GET_WIDTH_FROM_C_TYPE_STR(parser_state, right_t)
+    if LOGIC.C_TYPE_IS_INT_N(right_t):
         right_max_val = pow(2, right_width - 1) - 1
         right_unsigned_width = right_width - 1
     else:
         right_max_val = pow(2, right_width) - 1
         right_unsigned_width = right_width
-    output_width = VHDL.GET_WIDTH_FROM_C_TYPE_STR(parser_state, output_t)
+    output_width = LOGIC.GET_WIDTH_FROM_C_TYPE_STR(parser_state, output_t)
     output_prefix = output_t.replace("_t", "")
 
     # TODO: Remove 1 LL
@@ -16214,12 +16082,12 @@ def GET_BIN_OP_MULT_INT_N_C_CODE(partially_complete_logic, out_dir, parser_state
     output_t = partially_complete_logic.wire_to_c_type[
         partially_complete_logic.outputs[0]
     ]
-    left_width = VHDL.GET_WIDTH_FROM_C_TYPE_STR(parser_state, left_t)
-    right_width = VHDL.GET_WIDTH_FROM_C_TYPE_STR(parser_state, right_t)
+    left_width = LOGIC.GET_WIDTH_FROM_C_TYPE_STR(parser_state, left_t)
+    right_width = LOGIC.GET_WIDTH_FROM_C_TYPE_STR(parser_state, right_t)
     max_input_width = max(left_width, right_width)
     resized_prefix = "uint" + str(max_input_width)
     resized_t = resized_prefix + "_t"
-    output_width = VHDL.GET_WIDTH_FROM_C_TYPE_STR(parser_state, output_t)
+    output_width = LOGIC.GET_WIDTH_FROM_C_TYPE_STR(parser_state, output_t)
     output_prefix = "uint" + str(output_width)
 
     # Temp try to reduce bit width?
@@ -16925,12 +16793,12 @@ def GET_BIN_OP_MULT_UINT_N_C_CODE(partially_complete_logic, out_dir, parser_stat
     output_t = partially_complete_logic.wire_to_c_type[
         partially_complete_logic.outputs[0]
     ]
-    left_width = VHDL.GET_WIDTH_FROM_C_TYPE_STR(parser_state, left_t)
-    right_width = VHDL.GET_WIDTH_FROM_C_TYPE_STR(parser_state, right_t)
+    left_width = LOGIC.GET_WIDTH_FROM_C_TYPE_STR(parser_state, left_t)
+    right_width = LOGIC.GET_WIDTH_FROM_C_TYPE_STR(parser_state, right_t)
     max_input_width = max(left_width, right_width)
     resized_prefix = "uint" + str(max_input_width)
     resized_t = resized_prefix + "_t"
-    output_width = VHDL.GET_WIDTH_FROM_C_TYPE_STR(parser_state, output_t)
+    output_width = LOGIC.GET_WIDTH_FROM_C_TYPE_STR(parser_state, output_t)
     output_prefix = "uint" + str(output_width)
 
     # Temp try to reduce bit width?
@@ -17236,12 +17104,12 @@ def GET_BIN_OP_DIV_UINT_N_C_CODE(partially_complete_logic, out_dir, parser_state
     output_t = partially_complete_logic.wire_to_c_type[
         partially_complete_logic.outputs[0]
     ]
-    left_width = VHDL.GET_WIDTH_FROM_C_TYPE_STR(parser_state, left_t)
-    right_width = VHDL.GET_WIDTH_FROM_C_TYPE_STR(parser_state, right_t)
+    left_width = LOGIC.GET_WIDTH_FROM_C_TYPE_STR(parser_state, left_t)
+    right_width = LOGIC.GET_WIDTH_FROM_C_TYPE_STR(parser_state, right_t)
     max_input_width = max(left_width, right_width)
     resized_prefix = "uint" + str(max_input_width)
     resized_t = resized_prefix + "_t"
-    output_width = VHDL.GET_WIDTH_FROM_C_TYPE_STR(parser_state, output_t)
+    output_width = LOGIC.GET_WIDTH_FROM_C_TYPE_STR(parser_state, output_t)
     output_prefix = "uint" + str(output_width)
 
     text = ""
@@ -17357,12 +17225,12 @@ def GET_BIN_OP_MOD_UINT_N_C_CODE(partially_complete_logic, out_dir, parser_state
     output_t = partially_complete_logic.wire_to_c_type[
         partially_complete_logic.outputs[0]
     ]
-    left_width = VHDL.GET_WIDTH_FROM_C_TYPE_STR(parser_state, left_t)
-    right_width = VHDL.GET_WIDTH_FROM_C_TYPE_STR(parser_state, right_t)
+    left_width = LOGIC.GET_WIDTH_FROM_C_TYPE_STR(parser_state, left_t)
+    right_width = LOGIC.GET_WIDTH_FROM_C_TYPE_STR(parser_state, right_t)
     max_input_width = max(left_width, right_width)
     resized_prefix = "uint" + str(max_input_width)
     resized_t = resized_prefix + "_t"
-    output_width = VHDL.GET_WIDTH_FROM_C_TYPE_STR(parser_state, output_t)
+    output_width = LOGIC.GET_WIDTH_FROM_C_TYPE_STR(parser_state, output_t)
     output_prefix = "uint" + str(output_width)
 
     text = ""
@@ -17478,14 +17346,14 @@ def GET_BIN_OP_DIV_INT_N_C_CODE(partially_complete_logic, out_dir, parser_state)
     output_t = partially_complete_logic.wire_to_c_type[
         partially_complete_logic.outputs[0]
     ]
-    left_width = VHDL.GET_WIDTH_FROM_C_TYPE_STR(parser_state, left_t)
-    right_width = VHDL.GET_WIDTH_FROM_C_TYPE_STR(parser_state, right_t)
+    left_width = LOGIC.GET_WIDTH_FROM_C_TYPE_STR(parser_state, left_t)
+    right_width = LOGIC.GET_WIDTH_FROM_C_TYPE_STR(parser_state, right_t)
     max_input_width = max(left_width, right_width)
     resized_prefix = "int" + str(max_input_width)
     unsigned_resized_prefix = "u" + resized_prefix  # "uint" + str(max_input_width-1)
     resized_t = resized_prefix + "_t"
     unsigned_resized_t = unsigned_resized_prefix + "_t"
-    output_width = VHDL.GET_WIDTH_FROM_C_TYPE_STR(parser_state, output_t)
+    output_width = LOGIC.GET_WIDTH_FROM_C_TYPE_STR(parser_state, output_t)
     output_prefix = "int" + str(output_width)
 
     text = ""
@@ -17575,14 +17443,14 @@ def GET_BIN_OP_MOD_INT_N_C_CODE(partially_complete_logic, out_dir, parser_state)
     output_t = partially_complete_logic.wire_to_c_type[
         partially_complete_logic.outputs[0]
     ]
-    left_width = VHDL.GET_WIDTH_FROM_C_TYPE_STR(parser_state, left_t)
-    right_width = VHDL.GET_WIDTH_FROM_C_TYPE_STR(parser_state, right_t)
+    left_width = LOGIC.GET_WIDTH_FROM_C_TYPE_STR(parser_state, left_t)
+    right_width = LOGIC.GET_WIDTH_FROM_C_TYPE_STR(parser_state, right_t)
     max_input_width = max(left_width, right_width)
     resized_prefix = "int" + str(max_input_width)
     unsigned_resized_prefix = "u" + resized_prefix  # "uint" + str(max_input_width-1)
     resized_t = resized_prefix + "_t"
     unsigned_resized_t = unsigned_resized_prefix + "_t"
-    output_width = VHDL.GET_WIDTH_FROM_C_TYPE_STR(parser_state, output_t)
+    output_width = LOGIC.GET_WIDTH_FROM_C_TYPE_STR(parser_state, output_t)
     output_prefix = "int" + str(output_width)
 
     text = ""

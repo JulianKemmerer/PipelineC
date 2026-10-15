@@ -106,7 +106,7 @@ def run_sim(
     Each run starts with fresh RAM plans unless plans are explicitly replayed.
     """
     # Apply sim mode before importing the design: @hw_func decorators read these
-    # flags at decoration time, so they must be set before _import_design runs.
+    # flags at decoration time, so they must be set before import_design runs.
     if sim_mode == "strict":
         pypeline.SIM_STRICT_ARITH = True
         pypeline.SIM_RAW_INTS = False
@@ -141,7 +141,7 @@ def run_sim(
     _evict_design_modules()
     pypeline._auto_pipeline_ram_native_target = None
     modules_before = set(sys.modules)
-    module = _import_design(design_file)
+    module = import_design(design_file)
     if auto_pipeline_ram_plans is None and pypeline._auto_pipeline_ram_served:
         import AUTO_PIPELINE
 
@@ -151,7 +151,7 @@ def run_sim(
             for name in set(sys.modules) - modules_before:
                 del sys.modules[name]
             pypeline.RESET_AUTO_MULTI_CYCLE_TRACKING()
-            module = _import_design(design_file)
+            module = import_design(design_file)
 
     wire_info = _discover_wire_names(module)
 
@@ -207,10 +207,10 @@ def run_sim(
         for fn in mains:
             mod = getattr(fn, "__module__", None)
             # The top design file is loaded as "pypeline_design" by both
-            # PARSE_FILE and _import_design; sub-file MAINs get the module
+            # PARSE_FILE and import_design; sub-file MAINs get the module
             # prefix (dots -> underscores) exactly like elaboration does.
             prefix = None if mod in (None, "pypeline_design") else mod.replace(".", "_")
-            hw_name_to_fn[PY_TO_LOGIC._hw_func_name(prefix, fn.__name__)] = fn
+            hw_name_to_fn[PY_TO_LOGIC.HW_FUNC_NAME(prefix, fn.__name__)] = fn
         for hw_name, latency in main_latencies.items():
             if latency <= 0:
                 continue
@@ -442,7 +442,7 @@ def _discover_wire_names(module) -> list:
 
 def _evict_design_modules():
     """Evict modules imported since PY_TO_LOGIC's first PARSE_FILE from
-    sys.modules, so _import_design re-imports the design graph fresh in sim
+    sys.modules, so import_design re-imports the design graph fresh in sim
     mode. Needed in the pipelinec non---comb --sim flow: elaboration imported
     the design's sub-modules with sim flags unset (decoration-time flags) and
     with an empty/older AUTO_PIPELINE latency cache. Self-guarding no-op in
@@ -455,7 +455,7 @@ def _evict_design_modules():
         del sys.modules[mod_name]
 
 
-def _import_design(path: str):
+def import_design(path: str):
     """Import a pypeline design file, triggering all decorator registrations."""
     # Clear any previously registered MAINs/hooks/param() declarations from a
     # prior import in the same process (param() values persist: one per process).

@@ -18,6 +18,17 @@ become slices, stages and entities is documented in
 > has one, rather than appending a new one. See
 > [documentation conventions](pypeline_DESIGN.md#documentation-conventions).
 
+## Table of Contents
+
+- [Dispatch](#dispatch)
+- [Slices and stages](#slices-and-stages)
+- [Genuine bit-internal splits](#genuine-bit-internal-splits)
+- [Packed MUX bit chunks and one-logic-level leaves](#packed-mux-bit-chunks-and-one-logic-level-leaves)
+- [Operation-boundary lowering](#operation-boundary-lowering)
+- [Invariants and tests](#invariants-and-tests)
+
+---
+
 ## Dispatch
 
 `GET_RAW_HDL_WIRES_DECL_TEXT` and

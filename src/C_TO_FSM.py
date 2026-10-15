@@ -12,7 +12,6 @@ from pycparser import c_ast, c_generator
 # FOR NOW CAN TRUST FIRST STATE IN LIST (last in reversed list) TO BE ENTRY/FIRST POINTER?
 # Dont need curr_state_info since will be working backwards now anyway
 
-FSM_EXT = "_FSM"
 CLK_FUNC = "__clk"
 INPUT_FUNC = "__in"
 YIELD_FUNC = "__out"
@@ -673,7 +672,7 @@ def STATE_GROUP_TO_C_CODE(
             text += (
                 "    "
                 + LOGIC.RETURN_WIRE_NAME
-                + FSM_EXT
+                + C_TO_LOGIC.FSM_EXT
                 + " = "
                 + yield_arg_code
                 + "\n"
@@ -709,7 +708,7 @@ def STATE_GROUP_TO_C_CODE(
             text += (
                 "    "
                 + LOGIC.RETURN_WIRE_NAME
-                + FSM_EXT
+                + C_TO_LOGIC.FSM_EXT
                 + " = "
                 + inout_arg_code
                 + "\n"
@@ -803,7 +802,7 @@ def FSM_LOGIC_TO_C_CODE(fsm_logic, parser_state):
                     text += (
                         '#include "'
                         + called_func_logic.func_name
-                        + FSM_EXT
+                        + C_TO_LOGIC.FSM_EXT
                         + ".h"
                         + '"\n'
                     )
@@ -902,7 +901,7 @@ typedef struct """
         + fsm_logic.func_name
         + """_OUTPUT_t """
         + fsm_logic.func_name
-        + FSM_EXT
+        + C_TO_LOGIC.FSM_EXT
         + """("""
         + fsm_logic.func_name
         + """_INPUT_t fsm_i)
@@ -944,12 +943,12 @@ typedef struct """
         c_type = fsm_logic.wire_to_c_type[output_port]
         if LOGIC.C_TYPE_IS_ARRAY(c_type):
             elem_t, dims = LOGIC.C_ARRAY_TYPE_TO_ELEM_TYPE_AND_DIMS(c_type)
-            text += "  " + "static " + elem_t + " " + output_port + FSM_EXT
+            text += "  " + "static " + elem_t + " " + output_port + C_TO_LOGIC.FSM_EXT
             for dim in dims:
                 text += "[" + str(dim) + "]"
             text += ";\n"
         else:
-            text += "  " + "static " + c_type + " " + output_port + FSM_EXT + ";\n"
+            text += "  " + "static " + c_type + " " + output_port + C_TO_LOGIC.FSM_EXT + ";\n"
 
     text += """  // All local vars are regs too
 """
@@ -1194,7 +1193,7 @@ typedef struct """
             """
     fsm_o.return_output = """
             + LOGIC.RETURN_WIRE_NAME
-            + FSM_EXT
+            + C_TO_LOGIC.FSM_EXT
             + """;"""
         )
     text += """

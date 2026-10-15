@@ -566,7 +566,7 @@ def MEASURE_REQUIRED_ENDPOINTS(parser_state, timing_params, pool):
         logic = parser_state.LogicInstLookupTable[inst]
         print(
             "Synthesizing function:",
-            func + SYN.FUNC_SRC_LOC_STR(parser_state, func),
+            func + LOGIC.FUNC_SRC_LOC_STR(parser_state, func),
             "(AUTO_MULTI_CYCLE endpoint evidence)",
             flush=True,
         )

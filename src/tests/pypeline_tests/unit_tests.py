@@ -219,6 +219,15 @@ def get_tests() -> list:
             cmd=[INST_DIR / "doc_links_test.py"],
         )
     )
+    # Every src module imports first in a fresh interpreter (import cycles stay
+    # import-time safe), and a .py build needs no C preprocessor (#363).
+    tests.append(
+        Test(
+            name="src_module_import_test",
+            category="unit",
+            cmd=[INST_DIR / "src_module_import_test.py"],
+        )
+    )
     # Raw-HDL leaf split model: SPLIT_KIND classification (RAW_VHDL.
     # GET_LEAF_SPLIT_KIND/LEAF_MAX_SPLIT_SLICES) and the equal-width bit
     # allocator (RAW_VHDL._EQUAL_WIDTH_BITS_PER_STAGE_DICT) that replaced an

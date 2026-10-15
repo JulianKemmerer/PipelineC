@@ -1,4 +1,7 @@
 #!/usr/bin/env python
+"""ModelSim interactive debug project for the generated VHDL.
+See docs/SIM_DESIGN.md, "ModelSim".
+"""
 
 import os
 import sys

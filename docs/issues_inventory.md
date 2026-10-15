@@ -104,16 +104,15 @@ Within each group, bugs that affect both front ends come first, problems in the 
 | 24 | [#358][i358] | Python | `@enum` members named like VHDL reserved words produce invalid VHDL | Yes, GHDL |
 | 25 | [#359][i359] | Python | An array of a different length is accepted and produces invalid VHDL | Yes, GHDL |
 | 26 | [#362][i362] | Python | Unsupported constructs crash with internal errors | Yes |
-| 27 | [#363][i363] | Python | Builds fail without the C preprocessor | Yes |
-| 28 | [#361][i361] | Python | `sim_print` on the `sim_finish()` cycle is missing from VHDL simulation output | Yes, GHDL |
-| 29 | [#286][i286] | C | The tool does not run on macOS | No, from the thread |
-| 30 | [#52][i52] | C | A typedef alias gives a misleading type error | Yes |
-| 31 | TBD | C | A float `+` in `examples/tool_tests/open_tools.c` stops the build at `GET_RAW_HDL_WIRES_DECL_TEXT` | Yes |
-| 32 | [#76][i76] | Both | No `switch` (C) or `match` (Python) | C yes; Python from the code |
-| 33 | [#365][i365] | Both | `--coarse --sweep` may crash on narrow leaves | Not reproduced |
-| 34 | [#372][i372] | Python | `AUTO_PIPELINE(latency=N)` adds N cuts when `@pipeline_latency` calls already supply N cycles | Yes |
-| 35 | [#366][i366] | Python | AUTO_FSM deeply opened schedules may fail to elaborate | No, needs a long AUTO_FSM search |
-| 36 | Not yet filed | Python | `AUTO_PIPELINE(f)` on an imported function sweeps worse than tagging a local wrapper | Yes, in process |
+| 27 | [#361][i361] | Python | `sim_print` on the `sim_finish()` cycle is missing from VHDL simulation output | Yes, GHDL |
+| 28 | [#286][i286] | C | The tool does not run on macOS | No, from the thread |
+| 29 | [#52][i52] | C | A typedef alias gives a misleading type error | Yes |
+| 30 | TBD | C | A float `+` in `examples/tool_tests/open_tools.c` stops the build at `GET_RAW_HDL_WIRES_DECL_TEXT` | Yes |
+| 31 | [#76][i76] | Both | No `switch` (C) or `match` (Python) | C yes; Python from the code |
+| 32 | [#365][i365] | Both | `--coarse --sweep` may crash on narrow leaves | Not reproduced |
+| 33 | [#372][i372] | Python | `AUTO_PIPELINE(latency=N)` adds N cuts when `@pipeline_latency` calls already supply N cycles | Yes |
+| 34 | [#366][i366] | Python | AUTO_FSM deeply opened schedules may fail to elaborate | No, needs a long AUTO_FSM search |
+| 35 | Not yet filed | Python | `AUTO_PIPELINE(f)` on an imported function sweeps worse than tagging a local wrapper | Yes, in process |
 
 ## Wrong hardware, or simulation disagrees with hardware
 
@@ -409,7 +408,7 @@ Within each group, bugs that affect both front ends come first, problems in the 
 
 - **Front ends:** both (C: `#pragma FUNC_LATENCY`).
 - **What happens:** a function declared with a latency of 1 or more whose body is only wiring (no registers, no operators) gets an entity named `…_1CLK_…`. Its process sensitivity list ends in a dangling comment: `x,` then `-- Register)`. GHDL rejects it ("name expected here, found 'is'"), so simulation and synthesis fail. The declaration is trusted, so a body that does not implement the latency is allowed, but its VHDL should still be legal. A body with any operator compiles.
-- **Where to look:** the sensitivity-list text in `AUTO_PIPELINE.GET_PIPELINE_LOGIC_COMB_PROCESS_TEXT`. The ` -- Registers` header is emitted whenever `VHDL.LOGIC_NEEDS_REGS` holds, and the final two-character cut assumes the list ends with a comma.
+- **Where to look:** the sensitivity-list text in `VHDL.GET_PIPELINE_LOGIC_COMB_PROCESS_TEXT`. The ` -- Registers` header is emitted whenever `VHDL.LOGIC_NEEDS_REGS` holds, and the final two-character cut assumes the list ends with a comma.
 - **Reproduce:** in the issue, or `python3 src/tests/pypeline_tests/known_issues_tests.py -k pipeline_latency_wire_body` (XFAIL while the bug is present; needs GHDL).
 - **Workaround:** implement the latency with a `Reg` in the body, or declare `@pipeline_latency(0)` for pure wiring.
 
@@ -417,9 +416,9 @@ Within each group, bugs that affect both front ends come first, problems in the 
 
 - **Front ends:** both, but only C has a workaround.
 - **What happens:** the autopipeliner can add IO registers to a function that reads or writes global wires. Input registers only cover ports and the clock enable, so the result is broken VHDL (per the issue; not re-run here).
-- **Python, fixed:** Pypeline globals are aligned with the function's arguments/return value, so they ride in the IO banks. `AUTO_PIPELINE.ALIGNED_GLOBAL_READS`/`ALIGNED_GLOBAL_WRITES` join `input_registers_t`/`output_registers_t`. `IO_REG_BANKS` declares a bank only when it holds something, so a function whose only IO is global wires no longer declares `io_registers_t` signals without the type. See [AUTO_PIPELINE_DESIGN.md](AUTO_PIPELINE_DESIGN.md#global-wires-in-pipelines).
+- **Python, fixed:** Pypeline globals are aligned with the function's arguments/return value, so they ride in the IO banks. `AUTO_PIPELINE.ALIGNED_GLOBAL_READS`/`ALIGNED_GLOBAL_WRITES` join `input_registers_t`/`output_registers_t`. `VHDL.IO_REG_BANKS` declares a bank only when it holds something, so a function whose only IO is global wires no longer declares `io_registers_t` signals without the type. See [AUTO_PIPELINE_DESIGN.md](AUTO_PIPELINE_DESIGN.md#global-wires-in-pipelines).
 - **C:** the empty-bank declaration fix applies too, but C ("legacy") globals still bypass the banks. That case was not re-run.
-- **Where to look:** `IO_REG_BANKS` and the bank records in `GET_PIPELINE_ARCH_DECL_TEXT` (`src/AUTO_PIPELINE.py`); `src/SWEEP.py`, where the sweep honors `FUNC_NO_ADD_IO_REGS`.
+- **Where to look:** `IO_REG_BANKS` and the bank records in `GET_PIPELINE_ARCH_DECL_TEXT` (`src/VHDL.py`); `src/SWEEP.py`, where the sweep honors `FUNC_NO_ADD_IO_REGS`.
 - **Workaround:** C: `#pragma FUNC_NO_ADD_IO_REGS <function>`.
 
 ### 18. [#288][i288]: a function with no timing path stops vendor-tool builds
@@ -523,15 +522,7 @@ Within each group, bugs that affect both front ends come first, problems in the 
 - **Reproduce:** in the issue.
 - **Workarounds:** `x[i]`: `bits: uint1_t[8] = uint_to_array_le(x, 1)`, then `bits[i]`. Enums: use the members (`state_t.RUN`), and wrap an enum in a `@struct` to make an array of it. Structs: subclass `NamedTuple`.
 
-### 27. [#363][i363]: Python builds fail without the C preprocessor
-
-- **Front ends:** Python.
-- **What happens:** `pypelinec` imports the C front end, which raises at import time if `cpp` is not on `PATH` ("'cpp' C preprocessor is not installed!"). That stops `.py` builds, which never run `cpp`.
-- **Where to look:** `src/C_TO_LOGIC.py:28-30`. Checking when `cpp` is first run, rather than at import, would limit the requirement to C builds. Related: [Discussion #326][d326] (preprocessors other than `cpp`).
-- **Reproduce:** run any `.py` build with a `PATH` that contains `python3` but not `cpp`.
-- **Workaround:** install `cpp`.
-
-### 28. [#361][i361]: `sim_print` on the `sim_finish()` cycle is missing from VHDL simulation output
+### 27. [#361][i361]: `sim_print` on the `sim_finish()` cycle is missing from VHDL simulation output
 
 - **Front ends:** Python (`sim_finish()` is Pypeline's).
 - **What happens:** a `sim_print` that runs on the same cycle as `sim_finish()` appears in native simulation but not in the cocotb+GHDL output, and the run still exits 0. The print's write and `std.env.finish` happen on the same clock edge, and the finish wins. This affects plain prints as well as `debug=True` ones, so it also breaks the native-versus-VHDL cycle diff.
@@ -539,14 +530,14 @@ Within each group, bugs that affect both front ends come first, problems in the 
 - **Reproduce:** in the issue, or `sim_finish_debug_print_race_test` in `src/tests/pypeline_tests/known_issues_tests.py` (it passes while the bug is present).
 - **Workaround:** call `sim_finish()` one cycle after the last print.
 
-### 29. [#286][i286]: the tool does not run on macOS
+### 28. [#286][i286]: the tool does not run on macOS
 
-- **Front ends:** C only. Python never runs `cpp`, and Apple's `cpp` satisfies the import-time check ([#363][i363]).
+- **Front ends:** C only. Python builds never run `cpp`.
 - **What happens (from the thread):** Apple's `cpp` is clang, which does not behave like the GNU preprocessor PipelineC expects; comments in headers break preprocessing. Using `clang -E` and `clang -MM -MG` got the examples through elaboration.
-- **Where to look:** `preprocess_file`, `preprocess_text` and `get_included_files` in `src/C_TO_LOGIC.py` (around `:76`, `:121` and `:162-168`), and the import-time `cpp` check at `:28`.
+- **Where to look:** `preprocess_file`, `preprocess_text` and `get_included_files` in `src/C_TO_LOGIC.py` (around `:76`, `:121` and `:162-168`), and the `cpp` check in `REQUIRE_CPP`.
 - **Not verified here:** needs a Mac.
 
-### 30. [#52][i52]: a typedef alias gives a misleading type error
+### 29. [#52][i52]: a typedef alias gives a misleading type error
 
 - **Front ends:** C only. A Python type alias is a plain assignment.
 - **What happens:** `typedef uint8_t byte_t;` is skipped silently, and later code fails with a misleading error such as `Unsupported binary operation between types (explicit casting required for now): byte_t + uint1_t`. The warning that used to explain this, `WARN_NO_RENAMING_TYPEDEFS` (`src/C_TO_LOGIC.py:8560`), is commented out.
@@ -566,7 +557,7 @@ Within each group, bugs that affect both front ends come first, problems in the 
 
 - **Workaround:** `#define byte_t uint8_t`. Verified.
 
-### 31. TBD: a float `+` in `examples/tool_tests/open_tools.c` stops the build at `GET_RAW_HDL_WIRES_DECL_TEXT`
+### 30. TBD: a float `+` in `examples/tool_tests/open_tools.c` stops the build at `GET_RAW_HDL_WIRES_DECL_TEXT`
 
 - **Front ends:** C only. Python floats are library code under `include/pypeline/`.
 - **What happens:** the design parses, then the build exits with status 255 while writing the zero-added-clocks VHDL, after printing `GET_RAW_HDL_WIRES_DECL_TEXT for float_uint8_uint23 ?`. `float_uint8_uint23` is the bit-manipulation helper that the generated C for `BIN_OP_PLUS_float_float` calls to pack sign, exponent and mantissa. The other C examples that `src/tests/c_tests/test_builds.sh` builds first (blink, pipeline_and_fsm, global_fifo, clock_crossing, async_clock_crossing, internal_clocks, user_func_latency) build.
@@ -576,7 +567,7 @@ Within each group, bugs that affect both front ends come first, problems in the 
 
 ## Missing features that block designs
 
-### 32. [#76][i76]: no `switch` or `match` statement
+### 31. [#76][i76]: no `switch` or `match` statement
 
 - **Front ends:** both.
 - **What happens:** C `switch` fails with the internal error "C ast node cannot be parsed to logic" (verified). Python has no handling for `match` (Python 3.10 and later), so elaboration stops with "Unsupported statement" (from the code).
@@ -585,7 +576,7 @@ Within each group, bugs that affect both front ends come first, problems in the 
 
 ## Slower builds, extra hardware, and reports not yet reproduced
 
-### 33. [#365][i365]: `--coarse --sweep` may crash on narrow leaves
+### 32. [#365][i365]: `--coarse --sweep` may crash on narrow leaves
 
 - **Front ends:** both (shared pipelining code).
 - **What happens (from the docs):** on a design with many 1-3 bit leaves at a high cut count, `--coarse --sweep` can raise `GET_BITS_PER_STAGE_DICT: interior zero-bit stage … for a 2-bit op`. The planned sweep caps legal cuts at the leaf's width minus one (`SWEEP.SliceLandscape.finalize()`); the coarse path uses `RAW_VHDL.LEAF_MAX_SPLIT_SLICES`, which returns no cap for bit-split leaves.
@@ -593,7 +584,7 @@ Within each group, bugs that affect both front ends come first, problems in the 
 - **Reproduce:** not reproduced yet. A chain of four `uint2_t` adds built with `--syn_tool pyrtl --coarse --start 12 --stop 12` completed normally.
 - **Workaround:** use the default planned sweep.
 
-### 34. [#372][i372]: `AUTO_PIPELINE(func, latency=N)` adds cuts its `@pipeline_latency` calls make unnecessary
+### 33. [#372][i372]: `AUTO_PIPELINE(func, latency=N)` adds cuts its `@pipeline_latency` calls make unnecessary
 
 - **Front ends:** Python. The planner is shared; C's `#pragma AUTOPIPELINE N` was not checked.
 - **What happens:** when `func`'s `@pipeline_latency` calls already supply the N cycles, the planner still places N cuts. They survive only where they add no latency: in logic running parallel to those calls. That branch gets registers it does not need, and anything leaving it before the return value (a `VOLATILE` or C global write) appears later. The hardware meets the declared latency, but it is larger than it needs to be.
@@ -601,14 +592,14 @@ Within each group, bugs that affect both front ends come first, problems in the 
 - **Reproduce:** in the issue, or `python3 src/tests/pypeline_tests/known_issues_tests.py -k fixed_auto_pipeline_extra_cuts` (XFAIL while the bug is present).
 - **Workaround:** leave `latency=` off when the calls already supply it, or move the parallel logic out of the tagged function.
 
-### 35. [#366][i366]: AUTO_FSM deeply opened schedules may fail to elaborate
+### 34. [#366][i366]: AUTO_FSM deeply opened schedules may fail to elaborate
 
 - **Front ends:** Python (AUTO_FSM is Python-only and experimental).
 - **What happens (from the docs):** rescheduling the donut design (`examples/pypeline/vga_donut.py`) under a tightened budget produced a 412-operation, 131-state plan whose generated source failed to elaborate with "Bit index [14:14] out of range for uint9_t". The default control path avoids it only by meeting timing before the search opens the schedule that far.
 - **Where to look:** AUTO_FSM's source generation for opened operations in `src/AUTO_FSM.py`; `docs/AUTO_FSM_DESIGN.md` §6.
 - **Reproduce:** not re-run here; it needs a long AUTO_FSM search.
 
-### 36. Not yet filed: `AUTO_PIPELINE(f)` on an imported function sweeps worse than a wrapper
+### 35. Not yet filed: `AUTO_PIPELINE(f)` on an imported function sweeps worse than a wrapper
 
 - **Front ends:** Python.
 - **What happens:** the call's instance is labeled with the bare Python name (`square`), while the callee's function name is module-prefixed (`imported_math_square`). The sweep attributes a critical path by finding function names inside its register names, so a path through the region root matches nothing and the sweep replans the whole MAIN blindly. Separately, the sweep never mini-sweeps a region root, only functions inside a region. Seen on WireGuard: tagging `poly1305_body` directly built the bodies 6 and 12 deep and overflowed the device's DSPs, where tagging a one-line wrapper built 8 and 8.
@@ -644,7 +635,6 @@ Within each group, bugs that affect both front ends come first, problems in the 
 [i360]: https://github.com/JulianKemmerer/PipelineC/issues/360
 [i361]: https://github.com/JulianKemmerer/PipelineC/issues/361
 [i362]: https://github.com/JulianKemmerer/PipelineC/issues/362
-[i363]: https://github.com/JulianKemmerer/PipelineC/issues/363
 [i365]: https://github.com/JulianKemmerer/PipelineC/issues/365
 [i366]: https://github.com/JulianKemmerer/PipelineC/issues/366
 [i367]: https://github.com/JulianKemmerer/PipelineC/issues/367

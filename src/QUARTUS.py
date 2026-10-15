@@ -1,3 +1,7 @@
+"""Quartus synthesis backend (Intel parts), including the LPM_MULT primitive.
+See docs/SYN_DESIGN.md, "Choosing a tool" and "The backend contract".
+"""
+
 import os
 import sys
 

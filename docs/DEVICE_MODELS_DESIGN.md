@@ -25,6 +25,26 @@ sibling feature whose delay budget comes from the same `SYN_TOOL` interface.
 > than appending a new one. See
 > [documentation conventions](pypeline_DESIGN.md#documentation-conventions).
 
+## Table of Contents
+
+- [1. Selecting the tool](#1-selecting-the-tool)
+- [2. How it works](#2-how-it-works)
+  - [The `-fast` finding](#the--fast-finding)
+  - [Mux path-delay cache key](#mux-path-delay-cache-key)
+  - [Cache-key versioning](#cache-key-versioning)
+- [3. Results](#3-results)
+- [4. Verification](#4-verification)
+- [5. Limitations and future work](#5-limitations-and-future-work)
+- [6. Area model](#6-area-model)
+  - [The measurement is definitional](#the-measurement-is-definitional)
+  - [Two numbers, two very different accuracies](#two-numbers-two-very-different-accuracies)
+  - [Leaf area cache — `cache/area/`, mirrors `cache/delay/`](#leaf-area-cache--cachearea-mirrors-cachedelay)
+- [History](#history)
+  - [Delay-recipe selection: early flattening, and matching latchup exactly](#delay-recipe-selection-early-flattening-and-matching-latchup-exactly)
+  - [Area model V1 → V2](#area-model-v1--v2)
+
+---
+
 ---
 
 ## 1. Selecting the tool
@@ -133,7 +153,7 @@ The recipe above reaches yosys as a `.ys` script file
 `yosys -s <path>`, not inlined into a `yosys -p '<commands>'` shell argument
 — a large design's `ghdl --std=08 <files> -e <top>` command can otherwise
 exceed Linux's `MAX_ARG_STRLEN` (131072 bytes per single argv/envp string;
-see `pypeline_sim_DESIGN.md`'s cocotb section for the full mechanism).
+see [the cocotb section of `SIM_DESIGN.md`](SIM_DESIGN.md#cocotb-cocotbpy) for the full mechanism).
 Cache/artifact identity is unaffected: `recipe_commands_sha256` hashes
 `_get_synthesis_recipe_commands()`'s return value directly, never the `.sh`
 or `.ys` file text, and `_vhdl_input_record` hashes the VHDL files' own

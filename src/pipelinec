@@ -1,5 +1,9 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
+"""The pypelinec command-line build driver: parse arguments, parse the design, write VHDL,
+run the build and optional simulation. See docs/SYN_DESIGN.md, "The build driver
+(src/pipelinec)"; the flags are documented for users in docs/README.md.
+"""
 
 import argparse
 import atexit
@@ -397,7 +401,7 @@ try:
         if not src_file.endswith(".py"):
             sys.exit("--list_params applies to Pypeline (.py) designs.")
         pypeline._design_param_banner_printed = True  # the listing says it all
-        pypeline_sim._import_design(src_file)
+        pypeline_sim.import_design(src_file)
         print(pypeline.DESIGN_PARAM_LIST_TEXT(src_file))
         sys.exit(0)
 except pypeline.DesignParamError as e:

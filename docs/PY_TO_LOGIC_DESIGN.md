@@ -22,12 +22,8 @@ See [auto-pipelined RAM compilation](AUTO_PIPELINE_DESIGN.md#ram-compiler-sweep-
 
 ## Table of Contents
 
-**Architecture & Overview**
 - [Overview](#overview)
 - [Execution Model: Two Layers](#execution-model-two-layers)
-- [End-to-End Flow Summary](#end-to-end-flow-summary)
-
-**Core Data Structures**
 - [`ParserState` and the `Logic()` Object](#parserstate-and-the-logic-object)
   - [C Type Strings](#c-type-strings)
   - [Bit-Accurate Constant Inference](#bit-accurate-constant-inference)
@@ -37,16 +33,19 @@ See [auto-pipelined RAM compilation](AUTO_PIPELINE_DESIGN.md#ram-compiler-sweep-
   - [Hardware Locals Shadow Python Names](#hardware-locals-shadow-python-names)
   - [Annotation Evaluation](#annotation-evaluation)
   - [Return Type and Void Functions](#return-type-and-void-functions)
-
-**Elaboration Mechanics**
 - [Basic Function Calls — Submodule Instances](#basic-function-calls--submodule-instances)
+  - [Callee Expression Shapes](#callee-expression-shapes)
+  - [Bare (Void) Call Statements](#bare-void-call-statements)
 - [Reference Tokens — the Core Addressing System](#reference-tokens--the-core-addressing-system)
 - [Alias Tracking — Assignments Over Time](#alias-tracking--assignments-over-time)
+  - [Reassigning a Different Width — One VHDL Type Per Signal, Not a Type-Changing Variable](#reassigning-a-different-width--one-vhdl-type-per-signal-not-a-type-changing-variable)
+  - [`self.env` Staleness — Invalidating Descendant Keys on a Coarser Write](#selfenv-staleness--invalidating-descendant-keys-on-a-coarser-write)
 - [Finding the Covering Wire](#finding-the-covering-wire)
   - [Temporal Sort of Covering Wires](#temporal-sort-of-covering-wires)
-- [CONST\_REF\_RD — Reading Compound Types](#const_ref_rd--reading-compound-types)
-- [VAR\_REF\_RD — Variable-Index Reads](#var_ref_rd--variable-index-reads)
-- [VAR\_REF\_ASSIGN — Variable-Index Writes](#var_ref_assign--variable-index-writes)
+- [CONST_REF_RD — Reading Compound Types](#const_ref_rd--reading-compound-types)
+- [VAR_REF_RD — Variable-Index Reads](#var_ref_rd--variable-index-reads)
+- [VAR_REF_ASSIGN — Variable-Index Writes](#var_ref_assign--variable-index-writes)
+  - [Out-of-Range Dynamic Index: Silent Truncation, Not Rejection](#out-of-range-dynamic-index-silent-truncation-not-rejection)
 - [`if` Statements — Hardware MUX Generation](#if-statements--hardware-mux-generation)
   - [Clock Enable Propagation Through `if`](#clock-enable-propagation-through-if)
   - [Reduction (`_reduce_driven_ref_toks`)](#reduction-_reduce_driven_ref_toks)
@@ -58,61 +57,135 @@ See [auto-pipelined RAM compilation](AUTO_PIPELINE_DESIGN.md#ram-compiler-sweep-
 - [Closure Factory Pattern](#closure-factory-pattern)
   - [Specialised Functions](#specialised-functions)
   - [Specialised Types](#specialised-types)
+  - [Enum Types](#enum-types)
+- [`@interface` — Generated Reverse Wiring](#interface--generated-reverse-wiring)
+- [Char Array Support](#char-array-support)
+  - [String Literal Initializers](#string-literal-initializers)
+  - [`strlen()` Builtin](#strlen-builtin)
   - [Conditional Type-Driven Code](#conditional-type-driven-code)
-
-**Special Signal Declarations**
 - [Registers (`Reg[T]`)](#registers-regt)
   - [Register Init Values](#register-init-values)
   - [Never-Written (Read-Only) Registers](#never-written-read-only-registers)
   - [Clock Enable and Function Calls](#clock-enable-and-function-calls)
 - [Feedback Wires (`Feedback[T]`)](#feedback-wires-feedbackt)
 - [Global Wires (`Wire[T]`)](#global-wires-wiret)
+  - [Discovery](#discovery)
+  - [Which names mean a wire](#which-names-mean-a-wire)
+  - [Read side — behaves like a module input](#read-side--behaves-like-a-module-input)
+  - [Write side — hoisted declaration, implicit zero-init or readback-init alias](#write-side--hoisted-declaration-implicit-zero-init-or-readback-init-alias)
+  - [Const-path bypass](#const-path-bypass)
+  - [Pre-scan: `_prescan_written_globals`](#pre-scan-_prescan_written_globals)
+  - [`AugAssign` on ref targets (not just bare names)](#augassign-on-ref-targets-not-just-bare-names)
+  - [Constraints](#constraints)
+  - [Implementation mapping](#implementation-mapping)
 - [Global I/O (`Input[T]` / `Output[T]`)](#global-io-inputt--outputt)
-
-**Multi-File Support**
+  - [I/O Port Names Have No Module Prefix](#io-port-names-have-no-module-prefix)
+  - [Discovery](#discovery-1)
+  - [Read side — `Input[T]`](#read-side--inputt)
+  - [Write side — `Output[T]`](#write-side--outputt)
+  - [Constraints](#constraints-1)
+  - [Implementation mapping](#implementation-mapping-1)
 - [Multi-File Import Support](#multi-file-import-support)
-  - [Name Mangling Rule](#name-mangling-rule)
-  - [`PARSE_FILE` Import Pre-Pass (`_process_imports`)](#parse_file-import-pre-pass-_process_imports)
-  - [Conditional Imports (module-level `if` / `try`)](#conditional-imports-module-level-if--try)
-  - [Registered MAINs Must Be Elaborated](#registered-mains-must-be-elaborated)
-  - [Wire Access in Hardware Function Bodies](#wire-access-in-hardware-function-bodies)
-  - [Function Name Mangling](#function-name-mangling)
-  - [Cross-File Function Calls](#cross-file-function-calls)
-
-**Pypeline Pragmas**
+  - [Motivating example](#motivating-example)
+  - [Name mangling rule](#name-mangling-rule)
+  - [`PARSE_FILE` import pre-pass (`_process_imports`)](#parse_file-import-pre-pass-_process_imports)
+  - [Conditional imports (module-level `if` / `try`)](#conditional-imports-module-level-if--try)
+  - [Registered MAINs must be elaborated](#registered-mains-must-be-elaborated)
+  - [Elaboration ordering — sub-files first](#elaboration-ordering--sub-files-first)
+  - [Wire access in hardware function bodies](#wire-access-in-hardware-function-bodies)
+  - [Function name mangling](#function-name-mangling)
+  - [Cross-file function calls](#cross-file-function-calls)
+  - [Module-level constants from imported files](#module-level-constants-from-imported-files)
+  - [Struct types — no mangling](#struct-types--no-mangling)
+  - [Proto-simulation limitation](#proto-simulation-limitation)
+  - [Constraints specific to multi-file imports](#constraints-specific-to-multi-file-imports)
+  - [Implementation mapping](#implementation-mapping-2)
+- [Compound Initializer Syntax](#compound-initializer-syntax)
+  - [Compound Init from Python Function Call](#compound-init-from-python-function-call)
+  - [Float Type and `as_const`](#float-type-and-as_const)
+- [Casting](#casting)
+  - [Two hooks, and why de-classification is enough](#two-hooks-and-why-de-classification-is-enough)
+  - [Call arguments convert at the call boundary](#call-arguments-convert-at-the-call-boundary)
+  - [`_elab_cast_call(expr, dst_t)`](#_elab_cast_callexpr-dst_t)
+  - [Struct discovery: a cast target reached only through cast syntax](#struct-discovery-a-cast-target-reached-only-through-cast-syntax)
+  - [Interface-half bans: three exemptions](#interface-half-bans-three-exemptions)
+- [Ternary (IfExp) Assignment](#ternary-ifexp-assignment)
+- [Tuple/List-Unpacking Assignment](#tuplelist-unpacking-assignment)
+- [Augmented Assignment (`+=`, `-=`, etc.)](#augmented-assignment----etc)
+- [Boolean Operators (`and` / `or`)](#boolean-operators-and--or)
+- [Bit Manipulation Syntax](#bit-manipulation-syntax)
+  - [Single-Bit Select](#single-bit-select)
+  - [Bit-Slice Read](#bit-slice-read)
+  - [Bit-Slice Assignment](#bit-slice-assignment)
+  - [Bit Concatenation — `concat()` and tuple literal](#bit-concatenation--concat-and-tuple-literal)
+- [Built-in Bit Manipulation Functions](#built-in-bit-manipulation-functions)
+- [Type-to-Bytes Conversion (`byte_length`, `make_type_to_bytes`, `make_type_from_bytes`)](#type-to-bytes-conversion-byte_length-make_type_to_bytes-make_type_from_bytes)
+  - [`@enum` leaves](#enum-leaves)
+- [Raw VHDL Passthrough (`vhdl(...)`)](#raw-vhdl-passthrough-vhdl)
+- [`sim_print` — printf-style Console Output](#sim_print--printf-style-console-output)
+  - [Syntax: ordinary Python interpolation, not C's `printf(fmt, *args)`](#syntax-ordinary-python-interpolation-not-cs-printffmt-args)
+  - [Recognition and dispatch](#recognition-and-dispatch)
+  - [`_elab_sim_print_stmt(stmt)` — f-string → internal `%`-format translation](#_elab_sim_print_stmtstmt--f-string--internal--format-translation)
+  - [Entity naming: why source coordinates alone aren't enough](#entity-naming-why-source-coordinates-alone-arent-enough)
+  - [Why a bare `char_t` scalar / `uint8_t[N]` array still need an explicit wrapper](#why-a-bare-char_t-scalar--uint8_tn-array-still-need-an-explicit-wrapper)
+  - [`%s` uses the argument's real array size (both frontends)](#s-uses-the-arguments-real-array-size-both-frontends)
+  - [Frontend-agnostic format-string plumbing (`Logic.printf_format_string`)](#frontend-agnostic-format-string-plumbing-logicprintf_format_string)
+  - [`_add_submodule_instance`'s optional output wire](#_add_submodule_instances-optional-output-wire)
+  - [`%f` is not yet supported](#f-is-not-yet-supported)
+  - [VHDL console output is clocked, not value-change-triggered](#vhdl-console-output-is-clocked-not-value-change-triggered)
+- [`sim_print(..., debug=True)` — tagged prints for `pypeline_sim_debug.py`](#sim_print-debugtrue--tagged-prints-for-pypeline_sim_debugpy)
+- [`sim_assert` / `sim_finish` — simulation control builtins](#sim_assert--sim_finish--simulation-control-builtins)
+  - [Shared printf-family naming: `IS_SIM_CTRL_FUNC_NAME`](#shared-printf-family-naming-is_sim_ctrl_func_name)
+  - [Elaboration: `_elab_sim_assert_stmt` / `_elab_sim_finish_stmt`](#elaboration-_elab_sim_assert_stmt--_elab_sim_finish_stmt)
+  - [VHDL codegen: `GET_SIM_ASSERT_MODULE_TEXT` / `GET_SIM_FINISH_MODULE_TEXT`](#vhdl-codegen-get_sim_assert_module_text--get_sim_finish_module_text)
+  - [Native simulation: `SimFinish` and the CLI run loop](#native-simulation-simfinish-and-the-cli-run-loop)
+- [Custom Operator Registration](#custom-operator-registration)
+  - [Three registration functions](#three-registration-functions)
+  - [Binary operator lookup in `_elab_binop`](#binary-operator-lookup-in-_elab_binop)
+  - [Unary operator lookup in `_elab_unary`](#unary-operator-lookup-in-_elab_unary)
+  - [Comparison operator lookup in `_elab_compare`](#comparison-operator-lookup-in-_elab_compare)
+  - [Scoped operator registrations](#scoped-operator-registrations)
 - [Pypeline Pragmas (`PART` / `MAIN_MHZ`)](#pypeline-pragmas-part--main_mhz)
   - [`PART(...)` — FPGA Target Device](#part--fpga-target-device)
   - [`@MAIN(mhz)` — Clock Frequency Constraint](#mainmhz--clock-frequency-constraint)
   - [Clock Domain Inference (`INFER_CLOCK_DOMAINS`)](#clock-domain-inference-infer_clock_domains)
   - [`make_clock(mhz)` — Python Equivalent of `CLK_MHZ`](#make_clockmhz--python-equivalent-of-clk_mhz)
 - [`AUTO_PIPELINE(func, latency, start_latency, max_latency)` — Forced Submodule Pipelining](#auto_pipelinefunc-latency-start_latency-max_latency--forced-submodule-pipelining)
+  - [Syntax — a callable tag object, not a wrapper around a call expression](#syntax--a-callable-tag-object-not-a-wrapper-around-a-call-expression)
+  - [Validation](#validation)
+  - [Elaboration (`FuncElaborator._elab_call`)](#elaboration-funcelaborator_elab_call)
 - [`AUTO_COMB_AREA_OPT(func)` — Combinational Area Optimization](#auto_comb_area_optfunc--combinational-area-optimization)
 - [`AUTO_FSM(func)` — Resource-Shared State Machines](#auto_fsmfunc--resource-shared-state-machines)
+  - [Elaboration (`FuncElaborator._elab_call`)](#elaboration-funcelaborator_elab_call-1)
+  - [Side tables for code generation](#side-tables-for-code-generation)
+  - [Determinism requirements](#determinism-requirements)
+  - [Repeated `PARSE_FILE` support (the pin-and-confirm loop's foundation)](#repeated-parse_file-support-the-pin-and-confirm-loops-foundation)
+  - [Design parameters (`param()`, `-D`)](#design-parameters-param--d)
+  - [Test coverage](#test-coverage)
 - [`MULTI_CYCLE[ncycles]` / `Reg[T, tag]` — Multi-Cycle Path Constraint](#multi_cyclencycles--regt-tag--multi-cycle-path-constraint)
-- [`@wires` — Just-Wires Synthesis Hint](#wires--just-wires-synthesis-hint)
+  - [Syntax — tag the `Reg[T]` declarations, not a call](#syntax--tag-the-regt-declarations-not-a-call)
+  - [Elaboration (`FuncElaborator._elab_ann_assign` / `_tag_multi_cycle_reg`)](#elaboration-funcelaborator_elab_ann_assign--_tag_multi_cycle_reg)
+  - [Test coverage](#test-coverage-1)
 - [Fixed User Pipelines](#fixed-user-pipelines)
-
-**Syntax Extensions**
-- [Compound Initializer Syntax](#compound-initializer-syntax)
-- [Casting](#casting)
-- [Ternary (IfExp) Assignment](#ternary-ifexp-assignment)
-- [Tuple/List-Unpacking Assignment](#tuplelist-unpacking-assignment)
-- [Augmented Assignment (`+=`, `-=`, etc.)](#augmented-assignment----etc)
-- [Boolean Operators (`and` / `or`)](#boolean-operators-and--or)
-- [Bit Manipulation Syntax](#bit-manipulation-syntax)
-- [Built-in Bit Manipulation Functions](#built-in-bit-manipulation-functions)
-- [Type-to-Bytes Conversion (`byte_length`, `make_type_to_bytes`, `make_type_from_bytes`)](#type-to-bytes-conversion-byte_length-make_type_to_bytes-make_type_from_bytes)
-- [Raw VHDL Passthrough (`vhdl(...)`)](#raw-vhdl-passthrough-vhdl)
-- [`sim_print` — printf-style Console Output](#sim_print--printf-style-console-output)
-- [`sim_print(..., debug=True)` — tagged prints for `pypeline_sim_debug.py`](#sim_print-debugtrue--tagged-prints-for-pypeline_sim_debugpy)
-- [`sim_assert` / `sim_finish` — simulation control builtins](#sim_assert--sim_finish--simulation-control-builtins)
-- [Custom Operator Registration](#custom-operator-registration)
-
-**Reference**
+- [`@wires` — Just-Wires Synthesis Hint](#wires--just-wires-synthesis-hint)
+  - [Syntax — `@wires` decorator, implies `@hw_func`](#syntax--wires-decorator-implies-hw_func)
+  - [Elaboration — two name-finalization hook points](#elaboration--two-name-finalization-hook-points)
+  - [Validation — `_validate_wires_funcs`](#validation--_validate_wires_funcs)
+  - [Test coverage](#test-coverage-2)
 - [`@sim_output` / `@sim_input` Calls — Elaborator Skip](#sim_output--sim_input-calls--elaborator-skip)
 - [`@initial` / `@final` Hooks — Never Elaborated; Syn Hooks in the Driver](#initial--final-hooks--never-elaborated-syn-hooks-in-the-driver)
-- [VHDL Identifier Safety — Name Sanitization](#vhdl-identifier-safety--name-sanitization)
 - [Predicting C/VHDL Output Names](#predicting-cvhdl-output-names)
+  - [Generated VHDL names](#generated-vhdl-names)
+  - [Source Location String](#source-location-string)
+  - [Struct Type Names](#struct-type-names)
+  - [Hardware Function Names](#hardware-function-names)
+  - [Submodule Instance Names](#submodule-instance-names)
+  - [Port Wire Names](#port-wire-names)
+  - [Alias Wire Names](#alias-wire-names)
+  - [Built-in Primitive Function Names](#built-in-primitive-function-names)
+  - [VHDL Identifier Safety — Name Sanitization](#vhdl-identifier-safety--name-sanitization)
+  - [Summary Table](#summary-table)
+- [End-to-End Flow Summary](#end-to-end-flow-summary)
 - [Tests](#tests)
 
 ---
@@ -2908,7 +2981,7 @@ ref_toks normalization), and `_elab_ref_read` (base-var normalization) all call
 
 All hardware functions in sub-files — both `@MAIN` entry points and plain hardware
 helper functions (`def adder_extra(a: T, b: T) -> T`) — are elaborated under a
-module-prefixed name, via the single source of truth `_hw_func_name(mod_prefix, name)`:
+module-prefixed name, via the single source of truth `HW_FUNC_NAME(mod_prefix, name)`:
 
 ```python
 safe_name = _sanitize_vhdl_name(name)
@@ -3784,7 +3857,7 @@ compiler assigns `__qualname__ == __name__` with no `.<locals>.` marker by const
 `_elaborate_live_func`'s `if ".<locals>." not in func.__qualname__` check (see
 "Closure Factory Pattern" above) is therefore naturally `False`, so naming/dedup
 already goes through the plain top-level path (`_top_level_func_key` →
-`_hw_func_name`), using exactly the name written into the generated `def` line — no
+`HW_FUNC_NAME`), using exactly the name written into the generated `def` line — no
 post-hoc `__name__`/`__qualname__` manipulation is needed.
 
 **Packing (`to_bytes`)**, per scalar leaf at byte offset `base`, width `w`,
@@ -5663,8 +5736,9 @@ declaration's symbol, module, enclosing scopes, file/line, parameters and nested
 field/type descriptions. `@struct`, `@enum`, `@interface` and hardware-function
 decorators capture these while the original Python objects and factory arguments are
 available. Rendering them into VHDL identifiers is this module's job:
-`EmissionNames`, `_VHDL_TOKEN` and `display_source` live in the "Generated VHDL names
-(emission)" section of `PY_TO_LOGIC.py`. Derived interface records retain their interface origin and `fwd`, `fb` or
+`EmissionNames` and `_VHDL_TOKEN` live in the "Generated VHDL names
+(emission)" section of `PY_TO_LOGIC.py`; source paths are shortened by
+`utilities.DISPLAY_SOURCE`, which `VHDL.SOURCE_COMMENT` also uses. Derived interface records retain their interface origin and `fwd`, `fb` or
 `wire` role. Generated interface functions, cast/bytes helpers and AUTO_FSM functions
 retain the factory or user function that caused their generation, alongside the
 synthetic source available in the build index.
@@ -5992,7 +6066,7 @@ VHDL basic identifiers are more restrictive than Python identifiers:
   [Submodule Instance Names](#submodule-instance-names). Every other caller of
   `_inst`/`_inst_name` already passes a compiler-synthesized, already-legal tag
   (e.g. `UNARY_OP_...`, `mux_tag`), so this is a no-op for them.
-- **VHDL entity names / `FuncLogicLookupTable` keys** (`_hw_func_name(mod_prefix, name)`):
+- **VHDL entity names / `FuncLogicLookupTable` keys** (`HW_FUNC_NAME(mod_prefix, name)`):
   a single helper, defined next to `_sanitize_vhdl_name`, that sanitizes `name` and
   applies the `<mod_prefix>_` convention. It is the sole source of truth for this
   name — called identically from **seven** places that must all resolve to the same
@@ -6002,9 +6076,9 @@ VHDL basic identifiers are more restrictive than Python identifiers:
   `two_factory_wrappers_test.py`): `FuncElaborator.__init__` (`self.func_name`),
   `_elab_call`'s module-qualified-call lookup, bare-name lookup, and module-prefixed
   fallback lookup, `_top_level_func_key`, and `PARSE_FILE` Step 6 and Step 7. Never
-  re-derive the `<mod_prefix>_<name>` f-string locally — always call `_hw_func_name`.
+  re-derive the `<mod_prefix>_<name>` f-string locally — always call `HW_FUNC_NAME`.
   Separately, `_canonical_func_name` (factory-closure names, whose result overwrites
-  `Logic.func_name` directly and is never routed through `_hw_func_name`) sanitizes
+  `Logic.func_name` directly and is never routed through `HW_FUNC_NAME`) sanitizes
   just its `inner_func_name` base (the innermost closure `def`'s own name) before
   composing the param/hash suffix, covering e.g. a factory whose inner function is
   itself named with a leading underscore.
@@ -6019,7 +6093,7 @@ VHDL basic identifiers are more restrictive than Python identifiers:
   for the classic C-dialect frontend's built-in/library function names.
 - **Struct field names**: sanitized at every point a field identifier becomes a
   `struct_to_field_type_dict` key or a ref_toks token — `_register_struct_recursive`,
-  `_discover_structs` (AST fallback), the closure-registered-struct block in
+  the closure-registered-struct block in
   `_elaborate_live_func`, `_parse_ref_toks` (`ast.Attribute`/`ast.Subscript` field access),
   and `_elab_compound_init`/`_elab_compound_init_from_pyval` (`ast.Call` keyword args,
   dict-style string keys, and `NamedTuple._fields` iteration) all route string field
@@ -6045,7 +6119,7 @@ identically.
 
 Top-level VHDL entity names have no such positional suffix, so `PARSE_FILE` Step 6
 explicitly checks for this: while registering stub `Logic()`s, it tracks
-`_hw_func_name(mod_prefix, name).lower() -> (mod_prefix, name)` for every top-level
+`HW_FUNC_NAME(mod_prefix, name).lower() -> (mod_prefix, name)` for every top-level
 function def, and raises `ElaborationError` if two distinct `(mod_prefix, name)` pairs
 sanitize to the same `hw_name` (e.g. top-level `_foo` and `__foo` would otherwise both
 mangle to `v_foo`). Factory-closure names (`_canonical_func_name`) are not covered by
@@ -6065,8 +6139,8 @@ Loop counters and elaboration-time constants stored in `const_env` use raw Pytho
 |---|---|
 | Struct C type | `<class_name>_<f1>_<t1_mangled>_...` (canonical, set by `@struct`) |
 | Array of struct | `<struct_canonical>[N]` in C type strings |
-| Top-level function | sanitized Python `def` name (`_hw_func_name`) |
-| Imported sub-file function | `<actual_module_name>_<sanitized_func_name>` (`_hw_func_name`; e.g. `file_a_main`) |
+| Top-level function | sanitized Python `def` name (`HW_FUNC_NAME`) |
+| Imported sub-file function | `<actual_module_name>_<sanitized_func_name>` (`HW_FUNC_NAME`; e.g. `file_a_main`) |
 | Factory function logical key | `<inner_func>_<param>_<value>_..._s<identity12>` (128-character collapse) |
 | Factory/type VHDL base | Source symbol, module/factory and parameter descriptions (192-character budget) |
 | Composed VHDL identifier | Emitted fragments and role/location suffixes (240-character budget) |

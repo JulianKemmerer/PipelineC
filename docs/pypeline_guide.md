@@ -3009,7 +3009,7 @@ body_decrypt = AUTO_PIPELINE(poly1305_body, name="poly1305_body_decrypt")
 - **For the best sweep results, tag a wrapper.** Tagging a function imported from
   another module, as above, makes it the root of its latency region. The sweep then
   can't tell when a slow path runs through it, and it never mini-sweeps a region
-  root ([known issue](issues_inventory.md#36-not-yet-filed-auto_pipelinef-on-an-imported-function-sweeps-worse-than-a-wrapper)). A one-line local wrapper per
+  root ([known issue](issues_inventory.md#35-not-yet-filed-auto_pipelinef-on-an-imported-function-sweeps-worse-than-a-wrapper)). A one-line local wrapper per
   group keeps the function inside the region:
 
   ```python
@@ -5971,7 +5971,6 @@ tracks the row.
 | Simulation | **`sim_print` of a `uint32_t` value ≥ 2³¹** | Fails in VHDL only | `sim_print` lowers to `integer'image(to_integer(x))`, and VHDL's `integer` is 32-bit *signed*, so GHDL raises `overflow detected` at runtime. Native simulation prints it happily, so this only ever appears in a cocotb/GHDL run — mask or narrow the value before probing it | [#360](https://github.com/JulianKemmerer/PipelineC/issues/360) |
 | Simulation | **`sim_print` on the `sim_finish()` cycle** | Missing in VHDL simulation | Native simulation prints the line; in GHDL the run ends before it is written. Print one cycle before finishing | [#361](https://github.com/JulianKemmerer/PipelineC/issues/361) |
 | Simulation | **`@initial`/`@final` under `sim_call`** | Not run | Hooks run in clocked simulation runs (`pypelinec --sim`, `pypeline_sim.py`) and `pypelinec` builds. A plain Python script that drives `sim_call` itself has no run start/end for the tools to hook — call its setup/teardown code directly | — |
-| Tools | **Building without a C preprocessor** | Not supported | `pypelinec` loads the C front end, which stops at import if `cpp` is not on `PATH`, even for a `.py` design. Install `cpp` (see [Requirements](README.md#requirements)) | [#363](https://github.com/JulianKemmerer/PipelineC/issues/363) |
 
 Native simulation cannot detect restrictions that appear only after emitting VHDL, such
 as a reserved enum member, an underscore in a string literal, an array-length mismatch or

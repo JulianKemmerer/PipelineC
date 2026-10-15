@@ -21,7 +21,7 @@ import weakref
 
 import LOGIC
 import VHDL
-from utilities import INDEX_BIT_WIDTH
+from utilities import DISPLAY_SOURCE, INDEX_BIT_WIDTH
 from pypeline import (
     _RegType,
     _FeedbackType,
@@ -1124,7 +1124,7 @@ def _sanitize_ref_tok(tok):
     return _sanitize_vhdl_name(tok) if isinstance(tok, str) else tok
 
 
-def _hw_func_name(mod_prefix, name):
+def HW_FUNC_NAME(mod_prefix, name):
     """Canonical FuncLogicLookupTable key / Logic.func_name for a hardware
     function: module-prefixed for sub-file functions, VHDL-name-sanitized.
     Single source of truth -- PARSE_FILE Step 6/7, FuncElaborator.__init__,
@@ -1291,21 +1291,12 @@ class EmissionNames:
         infos = self.descriptions.get(raw, ())
         lines = []
         for info in sorted(infos, key=lambda n: (n.source, n.line, n.qualname)):
-            source = display_source(info.source)
+            source = DISPLAY_SOURCE(info.source)
             lines.append(
                 f"-- Python: {info.module}.{info.qualname} ({source}:{info.line})"
             )
             lines.append(f"-- Specialization: {info.render(user=False)}")
         return "\n".join(lines) + ("\n" if lines else "")
-
-
-def display_source(source):
-    """Portable source paths in generated HDL; absolute paths remain in index."""
-    root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-    if source.startswith(root + os.sep):
-        return os.path.relpath(source, root)
-    # Synthetic sources and external designs do not embed the scratch root.
-    return os.path.basename(source)
 
 
 # ─────────────────────────────────────────────
@@ -2053,7 +2044,7 @@ class FuncElaborator:
         self.func_def = func_def
         # Hardware function name: mangled with module prefix for sub-file functions
         # so file_a.main and file_b.main both elaborate without collision.
-        self.func_name = _hw_func_name(module_prefix, func_def.name)
+        self.func_name = HW_FUNC_NAME(module_prefix, func_def.name)
         self.parser_state = parser_state
         self.src_file = src_file
         # module_globals: live Python namespace from executing the design file.
@@ -5115,7 +5106,7 @@ class FuncElaborator:
                 )
             aliases = getattr(self.parser_state, "module_alias_to_actual", {})
             actual = aliases.get(base_name, base_name)
-            callee_name = _hw_func_name(actual, attr_name)
+            callee_name = HW_FUNC_NAME(actual, attr_name)
             # Check if already pre-elaborated (top-level def from sub-file)
             callee_def = self.parser_state.FuncLogicLookupTable.get(callee_name)
             if callee_def is None:
@@ -5144,10 +5135,10 @@ class FuncElaborator:
                     return entry
                 return None
 
-            callee_def = _bound_entry(_hw_func_name(None, callee_name))
+            callee_def = _bound_entry(HW_FUNC_NAME(None, callee_name))
             if callee_def is None and self.module_prefix:
                 # For sub-file functions, helpers are pre-elaborated under a prefixed name.
-                prefixed = _hw_func_name(self.module_prefix, callee_name)
+                prefixed = HW_FUNC_NAME(self.module_prefix, callee_name)
                 prefixed_def = _bound_entry(prefixed)
                 if prefixed_def is not None:
                     callee_def = prefixed_def
@@ -5700,7 +5691,7 @@ class FuncElaborator:
             src_file = None
         file_to_module_prefix = getattr(self.parser_state, "file_to_module_prefix", {})
         mod_prefix = file_to_module_prefix.get(src_file)
-        return _hw_func_name(mod_prefix, func_for_source.__name__)
+        return HW_FUNC_NAME(mod_prefix, func_for_source.__name__)
 
     def _elaborate_live_func(self, module_level_name, func):
         """Elaborate a live Python callable from module_globals.
@@ -6592,27 +6583,6 @@ class FuncElaborator:
 # ─────────────────────────────────────────────
 
 
-def _discover_structs(tree, parser_state):
-    """Walk AST for NamedTuple subclasses, populate struct_to_field_type_dict.
-    Used as fallback when module execution is not available.
-    """
-    for node in ast.walk(tree):
-        if not isinstance(node, ast.ClassDef):
-            continue
-        is_named_tuple = any(
-            (isinstance(b, ast.Name) and b.id == "NamedTuple")
-            or (isinstance(b, ast.Attribute) and b.attr == "NamedTuple")
-            for b in node.bases
-        )
-        if not is_named_tuple:
-            continue
-        fields = {}
-        for item in node.body:
-            if isinstance(item, ast.AnnAssign) and isinstance(item.target, ast.Name):
-                fields[_sanitize_vhdl_name(item.target.id)] = _annotation_to_ctype(
-                    item.annotation
-                )
-        parser_state.struct_to_field_type_dict[node.name] = fields
         # print(f"  struct: {node.name} -> {fields}")
 
 
@@ -7245,7 +7215,7 @@ def _validate_wires_funcs(parser_state):
         if reason is not None:
             raise ElaborationError(
                 f"@wires function '{func_name}'"
-                f"{SYN.FUNC_SRC_LOC_STR(parser_state, func_name)} is not just "
+                f"{LOGIC.FUNC_SRC_LOC_STR(parser_state, func_name)} is not just "
                 f"wires: it {reason}. @wires (#pragma FUNC_WIRES) promises the "
                 "function synthesizes to nothing but wires -- zero delay, no "
                 "registers, no logic -- so the compiler never times it. Remove "
@@ -7880,7 +7850,7 @@ def _elaborate_live_roots(roots):
 
     LOGIC.DEL_ALL_CACHES()
     SYN.DEL_ALL_CACHES()
-    AUTO_PIPELINE._GET_ZERO_ADDED_CLKS_TIMING_PARAMS_LOOKUP_cache.clear()
+    AUTO_PIPELINE.DEL_ZERO_ADDED_CLKS_TIMING_PARAMS_CACHE()
     dummy = ast.parse("def sim_root(): pass").body[0]
     for root in roots:
         source = inspect.unwrap(root)
@@ -7953,7 +7923,7 @@ def PARSE_FILE(py_file, run_syn_initial_hooks=False):
         SYN.DEL_ALL_CACHES()
         # Not part of SYN.DEL_ALL_CACHES: cached zero-clk TimingParams hold
         # references to the previous parse's Logic objects
-        AUTO_PIPELINE._GET_ZERO_ADDED_CLKS_TIMING_PARAMS_LOOKUP_cache.clear()
+        AUTO_PIPELINE.DEL_ZERO_ADDED_CLKS_TIMING_PARAMS_CACHE()
 
     design_dir = os.path.dirname(os.path.abspath(py_file))
     if design_dir not in sys.path:
@@ -8101,14 +8071,14 @@ def PARSE_FILE(py_file, run_syn_initial_hooks=False):
     # ── Step 6: register stubs first so cross-file forward references resolve ──
     # hw_name is module-prefixed for sub-file functions (file_a_main, file_b_main)
     # so two imported files can both define a function named 'main' without collision,
-    # and VHDL-name-sanitized via _hw_func_name (e.g. a leading-underscore Python def
+    # and VHDL-name-sanitized via HW_FUNC_NAME (e.g. a leading-underscore Python def
     # name is illegal in VHDL). Two distinct (mod_prefix, name) pairs that sanitize to
     # the same hw_name would otherwise silently collide on one FuncLogicLookupTable
     # entry -- same failure class as the closure-callable collision bug
     # (two_factory_wrappers_test.py) -- so guard against it explicitly here.
     _hw_name_lower_to_orig = {}
     for node, _fp, _fg, mod_prefix in all_func_defs:
-        hw_name = _hw_func_name(mod_prefix, node.name)
+        hw_name = HW_FUNC_NAME(mod_prefix, node.name)
         orig = (mod_prefix, node.name)
         existing_orig = _hw_name_lower_to_orig.setdefault(hw_name.lower(), orig)
         if existing_orig != orig:
@@ -8134,7 +8104,7 @@ def PARSE_FILE(py_file, run_syn_initial_hooks=False):
 
     # ── Step 7: elaborate all functions ──
     for node, file_path, fglobals, mod_prefix in all_func_defs:
-        hw_name = _hw_func_name(mod_prefix, node.name)
+        hw_name = HW_FUNC_NAME(mod_prefix, node.name)
         print(f"  elaborating func: {hw_name}")
         elab = FuncElaborator(
             node, parser_state, file_path, fglobals, module_prefix=mod_prefix

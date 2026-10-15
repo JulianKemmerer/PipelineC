@@ -1,3 +1,7 @@
+"""Verilator simulation backend: GHDL + yosys to Verilog, then a Verilator build.
+See docs/SIM_DESIGN.md, "Verilator".
+"""
+
 import os
 import shutil
 import sys
@@ -5,7 +9,6 @@ import sys
 import OPEN_TOOLS
 import SIM
 import SYN
-import VHDL
 from utilities import GET_SHELL_CMD_OUTPUT, GET_TOOL_PATH, REPO_ABS_DIR
 
 VERILATOR_EXE = "verilator"

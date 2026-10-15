@@ -47,6 +47,7 @@ from multiprocessing.pool import ThreadPool
 
 import AUTO_MULTI_CYCLE
 import AUTO_PIPELINE
+import DEVICE_MODELS
 import LOGIC
 import OPEN_TOOLS
 import RAW_VHDL
@@ -1587,12 +1588,6 @@ def PLAN_CUTS(landscape, budget_units, required_units=None):
     ):
         cuts = cuts[:-1]
     return cuts
-
-
-def CUTS_TO_SLICES(cuts, landscape):
-    # Center each cut within its delay unit so SLICE_DOWN's floor() recovers
-    # the intended offset without float boundary ambiguity
-    return [(u + 0.5) / float(landscape.total_units) for u in cuts]
 
 
 def _PLACEMENT_RANK_KEY(placement):
@@ -5801,7 +5796,7 @@ def RUN_HOTSPOT_MINISWEEP(hotspot_func, plan, parser_state):
     MEASURED_LOCK_MODEL(hotspot_func, inst, parser_state)
     print(
         f"[sweep] Isolated coarse sweep of hotspot: {hotspot_func}"
-        f"{SYN.FUNC_SRC_LOC_STR(parser_state, hotspot_func)} "
+        f"{LOGIC.FUNC_SRC_LOC_STR(parser_state, hotspot_func)} "
         f"(goal {plan.target_mhz:.2f} MHz)",
         flush=True,
     )
@@ -5828,7 +5823,7 @@ def RUN_HOTSPOT_MINISWEEP(hotspot_func, plan, parser_state):
     if not inst_sweep_state.met_timing or working_slices is None:
         print(
             f"[sweep] Hotspot {hotspot_func}"
-            f"{SYN.FUNC_SRC_LOC_STR(parser_state, hotspot_func)} could not meet "
+            f"{LOGIC.FUNC_SRC_LOC_STR(parser_state, hotspot_func)} could not meet "
             "timing in isolation.",
             flush=True,
         )
@@ -5843,7 +5838,7 @@ def RUN_HOTSPOT_MINISWEEP(hotspot_func, plan, parser_state):
     if len(working_slices) == 0:
         print(
             f"[sweep] Hotspot {hotspot_func}"
-            f"{SYN.FUNC_SRC_LOC_STR(parser_state, hotspot_func)} meets timing in "
+            f"{LOGIC.FUNC_SRC_LOC_STR(parser_state, hotspot_func)} meets timing in "
             "isolation without internal cuts; not locking IO-only latency.",
             flush=True,
         )
@@ -5868,7 +5863,7 @@ def RUN_HOTSPOT_MINISWEEP(hotspot_func, plan, parser_state):
         mid = (lo + hi) // 2
         print(
             f"[sweep] Hotspot minimality probe: {hotspot_func}"
-            f"{SYN.FUNC_SRC_LOC_STR(parser_state, hotspot_func)} at {mid} clks "
+            f"{LOGIC.FUNC_SRC_LOC_STR(parser_state, hotspot_func)} at {mid} clks "
             f"(known failing: {lo}, met: {hi})",
             flush=True,
         )
@@ -5922,7 +5917,7 @@ def RUN_HOTSPOT_MINISWEEP(hotspot_func, plan, parser_state):
     boundary = plan.mini_sweep_boundary_diagnostics[hotspot_func]
     print(
         f"[sweep] Locked {hotspot_func}"
-        f"{SYN.FUNC_SRC_LOC_STR(parser_state, hotspot_func)} at "
+        f"{LOGIC.FUNC_SRC_LOC_STR(parser_state, hotspot_func)} at "
         f"cuts={len(working_slices)} "
         f"({len(boundary['selected_inputs'])} input + "
         f"{len(boundary['selected_outputs'])} output boundary bank(s), "
@@ -6022,7 +6017,7 @@ def GET_MAIN_INSTS_FOR_PATH_REPORT(path_report, parser_state, multimain_timing_p
     # sky130 STA may report only flattened Yosys cell names ($auto/$abc).
     # Those are real endpoints without MAIN attribution, not evidence that
     # the path is outside every MAIN. Keep its measured failure as feedback.
-    if not main_insts and SYN.SYN_TOOL is SYN.DEVICE_MODELS:
+    if not main_insts and SYN.SYN_TOOL is DEVICE_MODELS:
         return set(all_main_insts)
     return main_insts
 
@@ -7354,7 +7349,7 @@ def DO_PLANNED_THROUGHPUT_SWEEP(parser_state, multimain_timing_params):
                                 where = DESCRIBE_HOTSPOT_LOCATION(
                                     hotspot_basis,
                                     f"function {hotspot_func}"
-                                    f"{SYN.FUNC_SRC_LOC_STR(parser_state, hotspot_func)}",
+                                    f"{LOGIC.FUNC_SRC_LOC_STR(parser_state, hotspot_func)}",
                                 )
                                 print(
                                     f"[sweep] WARNING: {main_logic.func_name} cannot meet {target_mhz:.2f} MHz: "
@@ -7372,7 +7367,7 @@ def DO_PLANNED_THROUGHPUT_SWEEP(parser_state, multimain_timing_params):
                                 where = DESCRIBE_HOTSPOT_LOCATION(
                                     hotspot_basis,
                                     f"{hotspot_func}"
-                                    f"{SYN.FUNC_SRC_LOC_STR(parser_state, hotspot_func)}",
+                                    f"{LOGIC.FUNC_SRC_LOC_STR(parser_state, hotspot_func)}",
                                 )
                                 print(
                                     f"[sweep] NOTE: {main_logic.func_name}: {where}, "
@@ -7410,7 +7405,7 @@ def DO_PLANNED_THROUGHPUT_SWEEP(parser_state, multimain_timing_params):
                             if next_boundary_strategy is not None:
                                 print(
                                     f"[sweep] Locked {hotspot_func}"
-                                    f"{SYN.FUNC_SRC_LOC_STR(parser_state, hotspot_func)} remains on "
+                                    f"{LOGIC.FUNC_SRC_LOC_STR(parser_state, hotspot_func)} remains on "
                                     f"the critical path; trying "
                                     f"{next_boundary_strategy} boundary policy.",
                                     flush=True,
@@ -7430,7 +7425,7 @@ def DO_PLANNED_THROUGHPUT_SWEEP(parser_state, multimain_timing_params):
                                 print(
                                     f"[sweep] WARNING: {main_logic.func_name} limited by "
                                     f"already-locked {hotspot_func}"
-                                    f"{SYN.FUNC_SRC_LOC_STR(parser_state, hotspot_func)} "
+                                    f"{LOGIC.FUNC_SRC_LOC_STR(parser_state, hotspot_func)} "
                                     "(concrete isolated implementation applied); "
                                     "this search has no further applicable refinement. Keeping best result."
                                     + DESCRIBE_EXCLUDED_MINISWEEP_INSTANCES(

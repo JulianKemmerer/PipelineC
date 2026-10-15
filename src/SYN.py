@@ -1258,7 +1258,7 @@ def GET_REGISTERS_ESTIMATE_TEXT_AND_FFS(
 
     latency = timing_params.GET_TOTAL_LATENCY(parser_state, TimingParamsLookupTable)
     if latency > 0:
-        if VHDL.LOGIC_IS_RAW_HDL(logic, parser_state) or FUNC_IS_PRIMITIVE(
+        if LOGIC.LOGIC_IS_RAW_HDL(logic, parser_state) or FUNC_IS_PRIMITIVE(
             logic.func_name, parser_state
         ):
             # Raw vhdl estimate func of N bits input -> M bits output as using
@@ -1635,19 +1635,6 @@ def RUN_INST_SYN_AND_UPDATE_CACHE(
     )
 
 
-def FUNC_SRC_LOC_STR(parser_state, func_name):
-    """' [file.py:line]' for a function's true source location, or '' when
-    none is known (built-ins, raw-HDL, etc.) -- for appending to stdout/
-    [sweep] messages that name a function, so a reader isn't left grepping a
-    second, much larger log file for a line number. Logic.ast_meta already
-    carries this; nothing printed it before now."""
-    logic = parser_state.FuncLogicLookupTable.get(func_name)
-    ast_meta = getattr(logic, "ast_meta", None)
-    if ast_meta is None:
-        return ""
-    return f" [{os.path.basename(ast_meta.src_file)}:{ast_meta.line}]"
-
-
 def GET_OUTPUT_DIRECTORY(Logic):
     if Logic.is_c_built_in or Logic.ast_meta is None:
         output_directory = (
@@ -1775,22 +1762,6 @@ def LOGIC_IS_ZERO_DELAY(logic, parser_state, allow_none_delay=False):
             return True
 
     return False
-
-
-def LOGIC_SINGLE_SUBMODULE_DELAY(logic, parser_state):
-    if len(logic.submodule_instances) != 1:
-        return None
-    if logic.vhdl_module_text is not None:
-        return None
-
-    submodule_inst = list(logic.submodule_instances.keys())[0]
-    submodule_func_name = logic.submodule_instances[submodule_inst]
-    submodule_logic = parser_state.FuncLogicLookupTable[submodule_func_name]
-    if submodule_logic.delay is None:
-        print("Wtf none to check delay???????")
-        sys.exit(-1)
-
-    return submodule_logic.delay
 
 
 def IS_USER_CODE(logic, parser_state):
@@ -2649,7 +2620,7 @@ def COLLECT_PATH_DELAY_REQUIREMENTS(parser_state, root_func_names=None):
         parser_state, root_func_names
     )
     if root_func_names is None:
-        extra_roots = set(AUTO_FSM._AUTO_FSM_MUX_ENTITIES(parser_state))
+        extra_roots = set(AUTO_FSM.AUTO_FSM_MUX_ENTITIES(parser_state))
         for logic in list(parser_state.FuncLogicLookupTable.values()):
             extra_roots.update(
                 logic.submodule_instances[local]
@@ -3052,7 +3023,7 @@ def MEASURE_DELAYS(func_names, parser_state, refine_opaque=False):
         inst_name = list(parser_state.FuncToInstances[func_name])[0]
         print(
             "Synthesizing function:",
-            func_name + FUNC_SRC_LOC_STR(parser_state, func_name),
+            func_name + LOGIC.FUNC_SRC_LOC_STR(parser_state, func_name),
             flush=True,
         )
         func_name_to_async_result[func_name] = my_thread_pool.apply_async(
@@ -3128,9 +3099,9 @@ def ADD_PATH_DELAY_TO_LOOKUP(parser_state, root_func_names=None):
             parser_state.main_mhz.keys(), parser_state
         )
         # ...plus AUTO_FSM's operand multiplexers, which the walk above cannot
-        # reach (see _AUTO_FSM_MUX_ENTITIES). Their own subtrees first, so the
+        # reach (see AUTO_FSM_MUX_ENTITIES). Their own subtrees first, so the
         # list stays bottom-up ordered.
-        _auto_fsm_muxes = sorted(AUTO_FSM._AUTO_FSM_MUX_ENTITIES(parser_state))
+        _auto_fsm_muxes = sorted(AUTO_FSM.AUTO_FSM_MUX_ENTITIES(parser_state))
     if _auto_fsm_muxes:
         for extra in RECURSIVE_GET_FUNCS_FOR_PATH_DELAYS(
             _auto_fsm_muxes, parser_state
@@ -3278,7 +3249,7 @@ def ADD_PATH_DELAY_TO_LOOKUP(parser_state, root_func_names=None):
                     # Run real syn in parallel
                     print(
                         "Synthesizing function:",
-                        logic.func_name + FUNC_SRC_LOC_STR(parser_state, logic.func_name),
+                        logic.func_name + LOGIC.FUNC_SRC_LOC_STR(parser_state, logic.func_name),
                         flush=True,
                     )
                     # Start Syn
@@ -3396,7 +3367,7 @@ def ADD_PATH_DELAY_TO_LOOKUP(parser_state, root_func_names=None):
             print(
                 f"Isolated effective stage-delay estimate ~{1000.0/min_mhz:.3f} ns (~{min_mhz:.3f} MHz), "
                 "not a whole-design limit; MCP values use their current cycle allowance. Function: "
-                f"{min_mhz_func_name}{FUNC_SRC_LOC_STR(parser_state, min_mhz_func_name)}"
+                f"{min_mhz_func_name}{LOGIC.FUNC_SRC_LOC_STR(parser_state, min_mhz_func_name)}"
             )
     WRITE_MODULE_INSTANCES_REPORT_BY_DELAY_USAGE(parser_state)
 
@@ -3475,9 +3446,9 @@ def WRITE_INTEGER_MODULE_INSTANCES_REPORT(
             input_c_type = func_logic.wire_to_c_type[input_port]
             func_types.append(input_c_type)
         max_in_width = 0
-        if VHDL.C_TYPES_ARE_INTEGERS(func_types):
+        if LOGIC.C_TYPES_ARE_INTEGERS(func_types):
             for func_type in func_types:
-                width = VHDL.GET_WIDTH_FROM_C_N_BITS_INT_TYPE_STR(func_type)
+                width = LOGIC.GET_WIDTH_FROM_C_N_BITS_INT_TYPE_STR(func_type)
                 if width > max_in_width:
                     max_in_width = width
         # Outputs types
@@ -3487,7 +3458,7 @@ def WRITE_INTEGER_MODULE_INSTANCES_REPORT(
         # Skip casts
         if func_name.startswith(LOGIC.CAST_FUNC_NAME_PREFIX + "_"):
             continue
-        if func_logic.is_c_built_in and VHDL.C_TYPES_ARE_INTEGERS(func_types):
+        if func_logic.is_c_built_in and LOGIC.C_TYPES_ARE_INTEGERS(func_types):
             int_funcs.append(func_name)
             int_func_to_max_in_width[func_name] = max_in_width
 
@@ -3765,10 +3736,10 @@ def GET_VHDL_FILES_TCL_TEXT_AND_TOP(
     if inst_name:
         # Does inst need clk cross?
         Logic = parser_state.LogicInstLookupTable[inst_name]
-        needs_global_to_module = VHDL.LOGIC_NEEDS_GLOBAL_TO_MODULE(
+        needs_global_to_module = LOGIC.LOGIC_NEEDS_GLOBAL_TO_MODULE(
             Logic, parser_state
         )  # , multimain_timing_params.TimingParamsLookupTable)
-        needs_module_to_global = VHDL.LOGIC_NEEDS_MODULE_TO_GLOBAL(
+        needs_module_to_global = LOGIC.LOGIC_NEEDS_MODULE_TO_GLOBAL(
             Logic, parser_state
         )  # , multimain_timing_params.TimingParamsLookupTable)
         needs_global_t = needs_global_to_module or needs_module_to_global

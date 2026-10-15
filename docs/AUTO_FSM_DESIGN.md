@@ -27,6 +27,33 @@ figures out the rest — how many stages, or how many states.
 > than appending a new one. See
 > [documentation conventions](pypeline_DESIGN.md#documentation-conventions).
 
+## Table of Contents
+
+- [1. If you have not done this before](#1-if-you-have-not-done-this-before)
+- [2. User API](#2-user-api)
+  - [2.1 Stream wrapper: `make_stream_auto_fsm`](#21-stream-wrapper-make_stream_auto_fsm)
+- [3. How it works](#3-how-it-works)
+  - [3.1 Building the DAG](#31-building-the-dag)
+  - [3.2 Scheduling and binding](#32-scheduling-and-binding)
+  - [3.2b Operand multiplexers](#32b-operand-multiplexers)
+  - [3.2c Register allocation](#32c-register-allocation)
+  - [3.3 Code generation](#33-code-generation)
+  - [3.4 The driver loop](#34-the-driver-loop)
+  - [3.5 Delay measurement](#35-delay-measurement)
+  - [3.6 Simulation](#36-simulation)
+  - [3.7 The minimum-area search](#37-the-minimum-area-search)
+  - [3.8 Consuming real sky130 area](#38-consuming-real-sky130-area)
+  - [3.9 What the clock goal does to allocation](#39-what-the-clock-goal-does-to-allocation)
+- [4. Results](#4-results)
+- [5. Tests](#5-tests)
+- [6. Limitations and future work](#6-limitations-and-future-work)
+- [History](#history)
+  - [Tighten loop termination](#tighten-loop-termination)
+  - [Operand multiplexer costing](#operand-multiplexer-costing)
+  - [Control-path encoding: constant tables, comparators, and one-hot](#control-path-encoding-constant-tables-comparators-and-one-hot)
+
+---
+
 ---
 
 ## 1. If you have not done this before
@@ -415,7 +442,7 @@ was measured for it.
 **It gets measured.** A generated FSM holds state, so its placement geometry
 is estimated from its children. Its operand muxes are independent scheduler
 consumers, so
-`AUTO_FSM._REGISTER_MUX_ENTITIES` and `AUTO_FSM._AUTO_FSM_MUX_ENTITIES` name these few
+`AUTO_FSM._REGISTER_MUX_ENTITIES` and `AUTO_FSM.AUTO_FSM_MUX_ENTITIES` name these few
 entities and scoped characterization collects them for measurement in their
 own right. They are small — one 3-to-8-way mux per shared unit input port — so
 this is a handful of quick synthesis runs, not a meaningful build cost.
@@ -783,7 +810,7 @@ receive operation delays.
   optimized/narrowed units before the next scheduling pass; treating them as
   ordinary stateful surroundings can change the timing budget's inputs between
   a tightening trial and the rebuilt schedule.
-- **`_AUTO_FSM_MUX_ENTITIES`:** registered operand muxes remain explicit
+- **`AUTO_FSM_MUX_ENTITIES`:** registered operand muxes remain explicit
   calibration consumers, independently of the surrounding stateful hierarchy.
   Their reports inform schedule sharing and area search. Identical tool inputs
   reuse output-directory or synthesis-store reports.

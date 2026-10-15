@@ -8,6 +8,7 @@ import inspect
 import os
 
 import AUTO
+import DEVICE_MODELS
 
 # Immutable graph choices, never live functions/types from an earlier parse.
 # A choice stays pinned while timing measurements accumulate during a build.
@@ -347,7 +348,7 @@ def prepare(func, parser_state, elaborator, strict=True, objective="area"):
     key = (AUTO.GRAPH_VERSION, AUTO.TIMING_VERSION, objective, entity, AUTO.fingerprint(_semantic_graph(dag)),
            AUTO.fingerprint(dependency_shapes),
            getattr(SYN.SYN_TOOL, "__name__", None), parser_state.part,
-           getattr(SYN.DEVICE_MODELS, "SELECTED_LIBRARY", None), AUTO.FORCE_ABSTRACT_AREA)
+           getattr(DEVICE_MODELS, "SELECTED_LIBRARY", None), AUTO.FORCE_ABSTRACT_AREA)
     if key not in _PLANS:
         timing = AUTO.TimingModel(parser_state) if objective == "delay" else None
         ranked, report = AUTO.search(dag, parser_state, seeds, timing=timing)

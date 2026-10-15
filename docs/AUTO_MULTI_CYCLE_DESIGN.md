@@ -22,6 +22,17 @@ block compiler-added latency under the [caller-context rule](SWEEP_DESIGN.md#cut
 > has one, rather than appending a new one. See
 > [documentation conventions](pypeline_DESIGN.md#documentation-conventions).
 
+## Table of Contents
+
+- [1. Who does what](#1-who-does-what)
+- [2. Constraints](#2-constraints)
+- [3. Sweep feedback](#3-sweep-feedback)
+- [4. Pin-and-confirm](#4-pin-and-confirm)
+- [5. Limitations](#5-limitations)
+- [6. Tests](#6-tests)
+
+---
+
 ## 1. Who does what
 
 | piece of `src/AUTO_MULTI_CYCLE.py` | used by | role |
@@ -59,7 +70,7 @@ periods; the hold exception restores the ordinary same-clock hold relationship.
 Both use the same C-to-D pin collections, leaving enable/reset paths untouched.
 See [Vivado set_multicycle_path](https://docs.amd.com/r/en-US/ug835-vivado-tcl-commands/set_multicycle_path).
 
-**Preservation starts in RTL.** `GET_PIPELINE_ARCH_DECL_TEXT` places a string
+**Preservation starts in RTL.** `VHDL.GET_PIPELINE_ARCH_DECL_TEXT` places a string
 `dont_touch` attribute on each tagged state-register signal. This includes
 record/array payloads and both fixed and automatic MCPs. The XDC reinforces
 that property on the resulting cells. `KEEP` in XDC alone is insufficient:

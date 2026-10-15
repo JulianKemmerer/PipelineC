@@ -1,3 +1,7 @@
+"""CXXRTL simulation backend: GHDL + yosys write_cxxrtl, then a clang++ build.
+See docs/SIM_DESIGN.md, "CXXRTL".
+"""
+
 import os
 import sys
 

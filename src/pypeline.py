@@ -652,12 +652,6 @@ def _check_user_name(name, what):
     return name
 
 
-def _user_name(obj):
-    """The user name= given to a hardware function or type, else None."""
-    obj = _inspect.unwrap(obj) if callable(obj) and not isinstance(obj, type) else obj
-    return getattr(obj, "_pypeline_user_name", None)
-
-
 def _named_key(name, unnamed_key):
     """Logical key of a named function or type: the user's name, then the
     digest of the key the object would have had without one."""
@@ -1540,12 +1534,6 @@ def _sim_val_make(v, ctype):
     return obj
 
 
-class _NamedTupleBase:
-    """Internal sentinel base used by the NamedTuple() function below."""
-
-    pass
-
-
 def NamedTuple(cls=None, **kwargs):
     """Used as a base class to create hardware struct types.
     Automatically adds array subscript support so point_t[10] works.
@@ -1557,7 +1545,7 @@ def NamedTuple(cls=None, **kwargs):
     """
     # When used as a base class Python calls this as NamedTuple() to get
     # the base object, then builds the subclass. We return a special sentinel.
-    # The actual class is built via __init_subclass__ on _NamedTupleBase...
+    # Building the class via __init_subclass__ on a sentinel base would work,
     # but that's complex. Instead we use __class_getitem__ on the returned object.
     #
     # Simplest approach that works: return typing.NamedTuple and rely on
@@ -2298,7 +2286,7 @@ def sim_input(fn):
 
 # (fn, when, sim, syn) per decorated hook, in registration order. Cleared with
 # _main_registry on every design (re)import: PY_TO_LOGIC.PARSE_FILE and
-# pypeline_sim._import_design.
+# pypeline_sim.import_design.
 _hook_registry: list = []
 # The syn hooks the pipelinec driver ran @initial from (set by PARSE_FILE's
 # run_syn_initial_hooks=True). Re-parses re-import the design into fresh module
@@ -5126,10 +5114,6 @@ def SET_AUTO_MULTI_CYCLE_LATENCY_CACHE(cache: dict) -> None:
     execution's AUTO_MULTI_CYCLE(...) constructions resolve .latency to them."""
     global _auto_multi_cycle_latency_cache
     _auto_multi_cycle_latency_cache = dict(cache)
-
-
-def AUTO_MULTI_CYCLE_LATENCY_CACHE() -> dict:
-    return dict(_auto_multi_cycle_latency_cache)
 
 
 def RESET_AUTO_MULTI_CYCLE_TRACKING() -> None:

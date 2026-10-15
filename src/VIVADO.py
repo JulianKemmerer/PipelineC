@@ -1,4 +1,8 @@
 #!/usr/bin/env python
+"""Vivado synthesis backend (Xilinx parts): synthesis and implementation TCL, timing and
+utilization report parsing, multi-cycle path checks and the AXIS XO export.
+See docs/SYN_DESIGN.md, "Choosing a tool" and "The backend contract".
+"""
 
 import copy
 import difflib
@@ -15,7 +19,6 @@ import sys
 import time
 
 import LOGIC
-import MODELSIM
 import SYN
 import VHDL
 from utilities import GET_SHELL_CMD_OUTPUT, GET_TOOL_PATH
@@ -591,53 +594,6 @@ def GET_SYN_IMP_AND_REPORT_TIMING_TCL(
 
     rv += 'puts "PYPELINEC_SYNTHESIS_COMPLETE"\n'
     return rv
-
-
-# return path to tcl file
-def WRITE_SYN_IMP_AND_REPORT_TIMING_TCL_FILE_MULTIMAIN(
-    multimain_timing_params, parser_state
-):
-    syn_imp_and_report_timing_tcl = GET_SYN_IMP_AND_REPORT_TIMING_TCL(
-        multimain_timing_params, parser_state
-    )
-    hash_ext = multimain_timing_params.GET_HASH_EXT(parser_state)
-    out_filename = SYN.TOP_LEVEL_MODULE + hash_ext + ".tcl"
-    out_filepath = (
-        SYN.SYN_OUTPUT_DIRECTORY + "/" + SYN.TOP_LEVEL_MODULE + "/" + out_filename
-    )
-    f = open(out_filepath, "w")
-    f.write(syn_imp_and_report_timing_tcl)
-    f.close()
-    return out_filepath
-
-
-# return path to tcl file
-def WRITE_SYN_IMP_AND_REPORT_TIMING_TCL_FILE(
-    inst_name, Logic, output_directory, TimingParamsLookupTable, parser_state
-):
-    import AUTO_PIPELINE
-
-    # Make fake multimain params
-    multimain_timing_params = AUTO_PIPELINE.MultiMainTimingParams()
-    multimain_timing_params.TimingParamsLookupTable = TimingParamsLookupTable
-    syn_imp_and_report_timing_tcl = GET_SYN_IMP_AND_REPORT_TIMING_TCL(
-        multimain_timing_params, parser_state, inst_name
-    )
-    timing_params = TimingParamsLookupTable[inst_name]
-    hash_ext = timing_params.GET_HASH_EXT(TimingParamsLookupTable, parser_state)
-    out_filename = (
-        Logic.func_name
-        + "_"
-        + str(timing_params.GET_TOTAL_LATENCY(parser_state, TimingParamsLookupTable))
-        + "CLK"
-        + hash_ext
-        + ".syn.tcl"
-    )
-    out_filepath = output_directory + "/" + out_filename
-    f = open(out_filepath, "w")
-    f.write(syn_imp_and_report_timing_tcl)
-    f.close()
-    return out_filepath
 
 
 def INPUT_MANIFEST(tcl, part, tool_version, output_root):

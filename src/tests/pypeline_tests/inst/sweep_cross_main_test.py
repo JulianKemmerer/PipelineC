@@ -173,7 +173,7 @@ def _real_name_patches(stack):
     for obj, name, value in [
         (VHDL, "GET_ENTITY_NAME", lambda inst, logic, tpl, ps: _ENTITIES[inst]),
         (SYN, "GET_TARGET_MHZ", lambda m, ps: ps.main_mhz.get(m)),
-        (SYN, "FUNC_SRC_LOC_STR", lambda *a: ""),
+        (LOGIC, "FUNC_SRC_LOC_STR", lambda *a: ""),
     ]:
         stack.enter_context(patch.object(obj, name, value))
 

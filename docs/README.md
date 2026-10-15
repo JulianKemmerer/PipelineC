@@ -452,7 +452,7 @@ RAM plan tried). See [Automatic pipelining](#automatic-pipelining) and
 `--sim` simulates. With `--comb`, the design with no temporal changes or optimizations is simulated. Otherwise the final, possibly automatically adjusted, design is simulated after the build. The native Python simulator runs the source itself,
 while `--cocotb --ghdl`, `--verilator` and others simulate the generated VHDL (see
 [Simulation](#simulation)). How:
-[pypeline_sim_DESIGN.md](pypeline_sim_DESIGN.md).
+[SIM_DESIGN.md](SIM_DESIGN.md), [pypeline_sim_DESIGN.md](pypeline_sim_DESIGN.md).
 
 ### Produces Bitstreams
 
@@ -1344,8 +1344,8 @@ simulation tools it calls. You can run it without an FPGA part or any synthesis 
 installed, but then you get no automatic pipelining or timing feedback: only plain
 generated VHDL, as in `--comb --no_synth` mode.
 
-Only Linux environments are supported, and a C preprocessor (`cpp`) must be installed,
-even for Python designs ([#363](https://github.com/JulianKemmerer/PipelineC/issues/363)).
+Only Linux environments are supported. C designs also need a C preprocessor (`cpp`)
+installed; Python designs do not.
 Native Windows and [Mac](https://github.com/JulianKemmerer/PipelineC/issues/286) support
 still needs work. On those systems, run Pypeline and the synthesis/simulation tools inside
 a Linux virtual machine or [Windows Subsystem for Linux (WSL)](https://docs.microsoft.com/en-us/windows/wsl/about).

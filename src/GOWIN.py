@@ -1,3 +1,7 @@
+"""Gowin synthesis backend (gw_sh), including the PipelineC ":<version>" part suffix.
+See docs/SYN_DESIGN.md, "Choosing a tool" and "The backend contract".
+"""
+
 import os
 import sys
 import xml.etree.ElementTree as ET

@@ -1,6 +1,6 @@
 # AUTO_PIPELINE: automatic pipelining
 
-How PypelineC represents pipelines, builds them into VHDL, and turns
+How PypelineC represents pipelines, decides their stages, and turns
 `AUTO_PIPELINE(func)` call sites into a known, readable `.latency`.
 
 `make_auto_pipeline_ram` uses a separate [RAM implementation search](AUTO_PIPELINE_DESIGN.md#ram-compiler-sweep-and-simulation)
@@ -15,7 +15,7 @@ Memory banks are never treated as zero-cycle combinational operators.
 - *Where* registers go -- the throughput sweep that iterates synthesis toward a
   timing goal -- is [`SWEEP_DESIGN.md`](SWEEP_DESIGN.md). The synthesis runs,
   reports and delay model it relies on are [`SYN_DESIGN.md`](SYN_DESIGN.md).
-  Entity/architecture emission outside the pipelined stages is
+  Entity/architecture emission, including the pipelined architecture text, is
   [`VHDL_DESIGN.md`](VHDL_DESIGN.md).
 
 > **Reference, not a logbook.** Describe the system as it is now, in the present
@@ -24,6 +24,27 @@ Memory banks are never treated as zero-cycle combinational operators.
 > worth keeping, revise the matching entry in this file's `History` section rather
 > than appending a new one. See
 > [documentation conventions](pypeline_DESIGN.md#documentation-conventions).
+
+## Table of Contents
+
+- [1. Who does what](#1-who-does-what)
+- [2. How pipelines physically form](#2-how-pipelines-physically-form)
+  - [Fixed user pipelines](#fixed-user-pipelines)
+- [3. Pipeline stages and register lifetimes](#3-pipeline-stages-and-register-lifetimes)
+  - [Global wires in pipelines](#global-wires-in-pipelines)
+- [4. Build entry points](#4-build-entry-points)
+- [5. `.latency` pin-and-confirm loop (Pypeline designs only)](#5-latency-pin-and-confirm-loop-pypeline-designs-only)
+- [6. Constrained AUTO_PIPELINE regions (`latency=` / `start_latency=` / `max_latency=`)](#6-constrained-auto_pipeline-regions-latency--start_latency--max_latency)
+- [7. Tests](#7-tests)
+- [8. Auto-pipelined RAM](#8-auto-pipelined-ram)
+  - [RAM API and ordering](#ram-api-and-ordering)
+  - [RAM register placement and splitting](#ram-register-placement-and-splitting)
+  - [RAM compiler, sweep, and simulation](#ram-compiler-sweep-and-simulation)
+  - [RAM stream wrapper and verification](#ram-stream-wrapper-and-verification)
+- [History](#history)
+  - [Why `AUTO_PIPELINE(func, depth=N)` became `latency=N`](#why-auto_pipelinefunc-depthn-became-latencyn)
+
+---
 
 ## 1. Who does what
 
@@ -34,13 +55,13 @@ Memory banks are never treated as zero-cycle combinational operators.
 | `GET_ZERO_ADDED_CLKS_*`, `WRITE_ALL_ZERO_CLK_VHDL`, `WRITE_ALL_NON_ZERO_CLK_VHDL_FILES` | the zero-added-latency table every build starts from, and writing the VHDL for a table |
 | `WRITE_0_ADDED_CLKS_INIT_FILES` | the first output after either front end parses: the zero-added-latency VHDL for every function, the struct/enum and global-wire packages, the float/integer instance reports (`SYN.py`), and a copy of `src/vhdl` as `built_in/` |
 | `SLICE_DOWN_HIERARCHY_WRITE_VHDL_PACKAGES`, `ADD_SLICES_DOWN_HIERARCHY_...`, `BUILD_AND_WRITE_COARSE_SLICED_TIMING_PARAMS`, `GET_BEST_GUESS_IDEAL_SLICES` | fractional (coarse/compatibility) slicing down the hierarchy |
-| `PiplineHDLParams`, `GET_PIPELINE_ARCH_DECL_TEXT`, `GET_PIPELINE_LOGIC_COMB_PROCESS_TEXT`, `GET_STAGE_TEXT`, `GET_SUBMODULE_LEVEL_TEXT` | the pipelined VHDL architecture text (§3) |
+| `PiplineHDLParams`, `GLOBAL_WIRE_TIMING`, `ALIGNED_GLOBAL_READS`, `ALIGNED_GLOBAL_WRITES` | each wire's register lifetime and the aligned global wires carried in the IO registers, from which `VHDL.py` renders the pipelined architecture (§3) |
 | `DO_PIPELINED_BUILD`, `DO_SWEEP_AND_AUTO_PIPELINE`, `DO_AUTO_PIPELINE_LATENCY_PASSES`, `HARVEST_AUTO_PIPELINE_LATENCIES`, `SEED_TIMING_PARAMS_FROM_PREVIOUS` | the build entry point and the `.latency` pin-and-confirm loop (§4, §5) |
 | `CAPTURE_CONCRETE_PIPELINE`, `CONCRETE_PIPELINE_COMPATIBLE`, `CONCRETE_PIPELINE_CONTAINS`, `RESTORE_CONCRETE_PIPELINE` | a subtree's timing params as data, keyed by path relative to its root (function, wire types, slices, exact bit boundaries, IO-register and fixed flags) and holding no reference to a parse's `Logic`; replayed exactly across re-elaboration (§5) and by the sweep's [hotspot locks](SWEEP_DESIGN.md#concrete-hotspot-locks) |
 | `BUILD_FIXED_AUTO_PIPELINE_TIMING_PARAMS`, `COLLECT_AUTO_PIPELINE_REGIONS`, `ENFORCE_AUTO_PIPELINE_REGIONS`, `REENFORCE_AUTO_PIPELINE_REGIONS`, `AUTO_PIPELINE_REGION_FEEDBACK`, ... | constrained call sites: `latency=` / `start_latency=` / `max_latency=` (§6) |
 | `FUNC_HAS_HIER_ALLOWING_ADDED_LATENCY_TO_RAW_VHDL`, `FUNC_SUBTREE_HAS_AUTO_PIPELINE` | "can registers be added below here?" predicates, used by slicing, the sweep and SYN's delay collection |
 | `ADDED_LATENCY_BLOCKER`, `DESCRIBE_ADDED_LATENCY_BLOCKER`, `CHECK_ADDED_LATENCY_CONTEXT`, `CHECK_ADDED_LATENCY_CONTEXTS` | caller-context eligibility, source-located diagnostics, lowering guards, and the pre-write whole-table check (§2) |
-| `DEL_PIPELINE_CACHES` | this module's per-parse caches; called from `SYN.DEL_ALL_CACHES` |
+| `DEL_PIPELINE_CACHES`, `DEL_ZERO_ADDED_CLKS_TIMING_PARAMS_CACHE` | this module's per-parse caches, called from `SYN.DEL_ALL_CACHES`; the zero-added-clocks table cache is cleared separately on every Pypeline re-parse (`PY_TO_LOGIC`), because its `TimingParams` hold the previous parse's `Logic` |
 
 Vocabulary shared with [`SWEEP_DESIGN.md`](SWEEP_DESIGN.md#1-who-does-what):
 a **slice** is one serial register boundary inserted by pipelining; a
@@ -282,49 +303,24 @@ The native simulator uses these same placements only for affected user-pipeline
 regions. Its architecture and compatibility gate are documented in
 [pypeline_sim_DESIGN.md](pypeline_sim_DESIGN.md#fixed-user-pipelines).
 
-## 3. The pipelined VHDL architecture
+## 3. Pipeline stages and register lifetimes
 
-`GET_PIPELINE_ARCH_DECL_TEXT` also emits user state registers in zero-added-
-latency holders. Registers named by `Logic.mcp_tuples` receive RTL `dont_touch`
-attributes before synthesis can absorb them into DSPs. This applies only to
-MCP endpoints, including aggregate signals; it changes neither the helper's
-arithmetic nor a separate AUTO_PIPELINE instance's register placement rules.
-The recursive timing identity includes the MCP implementation version and
-sorted tuples at each holder, invalidating its ancestors without invalidating
-unrelated leaves. See [MCP constraints](AUTO_MULTI_CYCLE_DESIGN.md#2-constraints).
-
-`VHDL.WRITE_LOGIC_ENTITY` renders every entity. For a function whose
-`TimingParams` add latency it builds a `PiplineHDLParams` from the pipeline map
-and asks this module for the architecture's stage declarations
-(`GET_PIPELINE_ARCH_DECL_TEXT`, via `VHDL.GET_ARCH_DECL_TEXT`) and its
-combinational stage process (`GET_PIPELINE_LOGIC_COMB_PROCESS_TEXT`); the C
-frontend's per-stage text goes through `GET_C_ENTITY_PROCESS_STAGES_TEXT` and
-`GET_STAGE_TEXT`, and a submodule instance is placed at its stage by
-`GET_SUBMODULE_LEVEL_TEXT`. `VHDL.py` imports this module lazily inside those
-three functions, so importing `VHDL` never imports `AUTO_PIPELINE`.
+This module decides a pipelined entity's stages and register lifetimes; `VHDL.py`
+renders its architecture from them (see
+[Building a pipelined architecture](VHDL_DESIGN.md#building-a-pipelined-architecture)).
 
 For hierarchical logic, `GET_PIPELINE_MAP` assigns each wire and submodule
-connection to a stage from data dependencies and child latencies.
-`GET_PIPELINE_ARCH_DECL_TEXT` declares stage records/signals, while
-`GET_PIPELINE_LOGIC_COMB_PROCESS_TEXT` and the clocked portions of the
-architecture implement the stage-to-stage transfers. Names containing
-`REG_STAGE<n>` are rendered alignment/storage wires, not evidence that each
-source-level variable owns an independent physical delay chain; synthesis may
-merge equivalent registers.
+connection to a stage from data dependencies and child latencies, and
+`PiplineHDLParams` turns that map into each wire's register lifetime
+(`wire_to_reg_stage_start_end`: the stages its `REG_STAGE<n>` registers start and
+end in). Names containing `REG_STAGE<n>` are rendered alignment/storage wires, not
+evidence that each source-level variable owns an independent physical delay chain;
+synthesis may merge equivalent registers.
 
-`io_registers_r` (the record holding a clocked function's input/output register
-banks) and `REG_STAGE<n>_<wire>` are deliberately GENERIC signal names -- they
-carry no reference to source location or the variable's Python name, unlike the
-generated entity/instance names elsewhere in this build (see
-[PY_TO_LOGIC_DESIGN.md](PY_TO_LOGIC_DESIGN.md)'s "Canonical function name
-format"). This is intentional, not an oversight: `SWEEP.py`'s critical-path
-attribution parses `stage(\d+)` back out of a register name
-(`_PATH_REPORT_STAGE_INFO`) to report local pipeline-stage info, and a Vivado/
-yosys timing report cross-references these exact strings, so renaming them would
-require updating both. To find the source construct a specific `io_registers_r`/
-`REG_STAGE<n>` field belongs to, read the ENCLOSING hierarchical instance path
-instead -- that path segment does carry a `_py_lNN` location suffix, and
-`name_index.log` (see [SYN_DESIGN.md](SYN_DESIGN.md)) decodes it further.
+Registers named by `Logic.mcp_tuples` are preserved in the rendered VHDL. The
+recursive timing identity includes the MCP implementation version and sorted
+tuples at each holder, invalidating its ancestors without invalidating unrelated
+leaves. See [MCP constraints](AUTO_MULTI_CYCLE_DESIGN.md#2-constraints).
 
 Reconvergent branches and bypass inputs are aligned to the stage at which
 their consumer runs. An operation-output placement creates a register at that
@@ -404,7 +400,7 @@ How `PiplineHDLParams` implements it:
 - **IO banks.** `ALIGNED_GLOBAL_READS` (declared variables only) join
   `input_registers_t`, captured from `global_to_module` as
   `global_<name>`. `ALIGNED_GLOBAL_WRITES` join `output_registers_t`, and
-  `module_to_global` is driven from `io_registers_r`. `IO_REG_BANKS` is the one
+  `module_to_global` is driven from `io_registers_r`. `VHDL.IO_REG_BANKS` is the one
   definition of whether a bank exists: the sweep placed it, and it holds
   arguments, clock enable, aligned reads, return or aligned writes. A function
   whose only IO is global wires used to declare `io_registers_t` signals without
