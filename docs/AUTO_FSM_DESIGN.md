@@ -801,15 +801,19 @@ AUTO_FSM is an independent delay consumer in
 A stateful caller does not require a pipeline landscape for its scheduler to
 receive operation delays.
 
-- **Operation roots:** each `sub_inst_to_auto_fsm_key` call contributes its
-  dependency subtree. The scheduler composes measured primitive delays and
-  eligible combinational measurements. Generated stateful FSMs remain
-  estimated atomic spans; full-design reports check their real register paths.
-  Selected functional-unit entities in `tag.schedule["fus"]` also remain
-  independent roots after the FSM replaces its pure function. This calibrates
-  optimized/narrowed units before the next scheduling pass; treating them as
-  ordinary stateful surroundings can change the timing budget's inputs between
-  a tightening trial and the rebuilt schedule.
+- **Operation roots:** on the bootstrap pass, each `sub_inst_to_auto_fsm_key`
+  call (the combinational passthrough) contributes its dependency subtree. The
+  scheduler composes measured primitive delays and estimates of the
+  hierarchical operations above them.
+- **Scheduled FSMs:** once the call points at a generated stateful FSM, that
+  FSM is one atomic span: a single whole-module synthesis whose
+  register-to-register path is its worst state's delay. Nothing inside it is
+  collected. Rescheduling therefore keeps the operation delays carried from the
+  bootstrap pass (`_schedule_delays`). Measuring the units inside a scheduled
+  FSM replaced those carried delays with whichever units the current schedule
+  happened to instantiate. A tightening trial and the rebuilt schedule then
+  disagreed (`auto_fsm_timing_iter_test` oscillated 1→2→1 states), and a copied
+  warm directory rescheduled differently (`warm_copy_no_resynth_test`).
 - **`AUTO_FSM_MUX_ENTITIES`:** registered operand muxes remain explicit
   calibration consumers, independently of the surrounding stateful hierarchy.
   Their reports inform schedule sharing and area search. Identical tool inputs

@@ -3277,7 +3277,7 @@ class ParserState:
         self.FuncToInstances = {}  # dict[func_name]=set([instance, name, usages, of , func)
         self.path_delay_funcs = None  # Full-parse delay dependencies in bottom-up order.
         self.path_delay_measure_funcs = None  # Hierarchy eligible for geometry measurements.
-        self.path_delay_frontier_funcs = None  # Combinational geometry measurement frontiers.
+        self.path_delay_frontier_funcs = None  # Measured frontiers: comb pipeline roots, scheduled AUTO_FSMs.
 
         # Pragma info
         self.main_mhz = {}  # dict[main_inst_name]=mhz # Any inst name can be used

@@ -2611,7 +2611,8 @@ def COLLECT_PATH_DELAY_REQUIREMENTS(parser_state, root_func_names=None):
 
     Returns ordered dependencies and the two eligibility/frontier sets without
     mutating ParserState. ADD_PATH_DELAY_TO_LOOKUP owns the full-parse scope.
-    AUTO_FSM's scheduler and operand muxes are independent timing consumers.
+    AUTO_FSM's bootstrap operations and operand muxes are independent timing
+    consumers; a scheduled (stateful) FSM is one measured atomic span.
     """
     import AUTO_FSM
     import AUTO_PIPELINE
@@ -2619,19 +2620,22 @@ def COLLECT_PATH_DELAY_REQUIREMENTS(parser_state, root_func_names=None):
     needed, eligible, frontier = AUTO_PIPELINE.COLLECT_PIPELINE_DELAY_REQUIREMENTS(
         parser_state, root_func_names
     )
+    atomic_fsms = set()
     if root_func_names is None:
         extra_roots = set(AUTO_FSM.AUTO_FSM_MUX_ENTITIES(parser_state))
         for logic in list(parser_state.FuncLogicLookupTable.values()):
-            extra_roots.update(
-                logic.submodule_instances[local]
-                for local in getattr(logic, "sub_inst_to_auto_fsm_key", {})
-            )
-        # A scheduled FSM's selected units can differ from the bootstrap
-        # operations (e.g. narrowed adders). They still inform rescheduling;
-        # their stateful caller must not hide their through-delay frontier.
-        for tag in AUTO_FSM.GET_TAGS(parser_state).values():
-            if tag.schedule is not None:
-                extra_roots.update(tag.schedule["fus"].values())
+            for local in getattr(logic, "sub_inst_to_auto_fsm_key", {}):
+                func = logic.submodule_instances[local]
+                # A scheduled FSM holds state: one whole-module synthesis gives
+                # its worst state's delay. Nothing inside it is collected, so
+                # rescheduling keeps the operation delays carried from the
+                # bootstrap pass (AUTO_FSM._schedule_delays).
+                if HIER_SYN_MODE != "prim" and FUNC_SUBTREE_HAS_STATE(func, parser_state):
+                    atomic_fsms.add(func)
+                else:
+                    extra_roots.add(func)
+        needed.update(atomic_fsms)
+        frontier.update(atomic_fsms)
         if extra_roots:
             extra, extra_eligible, extra_frontier = (
                 AUTO_PIPELINE.COLLECT_PIPELINE_DELAY_REQUIREMENTS(parser_state, extra_roots)
@@ -2646,7 +2650,7 @@ def COLLECT_PATH_DELAY_REQUIREMENTS(parser_state, root_func_names=None):
             return
         seen.add(func)
         logic = parser_state.FuncLogicLookupTable[func]
-        if logic.vhdl_module_text is None:
+        if logic.vhdl_module_text is None and func not in atomic_fsms:
             for child in logic.submodule_instances.values():
                 visit(child)
         result.append(func)
@@ -2725,11 +2729,10 @@ def FUNC_PATH_DELAY_IS_ESTIMABLE(logic, parser_state, frontier_funcs):
     # underneath, which are measured and cached as usual.
     if logic.func_name in getattr(parser_state, "func_force_estimated", ()):
         return True
-    # Internal register paths are not through-delays. Surrounding stateful
-    # hierarchy and blocked combinational helpers use primitive estimates.
-    if HIER_SYN_MODE == "prim" or FUNC_SUBTREE_HAS_STATE(logic.func_name, parser_state):
-        return True
-    return logic.func_name not in frontier_funcs
+    # Measured: combinational pipeline frontiers and scheduled AUTO_FSM spans.
+    # Other stateful hierarchy reports internal register paths, not
+    # through-delays, so it and blocked helpers use primitive estimates.
+    return HIER_SYN_MODE == "prim" or logic.func_name not in frontier_funcs
 
 
 def SET_MEASURED_DELAY_FROM_REPORT(logic, parsed_timing_report, parser_state):

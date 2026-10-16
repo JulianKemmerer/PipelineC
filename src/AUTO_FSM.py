@@ -4181,7 +4181,7 @@ class _Codegen(AUTO._GraphCodegen):
 
     def _note_mux_entity(self, t, n):
         """Remember that this FSM instantiates an operand mux of this shape, so
-        SYN calibrates it independently of the estimated stateful FSM span.
+        SYN measures it on its own, apart from the FSM's one whole-module run.
         Measured once, cached on disk, and read straight back by the next
         schedule's mux delay lookup -- the loop that replaces v1's flat
         MUX_PENALTY_DU guess."""
@@ -4192,10 +4192,10 @@ def _REGISTER_MUX_ENTITIES(parser_state, mux_shapes):
     """Mark the operand mux hw_funcs this FSM instantiates as things SYN should
     measure in their own right.
 
-    A generated FSM holds state and is estimated as an atomic span. Its
-    operand muxes remain independent calibration consumers for the scheduler
-    and area search. Naming them lets COLLECT_PATH_DELAY_REQUIREMENTS resolve
-    their delays even when no AUTO_PIPELINE landscape visits the FSM.
+    A generated FSM holds state, so SYN measures it as one atomic span and
+    collects nothing inside it. Its operand muxes remain independent
+    calibration consumers for the scheduler and area search. Naming them lets
+    COLLECT_PATH_DELAY_REQUIREMENTS measure them anyway.
 
     Records the live callables, not entity names: the names are only assigned
     when the generated source is elaborated, which has not happened yet at code
@@ -4332,8 +4332,9 @@ def DEL_AUTO_FSM_SUBTREE_CACHE():
 def AUTO_FSM_MUX_ENTITIES(parser_state):
     # Operand multiplexers inside generated AUTO_FSM state machines.
     #
-    # A generated FSM holds state, so its geometry stays estimated. Its muxes
-    # are independent scheduler consumers whose real delay is
+    # A generated FSM holds state, so it is one measured atomic span and
+    # nothing inside it is collected. Its muxes are independent scheduler
+    # consumers whose real delay is
     # the single most load-bearing input to AUTO_FSM's decision about HOW FINELY
     # to share -- the thing v1 had to guess at with a flat constant. So these
     # few entities are collected for measurement in their own right. They are
@@ -4374,8 +4375,9 @@ def FUNC_SUBTREE_HAS_AUTO_FSM(func_name, parser_state):
     #
     # On the bootstrap pass the call site points at a combinational passthrough.
     # Once scheduled, the tag remains on the caller and points at the generated
-    # stateful FSM, whose geometry is estimated. Full-design synthesis checks
-    # its register paths; selected units remain independent delay consumers.
+    # stateful FSM: one whole-module synthesis whose register-to-register path
+    # is its worst state's delay. Nothing inside it is collected, so
+    # rescheduling keeps the operation delays carried from the bootstrap pass.
     if func_name in _FUNC_SUBTREE_HAS_AUTO_FSM_cache:
         return _FUNC_SUBTREE_HAS_AUTO_FSM_cache[func_name]
     logic = parser_state.FuncLogicLookupTable[func_name]

@@ -339,9 +339,8 @@ scoped fallback and no-op fallback, estimated atomic floors, separate automatic
 MCP endpoint evidence, and explicit primitive-only/full-hierarchy modes.
 It also checks declared scope initialization, an error before initialization,
 rooted fixed-latency characterization preserving full-parse scope, and independent
-scope collections in a copied ParserState. A scheduled AUTO_FSM's selected
-functional units remain independent delay consumers after replacing the original
-function, including optimized operations absent from the bootstrap circuit.
+scope collections in a copied ParserState. A scheduled (stateful) AUTO_FSM is
+measured once as a whole, and nothing inside it is collected.
 
 `sweep_refinement_recovery_test.py` (`unit`) uses the real sweep feedback and
 fallback loop with scripted timing. A failed zero-cut trim concurrent with MCP
@@ -1370,8 +1369,10 @@ real-parse counterpart of the package-merge cases above.
   the VHDL `sim_print` formats values through a 32-bit integer, so a wider value overflows
   in GHDL.
 - **`self_check_mult_karatsuba_pipelined_test.py` (native_vs_vhdl_sim, sky130).** A 16×16
-  hybrid at threshold 6 under `@MAIN(150.0)`. The sweep builds 3 stages; the operands ride
-  along with the product, and the checker compares against `make_inferred_mult`.
+  hybrid at threshold 6 under `@MAIN(60.0)`. The sweep builds 3 slices (4 stages); the
+  operands ride along with the product, and the checker compares against
+  `make_inferred_mult`. The goal sits below the ~73 MHz ceiling set by the path from a
+  checker register through the pipe's input fanout, which pipe cuts cannot shorten.
 
 The area of the 130- and 64-bit hybrid is a manual Vivado probe,
 `qor/multiplier/karatsuba_inferred_leaves.py`. It is not registered in `run_all`; see

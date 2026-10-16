@@ -11,7 +11,6 @@ from unittest.mock import patch
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[3]))
 import AUTO_MULTI_CYCLE as MCP
-import AUTO_FSM
 import AUTO_PIPELINE as AP
 import LOGIC
 import PY_TO_LOGIC
@@ -23,7 +22,7 @@ DESIGN = Path(__file__).with_name("synthesis_scope_design.py")
 
 
 @contextlib.contextmanager
-def characterized(mode="leaf", cached_delay=None):
+def characterized(mode="leaf", cached_delay=None, prepare=None):
     calls = []
 
     def synth(inst, logic, *args, **kwargs):
@@ -60,6 +59,8 @@ def characterized(mode="leaf", cached_delay=None):
         pypeline.SET_AUTO_MULTI_CYCLE_LATENCY_CACHE({})
         with contextlib.redirect_stdout(io.StringIO()):
             ps = PY_TO_LOGIC.PARSE_FILE(str(DESIGN))
+            if prepare is not None:
+                prepare(ps)
             SYN.ADD_PATH_DELAY_TO_LOOKUP(ps)
         yield ps, calls
 
@@ -146,16 +147,32 @@ def test_unrelated_controller_has_no_geometry_jobs():
         assert not any("PLUS_uint64" in f for _, f in calls)
 
 
-def test_scheduled_fsm_functional_units_remain_independent_delay_consumers():
-    # Once the FSM replaces its pure function, selected optimized operations
-    # still need calibration for the next scheduling pass. A stateful caller
-    # alone must not turn these scheduler inputs into surrounding estimates.
-    tag = SimpleNamespace(schedule={"fus": {0: "goal_less_math"}})
-    with patch.object(AUTO_FSM, "GET_TAGS", lambda ps: {"fsm": tag}):
-        with characterized() as (ps, calls):
-            assert any(f == "goal_less_math" for _, f in calls), calls
-            assert "goal_less_math" in ps.path_delay_frontier_funcs
-            assert not any(f == "goal_less_tag_main" for _, f in calls)
+def _mark_scheduled_fsm(ps):
+    # After scheduling, the AUTO_FSM call site points at a generated stateful FSM.
+    main = ps.FuncLogicLookupTable["fsm_main"]
+    local = next(l for l, f in main.submodule_instances.items() if f == "fsm_stand_in")
+    main.sub_inst_to_auto_fsm_key = {local: "scope_fsm"}
+
+
+def test_scheduled_fsm_is_one_measured_atomic_span():
+    # Measuring the units inside a scheduled FSM replaced the operation delays
+    # carried from the bootstrap pass, so rescheduling saw different numbers
+    # (auto_fsm_timing_iter_test oscillated; warm copies rescheduled).
+    with characterized(prepare=_mark_scheduled_fsm) as (ps, calls):
+        fsm = ps.FuncLogicLookupTable["fsm_stand_in"]
+        assert [f for _, f in calls if f == "fsm_stand_in"] == ["fsm_stand_in"]
+        assert not fsm.delay_is_estimated
+        inside = set(fsm.submodule_instances.values())
+        assert inside and not inside.intersection(ps.path_delay_funcs), (
+            inside.intersection(ps.path_delay_funcs)
+        )
+        assert not any(f == "fsm_main" for _, f in calls)
+
+
+def test_unmarked_stateful_function_without_consumer_has_no_jobs():
+    with characterized() as (ps, calls):
+        assert "fsm_stand_in" not in ps.path_delay_funcs
+        assert not any(f == "fsm_stand_in" for _, f in calls)
 
 
 def test_opaque_fallback_requires_failing_path_evidence_in_the_plan():

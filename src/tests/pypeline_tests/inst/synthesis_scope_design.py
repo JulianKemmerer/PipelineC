@@ -1,5 +1,6 @@
 # pyright: reportInvalidTypeForm=none
-"""Pipeline geometry, blocked bank helpers, opaque text and MCP evidence."""
+"""Pipeline geometry, blocked bank helpers, opaque text, MCP evidence and a
+stand-in for a scheduled AUTO_FSM (marked by the test after parsing)."""
 
 from pypeline import (
     AUTO_PIPELINE,
@@ -112,6 +113,19 @@ fixed_pipeline = AUTO_PIPELINE(fixed_only_math, latency=2, name="fixed_only")
 @MAIN
 def fixed_only_main(x: uint24_t) -> uint48_t:
     return fixed_pipeline(x)
+
+
+@hw_func
+def fsm_stand_in(x: uint24_t) -> uint24_t:
+    # Holds state like a generated AUTO_FSM; its operator is used nowhere else.
+    acc: Reg[uint24_t]
+    acc = acc ^ (x - 5)
+    return acc
+
+
+@MAIN(80.0)
+def fsm_main(x: uint24_t) -> uint24_t:
+    return fsm_stand_in(x)
 
 
 @MAIN(80.0)

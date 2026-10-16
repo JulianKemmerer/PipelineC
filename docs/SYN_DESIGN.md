@@ -318,10 +318,10 @@ true primitives. Entirely unrelated MAINs and controller subtrees outside
 these dependencies receive no geometry jobs. Explicit `root_func_names`
 select independent consumers for fixed-latency placement. AUTO_FSM operation
 roots and registered operand muxes are also independent consumers, even if no
-pipeline landscape enters their stateful caller. After scheduling, the selected
-functional-unit entities (`tag.schedule["fus"]`) remain explicit roots: narrowing
-can introduce different operators from the bootstrap function. Their through-delay
-measurements calibrate subsequent schedules without measuring the stateful FSM.
+pipeline landscape enters their stateful caller. After scheduling, the generated
+stateful FSM is one measured atomic span (added to the measurement frontier) and
+nothing inside it is collected, so rescheduling keeps the operation delays
+carried from the bootstrap pass. In `--no_hier_syn` mode it is estimated instead.
 
 ### Measurements and estimates
 
@@ -338,9 +338,11 @@ The default synthesis jobs are:
   evidence for their current datapath shape get a targeted report for count
   selection. This is separate from geometry and never assigns the holder's
   internal critical path or cycle-normalized delay to `Logic.delay`.
+- **Scheduled AUTO_FSM spans:** one whole-module run per generated stateful
+  FSM, plus its registered operand muxes (see above).
 
-Inspectable hierarchy with state anywhere below stays **estimated**, whether
-or not a pipeline tag lies inside it. Its standalone report can describe an
+Other inspectable hierarchy with state anywhere below stays **estimated**,
+whether or not a pipeline tag lies inside it. Its standalone report can describe an
 internal register path rather than the input-to-output span placement needs.
 Combinational helpers blocked by their callers also stay estimated. Generated
 `VAR_REF_RD` and `VAR_REF_ASSIGN` helpers with children are hierarchy, not
