@@ -650,8 +650,12 @@ Fmax. PYRTL's generated script checks for a zero-length critical path before
 `max_freq` (which would divide by zero with `FF_OVERHEAD = 0`). It prints
 `PYRTL.NO_TIMING_PATHS_MARKER`, and `SYN_AND_REPORT_TIMING_NEW` raises a readable
 error on both fresh and reused logs. DEVICE_MODELS raises the same error for a
-zero worst period. Logic that truly has no timing path should be marked `@wires`,
-which `LOGIC_IS_ZERO_DELAY` never times. `PYRTL.PathReport` matches only lines
+zero worst period. `LOGIC_IS_ZERO_DELAY` never times a stateless user function with
+no submodules (every operator is a submodule, so its body is only casts, slices,
+concatenation, constant shifts or constants), so such a helper never reaches this
+error, nor gets its backend's register-to-register floor as a delay that the planner
+would then try to cut. Other logic that truly has no timing path should be marked
+`@wires`, which `LOGIC_IS_ZERO_DELAY` never times either. `PYRTL.PathReport` matches only lines
 *starting* with `Fmax (MHz):`, so a traceback quoting the script's `print` line can
 no longer parse as a number.
 

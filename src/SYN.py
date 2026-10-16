@@ -1722,6 +1722,15 @@ def LOGIC_IS_ZERO_DELAY(logic, parser_state, allow_none_delay=False):
         # has no combinational operators to time. In particular PYRTL's
         # zero-FF-overhead timing model cannot divide by this zero path delay.
         return True
+    elif (
+        not logic.is_c_built_in
+        and not logic.submodule_instances
+        and not logic.state_regs
+    ):
+        # Every operator is a submodule, so a stateless user function with
+        # none is only wiring. Timing it would just measure the backend's
+        # floor, which the planner then tries to cut.
+        return True
     elif logic.is_c_built_in and LOGIC.IS_SIM_CTRL_FUNC_NAME(logic.func_name):
         # printf/sim_print, sim_assert, and sim_finish submodules are all void,
         # simulation-console-facing builtins with no real output to measure a delay

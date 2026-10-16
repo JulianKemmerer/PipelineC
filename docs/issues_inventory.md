@@ -95,7 +95,7 @@ Within each group, bugs that affect both front ends come first, problems in the 
 | 15 | [#357][i357] | Both | A `char` register with an integer initial value: invalid VHDL in C, rejected in Python | Yes, GHDL |
 | 16 | [#371][i371] | Both | `@pipeline_latency`/`FUNC_LATENCY` on a wire-only body produces invalid VHDL | Yes, GHDL |
 | 17 | [#175][i175] | Both | IO registers on functions that touch global wires break the build (Python fixed) | No |
-| 18 | [#288][i288] | Both | A function with no timing path stops vendor-tool builds | No |
+| 18 | [#288][i288] | Both | A function with no timing path stops vendor-tool builds (constant-only functions fixed) | No |
 | 19 | [#137][i137] | Both | Internal user clocks are left unconstrained in Quartus | No |
 | 20 | [#168][i168] | Both | Enum literals shared by two enum types can produce invalid VHDL | No |
 | 21 | [#71][i71] | Both | `f().x` crashes the elaborator | Yes |
@@ -424,7 +424,8 @@ Within each group, bugs that affect both front ends come first, problems in the 
 ### 18. [#288][i288]: a function with no timing path stops vendor-tool builds
 
 - **Front ends:** both.
-- **What happens:** when a function synthesizes to a netlist with no timing path (for example, it returns a constant), vendor-tool builds stop with `No timing paths reported!`. The PyRTL and sky130 backends already fail with a clear message that suggests marking the function as wires.
+- **What happens:** when a function synthesizes to a netlist with no timing path, vendor-tool builds stop with `No timing paths reported!`. The PyRTL and sky130 backends already fail with a clear message that suggests marking the function as wires.
+- **Fixed for constant-only functions:** `SYN.LOGIC_IS_ZERO_DELAY` does not time a stateless user function with no submodules, so a function that only returns a constant (the case in the issue) or only casts or slices its inputs is never synthesized on its own. Verified with Gowin in both front ends. A function that has operators but still synthesizes away was not re-run.
 - **Where to look:** `src/SYN.py:2197`. The clearer message is `PYRTL.NO_TIMING_PATHS_ERROR_TEXT` (`src/PYRTL.py:30`). Open [PR #310][p310] changes related zero-delay handling.
 - **Workaround:** `#pragma FUNC_WIRES <function>` in C, `@wires` in Python.
 
