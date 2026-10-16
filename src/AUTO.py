@@ -1547,7 +1547,7 @@ def _is_decomposable(parser_state, entity, logic):
 
 def _soft_equivalents(parser_state):
     """built-in op entity -> equivalent Python-sourced entity, as prepared by
-    PREPARE_SOFT_EQUIVALENTS during the bootstrap elaboration."""
+    PREPARE_SOFT_EQUIVALENTS during AUTO_FSM call-site elaboration."""
     return getattr(parser_state, "pypeline_auto_fsm_soft_equiv", {})
 
 
@@ -1668,11 +1668,13 @@ def PREPARE_SOFT_EQUIVALENTS(tag, parser_state, elaborator):
     """Elaborate soft-operator equivalents for the built-in operators inside an
     AUTO_FSM'd function, so the area search has something to descend INTO.
 
-    Why here: this runs on the bootstrap pass, the one moment where a live
+    Why here: this runs while the AUTO_FSM call site elaborates, where a live
     elaborator, the design's module globals, and the tagged function are all in
-    hand at once. The results sit in FuncLogicLookupTable uninstantiated --
-    candidates, not hardware -- exactly as the tagged function's own Logic does
-    on every later pass. Nothing is built unless the search actually picks it.
+    hand at once -- on the bootstrap pass for the search, and again on each
+    scheduled re-parse, whose code generator calls the units a schedule bound
+    inside an opened equivalent (AUTO_FSM._PREPARE_CANDIDATES). The results sit
+    in FuncLogicLookupTable uninstantiated -- candidates, not hardware. Nothing
+    is built unless the search actually picks it.
 
     Best-effort throughout: a shape with no soft equivalent, or an operators
     package that is not importable, just means one fewer descent candidate.

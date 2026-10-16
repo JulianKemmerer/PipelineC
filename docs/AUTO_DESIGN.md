@@ -79,8 +79,8 @@ elaborated pure function into a dataflow graph:
   decomposition seeds. Only operations that came from Python source can be
   opened (`_is_decomposable`); a built-in operator is opened through its soft
   equivalent (`_open_target`).
-- **Soft equivalents.** `PREPARE_SOFT_EQUIVALENTS` elaborates, on the bootstrap
-  pass, a decomposable Pypeline implementation of each built-in operator
+- **Soft equivalents.** `PREPARE_SOFT_EQUIVALENTS` elaborates, on every
+  AUTO_FSM call-site elaboration (bootstrap and scheduled passes), a decomposable Pypeline implementation of each built-in operator
   (`_SOFT_FACTORY_FOR_OP`, `_soft_equivalent_callable`), uninstantiated, so a
   search has something to descend into. `_RESOLVE_BUILTIN_SUBMODULES`
   materializes the `Logic` of built-in operators inside such a candidate

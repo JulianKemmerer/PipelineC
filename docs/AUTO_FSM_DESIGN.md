@@ -873,9 +873,13 @@ supplies an equivalent that does — `make_soft_add_ripple`,
 are inferred bitwise operations. Descent can therefore continue all the way
 down to gates.
 
-Candidates are prepared during the bootstrap elaboration
-(`PREPARE_SOFT_EQUIVALENTS`), the one moment a live elaborator, the design's
-module globals and the tagged function are all in hand at once. They land in
+Candidates are prepared (`PREPARE_SOFT_EQUIVALENTS`) while the AUTO_FSM call
+site elaborates, where a live elaborator, the design's module globals and the
+tagged function are all in hand at once. That happens on every pass
+(`_PREPARE_CANDIDATES`): the bootstrap pass's search chooses among them, and
+each scheduled re-parse must record a live callable for every unit the carried
+schedule binds — an opened soft multiplier's adder tree, say — or code
+generation cannot call it. They land in
 `FuncLogicLookupTable` **uninstantiated** — candidates, not hardware. Nothing is
 built unless the search picks it. Two supporting details that are easy to get
 wrong:
@@ -913,8 +917,8 @@ and the `[type resolver: array reconstruction]` section of
 
 #### The search itself
 
-**Combinational graph choices are included by default.** Bootstrap elaboration
-calls `AUTO_COMB_OPT.prepare` to create exact alternatives through the shared
+**Combinational graph choices are included by default.** AUTO_FSM call-site
+elaboration (`_PREPARE_CANDIDATES`, on every pass) calls `AUTO_COMB_OPT.prepare` to create exact alternatives through the shared
 `AUTO` search ([`AUTO_DESIGN.md`](AUTO_DESIGN.md)): CSE, exclusive sharing, factoring, constant arithmetic, bit-width
 reduction and decomposition. No explicit `AUTO_COMB_AREA_OPT` tag is required.
 The delay objective of the same preparation path also exposes AUTO_COMB_DELAY_OPT's
@@ -930,7 +934,10 @@ the original graph's result remains an incumbent. A lower-combinational-area
 graph may lose because it needs more state or wider selection logic.
 
 Candidate graphs and their scores are pinned during a build's repeated parses,
-but generated callables are rematerialized in each parser state. A selected
+but generated callables are rematerialized in each parser state. Soft
+equivalents are prepared separately rather than left to `prepare`, which returns
+before seeding them when it retains the original graph (a scoped operator
+implementation in the call tree). A selected
 schedule records its actual source entity and rewrite moves. The additional
 candidate count is bounded and very large expanded graphs are skipped before
 scheduling; see [the shared search limits](AUTO_COMB_OPT_DESIGN.md#6-fsm-integration).
@@ -1346,7 +1353,7 @@ at least 3"*.
 | test | category | what it proves |
 |---|---|---|
 | `auto_fsm_test.py` | native_sim, (synth via wrapper) | the pure function's semantics, and the passthrough behaviour when unscheduled |
-| `auto_fsm_unit_test.py` | unit | scheduler/codegen internals: binding, one-op-per-unit-per-state, dependency order, distinct-operand mux coalescing and common-glue factoring, same- and cross-FU register reuse, recovered rolling output and consume/produce storage, field-lifetime input compaction, optional output bank, automatic control encoding, budget → states, floors, determinism, schedule is carryable data, tighten-loop termination (`SCHEDULES_EQUAL` ignores budget bookkeeping, the `TIGHTENING_STALLED` truth table), unmeasured delays resolved rather than zeroed, the zero-op guard (and measured-0 operations still legal), soft-operator equivalents, soft adder sign extension, `_TypeResolver` array reconstruction, real-sky130-area tiering (cold cache falls back to scaled abstract not zero, a cache hit wins over any abstract guess, `--auto_fsm_abstract_area`, real flip-flop area) |
+| `auto_fsm_unit_test.py` | unit | scheduler/codegen internals: binding, one-op-per-unit-per-state, dependency order, distinct-operand mux coalescing and common-glue factoring, same- and cross-FU register reuse, recovered rolling output and consume/produce storage, field-lifetime input compaction, optional output bank, automatic control encoding, budget → states, floors, determinism, schedule is carryable data, a scheduled re-parse prepares the soft equivalents its schedule binds, tighten-loop termination (`SCHEDULES_EQUAL` ignores budget bookkeeping, the `TIGHTENING_STALLED` truth table), unmeasured delays resolved rather than zeroed, the zero-op guard (and measured-0 operations still legal), soft-operator equivalents, soft adder sign extension, `_TypeResolver` array reconstruction, real-sky130-area tiering (cold cache falls back to scaled abstract not zero, a cache hit wins over any abstract guess, `--auto_fsm_abstract_area`, real flip-flop area) |
 | `area_model_test.py` (`src/tests/pypeline_tests/inst/`) | unit | not AUTO_FSM-specific (SYN/DEVICE_MODELS leaf-area-cache coverage), but two tests here directly guard AUTO_FSM.py's own constant: the committed `cache/area` excludes STA-harness registers, and `AUTO.UM2_PER_ABSTRACT_AREA_UNIT` refits to what is actually committed |
 | `self_check_auto_fsm_test.py` | native_sim, vhdl_sim, synth ×2 | the FSM computes what the function did — in native sim, in GHDL, at latency 0 and at real latency |
 | `stream_auto_fsm_test.py` | native_sim | `make_stream_auto_fsm`'s handshake protocol: ready deasserts while busy, latency/II == `fsm.latency + 1`, and — the property raw AUTO_FSM cannot provide — a stalled consumer never loses a result and sees stable data while it's held |

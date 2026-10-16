@@ -4229,6 +4229,24 @@ def GENERATE_FSM_SOURCE(tag, schedule, parser_state):
     return _Codegen(tag, schedule, parser_state).generate()
 
 
+def _PREPARE_CANDIDATES(tag, parser_state, elaborator):
+    """Elaborate every alternative the schedule may bind: soft-operator
+    equivalents (see PREPARE_SOFT_EQUIVALENTS) and AUTO_COMB_OPT's area and
+    delay graph alternatives.
+
+    Runs identically on the bootstrap pass, where the area search chooses among
+    them, and on the scheduled pass, whose fresh parse must record a live
+    callable for every unit the carried schedule binds. AUTO_COMB_OPT.prepare
+    alone does not cover the soft equivalents: it returns before preparing them
+    for some functions (one calling a scoped operator implementation, say).
+    """
+    import AUTO_COMB_OPT
+
+    AUTO.PREPARE_SOFT_EQUIVALENTS(tag, parser_state, elaborator)
+    AUTO_COMB_OPT.prepare(tag.func, parser_state, elaborator, strict=False)
+    AUTO_COMB_OPT.prepare(tag.func, parser_state, elaborator, strict=False, objective="delay")
+
+
 def BUILD_AUTO_FSM_FUNC(tag, parser_state, elaborator=None):
     """Elaborator entry point: what hardware an AUTO_FSM call site instantiates.
 
@@ -4248,13 +4266,9 @@ def BUILD_AUTO_FSM_FUNC(tag, parser_state, elaborator=None):
     if schedule is None:
         # Bootstrap pass: alongside putting the real function into the design so
         # its operations get measured, prepare the descent candidates the area
-        # search will consider (see PREPARE_SOFT_EQUIVALENTS).
+        # search will consider.
         if elaborator is not None:
-            AUTO.PREPARE_SOFT_EQUIVALENTS(tag, parser_state, elaborator)
-            import AUTO_COMB_OPT
-
-            AUTO_COMB_OPT.prepare(tag.func, parser_state, elaborator, strict=False)
-            AUTO_COMB_OPT.prepare(tag.func, parser_state, elaborator, strict=False, objective="delay")
+            _PREPARE_CANDIDATES(tag, parser_state, elaborator)
         fn = BUILD_PASSTHROUGH_FUNC(tag)
         # Keep the passthrough estimated during scoped characterization. It
         # makes the tagged function's operations visible to delay measurement.
@@ -4273,10 +4287,7 @@ def BUILD_AUTO_FSM_FUNC(tag, parser_state, elaborator=None):
             elaborator._elaborate_live_func(
                 getattr(tag.func, "__name__", "auto_fsm_func"), tag.func
             )
-            import AUTO_COMB_OPT
-
-            AUTO_COMB_OPT.prepare(tag.func, parser_state, elaborator, strict=False)
-            AUTO_COMB_OPT.prepare(tag.func, parser_state, elaborator, strict=False, objective="delay")
+            _PREPARE_CANDIDATES(tag, parser_state, elaborator)
         name, src, extra_globals = GENERATE_FSM_SOURCE(tag, schedule, parser_state)
         fn = AUTO._exec_generated(name, src, extra_globals)
     import inspect

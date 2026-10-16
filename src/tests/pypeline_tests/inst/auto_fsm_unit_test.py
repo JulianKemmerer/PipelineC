@@ -237,6 +237,51 @@ FUSED_PACK_SRC = textwrap.dedent(
     """
 )
 
+# A pinned multiplier (make_inferred_mult: a scoped operator registration) makes
+# AUTO_COMB_OPT.prepare keep the original graph and return before it prepares
+# soft equivalents; x.a * x.c is the built-in multiply a schedule opens into
+# soft_mult_shift_add, whose adder tree is an entity of its own.
+SCOPED_SOFT_SRC = textwrap.dedent(
+    """
+    # pyright: reportInvalidTypeForm=none
+    import os, sys
+    sys.path.insert(0, {repo!r})
+    from pypeline import (AUTO_FSM, MAIN, NamedTuple, Reg, hw_func, make_uint_t,
+                          struct, uint1_t, uint8_t, uint16_t)
+    from operators.soft_mult import make_inferred_mult
+
+    uint3_t = make_uint_t(3)
+    uint11_t = make_uint_t(11)
+    uint17_t = make_uint_t(17)
+    pinned_mult = make_inferred_mult(uint8_t, uint8_t)
+
+    @struct
+    class in_t(NamedTuple):
+        a: uint8_t
+        b: uint8_t
+        c: uint3_t
+
+    @hw_func
+    def mix(x: in_t) -> uint17_t:
+        p: uint16_t = pinned_mult(x.a, x.b)
+        q: uint11_t = x.a * x.c
+        return p + q
+
+    FSM = AUTO_FSM(mix)
+
+    @MAIN({mhz})
+    def top(start: uint1_t, x: in_t) -> uint17_t:
+        s: FSM.in_stream_t
+        s.data = x
+        s.valid = start
+        o = FSM(s)
+        r: Reg[uint17_t]
+        if o.valid:
+            r = o.data
+        return r
+    """
+)
+
 REPO = os.path.abspath(
     os.path.join(os.path.dirname(os.path.abspath(__file__)), "../../..")
 )
@@ -1079,6 +1124,57 @@ def main():
             AUTO_FSM.SCHEDULES_EQUAL({key7: swept7}, {key6: swept}),
             "the sweep is deterministic across re-elaborations (its result "
             "names the generated entity, so it has to be)",
+        )
+
+        print("[scheduled re-parse prepares the soft equivalents it binds]")
+        # The driver schedules on the bootstrap parse, then parses the design
+        # again with the schedule installed; the code generator calls every
+        # bound unit through a callable THAT parse recorded. Opening a built-in
+        # multiply binds units (its soft equivalent's adder tree) that exist
+        # only once the soft equivalent is elaborated, so the scheduled pass
+        # must prepare it too -- here without AUTO_COMB_OPT.prepare's help.
+        opened_mult = "BIN_OP_INFERRED_MULT_uint8_t_uint3_t"
+        ps8, key8, tag8 = parse_design(
+            tmp, mhz=25.0, name="d_scoped_soft", source=SCOPED_SOFT_SRC
+        )
+        entity8 = AUTO._entity_key_for_callable(ps8, tag8.func)
+        prepared8 = ps8.pypeline_comb_area_opt_candidates[entity8][0][1]
+        check(
+            prepared8.get("unsupported") == "scoped operator implementations retained"
+            and opened_mult in AUTO._soft_equivalents(ps8),
+            "precondition: prepare returned early, and the bootstrap pass "
+            "prepared the multiply's soft equivalent anyway",
+        )
+        # Every operator and Python-sourced call costs something, so each is a
+        # scheduled unit; wiring stays free glue.
+        soft8 = AUTO._soft_equivalents(ps8)[opened_mult]
+        callables8 = AUTO._entity_callables(ps8)
+        for entity in set(AUTO._subtree_entities(ps8, entity8)) | set(
+            AUTO._subtree_entities(ps8, soft8)
+        ):
+            logic = ps8.FuncLogicLookupTable.get(entity)
+            if logic is not None:
+                costs = entity.startswith("BIN_OP_") or entity in callables8
+                logic.delay = 100 if costs else 0
+        sched8 = AUTO_FSM.BUILD_SCHEDULE(ps8, key8, tag8, 0.9, None, (opened_mult,))
+        check(
+            any(e.startswith("soft_add_tree") for e in sched8["fus"].values()),
+            "precondition: the schedule binds the soft multiplier's adder tree",
+        )
+        pypeline.SET_AUTO_FSM_SCHEDULE_CACHE({key8: sched8})
+        try:
+            _ps9, _key9, tag9 = parse_design(
+                tmp, mhz=25.0, name="d_scoped_soft", source=SCOPED_SOFT_SRC
+            )
+            reparse_error = None
+        except AUTO.AutoError as e:
+            reparse_error = str(e)
+        finally:
+            pypeline.SET_AUTO_FSM_SCHEDULE_CACHE({})
+        check(
+            reparse_error is None and tag9._generated is not None,
+            "the scheduled re-parse generates the FSM, every bound unit callable "
+            f"(error: {reparse_error})",
         )
 
     # ── soft-operator equivalents: which built-ins can be opened, and into
