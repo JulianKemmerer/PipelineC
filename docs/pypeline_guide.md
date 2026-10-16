@@ -1241,7 +1241,8 @@ Arithmetic grows to retain its mathematical result rather than silently truncati
 
 | Expression | Result width after operand promotion |
 |---|---|
-| `a + b`, `a - b` | `max(width(a), width(b)) + 1` |
+| `a + b`, signed `a - b` | `max(width(a), width(b)) + 1` |
+| unsigned `a - b` | `max(width(a), width(b))` (wraps) |
 | `a * b` | `width(a) + width(b)` |
 | Other integer binary operations | `max(width(a), width(b))` |
 | `-a` | `width(a) + 1`, signed |
