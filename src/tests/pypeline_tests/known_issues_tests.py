@@ -164,6 +164,29 @@ def get_tests() -> list:
             expect_fail=True,
         )
     )
+    # C float-format conversion (float -> float_5_10_t) is the inline VHDL
+    # function resize_float_e_m_t, not an operator: out-of-range values wrap
+    # (GHDL), and its logic sits in user function bodies where no delay
+    # measurement sees it. Issue #376.
+    tests.append(
+        Test(
+            name="float_format_cast_wraps_known_issue",
+            category="known_issues",
+            cmd=[INST_DIR / "float_format_cast_test.py", "--check", "values"],
+            needs_out_dir=True,
+            expect_fail=True,
+            requires=["ghdl"],
+        )
+    )
+    tests.append(
+        Test(
+            name="float_format_cast_inline_logic_known_issue",
+            category="known_issues",
+            cmd=[INST_DIR / "float_format_cast_test.py", "--check", "inline"],
+            needs_out_dir=True,
+            expect_fail=True,
+        )
+    )
     # (operator_library_predicate_never_fires_known_issue was here while
     # SYN._IS_PYPELINE_OPERATOR_LIBRARY_CODE, meant to put operator-library
     # delays in the name-keyed cache/delay, never fired (#364). The predicate

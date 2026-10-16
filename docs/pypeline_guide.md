@@ -3009,7 +3009,7 @@ body_decrypt = AUTO_PIPELINE(poly1305_body, name="poly1305_body_decrypt")
 - **For the best sweep results, tag a wrapper.** Tagging a function imported from
   another module, as above, makes it the root of its latency region. The sweep then
   can't tell when a slow path runs through it, and it never mini-sweeps a region
-  root ([known issue](issues_inventory.md#35-not-yet-filed-auto_pipelinef-on-an-imported-function-sweeps-worse-than-a-wrapper)). A one-line local wrapper per
+  root ([known issue](issues_inventory.md#36-not-yet-filed-auto_pipelinef-on-an-imported-function-sweeps-worse-than-a-wrapper)). A one-line local wrapper per
   group keeps the function inside the region:
 
   ```python

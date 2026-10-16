@@ -970,6 +970,21 @@ in-process and calls `SYN.LOGIC_IS_ZERO_DELAY` on its untagged functions:
 
 Without the rule, both zero-delay cases fail.
 
+**Known issue: C float-format conversions are inline logic, not wires.**
+`float_format_cast_test.py` (known_issues) builds `float_format_cast_design.c`, where
+`to_half` only converts `float` to `float_5_10_t` and `select_half` converts inside an
+`if`. The C front end treats the conversion as a connection, and VHDL wraps it in
+`resize_float_e_m_t`, which has an exponent adder and a zero-detect mux. So `to_half`
+has no submodules and the rule above treats it as wiring. It is registered twice, one
+behavior each:
+- `float_format_cast_inline_logic_known_issue` fails while either function's own body
+  calls `resize_float_e_m_t`, where no delay measurement or estimate sees it.
+- `float_format_cast_wraps_known_issue` (needs GHDL) simulates `to_half` and fails while
+  1e10 and 1.5e5 come out as about 2.3 instead of infinity or 65504, and 1e-10 as
+  about 0.43 instead of 0.
+
+Tracked as bug [#376](https://github.com/JulianKemmerer/PipelineC/issues/376).
+
 ## Conditional import coverage
 
 `conditional_import_test.py` (`elab_introspect`) covers design modules chosen by

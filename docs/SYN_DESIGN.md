@@ -654,7 +654,9 @@ zero worst period. `LOGIC_IS_ZERO_DELAY` never times a stateless user function w
 no submodules (every operator is a submodule, so its body is only casts, slices,
 concatenation, constant shifts or constants), so such a helper never reaches this
 error, nor gets its backend's register-to-register floor as a delay that the planner
-would then try to cut. Other logic that truly has no timing path should be marked
+would then try to cut. One exception is known: a C conversion between float formats is
+inline `resize_float_e_m_t` logic, not a submodule (issue #376). Other logic that truly
+has no timing path should be marked
 `@wires`, which `LOGIC_IS_ZERO_DELAY` never times either. `PYRTL.PathReport` matches only lines
 *starting* with `Fmax (MHz):`, so a traceback quoting the script's `print` line can
 no longer parse as a number.

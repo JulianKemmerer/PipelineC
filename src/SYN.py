@@ -1729,7 +1729,8 @@ def LOGIC_IS_ZERO_DELAY(logic, parser_state, allow_none_delay=False):
     ):
         # Every operator is a submodule, so a stateless user function with
         # none is only wiring. Timing it would just measure the backend's
-        # floor, which the planner then tries to cut.
+        # floor, which the planner then tries to cut. (Exception: a C
+        # float-format conversion is inline VHDL logic, issue #376.)
         return True
     elif logic.is_c_built_in and LOGIC.IS_SIM_CTRL_FUNC_NAME(logic.func_name):
         # printf/sim_print, sim_assert, and sim_finish submodules are all void,
