@@ -331,7 +331,7 @@ Computes the output type for arithmetic operations:
 | `op` | Output width |
 |---|---|
 | `"add"` | `max(lw, rw) + 1` |
-| `"sub"` | `max(lw, rw) + 1` |
+| `"sub"` | `max(lw, rw) + 1` if `result_signed`, else `max(lw, rw)` (wraps) |
 | `"mul"` | `lw + rw` |
 | others | `max(lw, rw)` |
 

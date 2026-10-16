@@ -1237,12 +1237,13 @@ dimension. Scalar integer and `char_t` types also expose `T.width`; array types 
 
 #### Integer arithmetic result types
 
-Arithmetic grows to retain its mathematical result rather than silently truncating:
+Arithmetic grows to retain its mathematical result rather than silently truncating,
+except subtraction of two unsigned operands, which wraps:
 
 | Expression | Result width after operand promotion |
 |---|---|
 | `a + b`, signed `a - b` | `max(width(a), width(b)) + 1` |
-| unsigned `a - b` | `max(width(a), width(b))` (wraps) |
+| `a - b`, both operands unsigned | `max(width(a), width(b))` (wraps) |
 | `a * b` | `width(a) + width(b)` |
 | Other integer binary operations | `max(width(a), width(b))` |
 | `-a` | `width(a) + 1`, signed |
@@ -1253,6 +1254,10 @@ every signed value remain representable; the result is signed. Assigning that re
 narrower annotated destination performs the explicit truncation. Bitwise operations do not
 add a carry bit—their result uses the promoted maximum width—and comparisons produce
 `uint1_t`.
+
+An unsigned subtraction wraps before any wider destination sees it. With `uint8_t`
+operands, `d: int16_t = a - b` gives `254` for `3 - 5`, not `-2`. Cast one operand to a
+signed type first to keep the sign: `d: int16_t = int9_t(a) - b` gives `-2`.
 
 ### Casting
 
