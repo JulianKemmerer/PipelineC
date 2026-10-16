@@ -919,6 +919,16 @@ class AutoError(Exception):
     something other than the pure function it replaces."""
 
 
+class UnregenerableOpError(AutoError):
+    """DECODE_OP found an operation generated source cannot re-create. `inst`
+    is its instance name, source coordinates included, so a descent that falls
+    back to keeping its caller atomic can say what stood in the way."""
+
+    def __init__(self, message, inst):
+        super().__init__(message)
+        self.inst = inst
+
+
 def _entity_callables(parser_state):
     return getattr(parser_state, "pypeline_entity_callables", {})
 
@@ -1283,12 +1293,13 @@ def DECODE_OP(logic, inst, entity, parser_state):
     if _entity_callables(parser_state).get(entity) is not None:
         return {"kind": "call"}
 
-    raise AutoError(
+    raise UnregenerableOpError(
         f"AUTO_FSM: operation {inst!r} (entity {entity!r}) cannot be regenerated "
         f"as Python source, so this function cannot be turned into an FSM. "
         f"Supported: arithmetic/comparison/bitwise operators, constant shifts, "
         f"struct-field and constant-index reads, if/conditional muxes, and "
-        f"calls to @hw_func functions."
+        f"calls to @hw_func functions.",
+        inst,
     )
 
 
@@ -1815,6 +1826,7 @@ def BUILD_DAG(parser_state, func_entity, delays, budget_du, opened=()):
     """
     nodes = {}
     truncated = []
+    blocked = []
     _build_dag_level(
         parser_state,
         func_entity,
@@ -1824,6 +1836,7 @@ def BUILD_DAG(parser_state, func_entity, delays, budget_du, opened=()):
         prefix="",
         depth=0,
         truncated=truncated,
+        blocked=blocked,
         opened=frozenset(opened),
     )
     logic = parser_state.FuncLogicLookupTable[func_entity]
@@ -1837,6 +1850,9 @@ def BUILD_DAG(parser_state, func_entity, delays, budget_du, opened=()):
         # (see _MAX_DESCEND_DEPTH) -- diagnostic only, read by
         # DESCRIBE_SCHEDULE's AT FLOOR text, never consulted by scheduling.
         "descend_truncated": truncated,
+        # Operations slower than one state kept atomic because they could not
+        # be opened, with why -- diagnostic only, like descend_truncated.
+        "descend_blocked": blocked,
     }
 
 
@@ -1852,6 +1868,7 @@ def _build_dag_level(
     prefix,
     depth,
     truncated,
+    blocked,
     opened=frozenset(),
 ):
     """Add one function's operations to the DAG, descending where needed.
@@ -1864,6 +1881,11 @@ def _build_dag_level(
     `truncated` collects (node_id, sub_entity, delay_du) for every operation
     the depth cap stopped from descending further -- see the append below and
     _MAX_DESCEND_DEPTH.
+
+    `blocked` collects (node_id, sub_entity, delay_du, reason) for every
+    operation slower than one state that stayed atomic for any other reason:
+    nothing to open it into, or a body that cannot be regenerated. Only a
+    descent that succeeds passes its own nested entries up.
     """
     if depth > _MAX_DESCEND_DEPTH:
         raise AutoError(
@@ -1934,6 +1956,11 @@ def _build_dag_level(
             if want_open
             else (None, None)
         )
+        if too_slow_for_a_state and open_entity is None:
+            blocked.append(
+                (node_id, sub_entity, delay_du,
+                 "no Python source or soft-operator equivalent to open")
+            )
         if open_entity is not None:
             # Open it up and schedule its innards instead. The node itself does
             # not exist in the DAG; references to it are rewritten to whatever
@@ -1948,6 +1975,7 @@ def _build_dag_level(
             # scratch dict so a failed attempt leaves nothing behind.
             child_prefix = node_id + LOGIC.SUBMODULE_MARKER
             child_nodes = {}
+            child_blocked = []
             try:
                 _build_dag_level(
                     parser_state,
@@ -1958,12 +1986,13 @@ def _build_dag_level(
                     child_prefix,
                     depth + 1,
                     truncated,
+                    child_blocked,
                     opened,
                 )
                 child_out_ref, child_out_casts = _trace_operand(
                     open_logic, LOGIC.RETURN_WIRE_NAME
                 )
-            except AutoError:
+            except AutoError as e:
                 child_nodes = None
                 # depth+1 exceeding the cap is the ONLY raise _build_dag_level
                 # can hit before any other check (see its first line) -- so
@@ -1971,8 +2000,16 @@ def _build_dag_level(
                 # child call failed, not some other AutoError deeper in it.
                 if depth + 1 > _MAX_DESCEND_DEPTH:
                     truncated.append((node_id, sub_entity, delay_du))
+                elif too_slow_for_a_state:
+                    why = (
+                        f"{e.inst} cannot be regenerated as Python source"
+                        if isinstance(e, UnregenerableOpError)
+                        else str(e)
+                    )
+                    blocked.append((node_id, sub_entity, delay_du, why))
             if child_nodes is not None:
                 nodes.update(child_nodes)
+                blocked.extend(child_blocked)
                 nodes[node_id] = {
                     "kind": "inlined",
                     "entity": sub_entity,

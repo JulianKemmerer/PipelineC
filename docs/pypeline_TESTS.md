@@ -789,7 +789,10 @@ native-versus-GHDL fixtures. The stream asserts latency 2, II=1 and stable
 data/valid under stalls; composition covers pipeline and FSM.
 
 The FSM unit suite includes a counted diamond-DAG regression against
-exponential input-storage traversal. `qor_multiplier_auto_fsm_test` keeps its
+exponential input-storage traversal. `auto_fsm_var_index_read_test.py`
+(known_issues) schedules AUTO_FSMs around a variable-index array read in process:
+one read sits in a called function, where elaboration crashes today, and one in
+the tagged function, where scheduling fails. `qor_multiplier_auto_fsm_test` keeps its
 1800-second timeout; `auto_fsm_min_area_verify_test` keeps 2700 seconds, all four
 real builds and the 3% area tolerance. The latter saves each variant's complete
 live output in `build.log`, with elapsed/status summaries. Retaining the

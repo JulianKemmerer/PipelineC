@@ -187,6 +187,18 @@ def get_tests() -> list:
             expect_fail=True,
         )
     )
+    # AUTO_FSM has no source form for a variable-index array read: a call to a
+    # function containing one crashes elaboration (AUTO_COMB_OPT's delay
+    # search), and one in the tagged function itself cannot be scheduled.
+    # Issue #377.
+    tests.append(
+        Test(
+            name="auto_fsm_var_index_read_known_issue",
+            category="known_issues",
+            cmd=[INST_DIR / "auto_fsm_var_index_read_test.py"],
+            expect_fail=True,
+        )
+    )
     # (operator_library_predicate_never_fires_known_issue was here while
     # SYN._IS_PYPELINE_OPERATOR_LIBRARY_CODE, meant to put operator-library
     # delays in the name-keyed cache/delay, never fired (#364). The predicate

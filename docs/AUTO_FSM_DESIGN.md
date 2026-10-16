@@ -302,7 +302,12 @@ came from Python source that can be regenerated — or if it is a built-in
 operator for which the soft-operator library supplied an equivalent that does
 (§3.7). Descent is **best-effort**: a body that cannot be regenerated falls back
 to keeping the operation atomic (reported as a floor) rather than failing the
-build.
+build. When that operation is slower than one state, `DESCRIBE_SCHEDULE`
+appends a `descent blocked:` line naming each such entity and why: it has no
+Python source or soft-operator equivalent to open, or an operation inside it
+cannot be regenerated, named by instance with its source coordinates
+(`UnregenerableOpError`). A variable-index array read is one such operation
+today ([#377](https://github.com/JulianKemmerer/PipelineC/issues/377)).
 
 **Descent depth is capped** at `_MAX_DESCEND_DEPTH = 8` levels, for the same
 best-effort reason: past that many nested calls, the recursive walk gives up
@@ -1353,7 +1358,7 @@ at least 3"*.
 | test | category | what it proves |
 |---|---|---|
 | `auto_fsm_test.py` | native_sim, (synth via wrapper) | the pure function's semantics, and the passthrough behaviour when unscheduled |
-| `auto_fsm_unit_test.py` | unit | scheduler/codegen internals: binding, one-op-per-unit-per-state, dependency order, distinct-operand mux coalescing and common-glue factoring, same- and cross-FU register reuse, recovered rolling output and consume/produce storage, field-lifetime input compaction, optional output bank, automatic control encoding, budget → states, floors, determinism, schedule is carryable data, a scheduled re-parse prepares the soft equivalents its schedule binds, tighten-loop termination (`SCHEDULES_EQUAL` ignores budget bookkeeping, the `TIGHTENING_STALLED` truth table), unmeasured delays resolved rather than zeroed, the zero-op guard (and measured-0 operations still legal), soft-operator equivalents, soft adder sign extension, `_TypeResolver` array reconstruction, real-sky130-area tiering (cold cache falls back to scaled abstract not zero, a cache hit wins over any abstract guess, `--auto_fsm_abstract_area`, real flip-flop area) |
+| `auto_fsm_unit_test.py` | unit | scheduler/codegen internals: binding, one-op-per-unit-per-state, dependency order, distinct-operand mux coalescing and common-glue factoring, same- and cross-FU register reuse, recovered rolling output and consume/produce storage, field-lifetime input compaction, optional output bank, automatic control encoding, budget → states, floors, determinism, schedule is carryable data, a scheduled re-parse prepares the soft equivalents its schedule binds, the `descent blocked:` report, tighten-loop termination (`SCHEDULES_EQUAL` ignores budget bookkeeping, the `TIGHTENING_STALLED` truth table), unmeasured delays resolved rather than zeroed, the zero-op guard (and measured-0 operations still legal), soft-operator equivalents, soft adder sign extension, `_TypeResolver` array reconstruction, real-sky130-area tiering (cold cache falls back to scaled abstract not zero, a cache hit wins over any abstract guess, `--auto_fsm_abstract_area`, real flip-flop area) |
 | `area_model_test.py` (`src/tests/pypeline_tests/inst/`) | unit | not AUTO_FSM-specific (SYN/DEVICE_MODELS leaf-area-cache coverage), but two tests here directly guard AUTO_FSM.py's own constant: the committed `cache/area` excludes STA-harness registers, and `AUTO.UM2_PER_ABSTRACT_AREA_UNIT` refits to what is actually committed |
 | `self_check_auto_fsm_test.py` | native_sim, vhdl_sim, synth ×2 | the FSM computes what the function did — in native sim, in GHDL, at latency 0 and at real latency |
 | `stream_auto_fsm_test.py` | native_sim | `make_stream_auto_fsm`'s handshake protocol: ready deasserts while busy, latency/II == `fsm.latency + 1`, and — the property raw AUTO_FSM cannot provide — a stalled consumer never loses a result and sees stable data while it's held |

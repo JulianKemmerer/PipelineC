@@ -282,6 +282,65 @@ SCOPED_SOFT_SRC = textwrap.dedent(
     """
 )
 
+# Two operations slower than one state that descent cannot open: a call whose
+# body reads an array at a variable index (no source form yet, see
+# auto_fsm_var_index_read_test.py), and a signed multiply (no soft equivalent).
+# The pinned multiplier makes AUTO_COMB_OPT.prepare return before its delay
+# search, which would otherwise crash on that read during elaboration.
+BLOCKED_SRC = textwrap.dedent(
+    """
+    # pyright: reportInvalidTypeForm=none
+    import os, sys
+    sys.path.insert(0, {repo!r})
+    from pypeline import (AUTO_FSM, MAIN, NamedTuple, Reg, hw_func, int8_t,
+                          int16_t, make_uint_t, struct, uint1_t, uint8_t, uint16_t)
+    from operators.soft_mult import make_inferred_mult
+
+    uint2_t = make_uint_t(2)
+    pinned_mult = make_inferred_mult(uint8_t, uint8_t)
+
+    @struct
+    class in_t(NamedTuple):
+        vals: uint16_t[4]
+        idx: uint2_t
+        c: uint8_t
+        d: uint8_t
+        a: int8_t
+        b: int8_t
+
+    @struct
+    class out_t(NamedTuple):
+        u: uint16_t
+        s: int16_t
+
+    @hw_func
+    def pick(x: in_t) -> uint16_t:
+        v: uint16_t = x.vals[x.idx]
+        r: uint16_t = v + pinned_mult(x.c, x.d)
+        return r
+
+    @hw_func
+    def mix(x: in_t) -> out_t:
+        o: out_t
+        o.u = pick(x)
+        o.s = x.a * x.b
+        return o
+
+    FSM = AUTO_FSM(mix)
+
+    @MAIN({mhz})
+    def top(start: uint1_t, x: in_t) -> out_t:
+        s: FSM.in_stream_t
+        s.data = x
+        s.valid = start
+        o = FSM(s)
+        r: Reg[out_t]
+        if o.valid:
+            r = o.data
+        return r
+    """
+)
+
 REPO = os.path.abspath(
     os.path.join(os.path.dirname(os.path.abspath(__file__)), "../../..")
 )
@@ -1175,6 +1234,49 @@ def main():
             reparse_error is None and tag9._generated is not None,
             "the scheduled re-parse generates the FSM, every bound unit callable "
             f"(error: {reparse_error})",
+        )
+
+        print("[descent blocked: AT FLOOR names what could not be opened]")
+        ps10, key10, tag10 = parse_design(
+            tmp, mhz=25.0, name="d_blocked", source=BLOCKED_SRC
+        )
+        callables10 = AUTO._entity_callables(ps10)
+        for entity, logic in ps10.FuncLogicLookupTable.items():
+            name = getattr(callables10.get(entity), "__name__", None)
+            if name == "pick" or entity.startswith("BIN_OP_INFERRED_MULT_int"):
+                logic.delay = 1000  # slower than one 25 MHz state
+            elif entity.startswith(("BIN_OP_", "VAR_REF_RD_")):
+                logic.delay = 100
+        sched10 = AUTO_FSM.BUILD_SCHEDULE(ps10, key10, tag10, 0.9)
+        report10 = AUTO_FSM.DESCRIBE_SCHEDULE(ps10, key10, sched10)
+        reasons10 = {
+            entity: why for _nid, entity, _du, why in sched10["descend_blocked"]
+        }
+        pick10 = [e for e in reasons10 if e.startswith("pick")]
+        mult10 = [e for e in reasons10 if e.startswith("BIN_OP_INFERRED_MULT_int")]
+        check(
+            sched10["at_floor"] and "descent blocked: 2 entity/ies" in report10,
+            "an AT FLOOR schedule reports both too-slow operations it kept atomic",
+        )
+        check(
+            len(pick10) == 1
+            and "VAR_REF_RD" in reasons10[pick10[0]]
+            and "d_blocked_py_l" in reasons10[pick10[0]]
+            and "cannot be regenerated" in reasons10[pick10[0]],
+            "a call kept atomic names the unregenerable operation inside it, with "
+            "its source coordinates (tracks auto_fsm_var_index_read_known_issue: "
+            "once variable-index reads regenerate, block this call another way)",
+        )
+        check(
+            len(mult10) == 1
+            and reasons10[mult10[0]] == "no Python source or soft-operator equivalent to open",
+            "a slow signed multiply is kept atomic for want of a soft equivalent",
+        )
+        check(
+            AUTO_FSM.SCHEDULES_EQUAL(
+                {key10: sched10}, {key10: dict(sched10, descend_blocked=[])}
+            ),
+            "the blocked-descent record is diagnostic, not hardware",
         )
 
     # ── soft-operator equivalents: which built-ins can be opened, and into

@@ -2027,6 +2027,7 @@ def BUILD_SCHEDULE(
     # hash (see that function's docstring) -- it is diagnostic-only, read by
     # DESCRIBE_SCHEDULE, and must not perturb entity names / cache keys.
     schedule["descend_truncated"] = dag.get("descend_truncated", [])
+    schedule["descend_blocked"] = dag.get("descend_blocked", [])
     return schedule
 
 
@@ -2901,6 +2902,7 @@ _SCHEDULE_NON_HARDWARE_KEYS = frozenset(
         "ctl_auto_candidates",
         "comb_opt_candidates",
         "descend_truncated",
+        "descend_blocked",
     )
 )
 
@@ -3049,6 +3051,25 @@ def DESCRIBE_SCHEDULE(parser_state, key, schedule) -> str:
             f"{budget_ns:.2f} ns/state budget), kept atomic: "
             f"{', '.join(entities[:3])}{more}"
         )
+    blocked = schedule.get("descend_blocked") or []
+    if blocked:
+        # The other silent fallback: an operation too slow for one state
+        # stayed atomic because it could not be opened at all. Usually this
+        # is the whole story behind AT FLOOR, so name what stood in the way.
+        worst_by_entity = {}
+        for _nid, entity, du, why in blocked:
+            if entity not in worst_by_entity or du > worst_by_entity[entity][0]:
+                worst_by_entity[entity] = (du, why)
+        ranked = sorted(worst_by_entity, key=lambda e: (-worst_by_entity[e][0], e))
+        line += (
+            f"\n  descent blocked: {len(ranked)} entity/ies slower than the "
+            f"{budget_ns:.2f} ns/state budget kept atomic:"
+        )
+        for entity in ranked[:3]:
+            du, why = worst_by_entity[entity]
+            line += f"\n    {entity} ({du / 10.0:.2f} ns): {why}"
+        if len(ranked) > 3:
+            line += f"\n    +{len(ranked) - 3} more"
     line += f"\n  register bits: {_register_bit_count(schedule)}"
     if schedule.get("comb_opt_candidates"):
         line += f"\n  combinational candidates: {schedule['comb_opt_candidates']}; "
