@@ -3621,9 +3621,11 @@ causing the delay:
 UPDATE = AUTO_FSM(next_state, max_latency=8)
 ```
 
-It is a hard constraint. If no schedule meeting your clock goal fits in N
-cycles, the build fails and tells you the latency it actually needs, rather than
-handing back something slower than you asked for.
+It is a hard constraint. The tool adds as few unit copies as it can find to
+meet it. Only when N is shorter than the function's dependency chain allows,
+even with one unit per operation, does the build fail. It then tells you the
+latency the function actually needs, rather than handing back something slower
+than you asked for.
 
 Sharing is not free: every shared unit needs a multiplexer picking its operands
 per state, and more states means more registers holding values in between. For

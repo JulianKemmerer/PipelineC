@@ -174,6 +174,12 @@ NON_COMB_TEST_FILES = [
     # the REAL scheduled FSM (replaces synth_tests.py's former
     # auto_fsm_native_sim_test + auto_fsm_vhdl_sim_test pair with one cycle diff).
     ("self_check_auto_fsm_test.py", INST_DIR, []),
+    # Forced descent's width-halving equivalents through the real scheduled
+    # FSM: a 0.1 budget scale (4 ns states at 25 MHz) makes the 32-bit
+    # add/subtract and the 16x16 inferred multiply too slow for a state, so
+    # the FSM binds their split halves (carry-in-bit adds, pinned 8x16
+    # products), and the cycle diff checks them in GHDL.
+    ("self_check_auto_fsm_split_test.py", INST_DIR, ["--auto_fsm_budget_scale", "0.1"]),
     # Same, one layer up: the real scheduled FSM underneath
     # make_stream_auto_fsm's handshake registers, with real backpressure
     # toggled from the testbench (see the design file's own docstring).

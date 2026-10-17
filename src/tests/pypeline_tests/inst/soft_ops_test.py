@@ -43,7 +43,13 @@ from pypeline import (
     _resolve_generic_operator,
 )
 
-from operators.soft_add import make_soft_add_ripple, make_soft_add_carry_select, make_soft_sub
+from operators.soft_add import (
+    make_soft_add_ripple,
+    make_soft_add_carry_select,
+    make_soft_sub,
+    make_soft_add_split,
+    make_soft_sub_split,
+)
 from operators.soft_mult import (
     make_soft_mult_shift_add,
     make_soft_mult_karatsuba,
@@ -51,6 +57,7 @@ from operators.soft_mult import (
     make_soft_mult_carry_save,
     make_inferred_mult,
     make_mult_karatsuba_inferred_leaves,
+    make_soft_mult_split,
 )
 from operators.soft_div import (
     make_soft_div, make_soft_mod, make_soft_signed_div, make_soft_signed_mod,
@@ -117,6 +124,38 @@ def test_soft_sub():
         # Same-sign (both unsigned) MINUS: output width = max width, unsigned wrap.
         check(f"soft_sub({a},{b})", got, (a - b) & 0x3F)
     print("test_soft_sub passed")
+
+
+def test_soft_add_sub_split():
+    """AUTO_FSM's forced-descent adder/subtractor: two half-width built-in adds
+    joined through a carry-in bit. Exhaustive over equal and unequal operand
+    widths, including the odd result widths where the halves differ and a
+    1-bit operand."""
+    for lw, rw in [(5, 5), (5, 3), (3, 6), (1, 4), (6, 6)]:
+        lt, rt = make_uint_t(lw), make_uint_t(rw)
+        add = make_soft_add_split(lt, rt)
+        sub = make_soft_sub_split(lt, rt)
+        ow = max(lw, rw)
+        for a, b in itertools.product(range(1 << lw), range(1 << rw)):
+            got = sim_call(add, SimVal(a, lt), SimVal(b, rt))
+            check(f"soft_add_split[u{lw},u{rw}]({a},{b})", got, a + b)
+            got = sim_call(sub, SimVal(a, lt), SimVal(b, rt))
+            # Unsigned MINUS: output width = max width, unsigned wrap.
+            check(f"soft_sub_split[u{lw},u{rw}]({a},{b})", got, (a - b) % (1 << ow))
+    print("test_soft_add_sub_split passed")
+
+
+def test_soft_mult_split():
+    """AUTO_FSM's forced-descent multiplier: split the WIDER operand, two
+    pinned inferred products, one add of the upper bits. Exhaustive, both
+    operand orders (so both the split-left and split-right bodies run)."""
+    for lw, rw in [(5, 5), (6, 3), (3, 6), (1, 4), (7, 2)]:
+        lt, rt = make_uint_t(lw), make_uint_t(rw)
+        mult = make_soft_mult_split(lt, rt)
+        for a, b in itertools.product(range(1 << lw), range(1 << rw)):
+            got = sim_call(mult, SimVal(a, lt), SimVal(b, rt))
+            check(f"soft_mult_split[u{lw},u{rw}]({a},{b})", got, a * b)
+    print("test_soft_mult_split passed")
 
 
 def test_soft_negate():
@@ -853,9 +892,11 @@ if __name__ == "__main__":
     test_soft_add()
     test_soft_add_carry_select()
     test_soft_sub()
+    test_soft_add_sub_split()
     test_soft_negate()
     test_soft_mult()
     test_soft_mult_asymmetric()
+    test_soft_mult_split()
     test_soft_carry_save_mult()
     test_soft_carry_save_mult_asymmetric()
     test_soft_carry_save_mult_degenerate()

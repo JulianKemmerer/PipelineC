@@ -49,6 +49,7 @@ figures out the rest — how many stages, or how many states.
 - [6. Limitations and future work](#6-limitations-and-future-work)
 - [History](#history)
   - [Tighten loop termination](#tighten-loop-termination)
+  - [Forced descent into one-bit gates](#forced-descent-into-one-bit-gates)
   - [Operand multiplexer costing](#operand-multiplexer-costing)
   - [Control-path encoding: constant tables, comparators, and one-hot](#control-path-encoding-constant-tables-comparators-and-one-hot)
 
@@ -170,8 +171,10 @@ then correct at latency 0 and at latency 17.
 plus the registered-output cycle). It is a **hard constraint**: if no schedule
 meeting the clock goal fits inside N cycles the build fails, with a message
 naming the FSM and the latency it actually needs. The tool meets a cap the only
-way a cap can be met — by giving back sharing and building a second (third, …)
-copy of whatever unit is forcing the states. Note that "no cap" and "generous
+way a cap can be met — by giving back sharing and building more copies of the
+shared units, as few as it can find (§3.2). A cap fails only if even one unit
+per operation cannot meet it: the dependency chain alone then sets the latency.
+Note that "no cap" and "generous
 cap" are not the same thing: the area search spends latency to buy area (§3.7),
 and the cap bounds how much of it the search may spend.
 
@@ -291,6 +294,10 @@ Three classifications:
   different states bind to one FU.
 - **delay exceeds a state's budget → descend**, inlining the operation's body
   into this DAG so something too slow for one state can be split across several.
+  "Exceeds" means the operation plus a flat operand-mux allowance
+  (`MUX_PENALTY_DU`, 1 ns) does not fit. The fold count is not known yet, so a
+  heavily shared unit's real mux can still push a state over budget; the area
+  search resolves that by giving the unit more copies (§3.7).
 
 There is a fourth reason to descend that has nothing to do with delay: the area
 search may pass an `opened` set of entities it wants taken apart because doing
@@ -299,8 +306,13 @@ same code; the budget test and the `opened` set are simply OR-ed.
 
 Descent enters an entity if it has a recorded live Python callable — i.e. it
 came from Python source that can be regenerated — or if it is a built-in
-operator for which the soft-operator library supplied an equivalent that does
-(§3.7). Descent is **best-effort**: a body that cannot be regenerated falls back
+operator for which the operator library supplied an equivalent that does
+(§3.7). The two reasons to descend open a built-in operator into different
+equivalents. A **forced** descent (too slow for a state) prefers the
+width-halving one: two half-width built-in adds, or two half-width inferred
+products and one add, which descend again only if still too slow. A
+**chosen** descent (the `opened` set) uses the bit-level soft-operator one.
+Descent is **best-effort**: a body that cannot be regenerated falls back
 to keeping the operation atomic (reported as a floor) rather than failing the
 build. When that operation is slower than one state, `DESCRIBE_SCHEDULE`
 appends a `descent blocked:` line naming each such entity and why: it has no
@@ -367,16 +379,37 @@ this, instead of looping to its pass cap.
 **Copies.** Binding is normally one unit per entity, but `SCHEDULE_DAG` accepts
 a per-entity copy count, and `schedule["fus"]` maps unit id → entity as an
 explicit indirection rather than assuming the two are the same string. Two
-things use it: a `max_latency` cap that sharing alone cannot meet (an entity
-used F times with R copies needs at least ⌈F/R⌉ states, so a cap of S states
-forces R ≥ ⌈F/S⌉ — computed directly, not searched for), and the area search's
-unshare move (§3.7).
+things use it: a `max_latency` cap that sharing alone cannot meet, and the area
+search's unshare move (§3.7).
+
+A cap first gets the copies it directly forces (`_replication_for_latency`):
+an entity used F times with R copies needs at least ⌈F/R⌉ states, so a cap of
+S states forces R ≥ ⌈F/S⌉. When the schedule still runs past the cap,
+`_replicate_to_cap` searches one knob, a limit k on operations per unit:
+
+- **What k does.** Every entity gets ⌈F/k⌉ copies, and k is bisected for the
+  most sharing whose schedule meets the cap.
+- **Why one uniform knob.** What keeps a capped schedule long is usually many
+  kinds of operation queueing at once, and each unit's operand mux shrinks
+  with its fold count.
+- **Why not one unit at a time.** Giving units one at a time to the most-loaded
+  entity, at most eight times, never reached 64 or 32 cycles on the WireGuard
+  Poly1305 epilogue. The uniform search meets both: 64 states with 77 units,
+  and 29 states with 326 units, at 80 MHz.
+- **When it gives up.** k = 1 is one unit per operation, where only the
+  dependency chain sets the state count. A cap that k = 1 misses cannot be
+  met, and that schedule's latency is what the failure message reports.
+
+A capped anchor's copies seed the area search, so its candidates start from a
+binding that already meets the cap.
 
 Constants: `DEFAULT_BUDGET_SCALE = 0.9` (the delay model does not account for
 everything the FSM's own control adds, so leave headroom),
-`BUDGET_TIGHTEN_FACTOR = 0.75`, `MAX_SCHEDULE_PASSES = 6`. `MUX_PENALTY_DU = 10`
-survives only as the seed for a mux shape nothing has ever measured. Override
-the starting budget with `--auto_fsm_budget_scale`.
+`BUDGET_TIGHTEN_FACTOR = 0.75` (the tightening step only when a failure
+reported no achieved MHz, §3.4), `MAX_SCHEDULE_PASSES = 6`. `MUX_PENALTY_DU = 10`
+is the descent test's flat operand-mux allowance (§3.1) and the seed for a mux
+shape nothing has ever measured. Override the starting budget with
+`--auto_fsm_budget_scale`.
 
 Determinism is load-bearing: node ids come from source coordinates, ties break
 on node id, and the schedule is a pure function of (Logic graphs, delays,
@@ -728,7 +761,7 @@ for each schedule pass:
     AUTO_PIPELINE.DO_SWEEP_AND_AUTO_PIPELINE      <- sweep + AUTO_PIPELINE loop
     timing met, or nothing/only-floors blamed?  -> done
     last tightening gained no fmax?             -> done (path is not in the states)
-    otherwise shrink the blamed FSMs' per-state budget and go again
+    otherwise shrink the blamed FSMs' per-state budget by the measured miss and go again
 ```
 
 The bootstrap design is deliberately **not** swept: it contains the raw
@@ -771,8 +804,20 @@ the failing MAIN: over-blaming costs one extra pass, under-blaming would silentl
 give up.
 
 Tightening then shrinks the budget **until the schedule actually changes** — one
-step of the factor does not always move an operation across a state boundary, and
-rebuilding a byte-identical design to discover that would waste a synthesis run.
+step does not always move an operation across a state boundary, and rebuilding a
+byte-identical design to discover that would waste a synthesis run. Each step
+(`TIGHTENED_BUDGET_SCALE`) multiplies the budget scale by the measured miss,
+achieved over goal MHz of the worst failure blaming that FSM
+(`_BLAMED_MISS_RATIOS`). It also always goes at least just below the
+schedule's current worst state, so that state has to repack. A 72.65-of-80 MHz
+build therefore steps from 11.2 to 10.2 ns rather than to 8.4 ns, and a
+79.99-of-80 MHz near miss still moves its worst state. Without an achieved
+number the step is `BUDGET_TIGHTEN_FACTOR`. A fixed 0.75 step once took the
+WireGuard Poly1305 epilogue from 11.2 to 8.4 ns, below its 32–34-bit
+multiplies and 260-bit adds, and forced descent into all of them at once.
+On `auto_fsm_timing_iter_test` (120 MHz, sky130), the measured step met timing
+on the third schedule pass with 2 states (122.8 MHz). The fixed step needed a
+fourth pass and 3 states (128.6 MHz).
 The loop stops when:
 
 - timing is met;
@@ -878,6 +923,36 @@ supplies an equivalent that does — `make_soft_add_ripple`,
 are inferred bitwise operations. Descent can therefore continue all the way
 down to gates.
 
+**Forced descent halves instead of going straight to gates.** For an unsigned
+add, subtract or inferred multiply that is too slow for one state, `_open_target`
+first uses the width-halving equivalent from `_SPLIT_FACTORY_FOR_OP`:
+
+| Built-in | Width-halving equivalent | Body |
+| --- | --- | --- |
+| `PLUS` | `make_soft_add_split` | low-half add, then high-half add taking its carry |
+| `MINUS` | `make_soft_sub_split` | the same on `a + ~b`, with carry-in 1 into the low half |
+| `INFERRED_MULT` | `make_soft_mult_split` | wider operand split in half: two pinned inferred products, one add of the upper bits |
+
+A carry enters an inferred adder through one extra low bit
+(`(x<<1 | 1) + (y<<1 | c)`), so each half is one `+` and its carry chain stays
+a carry chain. Each half is itself a built-in, so a half that is still too slow
+is split again; one that fits stays a word-level unit. The bit-level flavor made
+a 260-bit add into ~1300 one-bit operations. In the WireGuard Poly1305
+epilogue, the first budget tightening (11.2 to 8.4 ns) pushed its 260-bit
+adds and 32–34-bit multiplies past the budget, and that became a
+31,494-fold one-bit AND on one shared unit, which needed at least that many
+states. On the same modular multiply at 8.4 ns, halving gives 66 scheduled
+operations in 22 states where bit-level descent gave 7,795 in 3,253. A signed
+operator, or an add too narrow to shrink when split (the carry-in bit makes a
+4-bit add's high half 4 bits again), keeps the soft-operator equivalent.
+
+Split equivalents are prepared by `PREPARE_SPLIT_EQUIVALENTS` breadth-first,
+from the function's own operators down through each halving, up to
+`_MAX_SPLIT_EQUIVALENTS` shapes. Breadth-first means the cap can only cut the
+narrowest halvings, never an operator the function itself uses. The area
+search's chosen opens still use the bit-level flavors, whose sharing behavior
+the measurements below were taken on.
+
 Candidates are prepared (`PREPARE_SOFT_EQUIVALENTS`) while the AUTO_FSM call
 site elaborates, where a live elaborator, the design's module globals and the
 tagged function are all in hand at once. That happens on every pass
@@ -963,16 +1038,26 @@ messages are latency/search-size advisories, not correctness/timing failures.
 
 ```
 anchor = the plain share-everything schedule      # candidate zero and incumbent
+if the anchor has more than MAX_SWEEP_DAG_NODES operations: return it
 repeat up to MAX_SWEEP_MOVES times:
     for each openable entity:   reschedule the WHOLE function with it opened
     for each shared entity:     reschedule the WHOLE function with one more unit
-    take the cheapest feasible result, even if it is worse than the incumbent
-    if it beats the best-so-far by > SWEEP_MIN_IMPROVEMENT
-       and clears the anchor-relative OPEN shape-confidence guard:
+    take the candidate closest to the clock budget, then the cheapest,
+        even if it is worse than the incumbent
+    if it is closer to the budget than the best-so-far, or equally close and
+       beats it by > SWEEP_MIN_IMPROVEMENT and clears the anchor-relative
+       OPEN shape-confidence guard:
         it becomes the best
     else after MAX_SWEEP_UPHILL consecutive non-improvements: stop
 return the best
 ```
+
+**An anchor already past the DAG cap is returned as it is.** Every candidate
+would be refused by the same `MAX_SWEEP_DAG_NODES` cap: an UNSHARE keeps the
+anchor's DAG, and an OPEN replaces one node by a body of at least one node.
+Building each of them only to refuse it cost minutes per candidate list on
+an oversized anchor. The schedule report then prints `area search skipped:`
+with the operation count.
 
 Four deliberate properties:
 
@@ -1008,7 +1093,16 @@ shapes show enough margin to survive the documented per-leaf modelling error.
 **The search may spend slack, but not miss the declared goal.** Area is the
 objective, so a candidate is not rejected merely because its modelled worst
 state is longer than the anchor's incidental critical state. It is rejected if
-that state exceeds the scaled clock budget, or if it violates `max_latency`.
+that state runs further past the scaled clock budget than the anchor's does,
+or if it violates `max_latency`. For an anchor that fits, that means any
+over-budget candidate is rejected. An anchor can itself be over budget: an
+operation passes the descent test with a flat 1 ns mux allowance (§3.1), and
+then sharing it many ways puts a wider mux in front of it. The search then
+ranks candidates by how far past the budget they run before their area, and
+any candidate closer to fitting becomes the best. A candidate no further over
+than the anchor is kept, so the search can reach a binding that needs two
+units widened together. Widening one of them alone leaves the other over
+budget, and is only a step on the way.
 This lets a low-frequency design trade unused timing margin and latency for
 fewer cells. The normal real-synthesis confirmation loop remains the authority:
 if model optimism causes a miss, the driver tightens the budget and reschedules
@@ -1277,15 +1371,17 @@ small divider is still cheaper left whole.
 #### Which built-in operators can be opened at all
 
 `_SOFT_FACTORY_FOR_OP` maps a built-in operator to the soft-operator equivalent
-descent uses. Signedness is part of that choice, and getting it wrong does not
+a chosen open uses, and the one a forced descent falls back to when there is no
+width-halving equivalent (`_SPLIT_FACTORY_FOR_OP`, unsigned PLUS, MINUS and
+INFERRED_MULT only). Signedness is part of that choice, and getting it wrong does not
 produce a slower design, it produces a WRONG one — `_open_target`'s return-type
 and arity checks cannot tell the difference, since the widths match and only the
 answers differ.
 
 | operator | unsigned | signed |
 |---|---|---|
-| PLUS / MINUS | ripple adder / subtract-via-add | same |
-| MULT | shift-and-add | **not openable** — no signed soft multiplier exists |
+| PLUS / MINUS | ripple adder / subtract-via-add (forced: width-halving split) | ripple adder / subtract-via-add |
+| MULT | shift-and-add (forced INFERRED_MULT: width-halving split) | **not openable** — no signed soft multiplier exists |
 | DIV / MOD | radix restoring | signed radix (magnitudes, sign applied after) |
 | comparisons, EQ / NEQ | subtract-based | same |
 | shifts | **not openable** (see below) | |
@@ -1358,10 +1454,11 @@ at least 3"*.
 | test | category | what it proves |
 |---|---|---|
 | `auto_fsm_test.py` | native_sim, (synth via wrapper) | the pure function's semantics, and the passthrough behaviour when unscheduled |
-| `auto_fsm_unit_test.py` | unit | scheduler/codegen internals: binding, one-op-per-unit-per-state, dependency order, distinct-operand mux coalescing and common-glue factoring, same- and cross-FU register reuse, recovered rolling output and consume/produce storage, field-lifetime input compaction, optional output bank, automatic control encoding, budget → states, floors, determinism, schedule is carryable data, a scheduled re-parse prepares the soft equivalents its schedule binds, the `descent blocked:` report, tighten-loop termination (`SCHEDULES_EQUAL` ignores budget bookkeeping, the `TIGHTENING_STALLED` truth table), unmeasured delays resolved rather than zeroed, the zero-op guard (and measured-0 operations still legal), soft-operator equivalents, soft adder sign extension, `_TypeResolver` array reconstruction, real-sky130-area tiering (cold cache falls back to scaled abstract not zero, a cache hit wins over any abstract guess, `--auto_fsm_abstract_area`, real flip-flop area) |
+| `auto_fsm_unit_test.py` | unit | scheduler/codegen internals: binding, one-op-per-unit-per-state, dependency order, distinct-operand mux coalescing and common-glue factoring, same- and cross-FU register reuse, recovered rolling output and consume/produce storage, field-lifetime input compaction, optional output bank, automatic control encoding, budget → states, floors, determinism, schedule is carryable data, a scheduled re-parse prepares the soft equivalents its schedule binds, the `descent blocked:` report, tighten-loop termination (`SCHEDULES_EQUAL` ignores budget bookkeeping, the `TIGHTENING_STALLED` truth table), the tightening step (`TIGHTENED_BUDGET_SCALE` follows the measured miss and always passes the worst state; `_BLAMED_MISS_RATIOS`), forced descent splitting wide adds and inferred multiplies into narrower inferred ones while a chosen open stays bit-level, the area search reaching a jointly feasible binding from an over-budget anchor and skipping candidates when the anchor is past the DAG cap, unmeasured delays resolved rather than zeroed, the zero-op guard (and measured-0 operations still legal), soft-operator equivalents, soft adder sign extension, `_TypeResolver` array reconstruction, real-sky130-area tiering (cold cache falls back to scaled abstract not zero, a cache hit wins over any abstract guess, `--auto_fsm_abstract_area`, real flip-flop area) |
 | `area_model_test.py` (`src/tests/pypeline_tests/inst/`) | unit | not AUTO_FSM-specific (SYN/DEVICE_MODELS leaf-area-cache coverage), but two tests here directly guard AUTO_FSM.py's own constant: the committed `cache/area` excludes STA-harness registers, and `AUTO.UM2_PER_ABSTRACT_AREA_UNIT` refits to what is actually committed |
 | `self_check_auto_fsm_test.py` | native_sim, vhdl_sim, synth ×2 | the FSM computes what the function did — in native sim, in GHDL, at latency 0 and at real latency |
 | `stream_auto_fsm_test.py` | native_sim | `make_stream_auto_fsm`'s handshake protocol: ready deasserts while busy, latency/II == `fsm.latency + 1`, and — the property raw AUTO_FSM cannot provide — a stalled consumer never loses a result and sees stable data while it's held |
+| `self_check_auto_fsm_split_test.py` | native_vs_vhdl_sim | forced descent's width-halving equivalents in real hardware: a 32-bit add and subtract and a 16x16 inferred multiply, forced open by a small `--auto_fsm_budget_scale`, compute the same values in native sim and GHDL |
 | `self_check_stream_auto_fsm_test.py` | native_sim, vhdl_sim, synth ×2 | same shape as `self_check_auto_fsm_test.py`, one layer up: the wrapper's handshake + the real scheduled FSM underneath it compute and sequence what the function did, with real backpressure toggled from the testbench, in native sim, in GHDL, at latency 1 and at real latency |
 | `qor/multiplier/auto_fsm.py`, `qor/divider/auto_fsm.py`, `qor/sqrt/auto_fsm.py` | synth | AUTO_PIPELINE→`make_stream_auto_fsm` conversions of the QoR designs, real `PART("sky130")`/pyrtl builds with `ready` genuinely wired (never a constant 1); the multiplier is what exposed and pins the `_TypeResolver` array-reconstruction fix below |
 | `auto_fsm_latency_test.py` | synth | end-to-end schedule; the generated VHDL instantiates exactly as many copies of each shared unit as the schedule claims |
@@ -1619,6 +1716,41 @@ Found under `--syn_tool device_models` with `auto_fsm_tighten_test.py` at 110 an
 - **`SCHEDULES_EQUAL` compared `budget_scale`.** Every tightened trial
   therefore looked changed, so "shrinking no longer changes the schedule" was
   dead code. It now compares hardware only.
+
+### Forced descent into one-bit gates
+
+Found in the WireGuard shared Poly1305 build (80 MHz, `hybrid_square`). The
+first confirmation measured the epilogue FSM at 72.65 MHz. The driver tightened
+its budget by the fixed 0.75 step, from 11.2 to 8.4 ns, and the next schedule
+printed `'BIN_OP_AND_uint1_t_uint1_t' folds 31494 operations onto one shared
+unit` before running out of memory. Three defects combined:
+
+- **Forced descent went straight to gates.** At 8.4 ns the 260-bit adds and
+  subtracts and the 32–34-bit inferred multiplies no longer fit a state, and
+  the only equivalents they could open into were the bit-level ripple adder
+  and shift-and-add multiplier.
+  - The 31,494-fold AND was the share-everything anchor. It was built and
+    scheduled before any area scoring, so it was never chosen as an area win.
+  - The model priced it correctly as terrible. On one modular multiply at
+    8.4 ns, the anchor was estimated at 397,856 against 8,320 at 11.2 ns.
+  - Its muxes were not a literal 3,135:1 per port. In that modular multiply,
+    operand factoring turned each port of the shared AND into one 1-bit mux
+    of 351–523 inputs, behind 260 4- to 7-way muxes over 260-bit registers.
+    Those wide register muxes are most of the estimate.
+  - Fix: forced descent prefers the width-halving equivalents (§3.7), which
+    keep every operation a word-level inferred one.
+- **The search could not run on that anchor at all.** The anchor had no DAG
+  cap, and each candidate rebuilt the same oversized DAG only to be refused by
+  `MAX_SWEEP_DAG_NODES`. Fix: an anchor already past the cap is returned
+  without building candidates (§3.7).
+- **The fixed tightening step overshot.** It took the budget past whole operator
+  widths at once. Fix: the step follows the measured miss (§3.4).
+
+The WireGuard probes that confirmed these also showed an over-budget anchor
+that one-at-a-time UNSHARE could not repair. Each of two shared units needed a
+second copy, and either copy alone was rejected for still missing the budget.
+The search now ranks candidates by how far past the budget they run before
+their area (§3.7).
 
 ### Operand multiplexer costing
 

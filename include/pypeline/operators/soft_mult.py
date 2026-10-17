@@ -293,6 +293,71 @@ def make_mult_karatsuba_inferred_leaves(l_t, r_t, threshold=34):
     return make_soft_mult_karatsuba(l_t, r_t, threshold, leaf=make_inferred_mult)
 
 
+def make_soft_mult_split(l_t, r_t, leaf=make_inferred_mult):
+    """Width-halving multiply: split the WIDER operand in half and multiply
+    each half by the other operand with `leaf` (default the pinned inferred
+    `*`), then recombine with one built-in add of the upper product bits --
+    the low `half` bits of the low product pass straight through as wiring:
+
+        a * b == ((a_hi * b) + ((a_lo * b) >> half)) << half | (a_lo * b)[half-1:0]
+
+    AUTO_FSM's FORCED-descent flavor for an inferred multiply too slow for one
+    state: a 34x34 product becomes two 17x34 inferred products and a 52-bit
+    add, rather than make_soft_mult_shift_add's bit-masked partial products.
+    If a 17x34 product is still too slow, descent splits it again (now the
+    34-bit side), so the leaves stay the widest inferred multipliers that fit
+    (docs/AUTO_FSM_DESIGN.md#descending-past-the-operator-level). Unlike
+    Karatsuba this handles asymmetric operands (uint130 x uint3) directly.
+    Unsigned operands only, like every multiplier in this module."""
+    eff_l_t, eff_r_t, out_t = arith_result_type("INFERRED_MULT", l_t, r_t)
+    if str(eff_l_t).startswith("int") or str(eff_r_t).startswith("int"):
+        raise TypeError(f"make_soft_mult_split: unsigned operands only (got {l_t}, {r_t})")
+    l_bits, r_bits = len(eff_l_t), len(eff_r_t)
+    split_left = l_bits >= r_bits
+    wide_bits, other_bits = (l_bits, r_bits) if split_left else (r_bits, l_bits)
+    if wide_bits < 2:
+        raise ValueError("make_soft_mult_split: a 1-bit operand has no halves")
+    wide_t = eff_l_t if split_left else eff_r_t
+    other_t = eff_r_t if split_left else eff_l_t
+    half = wide_bits // 2
+    lo_t = make_uint_t(half)
+    hi_t = make_uint_t(wide_bits - half)
+    p_hi_t = make_uint_t(wide_bits - half + other_bits)
+    upper_t = make_uint_t(wide_bits + other_bits - half)
+    mult_lo = leaf(lo_t, other_t)
+    mult_hi = leaf(hi_t, other_t)
+
+    @hw_func
+    def soft_mult_split(a: l_t, b: r_t) -> out_t:
+        ae: eff_l_t = a
+        be: eff_r_t = b
+        wide: wide_t = 0
+        other: other_t = 0
+        if split_left:
+            wide = ae
+            other = be
+        else:
+            wide = be
+            other = ae
+        w_lo: lo_t = wide
+        w_hi: hi_t = wide >> half
+        p_lo: out_t = mult_lo(w_lo, other)
+        p_hi: p_hi_t = mult_hi(w_hi, other)
+        p_lo_upper: other_t = p_lo >> half
+        upper: upper_t = p_hi + p_lo_upper
+        p_lo_low: lo_t = p_lo
+        result: out_t = 0
+        result = bit_assign(result, p_lo_low, 0)
+        result = bit_assign(result, upper, half)
+        return result
+
+    # Keep the recombining add on the built-in adder whatever PLUS
+    # registration is active (see soft_add._pin_inferred_add).
+    register_operator("PLUS", p_hi_t, other_t, INFERRED, scope=soft_mult_split)
+    register_left_operator("PLUS", p_hi_t, INFERRED, scope=soft_mult_split)
+    return soft_mult_split
+
+
 # ─────────────────────────────────────────────
 # Carry-save (deferred-carry) multiplier
 # ─────────────────────────────────────────────

@@ -341,6 +341,100 @@ BLOCKED_SRC = textwrap.dedent(
     """
 )
 
+# Wide arithmetic in the shape of the WireGuard Poly1305 epilogue that once
+# folded 31,494 one-bit ANDs onto one unit: a Karatsuba product with inferred
+# 32/33-bit leaves, then a 128-bit add and subtract. Under a budget too small
+# for its multiplies and adds, forced descent must split them into narrower
+# INFERRED operators, never into one-bit gates.
+WIDE_SRC = textwrap.dedent(
+    """
+    # pyright: reportInvalidTypeForm=none
+    import os, sys
+    sys.path.insert(0, {repo!r})
+    from pypeline import (AUTO_FSM, MAIN, NamedTuple, Reg, hw_func, make_uint_t,
+                          struct, uint1_t, uint64_t)
+    from operators.soft_mult import make_mult_karatsuba_inferred_leaves
+
+    uint128_t = make_uint_t(128)
+    multiply = make_mult_karatsuba_inferred_leaves(uint64_t, uint64_t, threshold=34)
+
+    @struct
+    class in_t(NamedTuple):
+        a: uint64_t
+        b: uint64_t
+        c: uint128_t
+
+    @hw_func
+    def wide(x: in_t) -> uint128_t:
+        p: uint128_t = multiply(x.a, x.b)
+        s: uint128_t = p + x.c
+        d: uint128_t = s - x.c
+        return d
+
+    FSM = AUTO_FSM(wide)
+
+    @MAIN({mhz})
+    def top(start: uint1_t, x: in_t) -> uint128_t:
+        s: FSM.in_stream_t
+        s.data = x
+        s.valid = start
+        o = FSM(s)
+        r: Reg[uint128_t]
+        if o.valid:
+            r = o.data
+        return r
+    """
+)
+
+
+# Five independent adds and five independent subtracts. With each operation
+# just inside the descent test's flat operand-mux allowance, sharing all five
+# on one unit charges a 5-way mux that does not fit a state; two units of EACH
+# kind (3-way muxes) do. Unsharing either kind alone still leaves the other
+# over budget.
+TWO_FLOORS_SRC = textwrap.dedent(
+    """
+    # pyright: reportInvalidTypeForm=none
+    import os, sys
+    sys.path.insert(0, {repo!r})
+    from pypeline import (AUTO_FSM, MAIN, NamedTuple, Reg, hw_func, make_uint_t,
+                          struct, uint1_t, uint32_t)
+
+    uint33_t = make_uint_t(33)
+
+    @struct
+    class in_t(NamedTuple):
+        a: uint32_t[5]
+        b: uint32_t[5]
+
+    @struct
+    class out_t(NamedTuple):
+        s: uint33_t[5]
+        d: uint32_t[5]
+
+    @hw_func
+    def ten(x: in_t) -> out_t:
+        o: out_t
+        for i in range(5):
+            o.s[i] = x.a[i] + x.b[i]
+            o.d[i] = x.a[i] - x.b[i]
+        return o
+
+    FSM = AUTO_FSM(ten)
+
+    @MAIN({mhz})
+    def top(start: uint1_t, x: in_t) -> out_t:
+        s: FSM.in_stream_t
+        s.data = x
+        s.valid = start
+        o = FSM(s)
+        r: Reg[out_t]
+        if o.valid:
+            r = o.data
+        return r
+    """
+)
+
 REPO = os.path.abspath(
     os.path.join(os.path.dirname(os.path.abspath(__file__)), "../../..")
 )
@@ -1277,6 +1371,242 @@ def main():
                 {key10: sched10}, {key10: dict(sched10, descend_blocked=[])}
             ),
             "the blocked-descent record is diagnostic, not hardware",
+        )
+
+        print("[forced descent splits wide operators into half-width inferred ones]")
+        # Width-proportional delays (delay units): an add/subtract grows with
+        # its carry chain, an inferred multiply with its operand widths. The
+        # 100 MHz clock at scale 0.6 gives 60 units per state: too small for
+        # the 32/33-bit multiplies (~85) and the 128-bit add/subtract (~52 plus
+        # the 10-unit operand-mux allowance).
+        ps11, key11, tag11 = parse_design(
+            tmp, mhz=100.0, name="d_wide", source=WIDE_SRC
+        )
+
+        def wide_delays(parser_state):
+            info = parser_state.pypeline_builtin_op_info
+            for entity, logic in parser_state.FuncLogicLookupTable.items():
+                op = info.get(entity)
+                if op is None:
+                    if not logic.submodule_instances:
+                        logic.delay = 0  # casts, bit reads/assigns: wiring
+                    continue
+                name, ctypes = op
+                widths = [AUTO._ctype_width(t) for t in ctypes]
+                if name in ("PLUS", "MINUS"):
+                    logic.delay = 10 + max(widths) // 3
+                elif name in ("INFERRED_MULT", "MULT"):
+                    logic.delay = 20 + sum(widths)
+                else:
+                    logic.delay = 2
+
+        wide_delays(ps11)
+        split11 = AUTO._split_equivalents(ps11)
+        check(
+            "BIN_OP_PLUS_uint128_t_uint128_t" in split11
+            and "BIN_OP_INFERRED_MULT_uint32_t_uint32_t" in split11,
+            "precondition: the bootstrap parse prepared width-halving "
+            "equivalents for the wide add and the inferred-leaf multiply",
+        )
+        sched11 = AUTO_FSM.BUILD_SCHEDULE(ps11, key11, tag11, 0.6)
+        ents11 = [n["entity"] for n in sched11["nodes"].values() if n.get("fu")]
+        one_bit11 = [
+            e for e in ents11
+            if e.startswith(("BIN_OP_AND_uint1_t", "BIN_OP_OR_uint1_t", "BIN_OP_XOR_uint1_t"))
+        ]
+        widest_add11 = max(
+            (AUTO._ctype_width(t)
+             for e in ents11 if e.startswith(("BIN_OP_PLUS_", "BIN_OP_MINUS_"))
+             for t in ps11.pypeline_builtin_op_info[e][1]),
+            default=0,
+        )
+        mults11 = sorted({e for e in ents11 if "MULT" in e or "inferred_mult" in e})
+        check(
+            not one_bit11,
+            f"forced descent never reaches one-bit gates ({len(one_bit11)} found)",
+        )
+        check(
+            0 < widest_add11 < 128,
+            f"the 128-bit add/subtract were split into narrower inferred adds "
+            f"(widest {widest_add11} bits)",
+        )
+        check(
+            mults11 and not any("uint32_t_r_t_uint32_t" in e or "uint33_t_r_t_uint33_t" in e
+                                for e in mults11),
+            f"the too-slow 32/33-bit products were split into narrower inferred "
+            f"products: {mults11}",
+        )
+        check(
+            len(sched11["nodes"]) < 400,
+            f"the descended schedule stays word-level ({len(sched11['nodes'])} "
+            f"operations); bit-level descent made thousands",
+        )
+        # Sharing every 8x16 product on one unit adds a wide operand mux, so
+        # the share-everything anchor runs over budget -- but only by its mux:
+        # each operation passed the descent test, which charges a flat
+        # allowance. Giving the product more units is what the area search is
+        # for, and it must find the fitting binding rather than return the
+        # over-budget anchor.
+        over11 = [
+            n for n in sched11["nodes"].values()
+            if n.get("fu") and n["end_du"] > sched11["budget_du"]
+        ]
+        check(
+            all(n["delay_du"] + AUTO.MUX_PENALTY_DU <= sched11["budget_du"] for n in over11),
+            "whatever runs over budget in the anchor does so only through its "
+            "operand mux",
+        )
+        best11 = AUTO_FSM.SWEEP_MIN_AREA_SCHEDULE(ps11, key11, tag11, 0.6)
+        check(
+            best11["worst_state_du"] <= best11["budget_du"] and not best11["at_floor"],
+            f"the area search reaches a binding that fits the clock "
+            f"(worst {best11['worst_state_du']} of {best11['budget_du']}, "
+            f"unshared {best11['unshared']})",
+        )
+        print("[max_latency is met down to the dependency-chain minimum]")
+        # One unit per operation leaves only the dependency chain setting the
+        # state count: the shortest schedule there is. A cap at exactly that
+        # latency must be met (giving units back one at a time to the most
+        # loaded entity, eight times at most, did not get there), and still
+        # with some sharing where the chain allows it; a cap one below it
+        # cannot be met, and the report says what the minimum is.
+        folds11 = {}
+        for n in sched11["nodes"].values():
+            if n.get("fu"):
+                folds11[n["entity"]] = folds11.get(n["entity"], 0) + 1
+        alone11 = AUTO_FSM.BUILD_SCHEDULE(
+            ps11, key11, tag11, 0.6, unshared=tuple(sorted(folds11.items()))
+        )
+        try:
+            tag11.max_latency = alone11["latency"]
+            capped11 = AUTO_FSM.BUILD_SCHEDULE(ps11, key11, tag11, 0.6)
+            tag11.max_latency = alone11["latency"] - 1
+            short11 = AUTO_FSM.BUILD_SCHEDULE(ps11, key11, tag11, 0.6)
+        finally:
+            tag11.max_latency = None
+        check(
+            alone11["latency"] < sched11["latency"]
+            and not capped11["latency_infeasible"]
+            and capped11["latency"] <= alone11["latency"],
+            f"a cap at the minimum latency ({alone11['latency']}, uncapped "
+            f"{sched11['latency']}) is met: {capped11['latency']}",
+        )
+        check(
+            len(capped11["fus"]) < sum(folds11.values()),
+            f"meeting it keeps some sharing ({len(capped11['fus'])} units for "
+            f"{sum(folds11.values())} operations)",
+        )
+        check(
+            short11["latency_infeasible"]
+            and short11["latency"] == alone11["latency"]
+            and f"needs {alone11['n_states']} states"
+            in AUTO_FSM.LATENCY_INFEASIBLE_MESSAGE(key11, short11),
+            "a cap below the minimum is infeasible, and the report names the "
+            "minimum",
+        )
+
+        # The area search's CHOSEN opens keep the soft-operator flavor: with
+        # room for every operation, opening the 128-bit add is a ripple adder.
+        roomy11 = AUTO_FSM.BUILD_SCHEDULE(
+            ps11, key11, tag11, 4.0, None, ("BIN_OP_PLUS_uint128_t_uint128_t",)
+        )
+        check(
+            any(n["entity"].startswith("BIN_OP_XOR_uint1_t")
+                for n in roomy11["nodes"].values()),
+            "a chosen (not forced) open still uses the bit-level soft adder",
+        )
+
+        print("[area search walks through over-budget intermediates]")
+        # Each add/subtract fits the descent test's flat 10-unit operand-mux
+        # allowance (80 + 10 <= 90), so neither is opened -- but five of them
+        # on one unit charge a 5-way mux (14 units) and do not fit. The anchor
+        # is therefore over budget twice over, and only giving BOTH kinds a
+        # second unit fixes it. Unsharing one kind alone is no closer to
+        # fitting, which the search used to reject outright, leaving the
+        # over-budget anchor as its answer.
+        ps12, key12, tag12 = parse_design(
+            tmp, mhz=100.0, name="d_two_floors", source=TWO_FLOORS_SRC
+        )
+        for entity, logic in ps12.FuncLogicLookupTable.items():
+            if entity.startswith(("BIN_OP_PLUS_", "BIN_OP_MINUS_")):
+                logic.delay = 80
+            elif not logic.submodule_instances:
+                logic.delay = 0
+        anchor12 = AUTO_FSM.BUILD_SCHEDULE(ps12, key12, tag12, 0.9)
+        check(
+            anchor12["worst_state_du"] > anchor12["budget_du"]
+            and not anchor12["opened"],
+            "precondition: sharing everything is over budget, and nothing was "
+            "opened to avoid it",
+        )
+        best12 = AUTO_FSM.SWEEP_MIN_AREA_SCHEDULE(ps12, key12, tag12, 0.9)
+        units12 = dict((e, n) for e, n in best12["unshared"])
+        check(
+            best12["worst_state_du"] <= best12["budget_du"]
+            and len(units12) == 2
+            and all(n >= 2 for n in units12.values()),
+            f"the search reaches the jointly feasible binding (unshared "
+            f"{best12['unshared']}, worst {best12['worst_state_du']} of "
+            f"{best12['budget_du']})",
+        )
+        old_cap = AUTO_FSM.MAX_SWEEP_DAG_NODES
+        print("[area search skips scoring when the anchor exceeds the DAG cap]")
+        try:
+            AUTO_FSM.MAX_SWEEP_DAG_NODES = len(anchor12["nodes"]) - 1
+            capped12 = AUTO_FSM.SWEEP_MIN_AREA_SCHEDULE(ps12, key12, tag12, 0.9)
+        finally:
+            AUTO_FSM.MAX_SWEEP_DAG_NODES = old_cap
+        check(
+            capped12["sweep_candidates"] == 0
+            and capped12["sweep_skipped_dag_nodes"] == len(anchor12["nodes"])
+            and AUTO_FSM.SCHEDULES_EQUAL({key12: capped12}, {key12: anchor12}),
+            "an anchor already past the DAG cap is returned without building "
+            "candidates the cap would refuse",
+        )
+        check(
+            "area search skipped" in AUTO_FSM.DESCRIBE_SCHEDULE(ps12, key12, capped12),
+            "the schedule report says the search was skipped and why",
+        )
+
+        print("[tightening steps by the measured miss and past the worst state]")
+        fake80 = type("PS", (), {})()
+        fake80.main_mhz = {"m": 80.0}  # 125 delay units per period
+        tighten = AUTO_FSM.TIGHTENED_BUDGET_SCALE
+        check(
+            abs(tighten(fake80, 0.9, 72.65 / 80.0, 112) - 0.9 * 72.65 / 80.0) < 1e-9,
+            "a 72.65-of-80 MHz miss shrinks the budget by that ratio (11.2 -> "
+            "10.2 ns), not by the fixed fallback step (8.4 ns)",
+        )
+        near = tighten(fake80, 0.9, 79.99 / 80.0, 110)
+        check(
+            AUTO_FSM._budget_du(fake80, near) == 109,
+            "a near miss still steps just below the current worst state",
+        )
+        check(
+            abs(tighten(fake80, 0.9, None, 112) - 0.9 * AUTO_FSM.BUDGET_TIGHTEN_FACTOR) < 1e-9,
+            "with no achieved MHz the fixed BUDGET_TIGHTEN_FACTOR applies",
+        )
+        fake85 = type("PS", (), {})()
+        fake85.main_mhz = {"m": 85.0}  # 117.6 delay units: not an integer
+        check(
+            AUTO_FSM._budget_du(fake85, tighten(fake85, 0.95, 0.9999, 110)) == 109,
+            "the below-worst step survives a non-integer clock period",
+        )
+        params13 = type("P", (), {})()
+        params13.sweep_timing_failures = [
+            ("main_a", 80.0, 72.65, "path through fsm_x_entity"),
+            ("main_b", 80.0, 79.99, "path through fsm_x_entity"),
+            ("main_c", 80.0, None, "path through fsm_y_entity"),
+        ]
+        scheds13 = {"kx": {"entity": "fsm_x_entity"}, "ky": {"entity": "fsm_y_entity"}}
+        ratios13 = AUTO_FSM._BLAMED_MISS_RATIOS(None, params13, scheds13)
+        check(
+            ratios13 == {"kx": 72.65 / 80.0, "ky": None},
+            f"each blamed FSM takes its worst miss; no number gives None ({ratios13})",
+        )
+        check(
+            AUTO_FSM.BLAMED_AUTO_FSM_KEYS(None, params13, scheds13) == {"kx", "ky"},
+            "BLAMED_AUTO_FSM_KEYS is the same attribution",
         )
 
     # ── soft-operator equivalents: which built-ins can be opened, and into

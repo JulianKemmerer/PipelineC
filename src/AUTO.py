@@ -19,6 +19,7 @@ no scheduler state. This module holds:
 Candidates are emitted and re-elaborated before any consumer scores them, so
 area and timing models always see the hardware that will be built.
 """
+import collections
 import copy
 import hashlib
 import json
@@ -1638,6 +1639,64 @@ _SOFT_UNSIGNED_ONLY_OPS = frozenset({"MULT", "INFERRED_MULT"})
 _MAX_SOFT_EQUIVALENTS = 64
 
 
+# FORCED descent's flavors: what an operation slower than one state is opened
+# into (see _open_target). Each computes its result from built-in operators of
+# about HALF the width -- two half-width inferred adds joined by a carry, or
+# two half-width inferred products and one add -- so descent only goes as far
+# as it must: a half that still does not fit is split again, and one that fits
+# stays a word-level unit. The bit-level flavors in _SOFT_FACTORY_FOR_OP jump
+# straight to one-bit gates instead: a 260-bit add opened that way is ~1300
+# shareable one-bit operations, which is how a WireGuard Poly1305 epilogue
+# became a 31,494-fold one-bit AND once its budget tightened past its wide
+# adders. The area sweep's CHOSEN opens keep _SOFT_FACTORY_FOR_OP.
+# Unsigned operands only: a signed operator falls back to its soft equivalent.
+_SPLIT_FACTORY_FOR_OP = {
+    "PLUS": ("operators.soft_add", "make_soft_add_split"),
+    "MINUS": ("operators.soft_add", "make_soft_sub_split"),
+    "INFERRED_MULT": ("operators.soft_mult", "make_soft_mult_split"),
+}
+
+
+# Ceiling on width-halving equivalents elaborated per AUTO_FSM function (see
+# PREPARE_SPLIT_EQUIVALENTS). Each root operator shape halves through about
+# log2(width) narrower shapes, two or three per level, so this is several
+# times what a function with a dozen distinct wide operators needs.
+_MAX_SPLIT_EQUIVALENTS = 256
+
+
+def _split_equivalent_callable(parser_state, entity):
+    """A live hw_func computing exactly what a built-in operator entity
+    computes from half-width built-in operators (_SPLIT_FACTORY_FOR_OP), or
+    None when the operator, its operand types or its width have no split."""
+    info = getattr(parser_state, "pypeline_builtin_op_info", {}).get(entity)
+    if info is None:
+        return None
+    op_name, operand_ctypes = info
+    if op_name not in _SPLIT_FACTORY_FOR_OP or len(operand_ctypes) != 2:
+        return None
+    if not all(ct.startswith("uint") for ct in operand_ctypes):
+        return None
+    types = [_scalar_ctype_to_type(ct) for ct in operand_ctypes]
+    if any(t is None for t in types):
+        return None
+    if op_name in ("PLUS", "MINUS"):
+        # The high half takes one extra carry-in bit, so a narrow add does not
+        # shrink when split (uint4 + uint4 splits into another uint4 + uint4):
+        # leave those to the soft equivalent rather than descend in place.
+        widest = max(_ctype_width(ct) for ct in operand_ctypes)
+        out_bits = widest + 1 if op_name == "PLUS" else widest
+        if out_bits - out_bits // 2 + 1 >= widest:
+            return None
+    module_name, factory_name = _SPLIT_FACTORY_FOR_OP[op_name]
+    try:
+        import importlib
+
+        factory = getattr(importlib.import_module(module_name), factory_name)
+        return factory(types[0], types[1])
+    except Exception:
+        return None
+
+
 def _soft_equivalent_callable(parser_state, entity):
     """A live, decomposable hw_func computing exactly what a built-in operator
     entity computes -- or None.
@@ -1740,6 +1799,66 @@ def PREPARE_SOFT_EQUIVALENTS(tag, parser_state, elaborator):
         _RESOLVE_BUILTIN_SUBMODULES(parser_state, soft_logic.func_name)
 
 
+def _split_equivalents(parser_state):
+    """built-in op entity -> its width-halving equivalent entity, as prepared
+    by PREPARE_SPLIT_EQUIVALENTS."""
+    return getattr(parser_state, "pypeline_auto_fsm_split_equiv", {})
+
+
+def PREPARE_SPLIT_EQUIVALENTS(tag, parser_state, elaborator):
+    """Elaborate width-halving equivalents (_SPLIT_FACTORY_FOR_OP) for the
+    built-in operators inside an AUTO_FSM'd function -- and, recursively, for
+    the half-width built-ins inside those -- so FORCED descent can split an
+    operation that does not fit one state as many times as it needs to.
+
+    Same lifecycle as PREPARE_SOFT_EQUIVALENTS: run on every pass from
+    AUTO_FSM._PREPARE_CANDIDATES, results land in FuncLogicLookupTable
+    uninstantiated, and nothing is built unless a schedule binds it. Bounded by
+    _MAX_SPLIT_EQUIVALENTS elaborated shapes.
+    """
+    equiv = getattr(parser_state, "pypeline_auto_fsm_split_equiv", None)
+    if equiv is None:
+        equiv = {}
+        parser_state.pypeline_auto_fsm_split_equiv = equiv
+    try:
+        func_logic = elaborator._elaborate_live_func(
+            getattr(tag.func, "__name__", "auto_fsm_func"), tag.func
+        )
+    except Exception:
+        return
+    builtin_ops = getattr(parser_state, "pypeline_builtin_op_info", {})
+    seen = set()
+    # Breadth first, so the cap below can only ever cut the DEEPEST (narrowest)
+    # halvings -- never an operator the function itself uses.
+    todo = collections.deque([func_logic.func_name])
+    n_prepared = 0
+    while todo and n_prepared < _MAX_SPLIT_EQUIVALENTS:
+        name = todo.popleft()
+        if name in seen:
+            continue
+        seen.add(name)
+        if name in builtin_ops:
+            split = equiv.get(name)
+            if split is None:
+                fn = _split_equivalent_callable(parser_state, name)
+                if fn is None:
+                    continue
+                try:
+                    split = elaborator._elaborate_live_func(fn.__name__, fn).func_name
+                except Exception:
+                    continue
+                # Verified against the built-in's own Logic in _open_target.
+                equiv[name] = split
+                _RESOLVE_BUILTIN_SUBMODULES(parser_state, split)
+                n_prepared += 1
+            todo.append(split)
+            continue
+        logic = parser_state.FuncLogicLookupTable.get(name)
+        if logic is None:
+            continue
+        todo.extend(logic.submodule_instances.values())
+
+
 def _RESOLVE_BUILTIN_SUBMODULES(parser_state, entity, _seen=None):
     """Materialize the Logic of every built-in operator inside a candidate
     subtree.
@@ -1771,9 +1890,13 @@ def _RESOLVE_BUILTIN_SUBMODULES(parser_state, entity, _seen=None):
         _RESOLVE_BUILTIN_SUBMODULES(parser_state, sub_entity, _seen)
 
 
-def _open_target(parser_state, entity, logic):
+def _open_target(parser_state, entity, logic, forced=False):
     """(entity, logic) whose body should be inlined when opening `entity` up:
-    itself if it has source, otherwise its soft-operator equivalent.
+    itself if it has source, otherwise an equivalent in Python source. A
+    `forced` open (the operation is slower than one state) prefers the
+    width-halving equivalent (_SPLIT_FACTORY_FOR_OP) and falls back to the
+    soft-operator one; a chosen open (the area sweep's) uses the soft-operator
+    equivalent only.
 
     The soft equivalent's SIGNATURE is verified here rather than where it was
     prepared, because at preparation time (bootstrap elaboration) the built-in
@@ -1784,22 +1907,25 @@ def _open_target(parser_state, entity, logic):
     """
     if _is_decomposable(parser_state, entity, logic):
         return entity, logic
-    soft = _soft_equivalents(parser_state).get(entity)
-    if soft is None:
-        return None, None
-    soft_logic = parser_state.FuncLogicLookupTable.get(soft)
-    if not _is_decomposable(parser_state, soft, soft_logic):
-        return None, None
-    if logic is not None:
-        ret = LOGIC.RETURN_WIRE_NAME
-        if soft_logic.wire_to_c_type.get(ret) != logic.wire_to_c_type.get(ret):
-            return None, None
-        ce = LOGIC.CLOCK_ENABLE_NAME
-        if len([i for i in soft_logic.inputs if i != ce]) != len(
-            [i for i in logic.inputs if i != ce]
-        ):
-            return None, None
-    return soft, soft_logic
+    tables = (_split_equivalents, _soft_equivalents) if forced else (_soft_equivalents,)
+    for table in tables:
+        soft = table(parser_state).get(entity)
+        if soft is None:
+            continue
+        soft_logic = parser_state.FuncLogicLookupTable.get(soft)
+        if not _is_decomposable(parser_state, soft, soft_logic):
+            continue
+        if logic is not None:
+            ret = LOGIC.RETURN_WIRE_NAME
+            if soft_logic.wire_to_c_type.get(ret) != logic.wire_to_c_type.get(ret):
+                continue
+            ce = LOGIC.CLOCK_ENABLE_NAME
+            if len([i for i in soft_logic.inputs if i != ce]) != len(
+                [i for i in logic.inputs if i != ce]
+            ):
+                continue
+        return soft, soft_logic
+    return None, None
 
 
 def BUILD_DAG(parser_state, func_entity, delays, budget_du, opened=()):
@@ -1952,7 +2078,7 @@ def _build_dag_level(
         too_slow_for_a_state = delay_du + MUX_PENALTY_DU > budget_du
         want_open = too_slow_for_a_state or sub_entity in opened
         open_entity, open_logic = (
-            _open_target(parser_state, sub_entity, sub_logic)
+            _open_target(parser_state, sub_entity, sub_logic, forced=too_slow_for_a_state)
             if want_open
             else (None, None)
         )

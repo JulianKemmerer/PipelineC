@@ -118,8 +118,9 @@ MAX_SCHEDULE_PASSES = 6
 # every functional unit. Overridable per build with --auto_fsm_budget_scale.
 DEFAULT_BUDGET_SCALE = 0.9
 
-# Multiplied into budget_scale for every AUTO_FSM blamed for a timing failure,
-# shrinking the per-state budget so the next schedule uses more, smaller states.
+# Multiplied into budget_scale for an AUTO_FSM blamed for a timing failure that
+# reported no achieved MHz; with one, the measured miss sets the step instead
+# (see TIGHTENED_BUDGET_SCALE).
 BUDGET_TIGHTEN_FACTOR = 0.75
 
 # Minimum relative fmax gain a tightened (rescheduled) build must show over the
@@ -133,8 +134,9 @@ BUDGET_TIGHTEN_FACTOR = 0.75
 # any real improvement.
 TIGHTEN_MIN_FMAX_GAIN = 0.01
 
-# How many times the driver may apply BUDGET_TIGHTEN_FACTOR looking for a budget
-# that actually changes the schedule, before concluding more states cannot help.
+# How many times the driver may tighten a budget (TIGHTENED_BUDGET_SCALE)
+# looking for one that actually changes the schedule, before concluding more
+# states cannot help.
 MAX_TIGHTEN_STEPS = 8
 
 
@@ -237,10 +239,6 @@ MAX_SWEEP_UPHILL = 4
 # Deliberately a size cap, never a wall-clock one: the schedule must stay a
 # pure function of the source (see _schedule_entity_name).
 MAX_SWEEP_DAG_NODES = 20000
-
-# How many times the scheduler may add a functional unit to try to fit a hard
-# max_latency cap before declaring the cap infeasible.
-MAX_REPLICATION_STEPS = 8
 
 # Advisory threshold (never a cap -- see _warn_large_schedule): folds onto one
 # shared unit past which BUILD_SCHEDULE prints a one-time notice before
@@ -1920,16 +1918,9 @@ def BUILD_SCHEDULE(
         return cached
 
     plan = SCHEDULE_DAG(dag, budget_du, mux_du_of, max_states, copies)
-    # A cap that sharing alone cannot meet: hand more units to whatever is
-    # still forcing states, and try again. Bounded, and each step is a pure
-    # (cheap) recomputation -- no synthesis is involved in any of this.
-    for _ in range(MAX_REPLICATION_STEPS):
-        if not plan["latency_infeasible"]:
-            break
-        bumped = _bump_replication(plan, folds, copies)
-        if not bumped:
-            break
-        plan = SCHEDULE_DAG(dag, budget_du, mux_du_of, max_states, copies)
+    if plan["latency_infeasible"]:
+        # A cap that sharing alone cannot meet: give units back until it is.
+        plan = _replicate_to_cap(dag, budget_du, mux_du_of, max_states, folds, copies)
     # Recorded after the latency-driven bumps above, so the schedule always
     # states the binding it actually has.
     unshared = tuple(sorted((e, n) for e, n in copies.items() if n > 1))
@@ -2084,24 +2075,49 @@ def _replication_for_latency(folds, max_states):
     }
 
 
-def _bump_replication(plan, folds, copies):
-    """Give one more unit to whatever is most loaded, in place. Returns False
-    when no entity can usefully be replicated further (the schedule is then
-    bounded by a dependency chain or the delay budget, neither of which more
-    units can fix)."""
-    best = None
-    for entity, count in sorted(folds.items()):
-        n = copies.get(entity, 1)
-        if n >= count:
-            continue  # already one unit per operation: nothing left to unshare
-        load = count / float(n)
-        if best is None or load > best[0]:
-            best = (load, entity)
-    if best is None:
-        return False
-    entity = best[1]
-    copies[entity] = copies.get(entity, 1) + 1
-    return True
+def _replicate_to_cap(dag, budget_du, mux_du_of, max_states, folds, copies):
+    """The SCHEDULE_DAG plan with the most sharing found that meets a
+    max_latency cap, setting `copies` (in place) to its binding.
+
+    Searches one knob: a limit k on operations per unit, every entity getting
+    max(its current copies, ceil(folds / k)) units. Uniform rather than
+    per-entity, because what keeps a capped schedule long is usually many
+    kinds of operation queueing at once, and because each unit's operand mux
+    shrinks with its fold count -- giving units one at a time to the most
+    loaded entity (the step this replaced, eight times at most) never reached
+    a 64- or 32-cycle cap on the WireGuard Poly1305 kernels, both of which
+    k = 2 meets. k = 1 is one unit per operation: the dependency chain alone
+    sets the state count, so a cap that k = 1 misses cannot be met at all, and
+    its plan (the shortest possible) is what the infeasibility report shows.
+    Fewer units means more states, so the largest k meeting the cap is found
+    by bisection (a handful of reschedules; still no synthesis).
+    """
+    base = dict(copies)
+
+    def trial(k):
+        copies.clear()
+        copies.update(base)
+        for entity, n_ops in folds.items():
+            need = min(n_ops, -(-n_ops // k))
+            if need > copies.get(entity, 1):
+                copies[entity] = need
+        return SCHEDULE_DAG(dag, budget_du, mux_du_of, max_states, copies)
+
+    best = trial(1)
+    best_copies = dict(copies)
+    if not best["latency_infeasible"]:
+        lo, hi = 2, max(folds.values(), default=1)
+        while lo <= hi:
+            k = (lo + hi) // 2
+            plan = trial(k)
+            if plan["latency_infeasible"]:
+                hi = k - 1
+            else:
+                best, best_copies = plan, dict(copies)
+                lo = k + 1
+    copies.clear()
+    copies.update(best_copies)
+    return best
 
 
 # ─────────────────────────────────────────────
@@ -2417,6 +2433,14 @@ def _scheduled_op_count(schedule):
     return sum(1 for node in schedule["nodes"].values() if node.get("fu"))
 
 
+def _state_excess(schedule):
+    """How far a schedule's worst state runs past its delay budget (0 when it
+    fits). The area search ranks by this before area: a schedule that fits
+    the clock always beats one that does not, and between two that do not,
+    the one closer to fitting is the one to keep walking from."""
+    return max(0, schedule["worst_state_du"] - schedule["budget_du"])
+
+
 def _sweep_required_improvement(anchor, candidate):
     """Minimum raw model win needed to make `candidate` the incumbent.
 
@@ -2491,10 +2515,14 @@ def _SWEEP_MIN_AREA_SCHEDULE(
         func_entity_override=func_entity_override,
     )
     anchor_cost = ESTIMATE_SCHEDULE_AREA(parser_state, anchor, memo)
-    best, best_cost = anchor, anchor_cost
+    anchor_excess = _state_excess(anchor)
+    best, best_cost, best_excess = anchor, anchor_cost, anchor_excess
     cur = anchor
     opened = []
-    unshared = {}
+    # Start from the units a max_latency cap already forced on the anchor
+    # (_replicate_to_cap): every candidate then begins at a binding that meets
+    # the cap instead of repeating that search, and the moves only add to it.
+    unshared = {e: n for e, n in anchor["unshared"]} if anchor["max_latency"] else {}
     n_considered = 0
     uphill = 0
 
@@ -2551,12 +2579,19 @@ def _SWEEP_MIN_AREA_SCHEDULE(
             # This made some state unschedulable at the clock goal. More area
             # for worse timing is never the trade being looked for here.
             return None, "rejected: a state stopped fitting the clock goal", None
-        if sched["worst_state_du"] > sched["budget_du"]:
+        if _state_excess(sched) > anchor_excess:
             # Area is the objective; unused timing margin is available to buy
             # it. The hard boundary is the declared clock budget, not the
             # anchor's incidental (often much shorter) worst state. Real
             # synthesis still confirms the result and the driver's existing
             # tighten/reschedule loop recovers from model optimism.
+            #
+            # When the anchor ITSELF runs over budget (an operation plus the
+            # operand mux its fold count implies does not fit a state), a
+            # candidate no further over is kept: unsharing one of two
+            # over-budget units leaves the other over budget, and rejecting
+            # that intermediate would make the jointly feasible two-unit
+            # binding unreachable one move at a time.
             return (
                 None,
                 f"rejected: worst state {sched['worst_state_du'] / 10.0:.2f} ns "
@@ -2573,8 +2608,24 @@ def _SWEEP_MIN_AREA_SCHEDULE(
             f"{anchor['worst_state_du'] / 10.0:.2f} ns",
             flush=True,
         )
-    for _move in range(MAX_SWEEP_MOVES):
-        candidates = []  # (cost, tie-break label, schedule, opened, unshared)
+    if len(anchor["nodes"]) > MAX_SWEEP_DAG_NODES:
+        # Every candidate would be refused by evaluate()'s DAG cap: UNSHARE
+        # keeps this DAG, and OPEN replaces a node by a body of at least one
+        # node. Building each of them just to refuse it is what made one
+        # oversized anchor cost minutes per candidate list -- the result is
+        # the anchor either way.
+        n_moves = 0
+        if debug:
+            print(
+                f"AUTO_FSM {key}: sweep skipped: the anchor already has "
+                f"{len(anchor['nodes'])} operations, past the "
+                f"{MAX_SWEEP_DAG_NODES} the area search will consider",
+                flush=True,
+            )
+    else:
+        n_moves = MAX_SWEEP_MOVES
+    for _move in range(n_moves):
+        candidates = []  # (excess, cost, tie-break label, schedule, opened, unshared)
         for entity in sorted(_openable_entities(parser_state, cur, opened)):
             trial_opened = sorted(opened + [entity])
             sched, why, cost = evaluate(trial_opened, unshared)
@@ -2583,6 +2634,7 @@ def _SWEEP_MIN_AREA_SCHEDULE(
             if sched is not None:
                 candidates.append(
                     (
+                        _state_excess(sched),
                         cost,
                         ("open", entity),
                         sched,
@@ -2599,6 +2651,7 @@ def _SWEEP_MIN_AREA_SCHEDULE(
             if sched is not None:
                 candidates.append(
                     (
+                        _state_excess(sched),
                         cost,
                         ("unshare", entity),
                         sched,
@@ -2614,8 +2667,8 @@ def _SWEEP_MIN_AREA_SCHEDULE(
                     flush=True,
                 )
             break
-        candidates.sort(key=lambda c: (c[0], c[1]))
-        cost, label, sched, opened, unshared = candidates[0]
+        candidates.sort(key=lambda c: (c[0], c[1], c[2]))
+        excess, cost, label, sched, opened, unshared = candidates[0]
         # Always take the cheapest available move, even uphill -- see
         # MAX_SWEEP_UPHILL. The incumbent BEST is what gets returned, so
         # walking uphill can only ever discover something, never lose anything.
@@ -2625,9 +2678,13 @@ def _SWEEP_MIN_AREA_SCHEDULE(
         # The anchor-relative threshold is the structural confidence guard:
         # walking farther through an opened DAG must not make a known modelling
         # blind spot look progressively more authoritative.
-        improved = cost < best_cost * (
-            1.0 - SWEEP_MIN_IMPROVEMENT
-        ) and cost < anchor_cost * (1.0 - min_win)
+        # Getting closer to the clock budget beats any area: only between
+        # equally (in)feasible schedules does area decide.
+        improved = excess < best_excess or (
+            excess == best_excess
+            and cost < best_cost * (1.0 - SWEEP_MIN_IMPROVEMENT)
+            and cost < anchor_cost * (1.0 - min_win)
+        )
         if debug:
             confidence = (
                 ""
@@ -2641,7 +2698,7 @@ def _SWEEP_MIN_AREA_SCHEDULE(
                 flush=True,
             )
         if improved:
-            best, best_cost = sched, cost
+            best, best_cost, best_excess = sched, cost, excess
             uphill = 0
         else:
             uphill += 1
@@ -2651,6 +2708,9 @@ def _SWEEP_MIN_AREA_SCHEDULE(
     best["est_area"] = round(best_cost, 3)
     best["est_area_anchor"] = round(anchor_cost, 3)
     best["sweep_candidates"] = n_considered
+    best["sweep_skipped_dag_nodes"] = (
+        len(anchor["nodes"]) if len(anchor["nodes"]) > MAX_SWEEP_DAG_NODES else None
+    )
     return best
 
 
@@ -2688,10 +2748,12 @@ def SWEEP_MIN_AREA_SCHEDULE(
             raise
         except AUTO.AutoError:
             continue
-        if (candidate["latency_infeasible"] or candidate["worst_state_du"] > candidate["budget_du"]
+        if (candidate["latency_infeasible"]
+                or _state_excess(candidate) > _state_excess(best)
                 or (candidate["at_floor"] and not best["at_floor"])):
             continue
-        if candidate["est_area"] < best["est_area"]:
+        if (_state_excess(candidate) < _state_excess(best)
+                or candidate["est_area"] < best["est_area"]):
             candidate["comb_opt_moves"] = report["moves"]
             best = candidate
     if considered:
@@ -2733,17 +2795,25 @@ def _budget_du(parser_state, budget_scale):
     is instantiated under several clocks the tightest one wins, since one entity
     is built once and must satisfy every context it appears in.
     """
+    period_du = _period_du(parser_state)
+    if period_du is None:
+        # No clock goal anywhere: nothing to schedule against, so keep the whole
+        # function in one state.
+        return 1 << 30
+    return max(1, int(period_du * budget_scale))
+
+
+def _period_du(parser_state):
+    """The tightest MAIN clock period in (fractional) delay units, or None
+    when no MAIN has a clock goal. See _budget_du."""
     import SYN
 
     mhz_values = [
         mhz for mhz in parser_state.main_mhz.values() if mhz is not None and mhz > 0
     ]
     if not mhz_values:
-        # No clock goal anywhere: nothing to schedule against, so keep the whole
-        # function in one state.
-        return 1 << 30
-    period_ns = 1000.0 / max(mhz_values)
-    return max(1, int(period_ns * SYN.DELAY_UNIT_MULT * budget_scale))
+        return None
+    return 1000.0 / max(mhz_values) * SYN.DELAY_UNIT_MULT
 
 
 def HARVEST_AUTO_FSM_SCHEDULES(
@@ -2835,8 +2905,8 @@ def LATENCY_INFEASIBLE_MESSAGE(key, schedule) -> str:
         f"AUTO_FSM {key}: max_latency={schedule['max_latency']} cannot be met. "
         f"The shortest schedule meeting the {schedule['budget_du'] / 10.0:.2f} "
         f"ns/state delay budget needs {schedule['n_states']} states "
-        f"(latency {schedule['latency']}), even after replicating shared units "
-        f"to unshare what could be unshared. Raise max_latency to at least "
+        f"(latency {schedule['latency']}) even with one unit per operation, so "
+        f"no amount of unsharing meets the cap. Raise max_latency to at least "
         f"{schedule['latency']}, lower the clock goal, or shorten the "
         f"function's dependency chain."
     )
@@ -2856,20 +2926,62 @@ def BLAMED_AUTO_FSM_KEYS(parser_state, multimain_timing_params, schedules):
     failing MAIN. Over-blaming costs one extra schedule pass at a tighter
     budget; under-blaming would silently give up.
     """
+    return set(_BLAMED_MISS_RATIOS(parser_state, multimain_timing_params, schedules))
+
+
+def _BLAMED_MISS_RATIOS(parser_state, multimain_timing_params, schedules):
+    """blamed key -> achieved/goal MHz of the worst failure blaming it, or None
+    when no failure blaming it reported an achieved number. The attribution
+    behind BLAMED_AUTO_FSM_KEYS; the ratio is how far TIGHTENED_BUDGET_SCALE
+    shrinks the key's per-state budget."""
     failures = getattr(multimain_timing_params, "sweep_timing_failures", None)
     if not failures:
-        return set()
+        return {}
     entity_to_key = {sched["entity"]: key for key, sched in schedules.items()}
-    blamed = set()
-    for main_func_name, _goal, _achieved, why in failures:
-        named = {
+    ratios = {}
+    for main_func_name, goal, achieved, why in failures:
+        keys = {
             entity_to_key[entity] for entity in entity_to_key if entity in (why or "")
-        }
-        if named:
-            blamed |= named
-            continue
-        blamed |= _AUTO_FSM_KEYS_UNDER_MAIN(parser_state, main_func_name)
-    return {key for key in blamed if key in schedules}
+        } or _AUTO_FSM_KEYS_UNDER_MAIN(parser_state, main_func_name)
+        ratio = achieved / goal if achieved and goal else None
+        for key in keys:
+            if key not in schedules:
+                continue
+            prev = ratios.get(key)
+            if prev is None or (ratio is not None and ratio < prev):
+                ratios[key] = ratio
+            else:
+                ratios.setdefault(key, prev)
+    return ratios
+
+
+def TIGHTENED_BUDGET_SCALE(parser_state, budget_scale, miss_ratio, worst_state_du):
+    """The next per-state budget scale for an FSM blamed for a timing miss.
+
+    Scaled by the measured miss (achieved / goal MHz): a build that reached
+    72.65 of 80 MHz had its real critical state about 1/0.908 longer than the
+    model priced it, so the budget shrinks by that much -- not by a fixed
+    step that can overshoot past whole operator widths (0.75 took the
+    WireGuard Poly1305 epilogue from 11.2 to 8.4 ns, below its 34-bit
+    multiplies and 260-bit adds). BUDGET_TIGHTEN_FACTOR stands in when the
+    failure reported no achieved number.
+
+    Always at least just below the schedule's current worst state, so the
+    state that state's chain packed into must change -- a near miss (79.99 of
+    80 MHz) would otherwise shrink the budget by a rounding error and move
+    nothing.
+    """
+    factor = (
+        miss_ratio if miss_ratio is not None and 0.0 < miss_ratio < 1.0
+        else BUDGET_TIGHTEN_FACTOR
+    )
+    scale = budget_scale * factor
+    period_du = _period_du(parser_state)
+    if period_du and worst_state_du > 0:
+        # _budget_du truncates, so any scale putting period_du * scale below
+        # worst_state_du gives a budget of at most worst_state_du - 1.
+        scale = min(scale, (worst_state_du - 0.5) / period_du)
+    return scale
 
 
 def _AUTO_FSM_KEYS_UNDER_MAIN(parser_state, main_func_name):
@@ -2901,6 +3013,7 @@ _SCHEDULE_NON_HARDWARE_KEYS = frozenset(
         "sweep_candidates",
         "ctl_auto_candidates",
         "comb_opt_candidates",
+        "sweep_skipped_dag_nodes",
         "descend_truncated",
         "descend_blocked",
     )
@@ -3095,6 +3208,12 @@ def DESCRIBE_SCHEDULE(parser_state, key, schedule) -> str:
             f"opened up, {n_unshared} kind(s) given extra unit(s), "
             f"{schedule.get('sweep_candidates', 0)} candidate schedule(s) tried"
         )
+        if schedule.get("sweep_skipped_dag_nodes"):
+            line += (
+                f"\n  area search skipped: the share-everything schedule already "
+                f"has {schedule['sweep_skipped_dag_nodes']} operations (> "
+                f"{MAX_SWEEP_DAG_NODES}), so every candidate would exceed the cap"
+            )
         line += f"\n  area model: {_describe_area_model(parser_state, schedule)}"
         for entity in schedule.get("opened") or ():
             line += f"\n    opened up: {entity}"
@@ -3271,10 +3390,15 @@ def DO_SCHEDULE_PASSES(parser_state, args, src_file):
         # whole synthesis run -- so keep shrinking the budget (a cheap pure
         # computation) until the plan differs, then go build that.
         changed = False
+        miss_ratios = _BLAMED_MISS_RATIOS(parser_state, multimain_timing_params, schedules)
+        latest = schedules
         for _attempt in range(MAX_TIGHTEN_STEPS):
             for key in blamed:
-                budget_scales[key] = (
-                    budget_scales.get(key, DEFAULT_BUDGET_SCALE) * BUDGET_TIGHTEN_FACTOR
+                budget_scales[key] = TIGHTENED_BUDGET_SCALE(
+                    parser_state,
+                    budget_scales.get(key, DEFAULT_BUDGET_SCALE),
+                    miss_ratios.get(key),
+                    latest[key]["worst_state_du"],
                 )
             if args.auto_fsm_sweep_debug:
                 # Without this header, a tighten-loop sweep's own "sweep
@@ -3301,6 +3425,7 @@ def DO_SCHEDULE_PASSES(parser_state, args, src_file):
             if not SCHEDULES_EQUAL(trial, schedules):
                 changed = True
                 break
+            latest = trial
         if not changed:
             print(
                 "AUTO_FSM: shrinking the per-state budget no longer changes the "
@@ -4251,9 +4376,10 @@ def GENERATE_FSM_SOURCE(tag, schedule, parser_state):
 
 
 def _PREPARE_CANDIDATES(tag, parser_state, elaborator):
-    """Elaborate every alternative the schedule may bind: soft-operator
-    equivalents (see PREPARE_SOFT_EQUIVALENTS) and AUTO_COMB_OPT's area and
-    delay graph alternatives.
+    """Elaborate every alternative the schedule may bind: soft-operator and
+    width-halving equivalents (see PREPARE_SOFT_EQUIVALENTS and
+    PREPARE_SPLIT_EQUIVALENTS) and AUTO_COMB_OPT's area and delay graph
+    alternatives.
 
     Runs identically on the bootstrap pass, where the area search chooses among
     them, and on the scheduled pass, whose fresh parse must record a live
@@ -4264,6 +4390,7 @@ def _PREPARE_CANDIDATES(tag, parser_state, elaborator):
     import AUTO_COMB_OPT
 
     AUTO.PREPARE_SOFT_EQUIVALENTS(tag, parser_state, elaborator)
+    AUTO.PREPARE_SPLIT_EQUIVALENTS(tag, parser_state, elaborator)
     AUTO_COMB_OPT.prepare(tag.func, parser_state, elaborator, strict=False)
     AUTO_COMB_OPT.prepare(tag.func, parser_state, elaborator, strict=False, objective="delay")
 

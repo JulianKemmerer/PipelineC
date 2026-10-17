@@ -2076,9 +2076,11 @@ compiler concept — every file here calls the exact same `register_operator` /
 above, using generic (matcher-based) registrations so one call covers every width.
 
 ```
-soft_add.py    make_soft_add_ripple, make_soft_add_carry_select, make_soft_sub
+soft_add.py    make_soft_add_ripple, make_soft_add_carry_select, make_soft_sub,
+               make_soft_add_split, make_soft_sub_split (two half-width built-in adds)
 soft_mult.py   make_soft_mult_shift_add, make_soft_mult_karatsuba(leaf=), make_soft_mult_carry_save,
-               make_inferred_mult, make_mult_karatsuba_inferred_leaves (FPGA hybrid, opt-in)
+               make_inferred_mult, make_mult_karatsuba_inferred_leaves (FPGA hybrid, opt-in),
+               make_soft_mult_split(leaf=) (wider operand halved, two inferred products)
 soft_div.py    make_soft_div, make_soft_mod           (restoring division, unsigned)
 soft_cmp.py    make_soft_cmp_prefix(op)               (parallel-prefix magnitude compare, default)
                make_soft_cmp_sub_swapped(op)          (widen/subtract/sign-bit, narrow-width alt)

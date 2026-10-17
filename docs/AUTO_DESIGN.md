@@ -78,13 +78,17 @@ elaborated pure function into a dataflow graph:
   delay; AUTO_COMB_OPT uses it for its hierarchy and soft-operator
   decomposition seeds. Only operations that came from Python source can be
   opened (`_is_decomposable`); a built-in operator is opened through its soft
-  equivalent (`_open_target`).
+  equivalent (`_open_target`), or, when the descent is forced (too slow for one
+  state), preferably through its width-halving equivalent.
 - **Soft equivalents.** `PREPARE_SOFT_EQUIVALENTS` elaborates, on every
   AUTO_FSM call-site elaboration (bootstrap and scheduled passes), a decomposable Pypeline implementation of each built-in operator
   (`_SOFT_FACTORY_FOR_OP`, `_soft_equivalent_callable`), uninstantiated, so a
   search has something to descend into. `_RESOLVE_BUILTIN_SUBMODULES`
   materializes the `Logic` of built-in operators inside such a candidate
-  subtree.
+  subtree. `PREPARE_SPLIT_EQUIVALENTS` (AUTO_FSM only) does the same for the
+  width-halving equivalents (`_SPLIT_FACTORY_FOR_OP`,
+  `_split_equivalent_callable`) that forced descent prefers, breadth-first
+  through each halving's own narrower built-ins.
 - **Types.** The graph carries C type *names*. `_TypeResolver` maps them back
   to live pypeline types for generated annotations, seeded from every callable
   in the subtree (`_subtree_entities`); `_ctype_width` prices a type by bit
