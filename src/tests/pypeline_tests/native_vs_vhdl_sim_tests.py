@@ -98,6 +98,9 @@ COMB_TEST_FILES = [
     ("self_check_auto_fsm_test.py", INST_DIR, []),
     # make_stream_auto_fsm's handshake wrapper, same --comb/non---comb split.
     ("self_check_stream_auto_fsm_test.py", INST_DIR, []),
+    # AUTO_FSM's operand mux over array values (5- and 7-way uint2_t[4]),
+    # called directly; GHDL rejected the old t[n] choices shape.
+    ("self_check_auto_fsm_array_mux_test.py", INST_DIR, []),
     # Stateful calls from one physical source line in an unrolled loop must
     # retain one native register bank per iteration ordinal, matching the
     # hardware elaborator's loop_instance_prefix hierarchy.
@@ -180,6 +183,9 @@ NON_COMB_TEST_FILES = [
     # the FSM binds their split halves (carry-in-bit adds, pinned 8x16
     # products), and the cycle diff checks them in GHDL.
     ("self_check_auto_fsm_split_test.py", INST_DIR, ["--auto_fsm_budget_scale", "0.1"]),
+    # The same array-valued muxes inside a scheduled FSM: one shared unit
+    # whose ports take uint2_t[4] values (a 5-way array mux, array registers).
+    ("self_check_auto_fsm_array_mux_test.py", INST_DIR, []),
     # Same, one layer up: the real scheduled FSM underneath
     # make_stream_auto_fsm's handshake registers, with real backpressure
     # toggled from the testbench (see the design file's own docstring).

@@ -187,6 +187,21 @@ def get_tests() -> list:
             expect_fail=True,
         )
     )
+    # Library factories that make "n of the caller's type" write elem_t[n],
+    # which nests the wrong way when elem_t is an array (make_shift_into_top,
+    # make_kept_data_bus_t, serializer/deserializer). Native sim passes; VHDL
+    # emission fails. Issue #378.
+    tests.append(
+        Test(
+            name="library_factory_array_elem_known_issue",
+            category="known_issues",
+            cmd=[PYPELINEC, INST_DIR / "library_factory_array_elem_design.py",
+                 "--comb", "--sim", "--cocotb", "--ghdl", "--run", "all"],
+            needs_out_dir=True,
+            expect_fail=True,
+            requires=["ghdl"],
+        )
+    )
     # AUTO_FSM has no source form for a variable-index array read: a call to a
     # function containing one crashes elaboration (AUTO_COMB_OPT's delay
     # search), and one in the tagged function itself cannot be scheduled.

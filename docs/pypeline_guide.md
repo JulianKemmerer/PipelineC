@@ -1577,8 +1577,18 @@ point_t[10]       # 10-element array of point_t structs
 uint8_t[4][2]     # 4-element outer array; each element is a 2-byte array (like C)
 ```
 
-Python evaluates chained brackets left to right, but Pypeline preserves C array order:
-in `T[A][B]`, `A` is always the outer dimension and `B` the inner dimension.
+Arrays are meant to behave as they do in C. `T[A][B]` declares the same shape as C's
+`T x[A][B]`: `A` is the outer dimension and `B` the inner one, and `x[i][j]` selects
+outer element `i`, then inner element `j`. Python lists of lists index the same way, and
+native simulation stores the value as one: `uint8_t[4][2]` is a list of 4 lists of 2.
+The order is fixed no matter how many brackets you chain or how they are grouped.
+
+That has one consequence when types are built in steps. If `T` is already an array,
+`T[N]` keeps C order and adds `N` as the *innermost* dimension; it does not make N
+copies of `T`. `(uint8_t[4])[2]` is still `uint8_t[4][2]`, four rows of two. A factory
+that takes a caller's type and needs N values of it uses `make_array_t(T, N)`, which
+adds N as the outer dimension: `make_array_t(uint2_t[4], 5)` is `uint2_t[5][4]`, five
+`uint2_t[4]` elements. For a scalar or struct `T` it is the same as `T[N]`.
 
 Index arrays with a compile-time constant or with a hardware signal:
 
@@ -3015,7 +3025,7 @@ body_decrypt = AUTO_PIPELINE(poly1305_body, name="poly1305_body_decrypt")
 - **For the best sweep results, tag a wrapper.** Tagging a function imported from
   another module, as above, makes it the root of its latency region. The sweep then
   can't tell when a slow path runs through it, and it never mini-sweeps a region
-  root ([known issue](issues_inventory.md#37-not-yet-filed-auto_pipelinef-on-an-imported-function-sweeps-worse-than-a-wrapper)). A one-line local wrapper per
+  root ([known issue](issues_inventory.md#38-not-yet-filed-auto_pipelinef-on-an-imported-function-sweeps-worse-than-a-wrapper)). A one-line local wrapper per
   group keeps the function inside the region:
 
   ```python
@@ -3586,9 +3596,7 @@ all of the time.
   interval == `.latency`.
 - Construct `AUTO_FSM(...)` once, eagerly, at module or factory level and capture
   it by closure — same rule and same reason as `AUTO_PIPELINE`.
-- Dynamic hardware array indices are not supported in the pure function ([#347](https://github.com/JulianKemmerer/PipelineC/discussions/347)). An
-  operation that consumes a complete array value cannot be shared: its operand multiplexer
-  currently builds the wrong array shape ([#359](https://github.com/JulianKemmerer/PipelineC/issues/359)).
+- Dynamic hardware array indices are not supported in the pure function ([#347](https://github.com/JulianKemmerer/PipelineC/discussions/347)).
 
 **Write the caller to react to `valid`, not to count cycles.** Before an implemented
 schedule is supplied, `.latency` is 0 and the call is a combinational passthrough.

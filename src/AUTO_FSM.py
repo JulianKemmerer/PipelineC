@@ -3638,7 +3638,7 @@ class _Codegen(AUTO._GraphCodegen):
 
     # ── main ───────────────────────────────────────────────────────────
     def generate(self):
-        from pypeline import Reg, hw_func
+        from pypeline import Reg, hw_func, make_array_t
 
         em = self.em
         tag = self.tag
@@ -3904,7 +3904,7 @@ class _Codegen(AUTO._GraphCodegen):
                     f"for pack {pack['root']!r} (got {sorted(bit_regs)})"
                 )
             source_expr = self.local_of_node[fusion["source_dep"]]
-            choices_t = em.inj(pack_t_obj[2], "t")
+            choices_t = em.inj(make_array_t(pack_t_obj, 2), "t")
             choices = f"{pack_name}_wchoices"
             em.line(f"    {choices}: {choices_t}")
             em.line(f"    {choices}[0] = {shift_expr}")
@@ -4067,7 +4067,7 @@ class _Codegen(AUTO._GraphCodegen):
                         em.line(f"    {sel_name}: {sel_t} = v{idx}_wslut[st]")
                     mux_fn = AUTO._mux_callable(reg_t, len(srcs))
                     if mux_fn is not None:
-                        choices_t = em.inj(reg_t[len(srcs)], "t")
+                        choices_t = em.inj(make_array_t(reg_t, len(srcs)), "t")
                         em.line(f"    v{idx}_wchoices: {choices_t}")
                         for row, src in enumerate(srcs):
                             em.line(f"    v{idx}_wchoices[{row}] = {src}")
@@ -4146,6 +4146,8 @@ class _Codegen(AUTO._GraphCodegen):
         locals make bit slices safe (their base cannot be an arbitrary Python
         expression in the current frontend).
         """
+        from pypeline import make_array_t
+
         em = self.em
         target_t_obj = self.types.resolve(plan["target_type"])
         target_t = em.inj(target_t_obj, "t")
@@ -4193,7 +4195,7 @@ class _Codegen(AUTO._GraphCodegen):
 
         arr_name = f"af{self._tmp_n}_fc"
         self._tmp_n += 1
-        arr_t = em.inj(target_t_obj[len(choices)], "t")
+        arr_t = em.inj(make_array_t(target_t_obj, len(choices)), "t")
         em.line(f"    {arr_name}: {arr_t}")
         for row, expr in enumerate(choices):
             em.line(f"    {arr_name}[{row}] = {expr}")

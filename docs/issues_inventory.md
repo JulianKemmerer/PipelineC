@@ -63,7 +63,7 @@ Issues #353 and later include their reproducers in the issue itself.
 
 - `python3 src/tests/pypeline_tests/run_all.py` runs the Python suites. It accepts `-j N` and `--category …`.
 - `src/tests/c_tests/test_builds.sh "--comb --no_synth"` builds the C examples.
-- `python3 src/tests/pypeline_tests/known_issues_tests.py` runs expect-fail reproducers of known bugs, including those for [#361][i361], [#369][i369], [#370][i370], [#371][i371], [#372][i372], [#376][i376] and [#377][i377]. A fixed bug shows up as XPASS.
+- `python3 src/tests/pypeline_tests/known_issues_tests.py` runs expect-fail reproducers of known bugs, including those for [#361][i361], [#369][i369], [#370][i370], [#371][i371], [#372][i372], [#376][i376], [#377][i377] and [#378][i378]. A fixed bug shows up as XPASS.
 
 ## Ranking
 
@@ -104,17 +104,18 @@ Within each group, bugs that affect both front ends come first, problems in the 
 | 24 | [#360][i360] | Both | `sim_print`/`printf` values of 2³¹ or more overflow in VHDL simulation | Yes, GHDL |
 | 25 | [#358][i358] | Python | `@enum` members named like VHDL reserved words produce invalid VHDL | Yes, GHDL |
 | 26 | [#359][i359] | Python | An array of a different length is accepted and produces invalid VHDL | Yes, GHDL |
-| 27 | [#362][i362] | Python | Unsupported constructs crash with internal errors | Yes |
-| 28 | [#361][i361] | Python | `sim_print` on the `sim_finish()` cycle is missing from VHDL simulation output | Yes, GHDL |
-| 29 | [#377][i377] | Python | AUTO_FSM cannot regenerate a variable-index array read: elaboration crashes, or the call stays atomic | Yes, in process |
-| 30 | [#286][i286] | C | The tool does not run on macOS | No, from the thread |
-| 31 | [#52][i52] | C | A typedef alias gives a misleading type error | Yes |
-| 32 | TBD | C | A float `+` in `examples/tool_tests/open_tools.c` stops the build at `GET_RAW_HDL_WIRES_DECL_TEXT` | Yes |
-| 33 | [#76][i76] | Both | No `switch` (C) or `match` (Python) | C yes; Python from the code |
-| 34 | [#365][i365] | Both | `--coarse --sweep` may crash on narrow leaves | Not reproduced |
-| 35 | [#372][i372] | Python | `AUTO_PIPELINE(latency=N)` adds N cuts when `@pipeline_latency` calls already supply N cycles | Yes |
-| 36 | [#366][i366] | Python | AUTO_FSM deeply opened schedules may fail to elaborate | No, needs a long AUTO_FSM search |
-| 37 | Not yet filed | Python | `AUTO_PIPELINE(f)` on an imported function sweeps worse than tagging a local wrapper | Yes, in process |
+| 27 | [#378][i378] | Python | Library factories build the wrong array shape when the element type is an array | Yes |
+| 28 | [#362][i362] | Python | Unsupported constructs crash with internal errors | Yes |
+| 29 | [#361][i361] | Python | `sim_print` on the `sim_finish()` cycle is missing from VHDL simulation output | Yes, GHDL |
+| 30 | [#377][i377] | Python | AUTO_FSM cannot regenerate a variable-index array read: elaboration crashes, or the call stays atomic | Yes, in process |
+| 31 | [#286][i286] | C | The tool does not run on macOS | No, from the thread |
+| 32 | [#52][i52] | C | A typedef alias gives a misleading type error | Yes |
+| 33 | TBD | C | A float `+` in `examples/tool_tests/open_tools.c` stops the build at `GET_RAW_HDL_WIRES_DECL_TEXT` | Yes |
+| 34 | [#76][i76] | Both | No `switch` (C) or `match` (Python) | C yes; Python from the code |
+| 35 | [#365][i365] | Both | `--coarse --sweep` may crash on narrow leaves | Not reproduced |
+| 36 | [#372][i372] | Python | `AUTO_PIPELINE(latency=N)` adds N cuts when `@pipeline_latency` calls already supply N cycles | Yes |
+| 37 | [#366][i366] | Python | AUTO_FSM deeply opened schedules may fail to elaborate | No, needs a long AUTO_FSM search |
+| 38 | Not yet filed | Python | `AUTO_PIPELINE(f)` on an imported function sweeps worse than tagging a local wrapper | Yes, in process |
 
 ## Wrong hardware, or simulation disagrees with hardware
 
@@ -288,7 +289,7 @@ Within each group, bugs that affect both front ends come first, problems in the 
 
   - **Untimed logic:** the rebias adder and zero-detect mux sit in the user function's own body, not in a submodule. In the default hierarchy mode, delays are measured on operators and estimated for their callers from those operators, so the planner never counts this logic. The final whole-design timing report does include it. A function whose body is only such a conversion has no submodules, so `SYN.LOGIC_IS_ZERO_DELAY` classifies it as wiring and it is not timed on its own either ([PR #374][p374]).
 - **Where to look:** `C_TO_LOGIC.py`'s assignment handling skips float-to-float connections (comment `Float casting is wires in VHDl for now`) just before the code that builds a `CAST_` submodule for int-to-float and float-to-int. `VHDL.TYPE_RESOLVE_ASSIGNMENT_RHS` emits the `resize_float_e_m_t(...)` call, and `resize_float_e_m_t` itself is in the package text `VHDL.py` writes. A mixed-format binary operator converts its operands the same way (`LOGIC.C_FLOAT_TYPES_TO_COMMON_TYPE` picks the narrower format). A likely fix is a `CAST_` operator for float-format changes, so the conversion is a measured leaf with range handling.
-- **Reproduce:** `python3 src/tests/pypeline_tests/known_issues_tests.py -k float_format_cast` (two XFAILs while the bug is present: `float_format_cast_wraps_known_issue` simulates `to_half` in GHDL, `float_format_cast_inline_logic_known_issue` finds the inline call). The design is `src/tests/pypeline_tests/inst/float_format_cast_design.c`. A mixed-format `+` would show the operand conversion too, but currently stops the build at the float-add bit-manipulation helper (rank 32).
+- **Reproduce:** `python3 src/tests/pypeline_tests/known_issues_tests.py -k float_format_cast` (two XFAILs while the bug is present: `float_format_cast_wraps_known_issue` simulates `to_half` in GHDL, `float_format_cast_inline_logic_known_issue` finds the inline call). The design is `src/tests/pypeline_tests/inst/float_format_cast_design.c`. A mixed-format `+` would show the operand conversion too, but currently stops the build at the float-add bit-manipulation helper (rank 33).
 - **Workaround:** none verified. Values already within the target format's range convert correctly, apart from mantissa truncation (1.0 and 65504 above).
 
 ### 9. [#82][i82]: reusing `--out_dir` silently builds the old C code
@@ -523,12 +524,20 @@ Within each group, bugs that affect both front ends come first, problems in the 
 ### 26. [#359][i359]: an array of a different length is accepted and produces invalid VHDL
 
 - **Front ends:** Python.
-- **What happens:** elaboration does not compare array lengths. Assigning a `uint2_t[4]` to a `uint2_t[16]` local, or returning it from a function declared `-> uint2_t[16]`, builds without error. Native simulation passes the 4-element value through, and GHDL rejects the VHDL ("type of element not compatible with the expected type"). AUTO_FSM can hit this without the user writing it: `make_operand_mux(t, n)` declares its choices as `t[n]`, which for an array `t` is the wrong shape under C-order indexing.
-- **Where to look:** `_write_ref` (`src/PY_TO_LOGIC.py:6215`) and `_elab_return` (`:3608`) connect array wires without comparing their types. The operand mux is in `include/pypeline/operators/auto_fsm_mux.py:49`.
+- **What happens:** elaboration does not compare array lengths. Assigning a `uint2_t[4]` to a `uint2_t[16]` local, or returning it from a function declared `-> uint2_t[16]`, builds without error. Native simulation passes the 4-element value through, and GHDL rejects the VHDL ("type of element not compatible with the expected type"). A factory that writes `t[n]` for "n values of a caller's type" gets a wrong shape when `t` is an array, and this check would catch it: see [#378][i378].
+- **Where to look:** `_write_ref` (`src/PY_TO_LOGIC.py:6215`) and `_elab_return` (`:3608`) connect array wires without comparing their types.
 - **Reproduce:** in the issue.
 - **Workaround:** keep array lengths equal.
 
-### 27. [#362][i362]: unsupported Python constructs crash with internal errors
+### 27. [#378][i378]: library factories build the wrong array shape when the element type is an array
+
+- **Front ends:** Python.
+- **What happens:** library factories that make "n values of the caller's type" write `elem_t[n]`, assuming it means n copies of `elem_t`. Pypeline arrays follow C order on purpose (`T[A][B]` is C's `T x[A][B]`, indexed like a Python list of lists), so when `elem_t` is itself an array, `elem_t[n]` adds the innermost dimension instead. The bug is in the factories, not the array order: `make_shift_into_top(uint2_t[4], 3)` declares `uint2_t[4][3]` (four `uint2_t[3]` values) instead of `uint2_t[3][4]`. Native simulation passes the values through and gives the intended result. VHDL emission stops with `Unhandled array assignment vhdl type resolve: uint2_t drives uint2_t`. Scalar and struct element types are not affected.
+- **Where to look:** `make_shift_into_top` (`include/pypeline/axi/axis.py:239`), `make_kept_data_bus_t` (`include/pypeline/kept_data_bus.py:14`), and the fragment and buffer types of `make_serializer` (`include/pypeline/stream/serializer.py:87`, `:91`) and `make_deserializer` (`include/pypeline/stream/deserializer.py:135`, `:138`), which declare the same shapes. `make_array_t(elem_t, n)` builds the intended type; AUTO_FSM's operand mux had this bug and uses it now. Elaboration does not catch the mismatch because of [#359][i359].
+- **Reproduce:** `python3 src/tests/pypeline_tests/known_issues_tests.py -k library_factory_array_elem` (XFAIL while the bug is present; needs GHDL). The design is `src/tests/pypeline_tests/inst/library_factory_array_elem_design.py`. Changing `make_shift_into_top` and `make_kept_data_bus_t` to `make_array_t` makes it pass in GHDL.
+- **Workaround:** wrap the array in an `@struct` and pass the struct as the element type.
+
+### 28. [#362][i362]: unsupported Python constructs crash with internal errors
 
 - **Front ends:** Python.
 - **What happens:** several natural constructs that Pypeline does not support fail with an internal exception instead of an error naming the construct and its line:
@@ -544,7 +553,7 @@ Within each group, bugs that affect both front ends come first, problems in the 
 - **Reproduce:** in the issue.
 - **Workarounds:** `x[i]`: `bits: uint1_t[8] = uint_to_array_le(x, 1)`, then `bits[i]`. Enums: use the members (`state_t.RUN`), and wrap an enum in a `@struct` to make an array of it. Structs: subclass `NamedTuple`.
 
-### 28. [#361][i361]: `sim_print` on the `sim_finish()` cycle is missing from VHDL simulation output
+### 29. [#361][i361]: `sim_print` on the `sim_finish()` cycle is missing from VHDL simulation output
 
 - **Front ends:** Python (`sim_finish()` is Pypeline's).
 - **What happens:** a `sim_print` that runs on the same cycle as `sim_finish()` appears in native simulation but not in the cocotb+GHDL output, and the run still exits 0. The print's write and `std.env.finish` happen on the same clock edge, and the finish wins. This affects plain prints as well as `debug=True` ones, so it also breaks the native-versus-VHDL cycle diff.
@@ -552,7 +561,7 @@ Within each group, bugs that affect both front ends come first, problems in the 
 - **Reproduce:** in the issue, or `sim_finish_debug_print_race_test` in `src/tests/pypeline_tests/known_issues_tests.py` (it passes while the bug is present).
 - **Workaround:** call `sim_finish()` one cycle after the last print.
 
-### 29. [#377][i377]: AUTO_FSM cannot regenerate a variable-index array read
+### 30. [#377][i377]: AUTO_FSM cannot regenerate a variable-index array read
 
 - **Front ends:** Python (AUTO_FSM is Python-only and experimental).
 - **What happens:** AUTO_FSM rebuilds the tagged function as Python source, and has no source form for an array read at a hardware index, `arr[i]` (a `VAR_REF_RD` operation). What follows depends on where the read is (verified in process):
@@ -572,14 +581,14 @@ Within each group, bugs that affect both front ends come first, problems in the 
 
   Moving the read into a `@hw_func` of its own also avoids the floor, but only where something else already stops `prepare` early; otherwise elaboration still crashes.
 
-### 30. [#286][i286]: the tool does not run on macOS
+### 31. [#286][i286]: the tool does not run on macOS
 
 - **Front ends:** C only. Python builds never run `cpp`.
 - **What happens (from the thread):** Apple's `cpp` is clang, which does not behave like the GNU preprocessor PipelineC expects; comments in headers break preprocessing. Using `clang -E` and `clang -MM -MG` got the examples through elaboration.
 - **Where to look:** `preprocess_file`, `preprocess_text` and `get_included_files` in `src/C_TO_LOGIC.py` (around `:76`, `:121` and `:162-168`), and the `cpp` check in `REQUIRE_CPP`.
 - **Not verified here:** needs a Mac.
 
-### 31. [#52][i52]: a typedef alias gives a misleading type error
+### 32. [#52][i52]: a typedef alias gives a misleading type error
 
 - **Front ends:** C only. A Python type alias is a plain assignment.
 - **What happens:** `typedef uint8_t byte_t;` is skipped silently, and later code fails with a misleading error such as `Unsupported binary operation between types (explicit casting required for now): byte_t + uint1_t`. The warning that used to explain this, `WARN_NO_RENAMING_TYPEDEFS` (`src/C_TO_LOGIC.py:8560`), is commented out.
@@ -599,7 +608,7 @@ Within each group, bugs that affect both front ends come first, problems in the 
 
 - **Workaround:** `#define byte_t uint8_t`. Verified.
 
-### 32. TBD: a float `+` in `examples/tool_tests/open_tools.c` stops the build at `GET_RAW_HDL_WIRES_DECL_TEXT`
+### 33. TBD: a float `+` in `examples/tool_tests/open_tools.c` stops the build at `GET_RAW_HDL_WIRES_DECL_TEXT`
 
 - **Front ends:** C only. Python floats are library code under `include/pypeline/`.
 - **What happens:** the design parses, then the build exits with status 255 while writing the zero-added-clocks VHDL, after printing `GET_RAW_HDL_WIRES_DECL_TEXT for float_uint8_uint23 ?`. `float_uint8_uint23` is the bit-manipulation helper that the generated C for `BIN_OP_PLUS_float_float` calls to pack sign, exponent and mantissa. The other C examples that `src/tests/c_tests/test_builds.sh` builds first (blink, pipeline_and_fsm, global_fifo, clock_crossing, async_clock_crossing, internal_clocks, user_func_latency) build.
@@ -609,7 +618,7 @@ Within each group, bugs that affect both front ends come first, problems in the 
 
 ## Missing features that block designs
 
-### 33. [#76][i76]: no `switch` or `match` statement
+### 34. [#76][i76]: no `switch` or `match` statement
 
 - **Front ends:** both.
 - **What happens:** C `switch` fails with the internal error "C ast node cannot be parsed to logic" (verified). Python has no handling for `match` (Python 3.10 and later), so elaboration stops with "Unsupported statement" (from the code).
@@ -618,7 +627,7 @@ Within each group, bugs that affect both front ends come first, problems in the 
 
 ## Slower builds, extra hardware, and reports not yet reproduced
 
-### 34. [#365][i365]: `--coarse --sweep` may crash on narrow leaves
+### 35. [#365][i365]: `--coarse --sweep` may crash on narrow leaves
 
 - **Front ends:** both (shared pipelining code).
 - **What happens (from the docs):** on a design with many 1-3 bit leaves at a high cut count, `--coarse --sweep` can raise `GET_BITS_PER_STAGE_DICT: interior zero-bit stage … for a 2-bit op`. The planned sweep caps legal cuts at the leaf's width minus one (`SWEEP.SliceLandscape.finalize()`); the coarse path uses `RAW_VHDL.LEAF_MAX_SPLIT_SLICES`, which returns no cap for bit-split leaves.
@@ -626,7 +635,7 @@ Within each group, bugs that affect both front ends come first, problems in the 
 - **Reproduce:** not reproduced yet. A chain of four `uint2_t` adds built with `--syn_tool pyrtl --coarse --start 12 --stop 12` completed normally.
 - **Workaround:** use the default planned sweep.
 
-### 35. [#372][i372]: `AUTO_PIPELINE(func, latency=N)` adds cuts its `@pipeline_latency` calls make unnecessary
+### 36. [#372][i372]: `AUTO_PIPELINE(func, latency=N)` adds cuts its `@pipeline_latency` calls make unnecessary
 
 - **Front ends:** Python. The planner is shared; C's `#pragma AUTOPIPELINE N` was not checked.
 - **What happens:** when `func`'s `@pipeline_latency` calls already supply the N cycles, the planner still places N cuts. They survive only where they add no latency: in logic running parallel to those calls. That branch gets registers it does not need, and anything leaving it before the return value (a `VOLATILE` or C global write) appears later. The hardware meets the declared latency, but it is larger than it needs to be.
@@ -634,14 +643,14 @@ Within each group, bugs that affect both front ends come first, problems in the 
 - **Reproduce:** in the issue, or `python3 src/tests/pypeline_tests/known_issues_tests.py -k fixed_auto_pipeline_extra_cuts` (XFAIL while the bug is present).
 - **Workaround:** leave `latency=` off when the calls already supply it, or move the parallel logic out of the tagged function.
 
-### 36. [#366][i366]: AUTO_FSM deeply opened schedules may fail to elaborate
+### 37. [#366][i366]: AUTO_FSM deeply opened schedules may fail to elaborate
 
 - **Front ends:** Python (AUTO_FSM is Python-only and experimental).
 - **What happens (from the docs):** rescheduling the donut design (`examples/pypeline/vga_donut.py`) under a tightened budget produced a 412-operation, 131-state plan whose generated source failed to elaborate with "Bit index [14:14] out of range for uint9_t". The default control path avoids it only by meeting timing before the search opens the schedule that far.
 - **Where to look:** AUTO_FSM's source generation for opened operations in `src/AUTO_FSM.py`; `docs/AUTO_FSM_DESIGN.md` §6.
 - **Reproduce:** not re-run here; it needs a long AUTO_FSM search.
 
-### 37. Not yet filed: `AUTO_PIPELINE(f)` on an imported function sweeps worse than a wrapper
+### 38. Not yet filed: `AUTO_PIPELINE(f)` on an imported function sweeps worse than a wrapper
 
 - **Front ends:** Python.
 - **What happens:** the call's instance is labeled with the bare Python name (`square`), while the callee's function name is module-prefixed (`imported_math_square`). The sweep attributes a critical path by finding function names inside its register names, so a path through the region root matches nothing and the sweep replans the whole MAIN blindly. Separately, the sweep never mini-sweeps a region root, only functions inside a region. Seen on WireGuard: tagging `poly1305_body` directly built the bodies 6 and 12 deep and overflowed the device's DSPs, where tagging a one-line wrapper built 8 and 8.
@@ -686,6 +695,7 @@ Within each group, bugs that affect both front ends come first, problems in the 
 [i372]: https://github.com/JulianKemmerer/PipelineC/issues/372
 [i376]: https://github.com/JulianKemmerer/PipelineC/issues/376
 [i377]: https://github.com/JulianKemmerer/PipelineC/issues/377
+[i378]: https://github.com/JulianKemmerer/PipelineC/issues/378
 [d323]: https://github.com/JulianKemmerer/PipelineC/discussions/323
 [d326]: https://github.com/JulianKemmerer/PipelineC/discussions/326
 [d342]: https://github.com/JulianKemmerer/PipelineC/discussions/342

@@ -223,7 +223,13 @@ C and `PY_TO_LOGIC.py`'s elaboration-side `_array_first_dim`/`_array_elem_type`
 ```python
 make_uint_t(width: int) → uintN_t       # e.g. make_uint_t(24) → uint24_t
 make_int_t(width: int)  → intN_t        # e.g. make_int_t(33) → int33_t
+make_array_t(elem_t, n) → array type     # n elem_t values; outer dimension even
+                                         # when elem_t is an array
 ```
+
+`make_array_t` rebuilds the array from its leaf, `leaf[n][d1]...`, because
+`elem_t[n]` on an array `elem_t` pushes `n` inward. That is the intended C order
+(see above), not something `make_array_t` works around.
 
 `_make_ctype(name)` is the primitive: creates a class with `_CTypeMeta` metaclass and
 `_ctype_name = name`. Both factories call it.

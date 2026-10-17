@@ -516,6 +516,17 @@ u0_a0: int16_t = _af_mux0(u0_sel, u0_c0)
 A port with a single user gets no multiplexer at all. A port type that cannot be
 arrayed falls back to the inline if/elif form.
 
+**The choices array is `make_array_t(t, n)`, never `t[n]`.** For an array-valued
+port, `t[n]` appends an *inner* dimension (arrays follow C order by design: in
+`T[A][B]`, `A` is outer),
+so a 5-way mux over `uint2_t[4]` used to declare `uint2_t[4][5]` choices and
+return a `uint2_t[5]`. Elaboration does not compare array lengths
+([#359](https://github.com/JulianKemmerer/PipelineC/issues/359)), so only
+VHDL analysis caught it: WireGuard's capped Poly1305 epilogue, the first
+schedule to share an array-taking operation, failed in Vivado. The same rule
+applies to the FSM's own choice arrays (operand factoring, register-write and
+rolling-output muxes). `self_check_auto_fsm_array_mux_test.py` covers both.
+
 Operand equivalence preserves shared glue as a DAG: `_value_equiv_key` memoizes
 each node/state traversal, and `_GlueValueKey` caches hashes and compares
 structure iteratively. Repeated children are not expanded again while hashing
@@ -1459,6 +1470,7 @@ at least 3"*.
 | `self_check_auto_fsm_test.py` | native_sim, vhdl_sim, synth ×2 | the FSM computes what the function did — in native sim, in GHDL, at latency 0 and at real latency |
 | `stream_auto_fsm_test.py` | native_sim | `make_stream_auto_fsm`'s handshake protocol: ready deasserts while busy, latency/II == `fsm.latency + 1`, and — the property raw AUTO_FSM cannot provide — a stalled consumer never loses a result and sees stable data while it's held |
 | `self_check_auto_fsm_split_test.py` | native_vs_vhdl_sim | forced descent's width-halving equivalents in real hardware: a 32-bit add and subtract and a 16x16 inferred multiply, forced open by a small `--auto_fsm_budget_scale`, compute the same values in native sim and GHDL |
+| `self_check_auto_fsm_array_mux_test.py` | native_vs_vhdl_sim ×2 | array-valued operand muxes: direct 5- and 7-way `uint2_t[4]` muxes (plus scalar and struct ones) over every selector and lane, and a scheduled FSM whose one shared unit takes and returns `uint2_t[4]` (7- and 5-way array ports, array registers), in native sim and GHDL |
 | `self_check_stream_auto_fsm_test.py` | native_sim, vhdl_sim, synth ×2 | same shape as `self_check_auto_fsm_test.py`, one layer up: the wrapper's handshake + the real scheduled FSM underneath it compute and sequence what the function did, with real backpressure toggled from the testbench, in native sim, in GHDL, at latency 1 and at real latency |
 | `qor/multiplier/auto_fsm.py`, `qor/divider/auto_fsm.py`, `qor/sqrt/auto_fsm.py` | synth | AUTO_PIPELINE→`make_stream_auto_fsm` conversions of the QoR designs, real `PART("sky130")`/pyrtl builds with `ready` genuinely wired (never a constant 1); the multiplier is what exposed and pins the `_TypeResolver` array-reconstruction fix below |
 | `auto_fsm_latency_test.py` | synth | end-to-end schedule; the generated VHDL instantiates exactly as many copies of each shared unit as the schedule claims |
@@ -1534,19 +1546,6 @@ Priorities are discussed in [#347](https://github.com/JulianKemmerer/PipelineC/d
   `SYN.ESTIMATE_DESIGN_AREA`'s whole-design build-log estimate as of the
   terms feeding `ESTIMATE_SCHEDULE_AREA`. The anchor bounds model-space
   regressions; the real whole-design A/B tests guard the physical result.
-- An ARRAY-typed operand cannot be shared. Its operand multiplexer,
-  `make_operand_mux(t, n)`, declares its choices as `t[n]`. For an array `t`,
-  C-order indexing makes that the wrong shape: `uint2_t[16][4]` is sixteen
-  `uint2_t[4]` elements, not four `uint2_t[16]` ones, so the mux returns a
-  `uint2_t[4]` where `uint2_t[16]` is declared. Elaboration accepts that
-  length mismatch (a general Pypeline bug, [#359](https://github.com/JulianKemmerer/PipelineC/issues/359), not an AUTO_FSM one), and GHDL
-  rejects the result with "type of element not compatible with the expected
-  type" — a bare `make_operand_mux(uint2_t[16], 4)` design fails with no
-  AUTO_FSM involved. Reachable only from a schedule that shares an operation
-  taking a whole array, which is rare.
-  **Not the same bug** as the array-reconstruction guarantee in §3.7's
-  "Descending past the operator level" — this one is about SHARING an
-  array-typed value across states (the mux), which is still open.
 - **The search's own cost is superlinear in folds-per-shared-unit, and has no
   wall-clock bound by design** (§3.7 — a schedule must stay a pure function of
   the source, so the only caps are size-based: `MAX_SWEEP_DAG_NODES`,

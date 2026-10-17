@@ -775,6 +775,26 @@ def make_int_t(width: int):
     return _make_ctype(f"int{width}_t")
 
 
+def make_array_t(elem_t, n: int):
+    """Return the type of an n-element array whose elements are `elem_t`.
+
+    Same as `elem_t[n]` unless `elem_t` is itself an array. Arrays follow C
+    order by design (in `T[A][B]`, A is outer, as in C's `T x[A][B]` and a
+    Python list of lists), so `uint2_t[4][5]` is four `uint2_t[5]` elements. A factory that takes a caller's type and needs n
+    values of it uses this instead: make_array_t(uint2_t[4], 5) is
+    `uint2_t[5][4]`, five `uint2_t[4]` elements.
+    """
+    dims = []
+    leaf = elem_t
+    while _array_elem_ctype(leaf) is not None:
+        dims.append(_array_len(leaf))
+        leaf = _array_elem_ctype(leaf)
+    arr = leaf[int(n)]
+    for dim in dims:
+        arr = arr[dim]
+    return arr
+
+
 def _enum_bit_width(enum_cls) -> int:
     """Compute the minimum uint bit width needed to represent all values of a pypeline enum type."""
     max_val = max((m.value for m in enum_cls), default=0)

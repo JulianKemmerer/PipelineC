@@ -30,7 +30,7 @@ FSM source:
 The entity AUTO_FSM measures IS the entity AUTO_FSM instantiates: the generated
 FSM calls the very same memoized hw_func whose delay the scheduler read.
 """
-from pypeline import hw_func, make_uint_t
+from pypeline import hw_func, make_array_t, make_uint_t
 
 # (element ctype name, n) -> memoized hw_func. Module-level so one shape is one
 # callable identity for the whole process: AUTO_FSM reverse-looks-up the entity
@@ -60,7 +60,9 @@ def make_operand_mux(t, n: int):
     if cached is not None:
         return cached
 
-    choices_t = t[n]
+    # n complete values of `t`; `t[n]` would add an inner dimension when `t`
+    # is itself an array.
+    choices_t = make_array_t(t, n)
     sel_t = mux_sel_t(n)
 
     @hw_func

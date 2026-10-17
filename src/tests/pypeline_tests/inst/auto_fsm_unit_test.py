@@ -966,6 +966,32 @@ def main():
             "sum operands share one register row; b/c/d remain distinct)",
         )
 
+        print("[an array-valued operand mux selects whole values]")
+        # t[n] on an array t appends an INNER dimension (C order); the mux
+        # needs n complete t values (self_check_auto_fsm_array_mux_test.py
+        # proves it in GHDL). Unequal dimensions: a square array hides it.
+        lanes_t = pypeline.uint2_t[4]
+        for n in (5, 7):
+            mux = AUTO._mux_callable(lanes_t, n)
+            choices_t = mux.__annotations__["choices"]
+            check(
+                pypeline.ctype_name(choices_t) == f"uint2_t[{n}][4]"
+                and pypeline._array_len(choices_t) == n
+                and pypeline.ctype_name(pypeline._array_elem_ctype(choices_t))
+                == "uint2_t[4]"
+                and mux.__annotations__["sel"].width == 3,
+                f"a {n}-way uint2_t[4] mux takes {n} uint2_t[4] choices and a "
+                "3-bit selector",
+            )
+        check(
+            pypeline.ctype_name(pypeline.make_array_t(pypeline.int16_t, 6))
+            == "int16_t[6]"
+            and pypeline.ctype_name(pypeline.make_array_t(pypeline.uint2_t[3][2], 4))
+            == "uint2_t[4][3][2]",
+            "make_array_t equals t[n] for a scalar and adds the outer "
+            "dimension to a multi-dimensional array",
+        )
+
         print("[operand muxes factor through common glue]")
         ps_factor, key_factor, tag_factor = parse_design(
             tmp, mhz=25.0, name="d_factor", source=FACTOR_SRC
