@@ -493,6 +493,57 @@ def main():
                      "op": {"kind": "call"}, "operands": [["node", last]]}
     plan = AUTO_FSM._INPUT_STORAGE_PLAN(diamond, ["node", "op"], 1)
     check(plan["stored_fields"][0]["field"] == "a", "linear input-storage walk preserves field storage")
+
+    # SCHEDULE_DAG's unit-order check searches only from the new edges'
+    # targets. It must answer exactly what checking the whole graph with the
+    # new edges added answers, on graphs that are acyclic before the check.
+    def acyclic_whole_graph(edges, new_edges):
+        trial = {k: set(v) for k, v in edges.items()}
+        for a, b in new_edges:
+            if a == b:
+                return False
+            trial.setdefault(a, set()).add(b)
+        indegree = {n: 0 for n in trial}
+        for targets in trial.values():
+            for m in targets:
+                indegree[m] = indegree.get(m, 0) + 1
+        ready = [n for n, d in indegree.items() if d == 0]
+        seen = 0
+        while ready:
+            n = ready.pop()
+            seen += 1
+            for m in trial.get(n, ()):
+                indegree[m] -= 1
+                if indegree[m] == 0:
+                    ready.append(m)
+        return seen == len(indegree)
+
+    import random
+
+    rng = random.Random(1)
+    mismatches = 0
+    n_cyclic = 0
+    for _trial in range(3000):
+        n = rng.randint(2, 9)
+        order = list(range(n))
+        rng.shuffle(order)
+        edges = {}
+        for i in range(n):
+            for j in range(i + 1, n):
+                if rng.random() < 0.3:
+                    edges.setdefault(order[i], set()).add(order[j])
+        new_edges = {
+            (rng.randrange(n), rng.randrange(n)) for _e in range(rng.randint(1, 3))
+        }
+        expected = acyclic_whole_graph(edges, new_edges)
+        n_cyclic += not expected
+        if AUTO_FSM._edges_stay_acyclic(edges, new_edges) != expected:
+            mismatches += 1
+    check(
+        mismatches == 0 and 0 < n_cyclic < 3000,
+        f"the unit-order cycle check matches a whole-graph check on 3000 random "
+        f"graphs ({n_cyclic} of them closing a cycle, {mismatches} mismatches)",
+    )
     with tempfile.TemporaryDirectory() as tmp:
         print("[binding and scheduling]")
         ps, key, tag = parse_design(tmp, mhz=25.0, name="d1")
@@ -676,6 +727,14 @@ def main():
             abs(AUTO_FSM.ESTIMATE_SCHEDULE_AREA(ps, auto) - min(auto_scores.values()))
             < 0.01,
             "auto returns the lowest-area feasible encoding",
+        )
+        # The tighten loop reschedules only the FSMs blamed for a miss.
+        check(
+            AUTO_FSM.HARVEST_AUTO_FSM_SCHEDULES(ps, area_sweep=False, keys=set()) == {}
+            and set(
+                AUTO_FSM.HARVEST_AUTO_FSM_SCHEDULES(ps, area_sweep=False, keys={key})
+            ) == {key},
+            "keys= limits a harvest to the named call sites",
         )
 
         print("[budget controls state count]")
@@ -1303,6 +1362,90 @@ def main():
             AUTO_FSM.SCHEDULES_EQUAL({key7: swept7}, {key6: swept}),
             "the sweep is deterministic across re-elaborations (its result "
             "names the generated entity, so it has to be)",
+        )
+
+        print("[control encodings share one packing memo]")
+        # Under ctl auto the v3 and onehot searches visit mostly the same
+        # points; packing does not depend on the encoding (CTL_LUT_DU == 0),
+        # so the second search reuses the first's schedules. The reused ones
+        # must be byte-identical to building fresh, entity name included.
+        def dumps(schedule):
+            return json.dumps(schedule, sort_keys=True, default=str)
+
+        built = []
+        real_build = AUTO_FSM._BUILD_SCHEDULE
+
+        def counting_build(*args):
+            built.append(args[8])
+            return real_build(*args)
+
+        AUTO_FSM._BUILD_SCHEDULE = counting_build
+        try:
+            fresh_oh = AUTO_FSM.SWEEP_MIN_AREA_SCHEDULE(ps6, key6, tag6, 0.9, ctl="onehot")
+            n_fresh = len(built)
+            memo = {}
+            memo_v3 = AUTO_FSM.SWEEP_MIN_AREA_SCHEDULE(
+                ps6, key6, tag6, 0.9, ctl="v3", build_memo=memo
+            )
+            del built[:]
+            memo_oh = AUTO_FSM.SWEEP_MIN_AREA_SCHEDULE(
+                ps6, key6, tag6, 0.9, ctl="onehot", build_memo=memo
+            )
+            n_memo = len(built)
+            plain_oh = AUTO_FSM.BUILD_SCHEDULE(ps6, key6, tag6, 0.9, ctl="onehot")
+            restamped_oh = AUTO_FSM.BUILD_SCHEDULE(
+                ps6, key6, tag6, 0.9, ctl="onehot", build_memo=memo
+            )
+            del built[:]
+            refusals = []
+            for _attempt in range(2):
+                try:
+                    AUTO_FSM.BUILD_SCHEDULE(
+                        ps6, key6, tag6, 0.9, None, (adder,), 1, ctl="onehot",
+                        build_memo=memo,
+                    )
+                except AUTO.AutoError as e:
+                    refusals.append(str(e))
+            n_refused = len(built)
+        finally:
+            AUTO_FSM._BUILD_SCHEDULE = real_build
+        check(
+            dumps(memo_oh) == dumps(fresh_oh),
+            "an onehot search through the v3 search's memo returns the same "
+            "schedule, byte for byte, as an onehot search on its own",
+        )
+        check(
+            dumps(restamped_oh) == dumps(plain_oh) and restamped_oh["ctl"] == "onehot",
+            "a memoized point restamped to onehot equals building it as onehot",
+        )
+        check(
+            all(isinstance(v, (bytes, AUTO.AutoError)) for v in memo.values()),
+            "the memo holds serialized schedules, not live ones (a live "
+            "schedule of a large function is megabytes, and a search keeps "
+            "hundreds)",
+        )
+        check(
+            memo_oh["entity"] != memo_v3["entity"],
+            "restamping renames the entity: the encoding stays part of its identity",
+        )
+        check(
+            n_memo < n_fresh,
+            f"the onehot search reuses the v3 search's schedules "
+            f"({n_memo} built through the memo vs {n_fresh} on its own)",
+        )
+        check(
+            len(refusals) == 2 and refusals[0] == refusals[1] and n_refused == 1,
+            "a refused point (past max_nodes) is built once and refused again "
+            "from the memo",
+        )
+        check(
+            all(
+                v.__traceback__ is None
+                for v in memo.values()
+                if isinstance(v, AUTO.AutoError)
+            ),
+            "a remembered refusal keeps no traceback (one would keep the "
+            "refused DAG and the search's frames alive)",
         )
 
         print("[scheduled re-parse prepares the soft equivalents it binds]")

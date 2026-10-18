@@ -371,6 +371,12 @@ after every placement is quadratic per state — invisible when a DAG held a few
 dozen operations, and fatal now the area search routinely scores candidates
 holding thousands.
 
+The ordering check (rule 3) runs for every placement attempt, millions of times
+in one area search on the WireGuard Poly1305 kernels. The unit-edge graph is
+acyclic before each check, so any cycle the new edges close runs through one of
+their targets. `_edges_stay_acyclic` therefore searches only from those targets,
+over the existing edges plus the new ones, without copying the graph.
+
 If nothing at all fits an empty state, the cheapest ready operation is forced in
 alone and the schedule is flagged **`at_floor`**: one indivisible operation that
 no number of extra states can speed up. The driver stops tightening when it sees
@@ -715,7 +721,14 @@ state instead of `log2(states)`, and with a binary encoder per shared unit,
 since the operand mux is a measured balanced tree that needs a binary select.
 Measured results are in §4. `auto` independently performs the area search for
 v3 and onehot, rejects either encoding if it violates the timing budget or
-`max_latency`, and selects the smaller estimate. The resolved encoding is
+`max_latency`, and selects the smaller estimate. The encoding reaches packing
+and binding only through the select-table delay `CTL_LUT_DU`, which is 0. So
+`HARVEST_AUTO_FSM_SCHEDULES` gives both searches one memo per call site
+(`BUILD_SCHEDULE`'s `build_memo`). A point the v3 search already scheduled is
+reused by the onehot search with only `ctl` and the entity name restamped, and
+only its area is estimated again. The two searches still rank and walk
+independently. On the WireGuard prologue they visited the same 291 points.
+The resolved encoding is
 stored in the schedule and printed with both candidate costs. `v2` remains an
 explicit regression/A-B mode rather than an automatic candidate.
 
@@ -829,6 +842,11 @@ multiplies and 260-bit adds, and forced descent into all of them at once.
 On `auto_fsm_timing_iter_test` (120 MHz, sky130), the measured step met timing
 on the third schedule pass with 2 states (122.8 MHz). The fixed step needed a
 fourth pass and 3 states (128.6 MHz).
+Each tightening trial reschedules only the blamed FSMs, whose budgets moved;
+the others keep their schedule, so "changed" means a blamed FSM changed. Each
+trial is a full area search, so an unblamed FSM rescheduled there would cost
+as much as a blamed one. The next pass reschedules every FSM from its newly
+measured delays as before.
 The loop stops when:
 
 - timing is met;
@@ -1586,6 +1604,20 @@ Priorities are discussed in [#347](https://github.com/JulianKemmerer/PipelineC/d
   Both the notice and the descend-cap report are advisory —
   neither raises, and there is still no hard cap — because a legitimate
   large design should still build, just no longer in silence.
+- **A capped search reschedules hundreds of candidates, and every timing
+  miss pays it again.** One `auto` harvest of the WireGuard Poly1305 kernels
+  (`max_latency=64`, 11.2 ns per state, measured delays, no synthesis) builds
+  311 schedules per encoding for the prologue and 626 for the epilogue.
+  It takes 467 s and 878 s of CPU, down from 2,944 s and 4,800 s before the
+  encoding memo, the one-sided cycle check, per-schedule mux-plan inputs and
+  per-type register search, with byte-identical schedules and estimates.
+  What remains is spread out: `SCHEDULE_DAG` with the cap's bisection about
+  40%, operand-mux planning, register allocation and schedule hashing about
+  10–15% each. Two cuts were measured and rejected.
+  - Skipping OPEN moves when the anchor is at the cap would have lost the
+    epilogue's result (64 → 56 states, −31% estimated area from two OPENs).
+  - A schedule-free lower bound (units plus glue) is about half an estimate
+    and pruned none of the prologue's first-move candidates.
 
 **Future work**
 

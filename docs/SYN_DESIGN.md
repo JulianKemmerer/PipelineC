@@ -516,7 +516,12 @@ what the first parse read
 ([PY_TO_LOGIC_DESIGN.md](PY_TO_LOGIC_DESIGN.md#repeated-parse_file-support-the-pin-and-confirm-loops-foundation)).
 Neither design source nor design parameters (`-D`) are part of any identity; only the
 HDL they produce is. A parameter only simulation code reads therefore reuses every
-result.
+result. That HDL does carry source positions: each entity's header comment names its
+Python file and line, and instance and signal names embed `<file>_py_l<line>_c<col>`
+([PY_TO_LOGIC_DESIGN.md](PY_TO_LOGIC_DESIGN.md#submodule-instance-names)). So any
+edit that shifts lines in a Python file, even one added comment line in a library file
+under `include/pypeline/`, re-synthesizes every entity defined below it in that file
+once, with unchanged names and usually unchanged delays.
 
 ### Shared synthesis store (`--syn_cache DIR`)
 
