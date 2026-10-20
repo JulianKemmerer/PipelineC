@@ -1181,6 +1181,9 @@ feature's module:
   repeated helper inside an uncapped `start_latency=` region gets the
   mini-sweep on its second consecutive attribution, as an untagged call site
   would (`TRY_HOTSPOT_MINISWEEP`).
+  FSM-owned constrained regions restore their recorded concrete placement on
+  every enforcement pass. Hotspot feedback leaves their count and boundaries
+  fixed; only AUTO_FSM rescheduling chooses a different implementation.
   `PLAN_TOTAL_CUTS` / `PLAN_TRIMMABLE_CUTS` / `PLAN_FINGERPRINT_PLACEMENTS` (here)
   count region cuts along with the main's own.
 - **AUTO_MULTI_CYCLE counts.** A failing path matched to an AUTO_MULTI_CYCLE group
@@ -1460,6 +1463,10 @@ today: an alternative someone would otherwise retry, a measurement that is
 still a live regression reference, or the reason a default is what it is.
 Numbers carry the conditions they were measured under, not the date they
 were taken.
+
+### Pinned FSM regions and retained timing evidence
+
+FSM-owned regions retain their selected placement while the surrounding design is swept. Timing observations keep ordered Vivado arcs alongside endpoint evidence and implementation signatures, so local FSM repair reads the retained implementation rather than a discarded candidate.
 
 ### Why the planned sweep replaced the middle-out sweep
 

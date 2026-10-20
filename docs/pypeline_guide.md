@@ -3025,7 +3025,7 @@ body_decrypt = AUTO_PIPELINE(poly1305_body, name="poly1305_body_decrypt")
 - **For the best sweep results, tag a wrapper.** Tagging a function imported from
   another module, as above, makes it the root of its latency region. The sweep then
   can't tell when a slow path runs through it, and it never mini-sweeps a region
-  root ([known issue](issues_inventory.md#38-not-yet-filed-auto_pipelinef-on-an-imported-function-sweeps-worse-than-a-wrapper)). A one-line local wrapper per
+  root ([known issue](issues_inventory.md#37-not-yet-filed-auto_pipelinef-on-an-imported-function-sweeps-worse-than-a-wrapper)). A one-line local wrapper per
   group keeps the function inside the region:
 
   ```python
@@ -3571,6 +3571,9 @@ Twelve identical adds in `next_state` — whether written as a Python loop that
 elaborates unrolled, or as twelve separate lines — can become one adder reused in
 twelve different states. The implementation schedules operations against the clock
 goal and chooses which compatible operations share a unit.
+It can also share pipelined arithmetic and balance selections controlled by
+distinct constant indices. These choices are automatic: you still set only the
+clock goal and, optionally, a latency cap.
 
 This is the right tool when a computation has a lot of *slack* — something that
 runs once per video frame, or once per packet, while a million cycles go by.
@@ -3596,7 +3599,7 @@ all of the time.
   interval == `.latency`.
 - Construct `AUTO_FSM(...)` once, eagerly, at module or factory level and capture
   it by closure — same rule and same reason as `AUTO_PIPELINE`.
-- Dynamic hardware array indices are not supported in the pure function ([#347](https://github.com/JulianKemmerer/PipelineC/discussions/347)).
+- Hardware array indices are supported, including reads of struct and array elements.
 
 **Write the caller to react to `valid`, not to count cycles.** Before an implemented
 schedule is supplied, `.latency` is 0 and the call is a combinational passthrough.
@@ -3615,10 +3618,9 @@ if resp.valid:
     busy = 0
 ```
 
-One thing scheduling cannot fix is a single indivisible operation slower than the
-clock, such as an opaque floating-point multiplier with no decomposable implementation.
-No number of extra states makes that operation faster; the clock goal must be reachable
-by the slowest indivisible operation.
+An operation must have an implementation that can meet the clock. The tool can
+try a pipelined unit or decompose supported arithmetic. An opaque operation with
+neither option must meet the clock on its own; adding states cannot speed it up.
 
 **Capping the latency.** `AUTO_FSM(func, max_latency=N)` says the result must
 arrive within N cycles. Sharing everything onto one unit of each kind can force
@@ -3629,11 +3631,9 @@ causing the delay:
 UPDATE = AUTO_FSM(next_state, max_latency=8)
 ```
 
-It is a hard constraint. The tool adds as few unit copies as it can find to
-meet it. Only when N is shorter than the function's dependency chain allows,
-even with one unit per operation, does the build fail. It then tells you the
-latency the function actually needs, rather than handing back something slower
-than you asked for.
+It is a hard constraint. The tool compares additional unit copies, pipelined
+arithmetic and different sharing choices. If the considered implementations
+cannot fit N, the build fails and reports the latency found by scheduling.
 
 Sharing is not free: every shared unit needs a multiplexer picking its operands
 per state, and more states means more registers holding values in between. For

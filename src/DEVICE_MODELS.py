@@ -1940,6 +1940,11 @@ def SYN_AND_REPORT_TIMING_NEW(
         )
 
     parsed = ParsedTimingReport(log_text)
+    # Sweep observations keep these, so consumers can reopen the retained
+    # mapped netlist named by the structured timing sibling of this log.
+    parsed.log_path = log_path
+    parsed.input_signature = synthesis_inputs["identity_sha256"]
+    parsed.cache_hit = reuse_existing_log
     # A mapped netlist with a zero worst period has no timing paths left to
     # measure (logic synthesized away, ex. no top-level outputs). Always an
     # error, never a zero-delay measurement -- same rule as PYRTL's

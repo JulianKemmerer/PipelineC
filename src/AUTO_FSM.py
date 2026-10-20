@@ -67,6 +67,8 @@ docs/SWEEP_DESIGN.md for the sweep this rides on.
 """
 
 import copy
+import collections
+import re
 import hashlib
 import json
 import math
@@ -76,6 +78,8 @@ import zlib
 
 import LOGIC
 import AUTO
+import SYN
+from pypeline import _AUTO_FSM_SCHEDULE_VERSION
 
 # Schedule dict format version, bumped if the shape changes incompatibly OR the
 # generated hardware changes for an unchanged schedule -- the entity name is a
@@ -91,7 +95,14 @@ import AUTO
 #    though the underlying operation schedule is unchanged.
 # 8: schedules carry the input type for whole-transaction storage accounting,
 #    including alternate combinational source graphs.
-SCHEDULE_VERSION = 8
+# 9: constant-aware typed graph cleanup and constant-specialized units.
+# 10: unit implementations, launch/completion states and pinned recipes.
+# 11: typed adapters, balanced selections and recurring fused functional units.
+# 12: source and target context validation for carried schedules.
+# 13: measured control tables, parallel select arrival and local timing repair.
+# 14: inline control with width-keyed timing proxies and repair stall checks.
+# 15: sparse pinned recipes with explicit restoration of implicit zero placements.
+SCHEDULE_VERSION = _AUTO_FSM_SCHEDULE_VERSION
 
 # How the generated FSM's CONTROL path is rendered. This selects codegen shape
 # AND the matching area model -- the two must agree, so it is part of the
@@ -158,22 +169,6 @@ AREA_PER_CTL_LUT_BIT = 0.16
 # the routing of `st` to every table. Much smaller than v2's per-state decode
 # because the decode itself is no longer per-state.
 AREA_PER_STATE_CTL = 0.2
-# Delay charged for a select table in front of an operand mux. Deliberately 0:
-# `st` is a register output available at the start of the cycle, so
-# st -> table -> mux.sel resolves in PARALLEL with operands -> mux.data, and on
-# the chain-fit states that set the schedule the data side arrives strictly
-# later (its operands are same-cycle unit outputs). Charging it in series would
-# model sum() where the truth is max(), making v3 schedule more conservatively
-# than v2 for no real timing benefit -- and v2 charged nothing for a DEEPER
-# comparator chain. Measured evidence: on vga donut the v3 control path is
-# 21% faster than v2's (48.3 vs 39.9 MHz) at an identical schedule.
-# Kept as a named tunable in case a design ever shows the select path on the
-# critical path; the honest fix is a max() chain fit, noted in AUTO_FSM_DESIGN.
-# This is the only way the encoding reaches packing, so BUILD_SCHEDULE's
-# cross-encoding memo keys on it: while it is 0, v3, onehot and v2 schedule
-# identically. Any new ctl-dependent packing input must join that memo key.
-CTL_LUT_DU = 0
-
 # ── Area sweep ────────────────────────────────────────────────────────────
 # How many "open one more entity" moves the search may accept before stopping.
 # Each move costs one full reschedule per remaining candidate entity, so this
@@ -378,6 +373,27 @@ def _schedule_delays(parser_state, func_entity, snapshot):
     return delays
 
 
+def _measured_entities(parser_state, entities, previous_measured):
+    """Those of `entities` whose scheduling delay is a synthesis measurement.
+
+    A live delay is this parse's own; anything else came from the carried
+    snapshot (measured only if the schedule that carried it said so) or was
+    resolved from cache, submodules or width (an estimate). `entities` covers
+    generated units too (constant wrappers, selections), which live outside
+    the function's own subtree.
+    """
+    previous_measured = set(previous_measured)
+    result = []
+    for entity in sorted(set(entities)):
+        logic = parser_state.FuncLogicLookupTable.get(entity)
+        if logic is not None and logic.delay is not None:
+            if not logic.delay_is_estimated:
+                result.append(entity)
+        elif entity in previous_measured:
+            result.append(entity)
+    return result
+
+
 # Shifts (SL/SR) are deliberately absent even though operators/soft_shift.py
 # ships barrel shifters: the built-in takes its amount at the operand's own
 # width, while the barrel takes exactly log2(width) amount bits, so the two
@@ -496,7 +512,7 @@ def _OUTPUT_SHIFT_PACKS(nodes, output_ref, n_states):
     seed_memo = {}
 
     def is_seed(ref):
-        if ref[0] == "const":
+        if ref[0] in ("const", "lit"):
             return True
         if ref[0] != "node":
             return False  # in/inlined/unknown: transaction-dependent seed
@@ -538,10 +554,11 @@ def _OUTPUT_SHIFT_PACKS(nodes, output_ref, n_states):
             ):
                 break
             left = node["operands"][0]
-            if left[0] != "node":
+            constant_seed = left[0] in ("const", "lit")
+            if left[0] != "node" and not constant_seed:
                 break
-            slice_node = nodes.get(left[1])
-            if (
+            slice_node = nodes.get(left[1]) if not constant_seed else None
+            if not constant_seed and (
                 slice_node is None
                 or slice_node["delay_du"] > 0
                 or slice_node["op"].get("kind") != "bitmanip"
@@ -572,6 +589,12 @@ def _OUTPUT_SHIFT_PACKS(nodes, output_ref, n_states):
                     "dep": dep,
                 }
             )
+            if constant_seed:
+                # Constant propagation can fold the first seed's low-bit
+                # slice. Its top bit is discarded by the first shift anyway.
+                cur = left
+                seed_casts = tuple(node["casts"][0])
+                break
             cur = slice_node["operands"][0]
             seed_casts = tuple(slice_node["casts"][0])
 
@@ -726,7 +749,10 @@ def _OUTPUT_SHIFT_PACKS(nodes, output_ref, n_states):
                     if source_nid not in _scheduled_deps(dag, operand, sched, set()):
                         continue
                     if not later_source_uses(
-                        operand, source_nid, consumer["state"], uses
+                        operand,
+                        source_nid,
+                        consumer.get("launch_state", consumer["state"]),
+                        uses,
                     ):
                         valid = False
                         break
@@ -784,7 +810,7 @@ def _INPUT_STORAGE_PLAN(nodes, output_ref, n_states):
     when a top-level field is consumed only in state 1.  Handwritten FSMs tend
     to load such a field straight into a work register and retain only the
     operands needed by later states.  Recover that form for scalar top-level
-    struct fields represented by direct ``ref`` glue nodes.
+    struct fields and array elements represented by direct ``ref`` glue nodes.
 
     A field used only in the source state of a consume/produce rolling pack,
     and feeding that pack's source operation, may preload the pack on accept.
@@ -850,7 +876,7 @@ def _INPUT_STORAGE_PLAN(nodes, output_ref, n_states):
         if consumer["delay_du"] <= 0:
             continue
         for operand in consumer.get("operands", ()):
-            mark_glue(operand, consumer["state"])
+            mark_glue(operand, consumer.get("launch_state", consumer["state"]))
     mark_glue(output_ref, n_states)
 
     def contains_any(refs, wanted, seen=None):
@@ -950,7 +976,7 @@ def _LIVE_RANGES(nodes, output_ref, n_states):
             continue  # glue is recomputed where used, never stored
         for operand in consumer["operands"]:
             for dep in _scheduled_deps(dag, operand, sched, set()):
-                used_in_states[dep].add(consumer["state"])
+                used_in_states[dep].add(consumer.get("launch_state", consumer["state"]))
     # The final result is assembled in the last state.  Results captured into
     # a recovered rolling output register are consumed in their own producer
     # states instead, so they do not each need a separate long-lived register.
@@ -1067,8 +1093,13 @@ def _register_sources(nodes, reg_of):
     for nid, idx in reg_of.items():
         fu = nodes[nid].get("fu")
         if fu is not None:
-            sources.setdefault(idx, set()).add(fu)
+            sources.setdefault(idx, set()).add(_result_source(nodes[nid]))
     return sources
+
+
+def _result_source(node):
+    casts = tuple(node.get("result_casts", ()))
+    return (node["fu"], casts, node["out_type"]) if casts else node["fu"]
 
 
 def _stable_op_key(op):
@@ -1228,7 +1259,14 @@ def _operand_equiv_key(nodes, node, port_i, reg_of, replacements=None, memo=None
 
 
 def _operand_factor_plan(
-    nodes, alternatives, reg_of, n_users, target_type, replacements=None, _memo=None
+    nodes,
+    alternatives,
+    reg_of,
+    n_users,
+    target_type,
+    replacements=None,
+    _memo=None,
+    _plans=None,
 ):
     """Factor a state-selected value through common zero-delay structure.
 
@@ -1255,6 +1293,21 @@ def _operand_factor_plan(
     """
     alternatives = tuple(alternatives)
     _memo = {} if _memo is None else _memo
+    _plans = {} if _plans is None else _plans
+    plan_key = (
+        target_type,
+        n_users,
+        tuple(
+            (user, tuple(ref), tuple(casts), state)
+            for user, ref, casts, state in alternatives
+        ),
+    )
+    if plan_key in _plans:
+        return _plans[plan_key]
+
+    def remember(plan):
+        _plans[plan_key] = plan
+        return plan
     if not alternatives:
         raise AUTO.AutoError("AUTO_FSM: cannot factor an empty operand choice set")
 
@@ -1270,11 +1323,11 @@ def _operand_factor_plan(
     for alt in alternatives:
         exact.setdefault(exact_key(alt), []).append(alt)
     if len(exact) == 1:
-        return {
+        return remember({
             "kind": "leaf",
             "target_type": target_type,
             "alternative": alternatives[0],
-        }
+        })
 
     # A glue root can be shared only when re-emitting it means the same
     # operation at the same types.  Include entity as well as decoded op:
@@ -1320,16 +1373,17 @@ def _operand_factor_plan(
                     target_type,
                     replacements,
                     _memo,
+                    _plans,
                 )
             )
             for user_i, _ref, _casts, _state in group:
                 mapping[user_i] = row
-        return {
+        return remember({
             "kind": "mux",
             "target_type": target_type,
             "mapping": tuple(mapping),
             "choices": tuple(choices),
-        }
+        })
 
     # Multiple non-identical alternatives with one root group must be the same
     # zero-delay operation shape (distinct terminal values were split above).
@@ -1357,19 +1411,24 @@ def _operand_factor_plan(
                 child_type,
                 replacements,
                 _memo,
+                _plans,
             )
         )
-    return {
+    return remember({
         "kind": "glue",
         "target_type": target_type,
         "node_id": first[1][1],
         "casts": tuple(first[2]),
         "children": tuple(children),
-    }
+    })
 
 
-def _factor_plan_muxes(plan):
-    """Yield ``(c_type, choice_count, state_mapping)`` for factored muxes."""
+def _factor_plan_muxes(plan, seen=None):
+    """Yield each physical mux once, preserving reconvergent plan sharing."""
+    seen = set() if seen is None else seen
+    if id(plan) in seen:
+        return
+    seen.add(id(plan))
     if plan["kind"] == "mux":
         yield (
             plan["target_type"],
@@ -1377,10 +1436,10 @@ def _factor_plan_muxes(plan):
             plan["mapping"],
         )
         for child in plan["choices"]:
-            yield from _factor_plan_muxes(child)
+            yield from _factor_plan_muxes(child, seen)
     elif plan["kind"] == "glue":
         for child in plan["children"]:
-            yield from _factor_plan_muxes(child)
+            yield from _factor_plan_muxes(child, seen)
 
 
 def _fu_nodes_in_emit_order(schedule, fu, users=None):
@@ -1390,7 +1449,16 @@ def _fu_nodes_in_emit_order(schedule, fu, users=None):
     else:
         fu_nids = (nid for nid in schedule["node_order"] if nodes[nid].get("fu") == fu)
     return sorted(
-        ((nid, nodes[nid]) for nid in fu_nids),
+        (
+            (
+                nid,
+                dict(
+                    nodes[nid],
+                    state=nodes[nid].get("launch_state", nodes[nid]["state"]),
+                ),
+            )
+            for nid in fu_nids
+        ),
         key=lambda pair: (pair[1]["state"], pair[0]),
     )
 
@@ -1416,6 +1484,8 @@ def _operand_mux_plan(schedule, fu, reg_of, replacements=None, users=None):
     # schedule mutations or rebindings. All ports/users see the same register
     # map and rolling replacements.
     value_memo = {}
+    factor_memo = {}
+    seen_muxes = set()
     n_ports = len(fu_nodes[0][1]["operands"])
     ports = []
     for port_i in range(n_ports):
@@ -1442,6 +1512,9 @@ def _operand_mux_plan(schedule, fu, reg_of, replacements=None, users=None):
             for user_i, (_nid, node) in enumerate(fu_nodes)
         ]
         target_type = fu_nodes[0][1]["port_types"][port_i]
+        implementation = schedule.get("implementations", {}).get(
+            schedule["fus"][fu], {}
+        )
         factor_plan = _operand_factor_plan(
             schedule["nodes"],
             alternatives,
@@ -1450,6 +1523,7 @@ def _operand_mux_plan(schedule, fu, reg_of, replacements=None, users=None):
             target_type,
             replacements,
             value_memo,
+            factor_memo,
         )
         ports.append(
             {
@@ -1460,13 +1534,26 @@ def _operand_mux_plan(schedule, fu, reg_of, replacements=None, users=None):
                 "mapping": tuple(mapping),
                 "n_choices": len(representatives),
                 "factor_plan": factor_plan,
-                "muxes": tuple(_factor_plan_muxes(factor_plan)),
+                "muxes": (
+                    ((target_type, len(representatives), tuple(mapping)),)
+                    if implementation.get("registered_selection")
+                    else tuple(_factor_plan_muxes(factor_plan, seen_muxes))
+                ),
             }
         )
     return fu_nodes, ports
 
 
-def _critical_path(dag, sched, preds):
+def _selector_shapes(schedule, fu, fu_nodes, ports):
+    implementation = schedule.get("implementations", {}).get(schedule["fus"][fu], {})
+    if implementation.get("registered_selection"):
+        return {(tuple(range(len(fu_nodes))), implementation["selection_rows"])}
+    return {
+        (mapping, n) for port in ports for _ctype, n, mapping in port["muxes"] if n >= 2
+    }
+
+
+def _critical_path(dag, sched, preds, implementations=None, budget_du=None):
     """Longest remaining delay from each node to any output, used as the list
     scheduler's priority: whatever is on the longest chain goes first, so the
     chain does not become the thing that forces extra states at the end."""
@@ -1486,7 +1573,14 @@ def _critical_path(dag, sched, preds):
         for s in succs[nid]:
             best = max(best, walk(s, stack))
         stack.discard(nid)
-        memo[nid] = best + dag["nodes"][nid]["delay_du"]
+        node = dag["nodes"][nid]
+        implementation = (implementations or {}).get(node["entity"], {})
+        latency = implementation.get("latency", 0)
+        if latency and budget_du is None:
+            raise AutoFsmInternalError(
+                "AUTO_FSM: a pipelined critical path needs a clock budget"
+            )
+        memo[nid] = best + node["delay_du"] + latency * (budget_du or 0)
         return memo[nid]
 
     for nid in sched:
@@ -1499,11 +1593,466 @@ def _fu_id(entity, copy_index):
     copy only appears when a hard max_latency cap cannot be met by sharing
     everything (see SCHEDULE_DAG). The schedule keeps fu_id -> entity as an
     explicit map rather than assuming they are the same string, which is also
-    the seam a future width-subsumption binding would use."""
+    the indirection used by compatible unsigned width adapters."""
     return entity if copy_index == 0 else f"{entity}#{copy_index}"
 
 
-def SCHEDULE_DAG(dag, budget_du, mux_du_of=None, max_states=None, copies=None):
+# ──────────────────────────────────────────────────────────────────────
+# Functional units and pinned pipeline implementations
+# ──────────────────────────────────────────────────────────────────────
+
+
+def _prepare_unit_candidates(tag, parser_state, elaborator):
+    """Retain the elaboration context for candidates discovered by scheduling."""
+    parser_state.pypeline_auto_fsm_elaborators[tag.canonical_key] = elaborator
+
+
+def _unit_function(parser_state, key, node, selection_rows=None):
+    """Materialize a pure callable without changing an operation's dispatch."""
+    import pypeline
+
+    node = dict(node, out_type=node.get("physical_out_type", node["out_type"]))
+    entity = node["entity"]
+    cache_key = entity if selection_rows is None else (entity, selection_rows)
+    cached = parser_state.pypeline_auto_fsm_unit_functions.get(cache_key)
+    if cached is not None:
+        return cached
+    elaborator = parser_state.pypeline_auto_fsm_elaborators.get(key)
+    if elaborator is None:
+        return None
+    if selection_rows is not None:
+        base = _unit_function(parser_state, key, node)
+        if base is None:
+            return None
+        types = AUTO._TypeResolver()
+        types.seed_callable(base["function"])
+        emitter = AUTO._Emitter()
+        emitter.inj_named(pypeline.hw_func, "hw_func")
+        select_type = pypeline.make_uint_t(max(1, (selection_rows - 1).bit_length()))
+        arguments = [f"selected: {emitter.inj(select_type, 't')}"]
+        for i, ctype in enumerate(node["port_types"]):
+            array_type = pypeline.make_array_t(types.resolve(ctype), selection_rows)
+            arguments.append(f"rows{i}: {emitter.inj(array_type, 't')}")
+        identity = AUTO.frozen(
+            (base["entity"], selection_rows, node["port_types"], node["out_type"])
+        )
+        name = (
+            "auto_fsm_selected_unit_"
+            + hashlib.sha256(identity.encode()).hexdigest()[:20]
+        )
+        emitter.line("@hw_func")
+        emitter.line(
+            f"def {name}({', '.join(arguments)}) -> {emitter.inj(types.resolve(node['out_type']), 't')}:"
+        )
+        for i, ctype in enumerate(node["port_types"]):
+            mux = emitter.inj(
+                AUTO._mux_callable(types.resolve(ctype), selection_rows), "mux"
+            )
+            emitter.line(
+                f"    a{i}: {emitter.inj(types.resolve(ctype), 't')} = {mux}(selected, rows{i})"
+            )
+        call = emitter.inj(base["function"], "unit")
+        emitter.line(
+            f"    return {call}({', '.join(f'a{i}' for i in range(len(node['port_types'])))})"
+        )
+        fn = AUTO._exec_generated(name, emitter.src(), emitter.globals)
+        logic = elaborator._elaborate_live_func(name, fn)
+        AUTO._RESOLVE_BUILTIN_SUBMODULES(parser_state, logic.func_name)
+        result = {"function": fn, "entity": logic.func_name}
+        parser_state.pypeline_auto_fsm_unit_functions[cache_key] = result
+        return result
+    if node["kind"] == "call":
+        fn = AUTO._entity_callables(parser_state).get(entity)
+        if fn is not None:
+            result = {"function": fn, "entity": entity}
+            parser_state.pypeline_auto_fsm_unit_functions[entity] = result
+            return result
+        return None
+    if node["kind"] != "binop" or node["op"].get("op") not in (
+        "+",
+        "-",
+        "*",
+        "==",
+        "!=",
+        "<",
+        "<=",
+        ">",
+        ">=",
+    ):
+        return None
+    if entity not in parser_state.pypeline_builtin_op_info:
+        return None
+    from operators.comb_opt import _primitive_math
+
+    types = AUTO._TypeResolver()
+    emitter = AUTO._Emitter()
+    emitter.inj_named(pypeline.hw_func, "hw_func")
+    arguments = [
+        f"a{i}: {emitter.inj(types.resolve(t), 't')}"
+        for i, t in enumerate(node["port_types"])
+    ]
+    identity = AUTO.frozen((entity, node["op"], node["port_types"], node["out_type"]))
+    name = "auto_fsm_unit_" + hashlib.sha256(identity.encode()).hexdigest()[:20]
+    emitter.line("@hw_func")
+    emitter.line(
+        f"def {name}({', '.join(arguments)}) -> {emitter.inj(types.resolve(node['out_type']), 't')}:"
+    )
+    expression = AUTO._render_op(
+        node["op"],
+        [f"a{i}" for i in range(len(arguments))],
+        emitter,
+        parser_state,
+        entity,
+    )
+    emitter.line(f"    return {expression}")
+    fn = _primitive_math(AUTO._exec_generated(name, emitter.src(), emitter.globals))
+    opname, ports = parser_state.pypeline_builtin_op_info[entity]
+    pypeline.register_operator(
+        opname, *(types.resolve(t) for t in ports), pypeline.INFERRED, scope=fn
+    )
+    logic = elaborator._elaborate_live_func(name, fn)
+    AUTO._RESOLVE_BUILTIN_SUBMODULES(parser_state, logic.func_name)
+    result = {"function": fn, "entity": logic.func_name}
+    parser_state.pypeline_auto_fsm_unit_functions[entity] = result
+    return result
+
+
+def _unit_isolated_tree(parser_state, entity, delays):
+    """Own mutable instance/parameter tables; share read-only type metadata."""
+    isolated = copy.copy(parser_state)
+    isolated.FuncLogicLookupTable = dict(parser_state.FuncLogicLookupTable)
+    isolated.LogicInstLookupTable = {}
+    isolated.FuncToInstances = {}
+    root = "auto_fsm_characterize_" + hashlib.sha256(entity.encode()).hexdigest()[:20]
+    isolated.main_mhz = {root: None}
+    isolated.main_syn_mhz = {}
+    isolated.main_clk_group = {}
+    owned = {}
+    postorder = []
+    representative = {}
+
+    def visit(inst, name):
+        if name not in owned:
+            logic = copy.copy(parser_state.FuncLogicLookupTable[name])
+            logic.delay = AUTO._resolve_delay_du(parser_state, name, delays)
+            owned[name] = logic
+        logic = owned[name]
+        isolated.FuncLogicLookupTable[name] = logic
+        isolated.LogicInstLookupTable[inst] = logic
+        isolated.FuncToInstances.setdefault(name, set()).add(inst)
+        representative.setdefault(name, inst)
+        for local, child in sorted(logic.submodule_instances.items()):
+            visit(inst + LOGIC.SUBMODULE_MARKER + local, child)
+        if name not in postorder:
+            postorder.append(name)
+
+    visit(root, entity)
+    import AUTO_PIPELINE
+
+    for name in postorder:
+        original = parser_state.FuncLogicLookupTable[name]
+        logic = owned[name]
+        if logic.submodule_instances and (
+            original.delay is None or original.delay_is_estimated
+        ):
+            # A new mux/unit wrapper has no measured through-delay. Its delay
+            # is its actual critical path, including repeated serial uses of
+            # an entity and excluding parallel branches' summed delays.
+            logic.delay = AUTO_PIPELINE.GET_ZERO_ADDED_CLKS_PIPELINE_MAP(
+                representative[name], logic, isolated, write_files=False
+            ).zero_clk_max_delay
+    return isolated, root
+
+
+def _unit_timing_recipe(root, table):
+    """Concrete choices relative to the region; omitted descendants are unsliced."""
+    return [
+        {
+            "path": inst[len(root) :],
+            "slices": list(params._slices),
+            "input_regs": params._has_input_regs,
+            "output_regs": params._has_output_regs,
+            "bit_boundaries": params._exact_bit_boundaries,
+        }
+        for inst, params in sorted(table.items())
+        if inst == root
+        or (
+            inst.startswith(root + LOGIC.SUBMODULE_MARKER)
+            and (
+                params._slices
+                or params._has_input_regs
+                or params._has_output_regs
+                or params._exact_bit_boundaries is not None
+            )
+        )
+    ]
+
+
+def _unit_recipe_digest(recipe):
+    return hashlib.sha256(AUTO.frozen(recipe).encode()).hexdigest()
+
+
+def _unit_candidate_nodes(parser_state, schedule):
+    """Bound operations plus pure helper boundaries lost through descent."""
+    candidates = {n["entity"]: n for n in schedule["nodes"].values() if n.get("fu")}
+    for entity in sorted(AUTO._subtree_entities(parser_state, schedule["func_entity"])):
+        if entity == schedule["func_entity"] or entity in candidates:
+            continue
+        logic = parser_state.FuncLogicLookupTable[entity]
+        if AUTO._entity_callables(parser_state).get(entity) is None:
+            continue
+        delay = AUTO._resolve_delay_du(
+            parser_state, entity, schedule["entity_delays_snapshot"]
+        )
+        if delay <= 0 or len(logic.outputs) != 1:
+            continue
+        ports = [port for port in logic.inputs if port != LOGIC.CLOCK_ENABLE_NAME]
+        candidates[entity] = {
+            "kind": "call",
+            "op": {"kind": "call"},
+            "entity": entity,
+            "delay_du": delay,
+            "operands": [["in", port] for port in ports],
+            "casts": [[] for _port in ports],
+            "port_types": [logic.wire_to_c_type[port] for port in ports],
+            "out_type": logic.wire_to_c_type[logic.outputs[0]],
+        }
+    counts = {}
+
+    def uses(entity):
+        if entity not in counts:
+            total = collections.Counter({entity: 1})
+            for child in parser_state.FuncLogicLookupTable[
+                entity
+            ].submodule_instances.values():
+                total.update(uses(child))
+            counts[entity] = total
+        return counts[entity]
+
+    occurrences = uses(schedule["func_entity"])
+    bound = collections.Counter(
+        node["entity"] for node in schedule["nodes"].values() if node.get("fu")
+    )
+    return [
+        dict(
+            candidates[entity], unit_occurrences=max(occurrences[entity], bound[entity])
+        )
+        for entity in sorted(candidates)
+    ]
+
+
+def _unit_profiles(
+    parser_state,
+    key,
+    node,
+    delays,
+    selection_rows=None,
+    through_latency=None,
+    until=None,
+):
+    """Pipelined profiles L=1.., characterized only as deep as a caller asks.
+
+    Depths are planned in order, and the cache resumes where an earlier call
+    stopped. Without a limit the walk runs to K*: the first count whose
+    predicted worst stage stops improving, or the legal end. `through_latency`
+    stops once that count is planned; `until(profiles)` stops once it is true.
+    """
+    import AUTO_PIPELINE
+    import SWEEP
+
+    node = dict(node, out_type=node.get("physical_out_type", node["out_type"]))
+    unit = _unit_function(parser_state, key, node, selection_rows)
+    if unit is None:
+        return []
+    subtree = sorted(AUTO._subtree_entities(parser_state, unit["entity"]))
+    geometry = []
+    if any(
+        kind in ("state", "feedback", "global", "temporal", "unresolved")
+        for _path, _name, kind, _detail in AUTO.FIND_EFFECTS(
+            parser_state, unit["entity"]
+        )
+    ):
+        return []
+    for entity in subtree:
+        logic = parser_state.FuncLogicLookupTable[entity]
+        geometry.append(
+            (
+                entity,
+                logic.submodule_instances,
+                logic.wire_driven_by,
+                logic.wire_to_c_type,
+                AUTO._resolve_delay_du(parser_state, entity, delays),
+            )
+        )
+    context = _unit_recipe_digest((_target_context(parser_state), geometry))
+    state = parser_state.pypeline_auto_fsm_unit_profiles.setdefault(
+        context, {"profiles": [], "count": 1, "previous_ns": None, "done": False}
+    )
+
+    def satisfied():
+        if state["done"]:
+            return True
+        if through_latency is not None:
+            return state["count"] > through_latency
+        if until is not None:
+            return until(state["profiles"])
+        return False
+
+    if satisfied():
+        return state["profiles"]
+    isolated, root = _unit_isolated_tree(parser_state, unit["entity"], delays)
+    # This unique root makes the existing instance-keyed zero-clock caches
+    # independent of every real MAIN and every other unit characterization.
+    zero = {
+        inst: AUTO_PIPELINE.TimingParams(inst, logic)
+        for inst, logic in isolated.LogicInstLookupTable.items()
+    }
+    landscape = SWEEP.BUILD_SLICE_LANDSCAPE(root, isolated, zero, {})
+    if landscape is None:
+        state["done"] = True
+        return state["profiles"]
+    if state["previous_ns"] is None:
+        state["previous_ns"] = SWEEP.PREDICTED_STAGE_NS([], landscape)
+    # The existing estimator keys by entity and realized placement hash. Reuse
+    # unchanged child estimates across depths of this same isolated hierarchy.
+    register_estimates = {}
+    while not satisfied():
+        count = state["count"]
+        try:
+            cuts, placements, _budget = AUTO_PIPELINE.COUNT_TARGETED_PLACEMENTS(
+                landscape, count
+            )
+        except AUTO_PIPELINE.AutoPipelineLatencyInfeasible:
+            state["done"] = True
+            break
+        table = {inst: params.DEEPCOPY() for inst, params in zero.items()}
+        table = SWEEP.APPLY_PIPELINE_PLACEMENTS(placements, isolated, table)
+        SWEEP.CHECK_PIPELINE_PLACEMENTS_REALIZED(placements, isolated, table)
+        AUTO_PIPELINE._INVALIDATE_REGION_CACHES(root, table)
+        realized = table[root].GET_TOTAL_LATENCY(isolated, table)
+        predicted = SWEEP.PREDICTED_STAGE_NS(cuts, landscape)
+        if realized == count:
+            boundaries = [-1] + list(cuts) + [landscape.total_units - 1]
+            stages = [
+                sum(landscape.weight[a + 1 : b + 1]) * landscape.units_to_ns
+                + landscape.stage_overhead_ns
+                for a, b in zip(boundaries, boundaries[1:])
+            ]
+            recipe = _unit_timing_recipe(root, table)
+            _text, bits = SYN.GET_REGISTERS_ESTIMATE_TEXT_AND_FFS(
+                isolated.FuncLogicLookupTable[unit["entity"]],
+                root,
+                isolated,
+                table,
+                register_estimates,
+            )
+            state["profiles"].append(
+                {
+                    "base_entity": node["entity"],
+                    "unit_entity": unit["entity"],
+                    "kind": "pipelined",
+                    "latency": count,
+                    "ii": 1,
+                    "registered_selection": selection_rows is not None,
+                    "selection_rows": selection_rows,
+                    "input_stage_du": int(round(stages[0] * SYN.DELAY_UNIT_MULT)),
+                    "output_stage_du": int(round(stages[-1] * SYN.DELAY_UNIT_MULT)),
+                    "worst_stage_du": int(round(predicted * SYN.DELAY_UNIT_MULT)),
+                    "register_bits": bits,
+                    "timing": recipe,
+                    "register_bits_source": "lowered pipeline storage estimate",
+                    "placement_digest": _unit_recipe_digest(recipe),
+                    "context": context,
+                    "evidence": "AUTO_PIPELINE count-targeted placement estimate",
+                }
+            )
+        state["count"] = count + 1
+        if predicted >= state["previous_ns"]:
+            state["done"] = True
+        state["previous_ns"] = predicted
+    return state["profiles"]
+
+
+def _make_unit_tag(parser_state, key, node, implementation):
+    """The selected placement is part of this internal region's identity."""
+    import pypeline
+
+    unit = _unit_function(parser_state, key, node, implementation.get("selection_rows"))
+    if unit is None or unit["entity"] != implementation["unit_entity"]:
+        raise AUTO.AutoError("AUTO_FSM: selected functional unit is unavailable")
+    identity = _unit_recipe_digest(
+        (
+            implementation["unit_entity"],
+            implementation["latency"],
+            implementation["ii"],
+            implementation["registered_selection"],
+            implementation["placement_digest"],
+        )
+    )
+    tag = pypeline.AUTO_PIPELINE(
+        unit["function"],
+        latency=implementation["latency"],
+        name="auto_fsm_pinned_" + identity[:20],
+    )
+    tag._auto_fsm_implementation = json.loads(AUTO.frozen(implementation))
+    return tag
+
+
+def RESTORE_UNIT_PLACEMENT(root, implementation, parser_state, table):
+    """Reapply the already-lowered recipe; surrounding sweeps cannot move it."""
+    # Sparse recipes describe a fully fixed hierarchy: restore their implicit
+    # zero placements too, including registers added by an enclosing sweep.
+    for inst, params in table.items():
+        if inst == root or inst.startswith(root + LOGIC.SUBMODULE_MARKER):
+            params.SET_SLICES([])
+            params._has_input_regs = False
+            params._has_output_regs = False
+            params._exact_bit_boundaries = None
+            params.INVALIDATE_CACHE()
+            params.params_are_fixed = True
+    for row in implementation["timing"]:
+        inst = root + row["path"]
+        if inst not in table:
+            raise AutoFsmInternalError(
+                "AUTO_FSM: pinned pipeline hierarchy changed: " + inst
+            )
+        params = table[inst]
+        params.SET_SLICES(list(row["slices"]))
+        params._has_input_regs = row["input_regs"]
+        params._has_output_regs = row["output_regs"]
+        params._exact_bit_boundaries = (
+            list(row["bit_boundaries"]) if row["bit_boundaries"] is not None else None
+        )
+        params.INVALIDATE_CACHE()
+        params.params_are_fixed = True
+    CHECK_UNIT_PLACEMENT(root, implementation, parser_state, table)
+    return table
+
+
+def CHECK_UNIT_PLACEMENT(root, implementation, parser_state, table):
+    """A different realized placement is an invariant failure, never a replan."""
+    if (
+        _unit_recipe_digest(_unit_timing_recipe(root, table))
+        != implementation["placement_digest"]
+    ):
+        raise AutoFsmInternalError(
+            "AUTO_FSM: pinned pipeline placement changed at " + root
+        )
+    if table[root].GET_TOTAL_LATENCY(parser_state, table) != implementation["latency"]:
+        raise AutoFsmInternalError("AUTO_FSM: pinned unit latency changed at " + root)
+
+
+def SCHEDULE_DAG(
+    dag,
+    budget_du,
+    mux_du_of=None,
+    max_states=None,
+    copies=None,
+    implementations=None,
+    select_du_of=None,
+    no_chain_edges=(),
+    no_chain_entity_pairs=(),
+):
     """List-schedule the DAG into states, binding same-entity operations to one
     shared functional unit each.
 
@@ -1526,14 +2075,18 @@ def SCHEDULE_DAG(dag, budget_du, mux_du_of=None, max_states=None, copies=None):
     here, which both over-priced lightly shared units and badly under-priced
     heavily shared ones, i.e. exactly the regime the area sweep explores.
 
-    `copies[entity]` allows more than one physical unit for an entity. That is
-    the ONLY way a hard max_latency cap can be met once sharing alone needs
-    more states than the cap allows: trade area back for latency.
+    `copies[entity]` allows more than one physical unit for an entity. Replication,
+    pipelined units and graph/adapter choices all participate in meeting a hard
+    max_latency cap; every choice is checked by a complete schedule.
     """
     nodes = dag["nodes"]
+    implementations = implementations or {}
     sched = _scheduled_ids(dag)
     copies = copies or {}
     mux_du_of = mux_du_of or (lambda nid: AUTO.MUX_PENALTY_DU)
+    select_du_of = select_du_of or (lambda nid: 0)
+    no_chain_edges = set(tuple(edge) for edge in no_chain_edges)
+    no_chain_entity_pairs = set(tuple(pair) for pair in no_chain_entity_pairs)
     # What each scheduled operation must wait for: the scheduled operations
     # feeding its OPERANDS, seen through any zero-delay glue in between.
     preds = {}
@@ -1542,9 +2095,12 @@ def SCHEDULE_DAG(dag, budget_du, mux_du_of=None, max_states=None, copies=None):
         for operand in nodes[nid]["operands"]:
             _scheduled_deps(dag, operand, sched, deps)
         preds[nid] = deps - {nid}
-    prio = _critical_path(dag, sched, preds)
+    prio = _critical_path(dag, sched, preds, implementations, budget_du)
 
-    state_of = {}
+    state_of = {}  # Completion state, including a pipelined unit's latency.
+    launch_of = {}
+    next_launch = {}
+    uses_of = {}  # A selected unit's concrete row count bounds its binding.
     fu_of = {}
     end_du_of = {}
     fu_edges = {}  # fu -> set of fus it feeds (within some state)
@@ -1565,7 +2121,12 @@ def SCHEDULE_DAG(dag, budget_du, mux_du_of=None, max_states=None, copies=None):
             ids = [_fu_id(entity, i) for i in range(max(1, copies.get(entity, 1)))]
             fu_ids[entity] = ids
         for fu in ids:
-            if fu not in fus_used:
+            rows = implementations.get(entity, {}).get("selection_rows")
+            if (
+                fu not in fus_used
+                and state >= next_launch.get(fu, 1)
+                and (rows is None or uses_of.get(fu, 0) < rows)
+            ):
                 return fu
         return None
 
@@ -1594,20 +2155,52 @@ def SCHEDULE_DAG(dag, budget_du, mux_du_of=None, max_states=None, copies=None):
         chain_end = {}
         state_worst = 0
         deferred = []
+        waiting_for_future = False
         while heap:
             item = heapq.heappop(heap)
             nid = item[1]
+            if any(state_of[p] > state for p in preds[nid]):
+                waiting_for_future = True
+                deferred.append(item)
+                continue
             fu = free_fu(nodes[nid]["entity"], fus_used)
             if fu is None:
+                if any(
+                    next_launch.get(candidate, 1) > state
+                    for candidate in fu_ids[nodes[nid]["entity"]]
+                ):
+                    waiting_for_future = True
                 deferred.append(item)
                 continue
             same_state_preds = [p for p in preds[nid] if state_of[p] == state]
-            start = max((chain_end[p] for p in same_state_preds), default=0)
-            end = start + nodes[nid]["delay_du"] + mux_du_of(nid)
-            if end > budget_du and (fus_used or chain_end):
+            if any(
+                (p, nid) in no_chain_edges
+                or (nodes[p]["entity"], nodes[nid]["entity"]) in no_chain_entity_pairs
+                for p in same_state_preds
+            ):
+                waiting_for_future = True
                 deferred.append(item)
                 continue
-            new_edges = {(fu_of[p], fu) for p in same_state_preds}
+            start = max((end_du_of[p] for p in same_state_preds), default=0)
+            implementation = implementations.get(nodes[nid]["entity"], {})
+            latency = implementation.get("latency", 0)
+            input_delay = implementation.get("input_stage_du", nodes[nid]["delay_du"])
+            launch_end = max(start, select_du_of(nid)) + mux_du_of(nid) + input_delay
+            end = max(launch_end, implementation.get("worst_stage_du", 0))
+            if end > budget_du and (fus_used or chain_end or same_state_preds):
+                # A pipeline may complete late in an otherwise empty state.
+                # Wait for its result register next cycle instead of calling
+                # this a unit floor: the input stage itself can still fit.
+                waiting_for_future = waiting_for_future or bool(same_state_preds)
+                deferred.append(item)
+                continue
+            # A pipelined producer's output crosses its own registers. Its
+            # Feedback local permits declaration before the physical call.
+            new_edges = {
+                (fu_of[p], fu)
+                for p in same_state_preds
+                if not implementations.get(nodes[p]["entity"], {}).get("latency", 0)
+            }
             if not _edges_stay_acyclic(fu_edges, new_edges):
                 deferred.append(item)
                 continue
@@ -1616,10 +2209,15 @@ def SCHEDULE_DAG(dag, budget_du, mux_du_of=None, max_states=None, copies=None):
                 at_floor = True
             for a, b in new_edges:
                 fu_edges.setdefault(a, set()).add(b)
-            state_of[nid] = state
+            launch_of[nid] = state
+            state_of[nid] = state + latency
+            next_launch[fu] = state + implementation.get("ii", 1)
+            uses_of[fu] = uses_of.get(fu, 0) + 1
             fu_of[nid] = fu
             chain_end[nid] = end
-            end_du_of[nid] = end
+            end_du_of[nid] = (
+                implementation["output_stage_du"] if latency else launch_end
+            )
             fus_used.add(fu)
             state_worst = max(state_worst, end)
             n_placed += 1
@@ -1635,7 +2233,7 @@ def SCHEDULE_DAG(dag, budget_du, mux_du_of=None, max_states=None, copies=None):
         # accumulate.
         for item in deferred:
             heapq.heappush(heap, item)
-        if not fus_used:
+        if not fus_used and not waiting_for_future:
             # No progress at all: only possible if every ready node was blocked
             # by the acyclicity rule, which an empty state cannot reproduce.
             raise AUTO.AutoError(
@@ -1648,11 +2246,12 @@ def SCHEDULE_DAG(dag, budget_du, mux_du_of=None, max_states=None, copies=None):
         # needs, which is the one thing a user staring at an infeasible
         # latency cap actually wants told.
 
-    n_states = max(1, state)
+    n_states = max(state_of.values(), default=1)
     used_fus = sorted(set(fu_of.values()))
     return {
         "n_states": n_states,
         "state_of": state_of,
+        "launch_of": launch_of,
         "fu_of": fu_of,
         "end_du_of": end_du_of,
         "at_floor": at_floor,
@@ -1737,19 +2336,164 @@ def _schedule_entity_name(func_entity: str, schedule_core: dict) -> str:
     """Name (and therefore FuncLogicLookupTable key / VHDL entity) of a
     generated FSM.
 
-    The schedule's content is hashed in, so rescheduling with a different budget
-    produces a DIFFERENT entity. That is deliberate: it makes stale cross-pass
-    reuse structurally impossible -- nothing can seed pipelining onto, or reuse
-    a cached delay for, an entity whose contents changed underneath it.
+    The physical schedule and concrete placement recipes are hashed in. Model-only
+    changes keep the name when they emit identical hardware; a changed operation,
+    binding, state or placement changes the entity and its synthesis identity.
     """
     h = hashlib.sha256(
-        json.dumps(schedule_core, sort_keys=True, default=str).encode()
+        json.dumps(
+            _schedule_hardware(schedule_core), sort_keys=True, default=str
+        ).encode()
     ).hexdigest()[:8]
     base = f"auto_fsm_{func_entity}"
     budget = _MAX_NAME_LEN - 9  # "_" + 8 hex chars
     if len(base) > budget:
         base = base[:budget].rstrip("_")
     return f"{base}_{h}"
+
+
+def SCHEDULE_CACHE_USABLE(schedule):
+    """Malformed carried data is a cache miss, never a build failure."""
+    try:
+        return _schedule_cache_usable(schedule)
+    except (KeyError, TypeError, ValueError, AttributeError):
+        return False
+
+
+def _schedule_cache_usable(schedule):
+    """Ignore stale or malformed carried data before any datapath is emitted."""
+    if not isinstance(schedule, dict) or schedule.get("version") != SCHEDULE_VERSION:
+        return False
+    if not all(
+        key in schedule
+        for key in (
+            "nodes",
+            "node_order",
+            "fus",
+            "fu_order",
+            "output",
+            "output_casts",
+            "out_type",
+            "in_type",
+            "source_identity",
+            "target_context",
+            "entity",
+            "n_states",
+            "latency",
+        )
+    ):
+        return False
+    if not isinstance(schedule["nodes"], dict) or not isinstance(schedule["fus"], dict):
+        return False
+    if (
+        not isinstance(schedule["node_order"], list)
+        or not isinstance(schedule["fu_order"], list)
+        or set(schedule["node_order"]) != set(schedule["nodes"])
+        or set(schedule["fu_order"]) != set(schedule["fus"])
+    ):
+        return False
+    if type(schedule["n_states"]) is not int or schedule["n_states"] < 1:
+        return False
+    if (
+        type(schedule["latency"]) is not int
+        or schedule["latency"] < schedule["n_states"]
+    ):
+        return False
+    if schedule["entity"] != _schedule_entity_name(schedule["func_entity"], schedule):
+        return False
+
+    implementations = schedule.get("implementations", {})
+    if not isinstance(implementations, dict):
+        return False
+    for implementation in implementations.values():
+        if not isinstance(implementation, dict) or not all(
+            key in implementation
+            for key in (
+                "base_entity",
+                "unit_entity",
+                "latency",
+                "ii",
+                "registered_selection",
+                "input_stage_du",
+                "output_stage_du",
+                "worst_stage_du",
+                "register_bits",
+                "timing",
+                "placement_digest",
+                "context",
+            )
+        ):
+            return False
+        if any(
+            type(implementation[key]) is not int or implementation[key] < 0
+            for key in (
+                "latency",
+                "ii",
+                "input_stage_du",
+                "output_stage_du",
+                "worst_stage_du",
+                "register_bits",
+            )
+        ):
+            return False
+        try:
+            if (
+                _unit_recipe_digest(implementation["timing"])
+                != implementation["placement_digest"]
+            ):
+                return False
+        except (TypeError, ValueError):
+            return False
+    return all(
+        isinstance(node, dict)
+        and all(
+            key in node
+            for key in (
+                "kind",
+                "op",
+                "entity",
+                "delay_du",
+                "operands",
+                "casts",
+                "port_types",
+                "out_type",
+            )
+        )
+        and isinstance(node["op"], dict)
+        and len(node["operands"]) == len(node["casts"]) == len(node["port_types"])
+        and (not node.get("fu") or node["fu"] in schedule["fus"])
+        for node in schedule["nodes"].values()
+    )
+
+
+def _source_identity(parser_state, entity):
+    return AUTO.fingerprint(
+        [
+            (
+                name,
+                logic.inputs,
+                logic.outputs,
+                logic.submodule_instances,
+                logic.wire_to_c_type,
+                logic.wire_driven_by,
+            )
+            for name in sorted(AUTO._subtree_entities(parser_state, entity))
+            for logic in [parser_state.FuncLogicLookupTable[name]]
+        ]
+    )
+
+
+def _target_context(parser_state):
+    import DEVICE_MODELS
+    import SYN
+
+    return [
+        AUTO.GRAPH_VERSION,
+        AUTO.TIMING_VERSION,
+        parser_state.part,
+        getattr(SYN.SYN_TOOL, "__name__", None),
+        getattr(DEVICE_MODELS, "SELECTED_LIBRARY", None),
+    ]
 
 
 _LARGE_SCHEDULE_WARNED_ATTR = "_auto_fsm_large_schedule_warned"
@@ -1809,6 +2553,10 @@ def BUILD_SCHEDULE(
     ctl=DEFAULT_CTL,
     func_entity_override=None,
     build_memo=None,
+    pipelined=(),
+    merged=(),
+    fused=(),
+    _graph_memo=None,
 ):
     """Schedule + bind one AUTO_FSM'd function into a plain (picklable,
     comparable) schedule dict.
@@ -1834,12 +2582,14 @@ def BUILD_SCHEDULE(
 
     `build_memo`, when given, is a dict shared by every call for ONE
     (parser_state, key, tag, prev_schedule) -- HARVEST_AUTO_FSM_SCHEDULES
-    keeps one per call site when it searches more than one encoding. Packing
-    and binding see the control encoding only through the select-table delay
-    CTL_LUT_DU, so a point already scheduled under one encoding is reused for
-    another with the same delay term, with only `ctl` and the entity name
-    restamped (_restamp_ctl). A refusal (AutoError) is remembered and raised
+    keeps one per call site when it searches more than one encoding. The memo
+    keys on select arrival, corrected timing evidence and implementation choices,
+    so encodings share packing only under the same model. A refusal (AutoError) is remembered and raised
     again the same way.
+
+    `_graph_memo` is private to one fixed-parser area search. Binding and depth
+    variants reuse its cleaned graph when source boundary choices and delays
+    agree; each result is decoded independently before scheduling.
     """
     # `auto` is a driver-level request because each encoding needs its own full
     # area sweep. Keep the low-level builder useful to direct callers/tests by
@@ -1849,7 +2599,7 @@ def BUILD_SCHEDULE(
         ctl = "v3"
     args = (
         parser_state, key, tag, budget_scale, prev_schedule, opened, max_nodes,
-        unshared, ctl, func_entity_override,
+        unshared, ctl, func_entity_override, pipelined, merged, fused, _graph_memo,
     )
     if build_memo is None:
         return _BUILD_SCHEDULE(*args)
@@ -1859,7 +2609,28 @@ def BUILD_SCHEDULE(
         tuple(sorted(set(opened))),
         max_nodes,
         tuple(tuple(pair) for pair in unshared),
-        0 if ctl == "v2" else CTL_LUT_DU,
+        _select_delay(
+            _control_snapshot(
+                parser_state, (prev_schedule or {}).get("control_delays_snapshot")
+            ),
+            ctl,
+        ),
+        AUTO.frozen(
+            {
+                field: (prev_schedule or {}).get(field)
+                for field in (
+                    "corrected_entity_delays",
+                    "select_arrivals",
+                    "no_chain_edges",
+                    "no_chain_entity_pairs",
+                    "control_delays_snapshot",
+                    "unit_measurements",
+                )
+            }
+        ),
+        AUTO.frozen(pipelined),
+        tuple(tuple(pair) for pair in merged),
+        tuple(fused),
     )
     hit = build_memo.get(memo_key)
     if hit is None:
@@ -1900,6 +2671,712 @@ def _restamp_ctl(schedule, ctl):
     return schedule
 
 
+# ──────────────────────────────────────────────────────────────────────
+# Typed selection, width adapters and recurring groups
+# ──────────────────────────────────────────────────────────────────────
+
+
+def _transform_identity(value):
+    return hashlib.sha256(AUTO.frozen(value).encode()).hexdigest()
+
+
+def _selection_chains(dag, parser_state, entity):
+    """Distinct equalities on one unsigned index, with a BDD exclusivity proof."""
+    dag.setdefault("constants", {}).update(
+        {
+            ref[1]: AUTO._literal(parser_state, entity, ref)
+            for node in dag["nodes"].values()
+            for ref in node["operands"]
+            if ref[0] == "const"
+        }
+    )
+    proof_dag = dict(dag, nodes=dict(dag["nodes"]))
+    users = {nid: [] for nid in dag["nodes"]}
+    for nid, node in dag["nodes"].items():
+        for ref in node["operands"]:
+            if ref[0] == "node":
+                users[ref[1]].append(nid)
+    if dag["output"][0] == "node":
+        users[dag["output"][1]].append("$output")
+    for nid, node in dag["nodes"].items():
+        shape = parser_state.pypeline_auto_fsm_specialization_shapes.get(node["entity"])
+        if shape is None or shape["base"] not in parser_state.pypeline_builtin_op_info:
+            continue
+        if shape["op"].get("op") != "==":
+            continue
+        variable = iter(zip(node["operands"], node["casts"]))
+        operands, casts = [], []
+        for value, ctype in zip(shape["values"], shape["port_types"]):
+            ref, chain = (
+                next(variable) if value is None else (["lit", value, ctype], [])
+            )
+            operands.append(ref)
+            casts.append(chain)
+        proof_dag["nodes"][nid] = dict(
+            node,
+            kind="binop",
+            op=shape["op"],
+            entity=shape["base"],
+            operands=operands,
+            casts=casts,
+            port_types=shape["port_types"],
+        )
+    result = []
+    covered = set()
+    for root in reversed(AUTO.order(dag)):
+        if root in covered:
+            continue
+        first = dag["nodes"][root]
+        if first["kind"] != "mux":
+            continue
+        current = ["node", root]
+        cases = []
+        chain = []
+        index = None
+        seen = 0
+        proof = AUTO.BDD()
+        default_casts = []
+        while current[0] == "node":
+            mux = dag["nodes"][current[1]]
+            if mux["kind"] != "mux" or mux["out_type"] != first["out_type"]:
+                break
+            condition = mux["operands"][0]
+            if condition[0] != "node" or mux["casts"][0]:
+                break
+            eq = proof_dag["nodes"][condition[1]]
+            if (
+                eq["kind"] != "binop"
+                or eq["op"].get("op") != "=="
+                or eq["entity"] not in parser_state.pypeline_builtin_op_info
+            ):
+                break
+            values = [
+                AUTO._constant_operand(eq, i, parser_state, entity) for i in range(2)
+            ]
+            if sum(value is not None for value in values) != 1:
+                break
+            literal = 0 if values[0] is not None else 1
+            other = 1 - literal
+            port_type = eq["port_types"][other]
+            if (
+                not AUTO._unsigned(port_type)
+                or AUTO.width(port_type) > 64
+                or any(not AUTO._unsigned(t) for t in eq["casts"][other])
+            ):
+                break
+            candidate = (eq["operands"][other], eq["casts"][other], port_type)
+            if index is not None and candidate != index:
+                break
+            try:
+                predicate = proof.expression(proof_dag, condition)
+                if proof.apply("and", seen, predicate) != 0:
+                    break
+                seen = proof.apply("or", seen, predicate)
+            except AUTO.BudgetExceeded:
+                break
+            index = candidate
+            chain.append(current[1])
+            cases.append(
+                (
+                    values[literal],
+                    mux["operands"][1],
+                    mux["casts"][1] + [mux["port_types"][1]],
+                )
+            )
+            current = mux["operands"][2]
+            default_casts = mux["casts"][2] + [mux["port_types"][2]]
+            # An intervening assignment to a different type changes the
+            # priority chain's value; retain it rather than moving that cast.
+            if any(t != first["out_type"] for t in default_casts):
+                break
+        if len(cases) >= 2:
+            shape = (
+                index[2],
+                first["out_type"],
+                [value for value, _ref, _casts in cases],
+            )
+            result.append(
+                (
+                    root,
+                    _transform_identity(shape),
+                    shape,
+                    index,
+                    cases,
+                    current,
+                    default_casts,
+                )
+            )
+            # Only surviving selectors need characterization. Nested chain
+            # suffixes disappear with this replacement unless used elsewhere.
+            covered.update(nid for nid in chain[1:] if len(users[nid]) == 1)
+    return result
+
+
+def _selection_function(shape, types):
+    import pypeline
+    from operators.comb_opt import _primitive_math
+
+    index_type, out_type, constants = shape
+    em = AUTO._Emitter()
+    em.inj_named(pypeline.hw_func, "hw_func")
+    em.inj_named(pypeline.bit_assign, "bit_assign")
+    it = em.inj(types.resolve(index_type), "t")
+    ot = em.inj(types.resolve(out_type), "t")
+    st = em.inj(pypeline.make_uint_t(len(constants).bit_length()), "t")
+    bt = em.inj(pypeline.uint1_t, "t")
+    array = em.inj(
+        pypeline.make_array_t(types.resolve(out_type), len(constants) + 1), "t"
+    )
+    mux = em.inj(AUTO._mux_callable(types.resolve(out_type), len(constants) + 1), "mux")
+    name = "auto_fsm_selection_" + _transform_identity(shape)[:20]
+    args = [f"index: {it}"] + [f"a{i}: {ot}" for i in range(len(constants) + 1)]
+    em.line("@hw_func")
+    em.line(f"def {name}({', '.join(args)}) -> {ot}:")
+    for i, constant in enumerate(constants):
+        em.line(f"    eq{i}: {bt} = index == {constant}")
+    em.line(f"    selected: {st} = 0")
+    for bit in range(len(constants).bit_length()):
+        terms = [f"eq{i}" for i in range(len(constants)) if ((i + 1) >> bit) & 1]
+        # Balanced source ORs avoid introducing a priority or serial OR chain.
+        while len(terms) > 1:
+            terms = [
+                f"({terms[i]} | {terms[i+1]})" if i + 1 < len(terms) else terms[i]
+                for i in range(0, len(terms), 2)
+            ]
+        if terms:
+            em.line(f"    selected = bit_assign(selected, {terms[0]}, {bit})")
+    em.line(f"    rows: {array}")
+    for i in range(len(constants) + 1):
+        em.line(f"    rows[{i}] = a{i}")
+    em.line(f"    return {mux}(selected, rows)")
+    return _primitive_math(AUTO._exec_generated(name, em.src(), em.globals))
+
+
+def _pair_matches(dag, parser_state):
+    """Recurring multiply/add/subtract and arithmetic/mux pairs, without escapes."""
+    users = {nid: [] for nid in dag["nodes"]}
+    for nid, node in dag["nodes"].items():
+        for ref in node["operands"]:
+            if ref[0] == "node":
+                users[ref[1]].append(nid)
+    if dag["output"][0] == "node":
+        users[dag["output"][1]].append("$output")
+    groups = {}
+    for cid in AUTO.order(dag):
+        consumer = dag["nodes"][cid]
+        for port, ref in enumerate(consumer["operands"]):
+            if ref[0] != "node" or users[ref[1]] != [cid]:
+                continue
+            producer = dag["nodes"][ref[1]]
+            if (
+                producer["kind"] == "binop"
+                and producer["entity"] not in parser_state.pypeline_builtin_op_info
+                or consumer["kind"] == "binop"
+                and consumer["entity"] not in parser_state.pypeline_builtin_op_info
+            ):
+                continue
+            op = producer["op"].get("op")
+            multiply = op == "*"
+            arithmetic = op in ("+", "-", "*")
+            if producer["kind"] == "call":
+                # Calls retain their original dispatch. Primitive semantics,
+                # when needed for recognizing multiplication, are attached
+                # by the same proof used for width adapters below.
+                multiply = producer.get("primitive_op") == "*"
+                arithmetic = producer.get("primitive_op") in ("+", "-", "*")
+            if not (
+                (multiply and consumer["op"].get("op") in ("+", "-"))
+                or (arithmetic and consumer["kind"] == "mux" and port in (1, 2))
+            ):
+                continue
+            signature = [
+                (n["kind"], n["entity"], n["op"], n["port_types"], n["out_type"])
+                for n in (producer, consumer)
+            ]
+            key = _transform_identity((signature, port, consumer["casts"][port]))
+            groups.setdefault(key, []).append((ref[1], cid, port))
+    return {key: matches for key, matches in groups.items() if len(matches) >= 2}
+
+
+class _PairEmitter(AUTO._GraphCodegen):
+    def __init__(self, dag, parser_state, types):
+        self.nodes = dag["nodes"]
+        self.parser_state = parser_state
+        self.types = types
+        self.em = AUTO._Emitter()
+        self.em.type_resolver = types
+        self._tmp_n = 0
+        self.locals = {}
+
+    def _render_ref(self, ref):
+        return self.locals[ref[1]] if ref[0] == "node" else ref[1]
+
+
+def _pair_function(key, producer, consumer, port, parser_state, types):
+    import pypeline
+    from operators.comb_opt import _primitive_math
+
+    p, c = copy.deepcopy(producer), copy.deepcopy(consumer)
+    inputs = list(p["port_types"]) + [
+        t for i, t in enumerate(c["port_types"]) if i != port
+    ]
+    p["operands"] = [["in", f"a{i}"] for i in range(len(p["operands"]))]
+    p["casts"] = [[] for _t in p["port_types"]]
+    next_input = len(p["operands"])
+    for i in range(len(c["operands"])):
+        if i == port:
+            c["operands"][i] = ["node", "producer"]
+        else:
+            c["operands"][i] = ["in", f"a{next_input}"]
+            c["casts"][i] = []
+            next_input += 1
+    graph = {"nodes": {"producer": p, "consumer": c}, "output": ["node", "consumer"]}
+    emitter = _PairEmitter(graph, parser_state, types)
+    em = emitter.em
+    em.inj_named(pypeline.hw_func, "hw_func")
+    name = "auto_fsm_fused_" + key[:20]
+    args = [f"a{i}: {em.inj(types.resolve(t), 't')}" for i, t in enumerate(inputs)]
+    em.line("@hw_func")
+    em.line(
+        f"def {name}({', '.join(args)}) -> {em.inj(types.resolve(c['out_type']), 't')}:"
+    )
+    for nid in AUTO.order(graph):
+        node = graph["nodes"][nid]
+        expression = emitter._render_glue(nid, node)
+        em.line(
+            f"    {nid}: {em.inj(types.resolve(node['out_type']), 't')} = {expression}"
+        )
+        emitter.locals[nid] = nid
+    em.line("    return consumer")
+    fn = _primitive_math(AUTO._exec_generated(name, em.src(), em.globals))
+    for node in (p, c):
+        primitive = parser_state.pypeline_builtin_op_info.get(node["entity"])
+        if primitive is not None:
+            opname, ports = primitive
+            pypeline.register_operator(
+                opname, *(types.resolve(t) for t in ports), pypeline.INFERRED, scope=fn
+            )
+    return fn
+
+
+def _prepare_transform_candidates(tag, parser_state, elaborator):
+    """Prepare deterministic, measured candidates in every parse, including replay."""
+    root = elaborator._elaborate_live_func(tag.func.__name__, tag.func).func_name
+    if root is None or any(
+        kind in ("state", "feedback", "global")
+        for _path, _entity, kind, _detail in AUTO.FIND_EFFECTS(parser_state, root)
+    ):
+        return
+    types = AUTO._TypeResolver()
+    types.seed_callable(tag.func)
+    for fn in AUTO._entity_callables(parser_state).values():
+        types.seed_callable(fn)
+    for entity in sorted(AUTO._subtree_entities(parser_state, root)):
+        logic = parser_state.FuncLogicLookupTable[entity]
+        if (
+            not logic.submodule_instances
+            or entity != root
+            and AUTO._entity_callables(parser_state).get(entity) is None
+        ):
+            continue
+        try:
+            # Structural proofs must not populate the timing resolver's memo
+            # with estimates before synthesis supplies the real leaf delays.
+            dag = AUTO._resolve_inlined(
+                AUTO.BUILD_DAG(
+                    parser_state,
+                    entity,
+                    dict.fromkeys(parser_state.FuncLogicLookupTable, 1),
+                    float("inf"),
+                )
+            )
+            # Preparation and scheduling prove the same cleaned graph. Before
+            # frontend trimming, repeated reads of one struct field otherwise
+            # have different node ids and hide an exclusive equality chain.
+            dag, _cleanup = AUTO.cleanup(dag, parser_state, entity)
+        except AUTO.UnregenerableOpError:
+            continue
+        _annotate_primitives(dag, parser_state)
+        for _nid, key, shape, _index, _cases, _default, _casts in _selection_chains(
+            dag, parser_state, entity
+        ):
+            if key not in parser_state.pypeline_auto_fsm_selections:
+                fn = _selection_function(shape, types)
+                selected = elaborator._elaborate_live_func(fn.__name__, fn).func_name
+                AUTO._RESOLVE_BUILTIN_SUBMODULES(parser_state, selected)
+                parser_state.pypeline_auto_fsm_selections[key] = selected
+                parser_state.pypeline_auto_fsm_measure_callables.append(fn)
+        for key, matches in _pair_matches(dag, parser_state).items():
+            if key in parser_state.pypeline_auto_fsm_fusions:
+                continue
+            pid, cid, port = matches[0]
+            fn = _pair_function(
+                key, dag["nodes"][pid], dag["nodes"][cid], port, parser_state, types
+            )
+            fused = elaborator._elaborate_live_func(fn.__name__, fn).func_name
+            AUTO._RESOLVE_BUILTIN_SUBMODULES(parser_state, fused)
+            original_calls = {
+                node["entity"]
+                for node in (dag["nodes"][pid], dag["nodes"][cid])
+                if node["kind"] == "call"
+            }
+            if not original_calls <= set(
+                parser_state.FuncLogicLookupTable[fused].submodule_instances.values()
+            ):
+                continue
+            parser_state.pypeline_auto_fsm_fusions[key] = fused
+            parser_state.pypeline_auto_fsm_measure_callables.append(fn)
+
+
+def _balance_selections(dag, parser_state, entity, delays):
+    """Replace proved chains with the exact prepared compact selection table."""
+    count = 0
+    for nid, key, _shape, index, cases, default, default_casts in _selection_chains(
+        dag, parser_state, entity
+    ):
+        selected = parser_state.pypeline_auto_fsm_selections.get(key)
+        if selected is None:
+            continue
+        old = dag["nodes"][nid]
+        old.update(
+            kind="call",
+            op={"kind": "call"},
+            entity=selected,
+            operands=[index[0], default] + [ref for _v, ref, _c in cases],
+            casts=[list(index[1]), default_casts] + [casts for _v, _r, casts in cases],
+            port_types=[index[2]] + [old["out_type"]] * (len(cases) + 1),
+            delay_du=AUTO._resolve_delay_du(parser_state, selected, delays),
+            balanced_selection=True,
+        )
+        count += 1
+    return AUTO.prune(dag), count
+
+
+def _fuse_pairs(dag, keys, parser_state, delays):
+    """Fuse only closed recurring pairs; outside uses retain their original nodes."""
+    count = 0
+    for key in keys:
+        entity = parser_state.pypeline_auto_fsm_fusions.get(key)
+        if entity is None:
+            continue
+        for pid, cid, port in _pair_matches(dag, parser_state).get(key, ()):
+            producer, consumer = dag["nodes"][pid], dag["nodes"][cid]
+            external = [i for i in range(len(consumer["operands"])) if i != port]
+            consumer.update(
+                kind="call",
+                op={"kind": "call"},
+                entity=entity,
+                operands=producer["operands"]
+                + [consumer["operands"][i] for i in external],
+                casts=producer["casts"] + [consumer["casts"][i] for i in external],
+                port_types=producer["port_types"]
+                + [consumer["port_types"][i] for i in external],
+                delay_du=AUTO._resolve_delay_du(parser_state, entity, delays),
+                fused_pattern=key,
+            )
+            count += 1
+        dag = AUTO.prune(dag)
+    return dag, count
+
+
+def _annotate_primitives(dag, parser_state):
+    for node in dag["nodes"].values():
+        form = _primitive_form(node, parser_state)
+        if form is not None:
+            node["primitive_op"] = form["op"]
+        else:
+            shape = parser_state.pypeline_auto_fsm_specialization_shapes.get(
+                node["entity"]
+            )
+            if (
+                shape is not None
+                and shape["base"] in parser_state.pypeline_builtin_op_info
+            ):
+                node["primitive_op"] = shape["op"].get("op")
+
+
+def _primitive_form(node, parser_state):
+    """Prove a builtin operation, or a pure wrapper containing just that operation.
+
+    This recognizes a square by its graph, never its name. Multi-operation
+    reducers and custom arithmetic implementations have no such proof.
+    """
+    entity = node["entity"]
+    cached = parser_state.pypeline_auto_fsm_primitive_forms
+    if entity not in cached:
+        logic = parser_state.FuncLogicLookupTable.get(entity)
+        if entity in parser_state.pypeline_builtin_op_info and node["kind"] == "binop":
+            cached[entity] = dict(
+                op=node["op"].get("op"),
+                ports=list(node["port_types"]),
+                inputs=[(i, []) for i in range(len(node["port_types"]))],
+                result_casts=[node["out_type"]],
+            )
+        elif logic is not None and node["kind"] == "call":
+            # Open source wrappers, retaining their elaborated builtin leaves.
+            opened = [
+                name
+                for name in AUTO._subtree_entities(parser_state, entity)
+                if AUTO._entity_callables(parser_state).get(name) is not None
+            ]
+            try:
+                dag = AUTO._resolve_inlined(
+                    AUTO.BUILD_DAG(
+                        parser_state,
+                        entity,
+                        dict.fromkeys(parser_state.FuncLogicLookupTable, 1),
+                        float("inf"),
+                        opened=opened,
+                    )
+                )
+                operations = [
+                    (nid, n) for nid, n in dag["nodes"].items() if n["kind"] != "copy"
+                ]
+                ports = [
+                    port for port in logic.inputs if port != LOGIC.CLOCK_ENABLE_NAME
+                ]
+                if len(operations) != 1:
+                    raise ValueError("not a single primitive")
+                nid, primitive = operations[0]
+                if (
+                    primitive["kind"] != "binop"
+                    or primitive["entity"] not in parser_state.pypeline_builtin_op_info
+                ):
+                    raise ValueError("not a builtin primitive")
+
+                def source(ref, casts):
+                    if ref[0] == "node" and dag["nodes"][ref[1]]["kind"] == "copy":
+                        copy_node = dag["nodes"][ref[1]]
+                        return source(
+                            copy_node["operands"][0],
+                            copy_node["casts"][0]
+                            + [copy_node["port_types"][0], copy_node["out_type"]]
+                            + casts,
+                        )
+                    return ref, casts
+
+                mappings = []
+                for i, ref in enumerate(primitive["operands"]):
+                    ref, casts = source(ref, primitive["casts"][i])
+                    if ref[0] != "in" or ref[1] not in ports:
+                        raise ValueError("primitive operands are not public inputs")
+                    mappings.append((ports.index(ref[1]), casts))
+                output, casts = source(dag["output"], dag["output_casts"])
+                if output != ["node", nid]:
+                    raise ValueError("result is not the primitive output")
+                cached[entity] = dict(
+                    op=primitive["op"].get("op"),
+                    ports=primitive["port_types"],
+                    inputs=mappings,
+                    result_casts=[primitive["out_type"]] + casts + [node["out_type"]],
+                )
+            except (AUTO.AutoError, ValueError):
+                cached[entity] = None
+        else:
+            cached[entity] = None
+    form = cached[entity]
+    if form is None or form["op"] not in (
+        "+",
+        "-",
+        "*",
+        "==",
+        "!=",
+        "<",
+        "<=",
+        ">",
+        ">=",
+    ):
+        return None
+    if any(
+        not AUTO._unsigned(t)
+        for t in node["port_types"]
+        + form["ports"]
+        + form["result_casts"]
+        + [t for _i, casts in form["inputs"] for t in casts]
+    ):
+        return None
+    return form
+
+
+def _merge_choices(dag, parser_state):
+    representatives = {}
+    for node in dag["nodes"].values():
+        if node["delay_du"] > 0 and (
+            node["entity"] not in representatives or not node.get("binding_from")
+        ):
+            representatives[node["entity"]] = dict(
+                node, out_type=node.get("physical_out_type", node["out_type"])
+            )
+    forms = {
+        entity: _primitive_form(node, parser_state)
+        for entity, node in representatives.items()
+    }
+    result = []
+    for narrow, left in sorted(representatives.items()):
+        a = forms[narrow]
+        if a is None:
+            continue
+        for wide, right in sorted(representatives.items()):
+            b = forms[wide]
+            if (
+                narrow == wide
+                or b is None
+                or a["op"] != b["op"]
+                or len(right["port_types"]) != 2
+            ):
+                continue
+            # The target must expose both primitive inputs independently.
+            if sorted(i for i, _casts in b["inputs"]) != [0, 1]:
+                continue
+            if any(
+                AUTO.width(t) < AUTO.width(right["port_types"][i])
+                for i, casts in b["inputs"]
+                for t in casts
+            ):
+                continue
+            if any(
+                AUTO.width(t) < AUTO.width(right["out_type"]) for t in b["result_casts"]
+            ):
+                continue
+            if any(
+                AUTO.width(t) > AUTO.width(right["port_types"][b["inputs"][i][0]])
+                for i, t in enumerate(a["ports"])
+            ):
+                continue
+            if min(AUTO.width(t) for t in a["result_casts"]) > AUTO.width(
+                right["out_type"]
+            ):
+                continue
+            if len(left["port_types"]) == 2 and not any(
+                AUTO.width(t) < AUTO.width(right["port_types"][b["inputs"][i][0]])
+                for i, t in enumerate(a["ports"])
+            ):
+                continue
+            result.append((narrow, wide))
+    return result
+
+
+def _local_merge_choices(dag, parser_state):
+    """Merge steps into each unit's next wider compatible unit only.
+
+    A later merge moves everything already bound to the narrower unit, so any
+    chain of merges stays reachable one step at a time, as UNSHARE adds one
+    copy at a time. Every legal pair made a search over sixteen subtract
+    widths (an integer square root) evaluate about 110 merges per step.
+    """
+    sizes = {}
+    for node in dag["nodes"].values():
+        if node["entity"] not in sizes or not node.get("binding_from"):
+            sizes[node["entity"]] = sum(
+                AUTO.width(t) for t in node["port_types"]
+            ) + AUTO.width(node.get("physical_out_type", node["out_type"]))
+    nearest = {}
+    for narrow, wide in _merge_choices(dag, parser_state):
+        if narrow not in nearest or (sizes[wide], wide) < (
+            sizes[nearest[narrow]],
+            nearest[narrow],
+        ):
+            nearest[narrow] = wide
+    return sorted(nearest.items())
+
+
+def _merge_widths(dag, choices, parser_state, delays):
+    """Bind compatible unsigned operations through explicit input/result adapters."""
+    count = 0
+    for narrow, wide in choices:
+        if (narrow, wide) not in _merge_choices(dag, parser_state):
+            continue
+        target = next(
+            (
+                n
+                for n in dag["nodes"].values()
+                if n["entity"] == wide and not n.get("binding_from")
+            ),
+            next(n for n in dag["nodes"].values() if n["entity"] == wide),
+        )
+        target_form = _primitive_form(target, parser_state)
+        for node in dag["nodes"].values():
+            if node["entity"] != narrow:
+                continue
+            form = _primitive_form(node, parser_state)
+            refs = [None, None]
+            casts = [None, None]
+            for i, (source, internal_casts) in enumerate(form["inputs"]):
+                target_port = target_form["inputs"][i][0]
+                refs[target_port] = node["operands"][source]
+                casts[target_port] = (
+                    node["casts"][source]
+                    + [node["port_types"][source]]
+                    + internal_casts
+                    + [form["ports"][i]]
+                )
+            result_casts = list(form["result_casts"]) + node.get("result_casts", [])
+            node.update(
+                entity=wide,
+                kind=target["kind"],
+                op=copy.deepcopy(target["op"]),
+                operands=refs,
+                casts=casts,
+                port_types=list(target["port_types"]),
+                physical_out_type=target.get("physical_out_type", target["out_type"]),
+                result_casts=result_casts,
+                binding_from=narrow,
+                delay_du=AUTO._resolve_delay_du(parser_state, wide, delays),
+            )
+            count += 1
+    return dag, count
+
+
+def _clean_schedule_graph(
+    parser_state, func_entity, delays, budget_du, opened, preserved, merged, fused, memo
+):
+    """Reuse typed graphs across bindings within one fixed-parser area search.
+
+    Fused pairs and width merges rebind an already-cleaned graph, so the graph
+    before them is kept as well: those moves skip descent and cleanup.
+    """
+    identity = AUTO.fingerprint(
+        (func_entity, delays, budget_du, opened, sorted(preserved), merged, fused)
+    )
+    if memo is not None and identity in memo:
+        return pickle.loads(zlib.decompress(memo[identity]))
+    cleaned = AUTO.fingerprint(
+        ("cleaned", func_entity, delays, budget_du, opened, sorted(preserved))
+    )
+    if memo is not None and cleaned in memo:
+        dag, stats = pickle.loads(zlib.decompress(memo[cleaned]))
+    else:
+        dag = AUTO._resolve_inlined(
+            AUTO.BUILD_DAG(
+                parser_state,
+                func_entity,
+                delays,
+                budget_du,
+                opened,
+                preserved=preserved,
+            )
+        )
+        dag, stats = AUTO.cleanup(dag, parser_state, func_entity)
+        stats["specialized"] = dag.get(
+            "specialized_nodes", 0
+        ) + AUTO.specialize_constants(dag, parser_state, func_entity, delays)
+        dag, stats["balanced_selections"] = _balance_selections(
+            dag, parser_state, func_entity, delays
+        )
+        _annotate_primitives(dag, parser_state)
+        if memo is not None:
+            memo[cleaned] = zlib.compress(
+                pickle.dumps((dag, stats), pickle.HIGHEST_PROTOCOL), 1
+            )
+    dag, stats["fused_pairs"] = _fuse_pairs(dag, fused, parser_state, delays)
+    dag, stats["width_adapters"] = _merge_widths(dag, merged, parser_state, delays)
+    if memo is not None:
+        memo[identity] = zlib.compress(
+            pickle.dumps((dag, stats), pickle.HIGHEST_PROTOCOL), 1
+        )
+    return dag, stats
+
+
 def _BUILD_SCHEDULE(
     parser_state,
     key,
@@ -1911,11 +3388,17 @@ def _BUILD_SCHEDULE(
     unshared,
     ctl,
     func_entity_override,
+    pipelined,
+    merged,
+    fused,
+    graph_memo,
 ):
     """BUILD_SCHEDULE without the memo; `ctl` is already resolved from auto."""
     import pypeline
 
-    func_entity = func_entity_override or AUTO._entity_key_for_callable(parser_state, tag.func)
+    func_entity = func_entity_override or AUTO._entity_key_for_callable(
+        parser_state, tag.func
+    )
     if func_entity is None:
         raise AUTO.AutoError(
             f"AUTO_FSM: the function tagged by {key!r} was never elaborated, so "
@@ -1924,6 +3407,53 @@ def _BUILD_SCHEDULE(
     budget_du = _budget_du(parser_state, budget_scale)
     snapshot = (prev_schedule or {}).get("entity_delays_snapshot", {})
     delays = _schedule_delays(parser_state, func_entity, snapshot)
+    delays.update((prev_schedule or {}).get("corrected_entity_delays", {}))
+
+    # A measured correction must not force a characterized word-level unit
+    # apart before trying its feasible pipeline. This also runs without the
+    # area search. Explicit OPEN choices still request decomposition.
+    pipeline_choices = dict(pipelined)
+    measurements = (prev_schedule or {}).get("unit_measurements", {})
+
+    def fits(profile):
+        return _with_measurements(profile, measurements)["worst_stage_du"] <= budget_du
+
+    for entity, corrected in sorted(
+        (prev_schedule or {}).get("corrected_entity_delays", {}).items()
+    ):
+        if (
+            entity in pipeline_choices
+            or entity in opened
+            or corrected + AUTO.MUX_PENALTY_DU <= budget_du
+        ):
+            continue
+        node = next(
+            (
+                node
+                for node in (prev_schedule or {}).get("nodes", {}).values()
+                if node["entity"] == entity and node.get("fu")
+            ),
+            None,
+        )
+        if node is None:
+            continue
+        feasible = next(
+            (
+                profile
+                for profile in _unit_profiles(
+                    parser_state,
+                    key,
+                    node,
+                    delays,
+                    until=lambda rows: any(fits(row) for row in rows),
+                )
+                if fits(profile)
+            ),
+            None,
+        )
+        if feasible is not None:
+            pipeline_choices[entity] = feasible["latency"]
+    pipelined = tuple(sorted(pipeline_choices.items()))
 
     AUTO._seed_struct_widths(parser_state)
     # The whole subtree must be pure, not just the levels BUILD_DAG opens: an
@@ -1950,8 +3480,16 @@ def _BUILD_SCHEDULE(
             f"arguments/return values."
         )
     opened = tuple(sorted(set(opened)))
-    dag = AUTO._resolve_inlined(
-        AUTO.BUILD_DAG(parser_state, func_entity, delays, budget_du, opened)
+    dag, cleanup_stats = _clean_schedule_graph(
+        parser_state,
+        func_entity,
+        delays,
+        budget_du,
+        opened,
+        [entity for entity, _latency in pipelined],
+        merged,
+        fused,
+        graph_memo,
     )
     if max_nodes is not None and len(dag["nodes"]) > max_nodes:
         # Checked BEFORE scheduling: this is the area search asking "what if I
@@ -1963,6 +3501,28 @@ def _BUILD_SCHEDULE(
             f"search will consider"
         )
 
+    implementations = {}
+    by_entity = {node["entity"]: node for node in dag["nodes"].values()}
+    for entity, choice in pipelined:
+        if entity not in by_entity:
+            continue
+        latency, selection_rows = (
+            choice if isinstance(choice, (tuple, list)) else (choice, None)
+        )
+        profiles = _unit_profiles(
+            parser_state, key, by_entity[entity], delays, selection_rows, latency
+        )
+        selected = next(
+            (profile for profile in profiles if profile["latency"] == latency), None
+        )
+        if selected is None:
+            raise AUTO.AutoError(
+                f"AUTO_FSM: no pipeline placement for {entity} at latency {latency}"
+            )
+        implementations[entity] = _with_measurements(
+            selected, (prev_schedule or {}).get("unit_measurements", {})
+        )
+
     # Operand-mux delays. Scheduling conservatively charges the unit's fold
     # count, which is known before states/registers exist. Codegen may later
     # coalesce equal per-port values to a narrower mux (or a wire); it never
@@ -1971,6 +3531,14 @@ def _BUILD_SCHEDULE(
     for t in (tag.in_type, tag.out_type):
         types.seed(t)
     mux_snapshot = dict((prev_schedule or {}).get("mux_delays_snapshot", {}))
+
+    control_snapshot = _control_snapshot(
+        parser_state, (prev_schedule or {}).get("control_delays_snapshot")
+    )
+    select_proxy = _select_delay(control_snapshot, ctl)
+    select_arrivals = (prev_schedule or {}).get("select_arrivals", {})
+    no_chain_edges = (prev_schedule or {}).get("no_chain_edges", ())
+    no_chain_entity_pairs = (prev_schedule or {}).get("no_chain_entity_pairs", ())
     sched_ids = _scheduled_ids(dag)
     folds = {}
     for nid in sched_ids:
@@ -1980,7 +3548,11 @@ def _BUILD_SCHEDULE(
     register_output = getattr(tag, "register_output", True)
     output_cycles = 1 if register_output else 0
     max_states = (max_latency - output_cycles) if max_latency else None
-    copies = _replication_for_latency(folds, max_states)
+    copies = _replication_for_latency(folds, max_states, implementations)
+    for entity, implementation in implementations.items():
+        rows = implementation.get("selection_rows")
+        if rows is not None:
+            copies[entity] = max(copies.get(entity, 1), math.ceil(folds[entity] / rows))
     # The area search's unsharing choices, floored by whatever the latency cap
     # already forces and capped at one unit per operation (past which extra
     # units could never be used).
@@ -2004,6 +3576,9 @@ def _BUILD_SCHEDULE(
     def mux_du_of(nid):
         node = dag["nodes"][nid]
         e = node["entity"]
+        if implementations.get(e, {}).get("registered_selection"):
+            # The selected AUTO_PIPELINE region already contains the muxes.
+            return 0
         n = _fold_count_per_unit(folds.get(e, 1), copies.get(e, 1))
         cached = mux_du_cache.get((e, n))
         if cached is None:
@@ -2012,19 +3587,40 @@ def _BUILD_SCHEDULE(
                 du = AUTO._mux_delay_du(parser_state, types, ctype, n, mux_snapshot)
                 mux_snapshot.setdefault(f"{ctype}#{n}", du)
                 cached = max(cached, du)
-            if ctl != "v2" and n >= 2:
-                # The select table feeding this mux. CTL_LUT_DU is 0 by
-                # design (see its definition): the table resolves in parallel
-                # with the data it steers. The hook exists so the tunable has
-                # exactly one place to act if that ever stops being true.
-                cached += CTL_LUT_DU
             mux_du_cache[(e, n)] = cached
         return cached
 
-    plan = SCHEDULE_DAG(dag, budget_du, mux_du_of, max_states, copies)
+    def select_du_of(nid):
+        entity = dag["nodes"][nid]["entity"]
+        if _fold_count_per_unit(folds[entity], copies.get(entity, 1)) < 2:
+            return 0
+        return select_arrivals.get(entity, select_proxy)
+
+    plan = SCHEDULE_DAG(
+        dag,
+        budget_du,
+        mux_du_of,
+        max_states,
+        copies,
+        implementations,
+        select_du_of,
+        no_chain_edges,
+        no_chain_entity_pairs,
+    )
     if plan["latency_infeasible"]:
         # A cap that sharing alone cannot meet: give units back until it is.
-        plan = _replicate_to_cap(dag, budget_du, mux_du_of, max_states, folds, copies)
+        plan = _replicate_to_cap(
+            dag,
+            budget_du,
+            mux_du_of,
+            max_states,
+            folds,
+            copies,
+            implementations,
+            select_du_of,
+            no_chain_edges,
+            no_chain_entity_pairs,
+        )
     # Recorded after the latency-driven bumps above, so the schedule always
     # states the binding it actually has.
     unshared = tuple(sorted((e, n) for e, n in copies.items() if n > 1))
@@ -2033,6 +3629,10 @@ def _BUILD_SCHEDULE(
     for nid, node in dag["nodes"].items():
         nodes[nid] = dict(node)
         nodes[nid]["state"] = plan["state_of"].get(nid)
+        nodes[nid]["launch_state"] = plan["launch_of"].get(nid)
+        nodes[nid]["unit_latency"] = implementations.get(node["entity"], {}).get(
+            "latency", 0
+        )
         nodes[nid]["fu"] = plan["fu_of"].get(nid)
         nodes[nid]["end_du"] = plan["end_du_of"].get(nid)
     n_states = plan["n_states"]
@@ -2089,6 +3689,9 @@ def _BUILD_SCHEDULE(
         )
     schedule_core = {
         "version": SCHEDULE_VERSION,
+        "source_identity": parser_state.pypeline_auto_fsm_source_identities.get(key)
+        or _source_identity(parser_state, func_entity),
+        "target_context": _target_context(parser_state),
         "key": key,
         "ctl": ctl,
         "register_output": register_output,
@@ -2110,10 +3713,31 @@ def _BUILD_SCHEDULE(
         "in_type": pypeline._ctype_str(tag.in_type),
         "out_type": dag["out_type"],
         "entity_delays_snapshot": delays,
+        "measured_entities": _measured_entities(
+            parser_state,
+            set(delays) | {node["entity"] for node in dag["nodes"].values()},
+            (prev_schedule or {}).get("measured_entities", ()),
+        ),
         "mux_delays_snapshot": mux_snapshot,
+        "control_delays_snapshot": control_snapshot,
+        "corrected_entity_delays": dict(
+            (prev_schedule or {}).get("corrected_entity_delays", {})
+        ),
+        "select_arrivals": dict(select_arrivals),
+        "no_chain_edges": list(no_chain_edges),
+        "no_chain_entity_pairs": list(no_chain_entity_pairs),
+        "unit_measurements": dict((prev_schedule or {}).get("unit_measurements", {})),
         "cross_fu_register_types": sorted(cross_fu_types),
         "opened": list(opened),
         "unshared": [list(pair) for pair in unshared],
+        "cleanup": cleanup_stats,
+        "constant_wrapper_count": len(
+            set(parser_state.pypeline_auto_fsm_specializations.values())
+        ),
+        "implementations": implementations,
+        "pipelined": [list(pair) for pair in pipelined if pair[0] in implementations],
+        "merged": [list(pair) for pair in merged],
+        "fused": list(fused),
     }
     _check_nonempty_schedule(parser_state, key, func_entity, nodes)
     # Everything added below is listed in _SCHEDULE_UNHASHED_KEYS.
@@ -2165,22 +3789,34 @@ def _fold_count_per_unit(folds, n_copies):
     return max(1, -(-folds // n_copies))
 
 
-def _replication_for_latency(folds, max_states):
-    """Minimum unit copies per entity implied by a hard latency cap.
-
-    An entity used F times with R copies needs at least ceil(F/R) states, since
-    one copy runs at most one operation per state. So a cap of S states forces
-    R >= ceil(F/S), computed directly rather than searched for."""
-    if not max_states:
+def _replication_for_latency(folds, max_states, implementations=None):
+    """Minimum copies from available launch states, result latency and II."""
+    if max_states is None:
         return {}
-    return {
-        entity: -(-count // max_states)
-        for entity, count in folds.items()
-        if count > max_states
-    }
+    copies = {}
+    for entity, count in folds.items():
+        implementation = (implementations or {}).get(entity, {})
+        available = max_states - implementation.get("latency", 0)
+        if available <= 0:
+            copies[entity] = count
+            continue
+        launches = 1 + (available - 1) // implementation.get("ii", 1)
+        copies[entity] = -(-count // launches)
+    return copies
 
 
-def _replicate_to_cap(dag, budget_du, mux_du_of, max_states, folds, copies):
+def _replicate_to_cap(
+    dag,
+    budget_du,
+    mux_du_of,
+    max_states,
+    folds,
+    copies,
+    implementations=None,
+    select_du_of=None,
+    no_chain_edges=(),
+    no_chain_entity_pairs=(),
+):
     """The SCHEDULE_DAG plan with the most sharing found that meets a
     max_latency cap, setting `copies` (in place) to its binding.
 
@@ -2211,7 +3847,17 @@ def _replicate_to_cap(dag, budget_du, mux_du_of, max_states, folds, copies):
                 copies[entity] = need
         counts = tuple(sorted(copies.items()))
         if counts not in plans:
-            plans[counts] = SCHEDULE_DAG(dag, budget_du, mux_du_of, max_states, copies)
+            plans[counts] = SCHEDULE_DAG(
+                dag,
+                budget_du,
+                mux_du_of,
+                max_states,
+                copies,
+                implementations,
+                select_du_of,
+                no_chain_edges,
+                no_chain_entity_pairs,
+            )
         return plans[counts]
 
     best = trial(1)
@@ -2308,13 +3954,15 @@ def ESTIMATE_SCHEDULE_AREA(parser_state, schedule, memo=None, tally=None):
     nodes = schedule["nodes"]
     fus = schedule["fus"]
 
-    total = 0.0
+    area_terms = []
     for fu, entity in sorted(fus.items()):
-        total += AUTO.ESTIMATE_ENTITY_AREA(parser_state, entity, memo, tally)
+        area_terms.append(AUTO.ESTIMATE_ENTITY_AREA(parser_state, entity, memo, tally))
     for nid in schedule["node_order"]:
         node = nodes[nid]
         if not node.get("fu"):
-            total += AUTO.ESTIMATE_ENTITY_AREA(parser_state, node["entity"], memo, tally)
+            area_terms.append(
+                AUTO.ESTIMATE_ENTITY_AREA(parser_state, node["entity"], memo, tally)
+            )
 
     users = {}
     for nid in schedule["node_order"]:
@@ -2340,14 +3988,16 @@ def ESTIMATE_SCHEDULE_AREA(parser_state, schedule, memo=None, tally=None):
     # mux explicitly so the optimization cannot win merely by hiding cost from
     # the estimator.
     for pack in fused_output_packs:
-        total += AUTO._mux_bank_area_um2(parser_state, pack["ctype"], tally)
+        area_terms.append(AUTO._mux_bank_area_um2(parser_state, pack["ctype"], tally))
         if (
             input_storage is not None
             and pack["root"] in input_storage["preload_by_pack"]
         ):
             # Accept-time field preload is the third source of the rolling
             # register (shift, transformed source, raw input field).
-            total += AUTO._mux_bank_area_um2(parser_state, pack["ctype"], tally)
+            area_terms.append(
+                AUTO._mux_bank_area_um2(parser_state, pack["ctype"], tally)
+            )
     mux_plans = {}
     replacements = _rolling_replacements(schedule, output_packs)
     for fu in sorted(users):
@@ -2359,17 +4009,21 @@ def ESTIMATE_SCHEDULE_AREA(parser_state, schedule, memo=None, tally=None):
             for ctype, n, _mapping in port["muxes"]:
                 if n < 2:
                     continue
-                total += (n - 1) * AUTO._mux_bank_area_um2(parser_state, ctype, tally)
+                area_terms.append(
+                    (n - 1) * AUTO._mux_bank_area_um2(parser_state, ctype, tally)
+                )
     # Input storage is now field/lifetime aware and therefore can change a
     # ranking (a first-state field may preload a rolling work register).
-    total += _reg_bits_from_types(schedule, reg_types) * AUTO._ff_area_um2(parser_state)
+    area_terms.append(
+        _reg_bits_from_types(schedule, reg_types) * AUTO._ff_area_um2(parser_state)
+    )
 
     n_states = schedule["n_states"]
     statew = max(1, int(n_states).bit_length())
     ctl = schedule.get("ctl", "v3")
     if ctl == "v2":
-        total += n_states * AREA_PER_STATE_DECODE * scale
-        total += len(fused_output_packs) * AREA_PER_STATE_DECODE * scale
+        area_terms.append(n_states * AREA_PER_STATE_DECODE * scale)
+        area_terms.append(len(fused_output_packs) * AREA_PER_STATE_DECODE * scale)
     elif ctl == "onehot":
         # State bits ARE the decode. Operand/writeback selectors only need OR
         # trees when several hot states select the same output bit; next-state
@@ -2378,23 +4032,24 @@ def ESTIMATE_SCHEDULE_AREA(parser_state, schedule, memo=None, tally=None):
         # area comparison rather than inheriting v3's control estimate.
         for fu in sorted(users):
             _fu_nodes, ports = mux_plans[fu]
-            selector_shapes = {
-                (mapping, n)
-                for port in ports
-                for _ctype, n, mapping in port["muxes"]
-                if n >= 2
-            }
+            selector_shapes = _selector_shapes(schedule, fu, _fu_nodes, ports)
             for mapping, n in sorted(selector_shapes):
                 for bit in range(max(1, (n - 1).bit_length())):
                     terms = sum(1 for row in mapping if (row >> bit) & 1)
-                    total += max(0, terms - 1) * AUTO.AREA_PER_BIT_BITWISE * scale
+                    area_terms.append(
+                        max(0, terms - 1) * AUTO.AREA_PER_BIT_BITWISE * scale
+                    )
         writes_by_reg = {}
         for nid, idx in reg_of.items():
             writes_by_reg.setdefault(idx, set()).add(nodes[nid]["state"])
         for states in writes_by_reg.values():
-            total += max(0, len(states) - 1) * AUTO.AREA_PER_BIT_BITWISE * scale
+            area_terms.append(
+                max(0, len(states) - 1) * AUTO.AREA_PER_BIT_BITWISE * scale
+            )
         for pack in output_packs:
-            total += max(0, len(pack["steps"]) - 1) * AUTO.AREA_PER_BIT_BITWISE * scale
+            area_terms.append(
+                max(0, len(pack["steps"]) - 1) * AUTO.AREA_PER_BIT_BITWISE * scale
+            )
         for idx, srcs in sorted(_register_sources(nodes, reg_of).items()):
             if len(srcs) < 2:
                 continue
@@ -2405,18 +4060,20 @@ def ESTIMATE_SCHEDULE_AREA(parser_state, schedule, memo=None, tally=None):
             source_rows = {}
             rows = []
             for nid in nids:
-                src = nodes[nid]["fu"]
+                src = _result_source(nodes[nid])
                 if src not in source_rows:
                     source_rows[src] = len(source_rows)
                 rows.append(source_rows[src])
             for bit in range(max(1, (len(srcs) - 1).bit_length())):
                 terms = sum(1 for row in rows if (row >> bit) & 1)
-                total += max(0, terms - 1) * AUTO.AREA_PER_BIT_BITWISE * scale
+                area_terms.append(max(0, terms - 1) * AUTO.AREA_PER_BIT_BITWISE * scale)
         # idle-and-valid plus idle-and-not-valid in the one-hot transition.
-        total += 2 * AUTO.AREA_PER_BIT_BITWISE * scale
+        area_terms.append(2 * AUTO.AREA_PER_BIT_BITWISE * scale)
         if input_storage is not None:
-            total += (
-                len(input_storage["preload_by_pack"]) * AUTO.AREA_PER_BIT_BITWISE * scale
+            area_terms.append(
+                len(input_storage["preload_by_pack"])
+                * AUTO.AREA_PER_BIT_BITWISE
+                * scale
             )
     else:
         # One select table per DISTINCT state-to-choice mapping. Ports whose
@@ -2424,40 +4081,38 @@ def ESTIMATE_SCHEDULE_AREA(parser_state, schedule, memo=None, tally=None):
         # none at all.
         for fu in sorted(users):
             _fu_nodes, ports = mux_plans[fu]
-            selector_shapes = {
-                (mapping, n)
-                for port in ports
-                for _ctype, n, mapping in port["muxes"]
-                if n >= 2
-            }
+            selector_shapes = _selector_shapes(schedule, fu, _fu_nodes, ports)
             for _mapping, n in sorted(selector_shapes):
-                total += max(1, (n - 1).bit_length()) * AREA_PER_CTL_LUT_BIT * scale
+                area_terms.append(
+                    max(1, (n - 1).bit_length()) * AREA_PER_CTL_LUT_BIT * scale
+                )
         # ...one one-bit write-enable table per register, plus the next-state
         # table and the output-write pulse.
-        total += (
+        area_terms.append(
             (len(reg_types) + len(output_packs) + len(fused_output_packs))
             * AREA_PER_CTL_LUT_BIT
             * scale
         )
         for srcs in _register_sources(nodes, reg_of).values():
             if len(srcs) > 1:
-                total += (
+                area_terms.append(
                     max(1, (len(srcs) - 1).bit_length()) * AREA_PER_CTL_LUT_BIT * scale
                 )
-        total += (statew + 1) * AREA_PER_CTL_LUT_BIT * scale
-        total += n_states * AREA_PER_STATE_CTL * scale
+        area_terms.append((statew + 1) * AREA_PER_CTL_LUT_BIT * scale)
+        area_terms.append(n_states * AREA_PER_STATE_CTL * scale)
         if input_storage is not None:
-            total += (
+            area_terms.append(
                 len(input_storage["preload_by_pack"]) * AREA_PER_CTL_LUT_BIT * scale
             )
     # A cross-FU shared register needs a real source mux regardless of control
     # encoding. Same-FU reuse has one unchanged data wire and costs zero here.
     for idx, srcs in sorted(_register_sources(nodes, reg_of).items()):
         if len(srcs) > 1:
-            total += (len(srcs) - 1) * AUTO._mux_bank_area_um2(
-                parser_state, reg_types[idx], tally
+            area_terms.append(
+                (len(srcs) - 1)
+                * AUTO._mux_bank_area_um2(parser_state, reg_types[idx], tally)
             )
-    return total
+    return math.fsum(area_terms)
 
 
 def _openable_entities(parser_state, schedule, opened):
@@ -2516,9 +4171,9 @@ def FORCE_SCHEDULE(
     its answer is really the smallest is to BUILD the alternatives it passed
     over and count their cells -- which is what
     src/tests/pypeline_tests/inst/auto_fsm_min_area_verify_test.py does. The
-    resulting schedule is a normal schedule in every respect, including having
-    `opened`/`unshared` hashed into its entity name, so a forced variant can
-    never reuse measured delays belonging to a different one.
+    resulting schedule is a normal schedule in every respect: its entity name
+    hashes its hardware, so a forced variant can never reuse measured delays
+    belonging to different hardware. `forced` is a report flag, not hardware.
     """
     anchor = BUILD_SCHEDULE(
         parser_state, key, tag, budget_scale, prev_schedule, ctl=ctl,
@@ -2625,22 +4280,90 @@ def _SWEEP_MIN_AREA_SCHEDULE(
     (only timing is available uniformly across tools) -- see the AREA_*
     constants.
     """
+
     memo = {}
+    graph_memo = {}
     anchor = BUILD_SCHEDULE(
         parser_state, key, tag, budget_scale, prev_schedule, ctl=ctl,
         func_entity_override=func_entity_override, build_memo=build_memo,
+        _graph_memo=graph_memo,
     )
     anchor_cost = ESTIMATE_SCHEDULE_AREA(parser_state, anchor, memo)
     anchor_excess = _state_excess(anchor)
-    best, best_cost, best_excess = anchor, anchor_cost, anchor_excess
+    best, best_cost = anchor, anchor_cost
+    best_excess = (anchor["latency_infeasible"], anchor_excess)
     cur = anchor
     opened = []
     # Start from the units a max_latency cap already forced on the anchor
     # (_replicate_to_cap): every candidate then begins at a binding that meets
     # the cap instead of repeating that search, and the moves only add to it.
     unshared = {e: n for e, n in anchor["unshared"]} if anchor["max_latency"] else {}
+    pipelined = dict(anchor.get("pipelined", ()))
+    merged, fused = [], []
+    max_states = (
+        anchor["max_latency"] - int(anchor.get("register_output", True))
+        if anchor["max_latency"] is not None
+        else None
+    )
+
+    def feasible(profile):
+        measured = _with_measurements(profile, anchor.get("unit_measurements"))
+        return measured["worst_stage_du"] <= anchor["budget_du"] and (
+            max_states is None or profile["latency"] < max_states
+        )
+
+    def pipeline_moves(schedule):
+        """Local depth steps, as UNSHARE adds one copy: each selection form's
+        shallowest feasible depth, one level either side of a chosen depth,
+        and back to combinational. Depths are characterized only that far."""
+        moves = []
+        delays = anchor["entity_delays_snapshot"]
+        for node in _unit_candidate_nodes(parser_state, schedule):
+            entity = node["entity"]
+            chosen = pipelined.get(entity)
+            chosen_latency, chosen_rows = (
+                chosen if isinstance(chosen, (tuple, list)) else (chosen, None)
+            )
+            rows = _fold_count_per_unit(
+                node["unit_occurrences"], _units_of(schedule, entity)
+            )
+            for selection_rows in [None, rows] if rows > 1 else [None]:
+                if chosen is None or chosen_rows != selection_rows:
+                    profiles = _unit_profiles(
+                        parser_state,
+                        key,
+                        node,
+                        delays,
+                        selection_rows,
+                        until=lambda found: any(feasible(row) for row in found),
+                    )
+                    targets = [next((row for row in profiles if feasible(row)), None)]
+                else:
+                    profiles = _unit_profiles(
+                        parser_state,
+                        key,
+                        node,
+                        delays,
+                        selection_rows,
+                        chosen_latency + 1,
+                    )
+                    targets = [
+                        row
+                        for row in profiles
+                        if row["latency"] in (chosen_latency - 1, chosen_latency + 1)
+                    ]
+                moves.extend(
+                    (entity, row)
+                    for row in targets
+                    if row is not None and feasible(row)
+                )
+            if chosen is not None:
+                moves.append((entity, None))
+        return moves
+
     n_considered = 0
     uphill = 0
+    visited = set()
 
     def trace(label, sched, verdict, cost):
         """One auditable line per candidate. Every 'the search declined to
@@ -2664,7 +4387,13 @@ def _SWEEP_MIN_AREA_SCHEDULE(
             flush=True,
         )
 
-    def evaluate(trial_opened, trial_unshared):
+    def evaluate(
+        trial_opened,
+        trial_unshared,
+        trial_pipelined,
+        trial_merged=None,
+        trial_fused=None,
+    ):
         """The candidate schedule, or None with the reason it was rejected.
         Third element is the candidate's estimated cost, computed here (once)
         rather than by trace() or the caller -- ESTIMATE_SCHEDULE_AREA is not
@@ -2672,6 +4401,20 @@ def _SWEEP_MIN_AREA_SCHEDULE(
         function), memo only covers its per-entity area lookups, and this
         function used to be called a second time per surviving candidate
         under --auto_fsm_sweep_debug just to print the same number."""
+        trial_merged = merged if trial_merged is None else trial_merged
+        trial_fused = fused if trial_fused is None else trial_fused
+        identity = AUTO.frozen(
+            (
+                sorted(trial_opened),
+                sorted(trial_unshared.items()),
+                sorted(trial_pipelined.items()),
+                sorted(trial_merged),
+                sorted(trial_fused),
+            )
+        )
+        if identity in visited:
+            return None, "rejected: already considered", None
+        visited.add(identity)
         try:
             sched = BUILD_SCHEDULE(
                 parser_state,
@@ -2685,11 +4428,15 @@ def _SWEEP_MIN_AREA_SCHEDULE(
                 ctl=ctl,
                 func_entity_override=func_entity_override,
                 build_memo=build_memo,
+                pipelined=tuple(sorted(trial_pipelined.items())),
+                merged=tuple(sorted(trial_merged)),
+                fused=tuple(sorted(trial_fused)),
+                _graph_memo=graph_memo,
             )
         except AutoFsmInternalError:
             raise
-        except AUTO.AutoError:
-            return None, "rejected: too many operations to score (DAG cap)", None
+        except AUTO.AutoError as error:
+            return None, f"rejected: {error}", None
         if sched["latency_infeasible"] and not anchor["latency_infeasible"]:
             return None, "rejected: cannot meet the max_latency cap", None
         if sched["at_floor"] and not anchor["at_floor"]:
@@ -2715,6 +4462,8 @@ def _SWEEP_MIN_AREA_SCHEDULE(
                 f"exceeds its {sched['budget_du'] / 10.0:.2f} ns budget",
                 None,
             )
+        if SCHEDULES_EQUAL({key: cur}, {key: sched}):
+            return None, "rejected: unchanged physical schedule", None
         return sched, "considered", ESTIMATE_SCHEDULE_AREA(parser_state, sched, memo)
 
     if debug:
@@ -2726,15 +4475,13 @@ def _SWEEP_MIN_AREA_SCHEDULE(
             flush=True,
         )
     if len(anchor["nodes"]) > MAX_SWEEP_DAG_NODES:
-        # Every candidate would be refused by evaluate()'s DAG cap: UNSHARE
-        # keeps this DAG, and OPEN replaces a node by a body of at least one
-        # node. Building each of them just to refuse it is what made one
-        # oversized anchor cost minutes per candidate list -- the result is
-        # the anchor either way.
-        n_moves = 0
+        # Expansion and unsharing cannot score this anchor. A pipelined
+        # helper can replace its opened body with one node, so coarsening
+        # remains eligible and is checked against the normal per-trial cap.
+        n_moves = MAX_SWEEP_MOVES if pipeline_moves(anchor) else 0
         if debug:
             print(
-                f"AUTO_FSM {key}: sweep skipped: the anchor already has "
+                f"AUTO_FSM {key}: expansion skipped: the anchor already has "
                 f"{len(anchor['nodes'])} operations, past the "
                 f"{MAX_SWEEP_DAG_NODES} the area search will consider",
                 flush=True,
@@ -2743,37 +4490,126 @@ def _SWEEP_MIN_AREA_SCHEDULE(
         n_moves = MAX_SWEEP_MOVES
     for _move in range(n_moves):
         candidates = []  # (excess, cost, tie-break label, schedule, opened, unshared)
-        for entity in sorted(_openable_entities(parser_state, cur, opened)):
+        allow_expansion = len(cur["nodes"]) <= MAX_SWEEP_DAG_NODES
+        for entity in sorted(
+            _openable_entities(parser_state, cur, opened) if allow_expansion else ()
+        ):
             trial_opened = sorted(opened + [entity])
-            sched, why, cost = evaluate(trial_opened, unshared)
+            trial_pipelined = {
+                e: latency for e, latency in pipelined.items() if e != entity
+            }
+            sched, why, cost = evaluate(trial_opened, unshared, trial_pipelined)
             n_considered += 1
             trace(("open", entity), sched, why, cost)
             if sched is not None:
                 candidates.append(
                     (
-                        _state_excess(sched),
+                        (sched["latency_infeasible"], _state_excess(sched)),
                         cost,
                         ("open", entity),
                         sched,
                         trial_opened,
                         unshared,
+                        trial_pipelined,
                     )
                 )
-        for entity, n_units in sorted(_unshareable_entities(cur, unshared).items()):
+        unit_moves = _unshareable_entities(cur, unshared) if allow_expansion else {}
+        unshare_moves = [
+            ("unshare", entity, n) for entity, n in sorted(unit_moves.items())
+        ]
+        unshare_moves += [
+            ("unshare_all", entity, n)
+            for entity, n in sorted(_fold_counts(cur).items())
+            if entity in unit_moves and n > unit_moves[entity]
+        ]
+        for move, entity, n_units in unshare_moves:
             trial_unshared = dict(unshared)
             trial_unshared[entity] = n_units
-            sched, why, cost = evaluate(opened, trial_unshared)
+            sched, why, cost = evaluate(opened, trial_unshared, pipelined)
             n_considered += 1
-            trace(("unshare", f"{entity} -> {n_units} units"), sched, why, cost)
+            trace((move, f"{entity} -> {n_units} units"), sched, why, cost)
             if sched is not None:
                 candidates.append(
                     (
-                        _state_excess(sched),
+                        (sched["latency_infeasible"], _state_excess(sched)),
                         cost,
-                        ("unshare", entity),
+                        (move, entity),
                         sched,
                         opened,
                         trial_unshared,
+                        pipelined,
+                    )
+                )
+        for entity, implementation in pipeline_moves(cur):
+            latency = implementation["latency"] if implementation is not None else None
+            choice = (
+                (latency, implementation["selection_rows"])
+                if implementation is not None and implementation["registered_selection"]
+                else latency
+            )
+            if pipelined.get(entity) == choice:
+                continue
+            trial_pipelined = dict(pipelined)
+            if latency is None:
+                trial_pipelined.pop(entity)
+            else:
+                trial_pipelined[entity] = choice
+            trial_opened = [e for e in opened if e != entity]
+            sched, why, cost = evaluate(trial_opened, unshared, trial_pipelined)
+            n_considered += 1
+            description = (
+                f"{entity} combinational"
+                if latency is None
+                else f"{entity} L={latency}, selection={implementation['selection_rows']}"
+            )
+            trace(("pipeline", description), sched, why, cost)
+            if sched is not None:
+                candidates.append(
+                    (
+                        (sched["latency_infeasible"], _state_excess(sched)),
+                        cost,
+                        ("pipeline", description),
+                        sched,
+                        trial_opened,
+                        unshared,
+                        trial_pipelined,
+                    )
+                )
+        candidates = [candidate + (merged, fused) for candidate in candidates]
+
+        trial_dag = {"nodes": cur["nodes"], "output": cur["output"]}
+        moves = [
+            ("merge", (narrow, wide))
+            for narrow, wide in _local_merge_choices(trial_dag, parser_state)
+            if [narrow, wide] not in merged
+        ]
+        moves += [
+            ("fuse", pattern)
+            for pattern in sorted(_pair_matches(trial_dag, parser_state))
+            if pattern in parser_state.pypeline_auto_fsm_fusions
+            and pattern not in fused
+        ]
+        for move, item in moves:
+            trial_merged = merged + [list(item)] if move == "merge" else merged
+            trial_fused = fused + [item] if move == "fuse" else fused
+            sched, why, cost = evaluate(
+                opened, unshared, pipelined, trial_merged, trial_fused
+            )
+            n_considered += 1
+            label = (move, " -> ".join(item) if move == "merge" else item)
+            trace(label, sched, why, cost)
+            if sched is not None:
+                candidates.append(
+                    (
+                        (sched["latency_infeasible"], _state_excess(sched)),
+                        cost,
+                        label,
+                        sched,
+                        opened,
+                        unshared,
+                        pipelined,
+                        trial_merged,
+                        trial_fused,
                     )
                 )
         if not candidates:
@@ -2785,7 +4621,9 @@ def _SWEEP_MIN_AREA_SCHEDULE(
                 )
             break
         candidates.sort(key=lambda c: (c[0], c[1], c[2]))
-        excess, cost, label, sched, opened, unshared = candidates[0]
+        excess, cost, label, sched, opened, unshared, pipelined, merged, fused = (
+            candidates[0]
+        )
         # Always take the cheapest available move, even uphill -- see
         # MAX_SWEEP_UPHILL. The incumbent BEST is what gets returned, so
         # walking uphill can only ever discover something, never lose anything.
@@ -3144,17 +4982,60 @@ _SCHEDULE_NON_HARDWARE_KEYS = frozenset(
         "sweep_candidates",
         "ctl_auto_candidates",
         "comb_opt_candidates",
+        "comb_opt_moves",
         "sweep_skipped_dag_nodes",
         "descend_truncated",
         "descend_blocked",
+        "cleanup",
+        "constant_wrapper_count",
+        "entity_delays_snapshot",
+        "measured_entities",
+        "mux_delays_snapshot",
+        "timing_evidence",
+        "repair_history",
+        "unit_measurements",
+        "control_delays_snapshot",
+        "corrected_entity_delays",
+        "select_arrivals",
+        "no_chain_edges",
+        "no_chain_entity_pairs",
+        "opened",
+        "unshared",
+        "merged",
+        "fused",
+        "pipelined",
+        "forced",
     )
 )
 
 
 def _schedule_hardware(schedule):
-    return {
+    hardware = {
         k: v for k, v in schedule.items() if k not in _SCHEDULE_NON_HARDWARE_KEYS
     }
+    if "nodes" in hardware:
+        hardware["nodes"] = {
+            nid: {key: value for key, value in node.items() if key != "end_du"}
+            for nid, node in hardware["nodes"].items()
+        }
+    if "implementations" in hardware:
+        fields = (
+            "base_entity",
+            "unit_entity",
+            "latency",
+            "ii",
+            "registered_selection",
+            "selection_rows",
+            "timing",
+            "placement_digest",
+        )
+        hardware["implementations"] = {
+            entity: {
+                key: value for key, value in implementation.items() if key in fields
+            }
+            for entity, implementation in hardware["implementations"].items()
+        }
+    return hardware
 
 
 def SCHEDULES_EQUAL(a, b) -> bool:
@@ -3213,6 +5094,10 @@ def _reg_bits_from_types(schedule, reg_types):
     total on its own, with no other area computation)."""
     reg_bits = sum(AUTO._ctype_width(t) for t in reg_types.values())
     reg_bits += sum(
+        schedule.get("implementations", {}).get(entity, {}).get("register_bits", 0)
+        for entity in schedule["fus"].values()
+    )
+    reg_bits += sum(
         pack["width"]
         for pack in _OUTPUT_SHIFT_PACKS(
             schedule["nodes"], schedule["output"], schedule["n_states"]
@@ -3258,6 +5143,26 @@ def _register_bit_count(schedule):
         schedule.get("cross_fu_register_types", ()),
     )
     return _reg_bits_from_types(schedule, reg_types)
+
+
+def _chain_floor(schedule):
+    """States this graph needs with one unit per operation and no operand
+    muxes: the dependency chain's floor at the schedule's budget."""
+    folds = collections.Counter(
+        node["entity"] for node in schedule["nodes"].values() if node["delay_du"] > 0
+    )
+    plan = SCHEDULE_DAG(
+        {"nodes": schedule["nodes"], "output": schedule["output"]},
+        schedule["budget_du"],
+        lambda nid: 0,
+        None,
+        dict(folds),
+        schedule.get("implementations", {}),
+        None,
+        schedule.get("no_chain_edges", ()),
+        schedule.get("no_chain_entity_pairs", ()),
+    )
+    return plan["n_states"]
 
 
 def DESCRIBE_SCHEDULE(parser_state, key, schedule) -> str:
@@ -3315,9 +5220,62 @@ def DESCRIBE_SCHEDULE(parser_state, key, schedule) -> str:
         if len(ranked) > 3:
             line += f"\n    +{len(ranked) - 3} more"
     line += f"\n  register bits: {_register_bit_count(schedule)}"
+    line += f"\n  dependency floor: {_chain_floor(schedule)} states with one unit per operation"
+    bound = {node["entity"] for node in schedule["nodes"].values() if node.get("fu")}
+    measured = bound & set(schedule.get("measured_entities", ()))
+    line += (
+        f"\n  operation delays: {len(measured)} of {len(bound)} unit kind(s) measured, "
+        f"{len(bound) - len(measured)} estimated"
+    )
+    if schedule.get("cleanup"):
+        line += "\n  graph cleanup: " + ", ".join(
+            f"{name} {count}" for name, count in sorted(schedule["cleanup"].items())
+        )
+    line += f"\n  constant characterization shapes: {schedule.get('constant_wrapper_count', 0)}"
+    for entity, implementation in sorted(schedule.get("implementations", {}).items()):
+        line += (
+            f"\n  pipeline {entity}: L={implementation['latency']}, II={implementation['ii']}, "
+            f"{implementation['register_bits']} register bits (estimated), "
+            f"placement {implementation['placement_digest'][:16]}"
+        )
+        events = sorted(
+            (node["launch_state"], node["state"])
+            for node in schedule["nodes"].values()
+            if node.get("fu") and node["entity"] == entity
+        )
+        line += f"\n    launch/completion states: {events}"
+        recipe = implementation["timing"]
+        line += (
+            f"\n    pipeline boundaries: {sum(len(row['slices']) for row in recipe)} slice(s), "
+            f"{sum(bool(row['input_regs']) for row in recipe)} input bank(s), "
+            f"{sum(bool(row['output_regs']) for row in recipe)} output bank(s); "
+            "concrete placement in the generated schedule JSON"
+        )
+        measured = schedule.get("unit_measurements", {}).get(
+            implementation["placement_digest"]
+        )
+        stages = _with_measurements(implementation, schedule.get("unit_measurements"))
+        line += (
+            f"\n    stage timing: {stages['evidence']}, worst stage "
+            f"{stages['worst_stage_du'] / 10.0:.2f} ns"
+            + ("" if measured else " (predicted)")
+        )
+    controls = schedule.get("control_delays_snapshot", {})
+    if controls:
+        line += f"\n  control timing: {len(controls)} measured/proved decode shape(s); max(data, select) + mux"
+    evidence = schedule.get("timing_evidence", ())
+    if evidence:
+        line += (
+            f"\n  timing provenance: {sum(row['attributed'] for row in evidence)} attributed, "
+            f"{sum(not row['attributed'] for row in evidence)} unattributed path(s)"
+        )
+    for decision in schedule.get("repair_history", ()):
+        line += f"\n  timing repair: {decision}"
     if schedule.get("comb_opt_candidates"):
         line += f"\n  combinational candidates: {schedule['comb_opt_candidates']}; "
-        line += ", ".join(schedule.get("comb_opt_moves", [])) or "original graph retained"
+        line += (
+            ", ".join(schedule.get("comb_opt_moves", [])) or "original graph retained"
+        )
     ctl_candidates = schedule.get("ctl_auto_candidates")
     if ctl_candidates:
         scores = ", ".join(
@@ -3348,8 +5306,16 @@ def DESCRIBE_SCHEDULE(parser_state, key, schedule) -> str:
         line += f"\n  area model: {_describe_area_model(parser_state, schedule)}"
         for entity in schedule.get("opened") or ():
             line += f"\n    opened up: {entity}"
+        built = collections.Counter(schedule["fus"].values())
         for entity, n_units in schedule.get("unshared") or ():
-            line += f"\n    {n_units} units of: {entity}"
+            # The scheduler fills the lowest-numbered copies first; unused
+            # allowed copies are never built.
+            allowed = f" ({n_units} allowed)" if n_units != built[entity] else ""
+            line += f"\n    {built[entity]} units of: {entity}{allowed}"
+        for narrow, wide in schedule.get("merged") or ():
+            line += f"\n    merged onto a wider unit: {narrow} -> {wide}"
+        for pattern in schedule.get("fused") or ():
+            line += f"\n    fused pair: {pattern}"
     return line
 
 
@@ -3384,6 +5350,987 @@ def PARSE_UNSHARE_SPEC(spec):
     return (pattern, int(n_units))
 
 
+# ──────────────────────────────────────────────────────────────────────
+# Control timing, path attribution and local repair
+# ──────────────────────────────────────────────────────────────────────
+
+
+def _control_proxy(parser_state, key, ctl, state_width, select_width):
+    """Small shape proxy for first-pass decode delay, never emitted in an FSM."""
+    import pypeline
+
+    identity = AUTO.frozen((ctl, state_width, select_width))
+    cached = parser_state.pypeline_auto_fsm_control_proxies.get(identity)
+    if cached is not None:
+        return cached
+    elaborator = parser_state.pypeline_auto_fsm_elaborators.get(key)
+    if elaborator is None:
+        return None
+    emitter = AUTO._Emitter()
+    state_type = pypeline.make_uint_t(state_width)
+    select_type = pypeline.make_uint_t(select_width)
+    name = (
+        "auto_fsm_control_proxy_"
+        + AUTO.fingerprint((ctl, state_width, select_width))[:20]
+    )
+    emitter.inj_named(pypeline.hw_func, "hw_func")
+    emitter.inj_named(pypeline.bit_assign, "bit_assign")
+    emitter.line("@hw_func")
+    emitter.line(
+        f"def {name}(state: {emitter.inj(state_type, 't')}) -> {emitter.inj(select_type, 't')}:"
+    )
+    emitter.line(f"    result: {emitter.inj(select_type, 't')} = 0")
+    wiring = True
+    for bit in range(select_width):
+        if ctl == "onehot":
+            positions = [i for i in range(state_width) if (i >> bit) & 1]
+            operator = " | "
+        else:
+            # Overlapping parity windows exercise decode logic at this input
+            # width. This is a shape proxy, not a truth-table or fanout claim.
+            span = max(1, state_width - select_width + 1)
+            positions = [(bit + offset) % state_width for offset in range(span)]
+            operator = " ^ "
+        wiring = wiring and len(positions) <= 1
+        expression = operator.join(f"state[{i}:{i}]" for i in positions) or "0"
+        emitter.line(f"    result = bit_assign(result, {expression}, {bit})")
+    emitter.line("    return result")
+    fn = AUTO._exec_generated(name, emitter.src(), emitter.globals)
+    if wiring:
+        fn = pypeline.wires(fn)
+    logic = elaborator._elaborate_live_func(name, fn)
+    AUTO._RESOLVE_BUILTIN_SUBMODULES(parser_state, logic.func_name)
+    if wiring:
+        logic.delay = 0
+    else:
+        parser_state.pypeline_auto_fsm_measure_callables.append(fn)
+    result = dict(
+        function=fn,
+        entity=logic.func_name,
+        ctl=ctl,
+        wiring=wiring,
+        state_width=state_width,
+        select_width=select_width,
+    )
+    parser_state.pypeline_auto_fsm_control_proxies[identity] = result
+    return result
+
+
+def _prepare_control_proxies(parser_state, key, schedule, ctl):
+    """One proxy per encoding/state width/select width, independent of rows."""
+    reg_of, _types = ALLOCATE_REGISTERS(
+        schedule["nodes"],
+        schedule["output"],
+        schedule["n_states"],
+        schedule.get("cross_fu_register_types", ()),
+    )
+    state_width = (
+        schedule["n_states"] + 1
+        if ctl == "onehot"
+        else max(1, schedule["n_states"].bit_length())
+    )
+    widths = set()
+    for fu in schedule["fu_order"]:
+        nodes, plans = _operand_mux_plan(schedule, fu, reg_of)
+        widths.update(
+            max(1, (choices - 1).bit_length())
+            for _mapping, choices in _selector_shapes(schedule, fu, nodes, plans)
+        )
+    return [
+        record
+        for width in sorted(widths)
+        for record in [_control_proxy(parser_state, key, ctl, state_width, width)]
+        if record is not None
+    ]
+
+
+def _control_snapshot(parser_state, previous=None):
+    """Measured shape proxies, retained across scheduled re-parses."""
+    result = copy.deepcopy(previous or {})
+    for record in parser_state.pypeline_auto_fsm_control_proxies.values():
+        logic = parser_state.FuncLogicLookupTable[record["entity"]]
+        if logic.delay is not None and (
+            record["wiring"] or not logic.delay_is_estimated
+        ):
+            result[record["entity"]] = dict(
+                ctl=record["ctl"],
+                delay_du=logic.delay,
+                state_width=record["state_width"],
+                select_width=record["select_width"],
+                source="wiring proof"
+                if record["wiring"]
+                else "measured decode shape proxy",
+            )
+    return result
+
+
+def _select_delay(snapshot, ctl):
+    """Measured shape proxy; in-context state-register paths refine each unit."""
+    return max(
+        (row["delay_du"] for row in snapshot.values() if row["ctl"] == ctl), default=0
+    )
+
+
+def _calibrate_controls(parser_state, budget_scales, ctl, previous):
+    """Measure distinct decode shapes before the first full area search."""
+    snapshots = {}
+    modes = ("v3", "onehot") if ctl == "auto" else (ctl,)
+    for key, tag in sorted(GET_TAGS(parser_state).items()):
+        old = (previous or {}).get(key)
+        snapshot = _control_snapshot(
+            parser_state, (old or {}).get("control_delays_snapshot")
+        )
+        missing = [
+            mode
+            for mode in modes
+            if not any(row["ctl"] == mode for row in snapshot.values())
+        ]
+        roots = set()
+        for mode in missing:
+            provisional = BUILD_SCHEDULE(
+                parser_state,
+                key,
+                tag,
+                budget_scales.get(key, DEFAULT_BUDGET_SCALE),
+                old,
+                ctl=mode,
+            )
+            roots.update(
+                record["entity"]
+                for record in _prepare_control_proxies(
+                    parser_state, key, provisional, mode
+                )
+                if not record["wiring"]
+            )
+        if roots:
+            parser_state = _measure_entities(parser_state, roots)
+        snapshots[key] = _control_snapshot(parser_state, snapshot)
+    return parser_state, snapshots
+
+
+def _needs_measurement(parser_state, entity):
+    """A pure, inspectable entity whose current delay is not a measurement."""
+    import SYN
+
+    logic = parser_state.FuncLogicLookupTable.get(entity)
+    if logic is None or logic.vhdl_module_text is not None:
+        return False
+    if logic.delay is not None and not logic.delay_is_estimated:
+        return False
+    if entity in getattr(parser_state, "func_force_estimated", ()):
+        return False
+    return not SYN.LOGIC_IS_ZERO_DELAY(
+        logic, parser_state, allow_none_delay=True
+    ) and not SYN.FUNC_SUBTREE_HAS_STATE(entity, parser_state)
+
+
+def _measure_entities(parser_state, entities):
+    """Standalone measurements for entities the design's delay scope cannot reach.
+
+    The delay scope walks instances under a MAIN. Generated candidates (decode
+    proxies, constant wrappers) are never instantiated there, and neither is
+    anything inside a pure function once its scheduled FSM replaces it. Each
+    entity gets an isolated root instance instead, reaching the backend's
+    ordinary per-function run with its output-directory and --syn_cache reuse.
+    The design's own instance tables are untouched; the shared Logic objects
+    receive the measurements.
+    """
+    import AUTO_PIPELINE
+    import SYN
+    import VHDL
+
+    pending = sorted(entities)
+    if not pending:
+        return parser_state
+    isolated = copy.copy(parser_state)
+    isolated.LogicInstLookupTable = {}
+    isolated.FuncToInstances = {}
+    isolated.main_mhz = {}
+    isolated.main_syn_mhz = {}
+    isolated.main_clk_group = {}
+
+    def visit(inst, name):
+        logic = parser_state.FuncLogicLookupTable[name]
+        isolated.LogicInstLookupTable[inst] = logic
+        isolated.FuncToInstances.setdefault(name, set()).add(inst)
+        for local, child in sorted(logic.submodule_instances.items()):
+            visit(inst + LOGIC.SUBMODULE_MARKER + local, child)
+
+    for entity in pending:
+        root = "auto_fsm_measure_" + hashlib.sha256(entity.encode()).hexdigest()[:20]
+        isolated.main_mhz[root] = None
+        visit(root, entity)
+        # Per-function runs only measure what has no delay yet.
+        parser_state.FuncLogicLookupTable[entity].delay = None
+    # Per-function runs read their submodules' entity files, which the design
+    # wrote only for what it instantiates.
+    timing = AUTO_PIPELINE.GET_ZERO_ADDED_CLKS_TIMING_PARAMS_LOOKUP(isolated)
+    for name, insts in sorted(isolated.FuncToInstances.items()):
+        logic = isolated.FuncLogicLookupTable[name]
+        if (
+            logic.is_vhdl_func
+            or logic.is_vhdl_expr
+            or logic.func_name == LOGIC.VHDL_FUNC_NAME
+            or logic.is_clock_crossing
+            or logic.is_fsm_clk_func
+        ):
+            continue
+        out_dir = SYN.GET_OUTPUT_DIRECTORY(logic)
+        os.makedirs(out_dir, exist_ok=True)
+        VHDL.WRITE_LOGIC_ENTITY(sorted(insts)[0], logic, out_dir, isolated, timing)
+    SYN.ADD_PATH_DELAY_TO_LOOKUP(isolated, root_func_names=set(pending))
+    # Resolved delays derived from the old estimates are stale now.
+    memo = getattr(parser_state, AUTO._DELAY_MEMO_ATTR, None)
+    if memo is not None:
+        memo.clear()
+    return parser_state
+
+
+def _measure_schedule_inputs(parser_state, budget_scales, previous):
+    """Measure every delay that decides the forced-descent grain.
+
+    A helper that is not a delay-scope frontier carries a delay derived from
+    its submodules: standalone leaves, each with its own registers and routing,
+    summed along the deepest chain. On Artix-7 a nine-leaf soft comparator
+    prefix level derives 10.8 ns where its synthesis measures 2.3 ns, and
+    forced descent then split it and everything above it into one-bit gates.
+    So before scheduling, every operation the plain forced grain opens or keeps
+    atomic over budget gets a measurement, and then every operation it binds.
+    Descent decisions go first, outermost first: a helper measured whole needs
+    none of its children measured. An entity with a measured part already too slow for a
+    state is not measured: the whole cannot be faster, so the decision stands
+    (this keeps a kernel's whole parallel body from being synthesized). A
+    measurement can move a descent and expose new decisions, so this repeats
+    until none rests on an estimate.
+    """
+    tried = set()
+    while True:
+        descents, bound = set(), set()
+        for key, tag in sorted(GET_TAGS(parser_state).items()):
+            func_entity = AUTO._entity_key_for_callable(parser_state, tag.func)
+            if func_entity is None:
+                continue
+            old = (previous or {}).get(key) or {}
+            delays = _schedule_delays(
+                parser_state, func_entity, old.get("entity_delays_snapshot", {})
+            )
+            measured = set(
+                _measured_entities(
+                    parser_state,
+                    set(delays) | set(old.get("measured_entities", ())),
+                    old.get("measured_entities", ()),
+                )
+            )
+            budget_du = _budget_du(
+                parser_state, budget_scales.get(key, DEFAULT_BUDGET_SCALE)
+            )
+            try:
+                dag = AUTO.BUILD_DAG(parser_state, func_entity, delays, budget_du)
+            except AUTO.AutoError:
+                continue  # BUILD_SCHEDULE reports why.
+            decided = {
+                nid: node["entity"]
+                for nid, node in dag["nodes"].items()
+                if node["kind"] == "inlined"
+            }
+            decided.update((row[0], row[1]) for row in dag["descend_blocked"])
+            pending_ids = {
+                nid
+                for nid, entity in decided.items()
+                if entity not in measured
+                and not any(
+                    part in measured
+                    and delays.get(part, 0) + AUTO.MUX_PENALTY_DU > budget_du
+                    for part in AUTO._subtree_entities(parser_state, entity)
+                    if part != entity
+                )
+            }
+            # Outermost first: a descent inside a pending one may never happen.
+            descents.update(
+                decided[nid]
+                for nid in pending_ids
+                if not any(
+                    nid.startswith(outer + LOGIC.SUBMODULE_MARKER)
+                    for outer in pending_ids
+                )
+            )
+            # Bound operations as scheduling sees them: cleanup adds units of
+            # its own (balanced selections, constant-multiply factories).
+            cleaned, _stats = _clean_schedule_graph(
+                parser_state, func_entity, delays, budget_du, (), [], (), (), None
+            )
+            bound.update(
+                node["entity"]
+                for node in cleaned["nodes"].values()
+                if node["delay_du"] > 0 and node["entity"] not in measured
+            )
+        pending = {
+            entity
+            for entity in descents - tried
+            if _needs_measurement(parser_state, entity)
+        }
+        if not pending:
+            pending = {
+                entity
+                for entity in bound - tried
+                if _needs_measurement(parser_state, entity)
+            }
+        if not pending:
+            return parser_state
+        tried |= pending
+        print(
+            f"AUTO_FSM: measuring {len(pending)} operation(s) before scheduling instead of "
+            f"deciding on derived estimates",
+            flush=True,
+        )
+        parser_state = _measure_entities(parser_state, pending)
+
+
+def _timing_register(name, registers):
+    lowered = (name or "").lower()
+    rows = [
+        row
+        for reg, row in sorted(registers.items())
+        if re.search(
+            r"(?:^|[^a-z0-9])" + re.escape(reg.lower()) + r"(?:$|[^a-z0-9])", lowered
+        )
+    ]
+    if not rows:
+        return None
+    roles = sorted({row["role"] for row in rows})
+    return dict(
+        role="/".join(roles),
+        node_ids=sorted({nid for row in rows for nid in row["node_ids"]}),
+        states=sorted({state for row in rows for state in row["states"]}),
+    )
+
+
+def _attribute_path(path, schedule, provenance, aliases=()):
+    """Attribute ordered boundaries and endpoint writers; preserve the raw path."""
+    nodes = schedule["nodes"]
+    text = " ".join(
+        str(path.get(field) or "") for field in ("start_reg_name", "end_reg_name")
+    )
+    text += " " + " ".join(
+        [*path.get("start_reg_aliases", ()), *path.get("end_reg_aliases", ())]
+    )
+    resources = [
+        element.get("resource", "") for element in path.get("path_elements") or []
+    ]
+    resources += path.get("netlist_resources") or []
+    text += " " + " ".join(resources)
+    owned = any(
+        alias.lower() in text.lower()
+        for alias in (schedule["entity"], *aliases)
+        if alias
+    )
+    result = dict(
+        path=copy.deepcopy(path),
+        attributed=False,
+        states=[],
+        node_ids=[],
+        fus=[],
+        boundaries=[],
+    )
+    if not owned:
+        result["reason"] = "no matching FSM hierarchy or generated source"
+        return result
+    registers = provenance.get("registers", {})
+    end = _timing_register(
+        " ".join([path.get("end_reg_name") or "", *path.get("end_reg_aliases", ())]),
+        registers,
+    )
+    start = _timing_register(
+        " ".join(
+            [path.get("start_reg_name") or "", *path.get("start_reg_aliases", ())]
+        ),
+        registers,
+    )
+    result["start_role"] = start["role"] if start else None
+    result["end_role"] = end["role"] if end else None
+    writers = set(end.get("node_ids", ())) if end else set()
+    states = set(end.get("states", ())) if end else set()
+    lines = {row["line"]: row for row in provenance.get("lines", ())}
+    for element in path.get("path_elements") or []:
+        # Source coordinates refer to this FSM only when its source/hierarchy
+        # precedes the coordinate. A nested helper's line 20 is not FSM line 20,
+        # and the FSM instance's own label carries its call site in the caller.
+        # Net names may come from a neighbouring module; cells place the arc.
+        if (element.get("delay_type") or "").startswith("net"):
+            continue
+        resource = element.get("resource", "")
+        lowered = resource.lower()
+        ends = [
+            lowered.rfind(alias.lower()) + len(alias)
+            for alias in (schedule["entity"], *aliases)
+            if alias and alias.lower() in lowered
+        ]
+        if not ends:
+            continue
+        matches = list(
+            re.finditer(
+                r"(?:_py_l|\.py[:_]l?)(\d+)(?:_|:|$)",
+                resource[max(ends) :],
+                re.IGNORECASE,
+            )
+        )
+        if not matches:
+            continue
+        row = lines.get(int(matches[0].group(1)))
+        if row is None:
+            continue
+        result["boundaries"].append(
+            dict(
+                kind=row["kind"],
+                fu=row.get("fu"),
+                node_ids=row["node_ids"],
+                arrival_ns=element.get("arrival_ns"),
+                increment_ns=element.get("increment_ns"),
+                resource=resource,
+            )
+        )
+        writers.update(row["node_ids"])
+        states.update(row["states"])
+    # A work register may have several writers. Keep every possible same-state
+    # predecessor chain, rather than guessing which unreported mux input won.
+    chain = set()
+
+    def visit(nid, state):
+        if nid in chain or nid not in nodes:
+            return
+        node = nodes[nid]
+        if node.get("state") not in (None, state):
+            return
+        chain.add(nid)
+        for ref in node["operands"]:
+            if ref[0] == "node":
+                visit(ref[1], state)
+
+    for nid in sorted(writers):
+        if nid in nodes:
+            visit(nid, nodes[nid].get("state"))
+    result.update(
+        attributed=bool(end or result["boundaries"]),
+        states=sorted(states),
+        node_ids=sorted(chain),
+        fus=sorted({nodes[nid]["fu"] for nid in chain if nodes[nid].get("fu")}),
+    )
+    if not result["attributed"]:
+        result["reason"] = "FSM matched but no register or operation boundary matched"
+    return result
+
+
+def _fsm_instance_aliases(parser_state, key):
+    """VHDL names of the instances that call this FSM. Netlist names carry the
+    elaborated hierarchy, not the schedule's entity name."""
+    import VHDL
+
+    aliases = []
+    for logic in parser_state.LogicInstLookupTable.values():
+        aliases.extend(
+            VHDL.WIRE_TO_VHDL_NAME(local, parser_state)
+            for local, tagged_key in logic.sub_inst_to_auto_fsm_key.items()
+            if tagged_key == key
+        )
+    return aliases
+
+
+def _fsm_source_line(name, aliases):
+    """The FSM source line a netlist name points into, once inside the FSM.
+
+    Returns (owned, line). The first source coordinate after the FSM's own
+    instance is a line of the generated FSM; the instance label itself carries
+    its caller's line. A register of the FSM proper (st_r, v<n>_r) has none.
+    """
+    lowered = (name or "").lower()
+    ends = [
+        lowered.rfind(alias.lower()) + len(alias)
+        for alias in aliases
+        if alias and alias.lower() in lowered
+    ]
+    if not ends:
+        return False, None
+    match = re.search(
+        r"(?:_py_l|\.py[:_]l?)(\d+)(?:_|:|$)", name[max(ends) :], re.IGNORECASE
+    )
+    return True, int(match.group(1)) if match else None
+
+
+def _unit_measurements(observation, schedule, provenance, aliases):
+    """Measured unit stages replace their placement's estimates.
+
+    A path ending inside a unit measures it when it starts inside the same
+    unit (an isolated stage) or at a register of the FSM proper (its launch:
+    operand selection and first stage). A path from another unit's output also
+    holds that unit's stage and the chained logic, so it is not either one.
+    """
+    unit_lines = {
+        row["line"]: row["fu"]
+        for row in provenance.get("lines", ())
+        if row["kind"] == "unit" and row.get("fu")
+    }
+    aliases = [schedule["entity"], *aliases]
+    result = copy.deepcopy(schedule.get("unit_measurements", {}))
+    for path in (observation or {}).get("paths", ()):
+        end = path.get("end_reg_name") or ""
+        end_owned, end_line = _fsm_source_line(end, aliases)
+        start_owned, start_line = _fsm_source_line(path.get("start_reg_name"), aliases)
+        fu = unit_lines.get(end_line)
+        if not (end_owned and start_owned) or fu is None:
+            continue
+        if start_line != end_line and start_line in unit_lines:
+            continue
+        implementation = schedule.get("implementations", {}).get(schedule["fus"][fu])
+        delay = path.get("path_delay_ns")
+        if implementation is None or not delay:
+            continue
+        digest = implementation["placement_digest"]
+        measurement = result.setdefault(
+            digest, dict(evidence="measured unit stages", paths=[])
+        )
+        stage_delay = math.ceil(float(delay) * 10.0)
+        measurement["worst_stage_du"] = max(
+            measurement.get("worst_stage_du", implementation["worst_stage_du"]),
+            stage_delay,
+        )
+        stage = re.search(r"REG_STAGE(\d+)_", end, re.IGNORECASE)
+        measurement["paths"].append(
+            dict(
+                stage=int(stage.group(1)) if stage else None,
+                launch=start_line != end_line,
+                delay_du=stage_delay,
+                path=copy.deepcopy(path),
+            )
+        )
+    return result
+
+
+def _with_measurements(profile, measurements):
+    """A built placement's measured stages replace its estimate."""
+    measured = (measurements or {}).get(profile["placement_digest"])
+    return dict(profile, **measured) if measured else profile
+
+
+def _measure_unit_placements(parser_state, schedules):
+    """Synthesize each chosen pinned placement once, on its own.
+
+    The landscape predicts stages from the cut positions it plans, and a
+    hierarchy measured as a whole can realize its registers elsewhere (§3.2,
+    "Measured stages"). One synthesis of the pinned unit, its operand
+    selection included, measures its worst register-to-register stage before
+    a whole-design build relies on it. Results land in each schedule's
+    unit_measurements (diagnostic data, not hardware). Returns
+    {key: {placement digest, ...}} for chosen placements over their budget.
+    """
+    import AUTO_PIPELINE
+    import VHDL
+
+    over = {}
+    package_written = False
+    for key, schedule in sorted(schedules.items()):
+        measurements = schedule.setdefault("unit_measurements", {})
+        for entity, implementation in sorted(
+            schedule.get("implementations", {}).items()
+        ):
+            digest = implementation["placement_digest"]
+            if digest not in measurements:
+                node = next(
+                    node
+                    for _nid, node in sorted(schedule["nodes"].items())
+                    if node.get("fu") and node["entity"] == entity
+                )
+                unit = _unit_function(
+                    parser_state, key, node, implementation.get("selection_rows")
+                )
+                if unit is None or unit["entity"] != implementation["unit_entity"]:
+                    raise AutoFsmInternalError(
+                        "AUTO_FSM: selected functional unit is unavailable: " + entity
+                    )
+                delays = dict(
+                    schedule["entity_delays_snapshot"],
+                    **schedule.get("corrected_entity_delays", {}),
+                )
+                isolated, root = _unit_isolated_tree(
+                    parser_state, unit["entity"], delays
+                )
+                table = {
+                    inst: AUTO_PIPELINE.TimingParams(inst, logic)
+                    for inst, logic in isolated.LogicInstLookupTable.items()
+                }
+                RESTORE_UNIT_PLACEMENT(root, implementation, isolated, table)
+                if not package_written:
+                    # Grow-only: the unit's own types join the chunk index, and
+                    # isolated runs read a package scoped to what they use.
+                    VHDL.WRITE_C_DEFINED_VHDL_STRUCTS_PACKAGE(parser_state)
+                    package_written = True
+                for inst, logic in sorted(isolated.LogicInstLookupTable.items()):
+                    if (
+                        logic.is_vhdl_func
+                        or logic.is_vhdl_expr
+                        or logic.func_name == LOGIC.VHDL_FUNC_NAME
+                        or logic.is_clock_crossing
+                        or logic.is_fsm_clk_func
+                    ):
+                        continue
+                    out_dir = SYN.GET_OUTPUT_DIRECTORY(logic)
+                    os.makedirs(out_dir, exist_ok=True)
+                    VHDL.WRITE_LOGIC_ENTITY(inst, logic, out_dir, isolated, table)
+                print(
+                    f"AUTO_FSM {key}: measuring pinned unit {entity} "
+                    f"L={implementation['latency']} on its own",
+                    flush=True,
+                )
+                report = SYN.SYN_TOOL.SYN_AND_REPORT_TIMING(
+                    root, isolated.LogicInstLookupTable[root], isolated, table
+                )
+                delays_ns = [
+                    path.path_delay_ns
+                    for path in report.path_reports.values()
+                    if path.path_delay_ns is not None
+                ]
+                if not delays_ns:
+                    continue
+                measurements[digest] = dict(
+                    evidence="measured on its own",
+                    worst_stage_du=max(
+                        implementation["worst_stage_du"],
+                        math.ceil(max(delays_ns) * SYN.DELAY_UNIT_MULT),
+                    ),
+                    paths=[],
+                )
+            if measurements[digest]["worst_stage_du"] > schedule["budget_du"]:
+                over.setdefault(key, set()).add(digest)
+    return over
+
+
+def _confirm_unit_placements(parser_state, schedules, harvest):
+    """Reschedule call sites until every chosen pinned placement is measured
+    within its budget, or measuring finds no new miss.
+
+    A measured placement is never chosen again, so each round either measures
+    something new or ends; a miss that rescheduling cannot avoid is left to
+    the whole-design build and its timing loop.
+    """
+    known = set()
+    while True:
+        over = _measure_unit_placements(parser_state, schedules)
+        new = {digest for digests in over.values() for digest in digests} - known
+        if not new:
+            return schedules
+        known |= new
+        for key in sorted(over):
+            budget_ns = schedules[key]["budget_du"] / 10.0
+            print(
+                f"AUTO_FSM {key}: a pinned unit placement measured over the "
+                f"{budget_ns:.2f} ns/state budget on its own; rescheduling "
+                f"before the whole-design build.",
+                flush=True,
+            )
+        schedules = dict(schedules)
+        schedules.update(harvest(parser_state, schedules, set(over)))
+
+
+def _mapped_endpoint_aliases(observation):
+    """Recover readable sky130 endpoints from the retained, authenticated netlist."""
+    log_path = (observation or {}).get("log_path")
+    if not log_path:
+        return {}, "no retained netlist path"
+    try:
+        with open(os.path.splitext(log_path)[0] + "_timing.json") as source:
+            timing = json.load(source)
+        mapped = os.path.join(os.path.dirname(log_path), timing["mapped_json_path"])
+        with open(mapped, "rb") as source:
+            contents = source.read()
+        if hashlib.sha256(contents).hexdigest() != timing["mapped_json_sha256"]:
+            return {}, "retained mapped-netlist digest differs"
+        result = {}
+        for module in json.loads(contents)["modules"].values():
+            aliases_of_bit = {}
+            for name, net in module["netnames"].items():
+                for bit in net["bits"]:
+                    aliases_of_bit.setdefault(bit, set()).add(name)
+            for name, cell in module["cells"].items():
+                bits = cell["connections"].get("Q", []) + cell["connections"].get(
+                    "QN", []
+                )
+                if bits:
+                    result[name] = sorted(
+                        {alias for bit in bits for alias in aliases_of_bit.get(bit, ())}
+                    )
+        return result, "retained mapped-netlist digest verified"
+    except (OSError, KeyError, TypeError, ValueError):
+        return {}, "retained mapped-netlist aliases unavailable"
+
+
+def _collect_timing_evidence(parser_state, params, schedules):
+    """Read the retained implementation, never an abandoned sweep candidate."""
+
+    import SWEEP
+
+    observation = SWEEP.RETAINED_OBSERVATION(parser_state, params)
+    endpoint_aliases, alias_status = _mapped_endpoint_aliases(observation)
+    result = {key: [] for key in schedules}
+    failures = getattr(params, "sweep_timing_failures", ()) or ()
+    for key, schedule in schedules.items():
+        aliases = _fsm_instance_aliases(parser_state, key)
+        provenance = parser_state.pypeline_auto_fsm_provenance.get(key, {})
+        relevant = [
+            (main, goal)
+            for main, goal, _mhz, _why in failures
+            if key in _AUTO_FSM_KEYS_UNDER_MAIN(parser_state, main)
+        ]
+        for path in (observation or {}).get("paths", ()):
+            delay = path.get("path_delay_ns")
+            if not delay or not any(
+                goal and delay > 1000.0 / goal for _main, goal in relevant
+            ):
+                continue
+            path = dict(
+                path,
+                start_reg_aliases=endpoint_aliases.get(path.get("start_reg_name"), []),
+                end_reg_aliases=endpoint_aliases.get(path.get("end_reg_name"), []),
+                endpoint_alias_status=alias_status,
+            )
+            row = _attribute_path(path, schedule, provenance, aliases)
+            row["observation"] = {
+                field: observation.get(field)
+                for field in (
+                    "input_signature",
+                    "implementation_signature",
+                    "log_path",
+                    "iteration",
+                )
+            }
+            result[key].append(row)
+        if relevant and not result[key]:
+            result[key].append(
+                dict(
+                    attributed=False,
+                    reason="backend supplied no failing path for the retained implementation",
+                    path={},
+                )
+            )
+    return result
+
+
+def _corrected_timing_model(schedule, evidence):
+    """Apply observed/modelled ratios locally, including equivalent chains."""
+    model = copy.deepcopy(schedule)
+    delays = model.setdefault("corrected_entity_delays", {})
+    selects = model.setdefault("select_arrivals", {})
+    for row in evidence:
+        if not row["attributed"]:
+            continue
+        ids = row["node_ids"]
+        measured = (row["path"].get("path_delay_ns") or 0) * 10.0
+        predicted = max(
+            (schedule["nodes"][nid].get("end_du") or 0 for nid in ids), default=0
+        )
+        if row.get("start_role") == "control":
+            # The first arithmetic/mux boundary isolates the select arrival.
+            arrivals = [
+                arc["arrival_ns"]
+                for arc in row["boundaries"]
+                if arc["kind"] in ("operand_mux", "unit")
+                and arc["arrival_ns"] is not None
+            ]
+            if arrivals:
+                for fu in row["fus"]:
+                    entity = schedule["fus"][fu]
+                    selects[entity] = max(
+                        selects.get(entity, 0), math.ceil(min(arrivals) * 10.0)
+                    )
+        if predicted and measured > predicted:
+            ratio = measured / predicted
+            for nid in ids:
+                node = schedule["nodes"][nid]
+                if node.get("fu") and node["delay_du"]:
+                    entity = node["entity"]
+                    delays[entity] = max(
+                        delays.get(entity, 0), math.ceil(node["delay_du"] * ratio)
+                    )
+    model["timing_evidence"] = list(
+        {
+            AUTO.frozen(row): row
+            for row in list(schedule.get("timing_evidence", ())) + evidence
+        }.values()
+    )
+    return model
+
+
+def _separation_entity_pairs(schedule, evidence):
+    """Cut the operation boundary where an ordered path first crosses budget.
+
+    Every same-state edge follows the units' emission order. Synthesis names
+    some merged cells after a neighbouring unit, so a transition against that
+    order is a naming artifact, not a producer-to-consumer boundary.
+    """
+    order = {fu: index for index, fu in enumerate(schedule["fu_order"])}
+    pairs = set()
+    for row in evidence:
+        previous_fu = None
+        previous_pair = None
+        for boundary in row.get("boundaries", ()):
+            fu = boundary.get("fu")
+            if boundary["kind"] != "unit" or fu is None:
+                continue
+            if previous_fu is not None and previous_fu != fu:
+                if order.get(previous_fu, -1) >= order.get(fu, -1):
+                    continue
+                previous_pair = (schedule["fus"][previous_fu], schedule["fus"][fu])
+            previous_fu = fu
+            if (
+                boundary.get("arrival_ns") is not None
+                and boundary["arrival_ns"] * 10.0 > schedule["budget_du"]
+            ):
+                if previous_pair is not None:
+                    pairs.add(previous_pair)
+                break
+    return pairs
+
+
+def _timing_repair_candidates(parser_state, key, tag, schedule, evidence, build_memo):
+    """Full reschedules of corrected timing, selection, edges, depth and copies."""
+
+    attributed = [row for row in evidence if row["attributed"]]
+    if not attributed:
+        return []
+    model = _corrected_timing_model(schedule, evidence)
+    affected = sorted({schedule["fus"][fu] for row in attributed for fu in row["fus"]})
+    common = dict(
+        ctl=schedule["ctl"],
+        opened=tuple(schedule.get("opened", ())),
+        unshared=tuple(tuple(row) for row in schedule.get("unshared", ())),
+        pipelined=tuple(
+            (row[0], tuple(row[1]) if isinstance(row[1], list) else row[1])
+            for row in schedule.get("pipelined", ())
+        ),
+        merged=tuple(tuple(row) for row in schedule.get("merged", ())),
+        fused=tuple(schedule.get("fused", ())),
+        func_entity_override=schedule["func_entity"],
+        build_memo=build_memo,
+    )
+    variants = [("corrected attributed delays", model, common)]
+    candidates = {
+        node["entity"]: node for node in _unit_candidate_nodes(parser_state, schedule)
+    }
+    for entity in affected:
+        node = candidates.get(entity)
+        if node is None:
+            continue
+        uses = sum(
+            n.get("fu") is not None and n["entity"] == entity
+            for n in schedule["nodes"].values()
+        )
+        selected = schedule.get("implementations", {}).get(entity, {})
+        for rows in (None, uses) if uses > 1 else (None,):
+            delays = dict(
+                model["entity_delays_snapshot"],
+                **model.get("corrected_entity_delays", {}),
+            )
+            after = (
+                selected.get("latency", 0)
+                if selected.get("selection_rows") == rows
+                else 0
+            )
+            profiles = _unit_profiles(
+                parser_state,
+                key,
+                node,
+                delays,
+                rows,
+                until=lambda found: any(row["latency"] > after for row in found),
+            )
+            next_profile = next(
+                (profile for profile in profiles if profile["latency"] > after), None
+            )
+            if next_profile is not None:
+                chosen = dict(common["pipelined"])
+                chosen[entity] = (
+                    (next_profile["latency"], rows)
+                    if rows is not None
+                    else next_profile["latency"]
+                )
+                variants.append(
+                    (
+                        f"pipeline {entity} L={next_profile['latency']} selection_rows={rows}",
+                        model,
+                        dict(common, pipelined=tuple(sorted(chosen.items()))),
+                    )
+                )
+        copies = dict(common["unshared"])
+        current = sum(bound == entity for bound in schedule["fus"].values())
+        if current < uses:
+            copies[entity] = current + 1
+            variants.append(
+                (
+                    f"duplicate {entity}",
+                    model,
+                    dict(common, unshared=tuple(sorted(copies.items()))),
+                )
+            )
+    edge_model = copy.deepcopy(model)
+    pairs = {tuple(pair) for pair in model.get("no_chain_entity_pairs", ())}
+    observed_pairs = _separation_entity_pairs(schedule, attributed)
+    edge_model["no_chain_entity_pairs"] = sorted(pairs | observed_pairs)
+    if observed_pairs - pairs:
+        variants.append(
+            ("separate the measured over-budget operation boundary", edge_model, common)
+        )
+    result = []
+    for reason, previous, options in variants:
+        try:
+            trial = BUILD_SCHEDULE(
+                parser_state, key, tag, schedule["budget_scale"], previous, **options
+            )
+        except AutoFsmInternalError:
+            raise
+        except AUTO.AutoError:
+            continue
+        if SCHEDULES_EQUAL({key: schedule}, {key: trial}):
+            continue
+        period = _period_du(parser_state)
+        clock_budget = min(trial["budget_du"], period) if period else trial["budget_du"]
+        feasible = (
+            not trial["latency_infeasible"] and trial["worst_state_du"] <= clock_budget
+        )
+        trial["est_area"] = ESTIMATE_SCHEDULE_AREA(parser_state, trial)
+        trial["repair_history"] = list(schedule.get("repair_history", ())) + [reason]
+        trial["timing_evidence"] = model["timing_evidence"]
+        result.append((not feasible, trial["est_area"], reason, trial))
+    return sorted(result, key=lambda row: row[:3])
+
+
+def CHECK_SCHEDULES_APPLIED(parser_state):
+    """Every call site of a build's re-parse uses the schedule installed for it.
+
+    A refused or missing schedule elaborates the combinational passthrough,
+    which is a cache miss elsewhere. Inside a build every installed schedule
+    comes from the build's own passes, so the passthrough would be synthesized
+    in place of the chosen FSM: an internal error naming why.
+    """
+    import pypeline
+
+    installed = pypeline.AUTO_FSM_SCHEDULE_CACHE()
+    if not installed:
+        return
+    problems = dict(parser_state.pypeline_auto_fsm_schedule_rejections)
+    for key, tag in sorted(GET_TAGS(parser_state).items()):
+        if key in problems:
+            continue
+        if key not in installed:
+            problems[key] = "no schedule was installed for this call site"
+        elif tag.schedule is None:
+            problems[key] = (
+                "the call site refused it (version, max_latency or register_output)"
+            )
+    if problems:
+        raise AutoFsmInternalError(
+            "AUTO_FSM: re-elaboration did not apply a schedule this build produced: "
+            + "; ".join(f"{key}: {why}" for key, why in sorted(problems.items()))
+        )
+
+
 def DO_SCHEDULE_PASSES(parser_state, args, src_file):
     """AUTO_FSM schedule-and-confirm loop, wrapping the sweep + AUTO_PIPELINE flow.
 
@@ -3412,6 +6359,7 @@ def DO_SCHEDULE_PASSES(parser_state, args, src_file):
 
     import sys
 
+    import SWEEP
     import SYN
     import PY_TO_LOGIC
     import pypeline
@@ -3423,9 +6371,12 @@ def DO_SCHEDULE_PASSES(parser_state, args, src_file):
     force_unshare = list(args.auto_fsm_unshare)
     force_open = list(args.auto_fsm_open)
     prev_schedules = None
-    # Set only once a pass has been rebuilt after a tightening: what the build
-    # before it achieved, so the stall check below compares like with like.
+    # Set only once a pass has been rebuilt after a tightening or a local
+    # repair: what the build before it achieved and which step rebuilt it, so
+    # the stall check below compares like with like.
     tightened_from = None
+    pending_schedules = None
+    attempted_repairs = set()
     for schedule_pass in range(1, MAX_SCHEDULE_PASSES + 1):
         print(
             f"================== AUTO_FSM Pass {schedule_pass}: Scheduling "
@@ -3433,16 +6384,47 @@ def DO_SCHEDULE_PASSES(parser_state, args, src_file):
             flush=True,
         )
         parser_state = SYN.ADD_PATH_DELAY_TO_LOOKUP(parser_state)
-        schedules = HARVEST_AUTO_FSM_SCHEDULES(
-            parser_state,
-            budget_scales,
-            prev_schedules,
-            area_sweep=not args.auto_fsm_no_area_sweep,
-            ctl=args.auto_fsm_ctl,
-            sweep_debug=args.auto_fsm_sweep_debug,
-            force_open=force_open,
-            force_unshare=force_unshare,
-        )
+        if pending_schedules is not None:
+            schedules, pending_schedules = pending_schedules, None
+        else:
+            parser_state = _measure_schedule_inputs(
+                parser_state, budget_scales, prev_schedules
+            )
+            parser_state, control_snapshots = _calibrate_controls(
+                parser_state, budget_scales, args.auto_fsm_ctl, prev_schedules
+            )
+            previous = {
+                key: dict(
+                    (prev_schedules or {}).get(key, {}),
+                    control_delays_snapshot=snapshot,
+                )
+                for key, snapshot in control_snapshots.items()
+            }
+            schedules = HARVEST_AUTO_FSM_SCHEDULES(
+                parser_state,
+                budget_scales,
+                previous,
+                area_sweep=not args.auto_fsm_no_area_sweep,
+                ctl=args.auto_fsm_ctl,
+                sweep_debug=args.auto_fsm_sweep_debug,
+                force_open=force_open,
+                force_unshare=force_unshare,
+            )
+
+        def harvest(state, previous, keys):
+            return HARVEST_AUTO_FSM_SCHEDULES(
+                state,
+                budget_scales,
+                previous,
+                area_sweep=not args.auto_fsm_no_area_sweep,
+                ctl=args.auto_fsm_ctl,
+                sweep_debug=args.auto_fsm_sweep_debug,
+                force_open=force_open,
+                force_unshare=force_unshare,
+                keys=keys,
+            )
+
+        schedules = _confirm_unit_placements(parser_state, schedules, harvest)
         for key in sorted(schedules):
             print(DESCRIBE_SCHEDULE(parser_state, key, schedules[key]), flush=True)
             for fu_line in DESCRIBE_FUS(schedules[key]):
@@ -3460,11 +6442,24 @@ def DO_SCHEDULE_PASSES(parser_state, args, src_file):
         prev_schedules = schedules
 
         pypeline.SET_AUTO_FSM_SCHEDULE_CACHE(schedules)
-        parser_state = PY_TO_LOGIC.PARSE_FILE(src_file)
+        parser_state = PY_TO_LOGIC.PARSE_FILE(src_file, resolved_part=parser_state.part)
+        CHECK_SCHEDULES_APPLIED(parser_state)
         AUTO_PIPELINE.WRITE_0_ADDED_CLKS_INIT_FILES(parser_state)
         DUMP_GENERATED_SOURCE(parser_state, SYN.SYN_OUTPUT_DIRECTORY)
         parser_state, multimain_timing_params = AUTO_PIPELINE.DO_SWEEP_AND_AUTO_PIPELINE(
             parser_state, args, src_file
+        )
+
+        observation = SWEEP.RETAINED_OBSERVATION(parser_state, multimain_timing_params)
+        for key, schedule in schedules.items():
+            schedule["unit_measurements"] = _unit_measurements(
+                observation,
+                schedule,
+                parser_state.pypeline_auto_fsm_provenance.get(key, {}),
+                _fsm_instance_aliases(parser_state, key),
+            )
+        DUMP_GENERATED_SOURCE(
+            parser_state, SYN.SYN_OUTPUT_DIRECTORY, schedules=schedules
         )
 
         failures = getattr(multimain_timing_params, "sweep_timing_failures", None)
@@ -3478,19 +6473,26 @@ def DO_SCHEDULE_PASSES(parser_state, args, src_file):
                 flush=True,
             )
             break
-        if all(schedules[key]["at_floor"] for key in blamed):
-            print(
-                "AUTO_FSM: every implicated FSM is already at its floor -- its "
-                "slowest state is a single indivisible operation, so no number "
-                "of extra states can make the clock: " + ", ".join(sorted(blamed)),
-                flush=True,
-            )
-            break
         failed_mhz = FAILED_MAIN_MHZ(multimain_timing_params)
+        repair_stalled = False
         if tightened_from is not None:
-            prev_failed_mhz, prev_states = tightened_from
+            prev_failed_mhz, prev_states, step = tightened_from
             stalled = TIGHTENING_STALLED(prev_failed_mhz, failed_mhz)
-            if stalled:
+            if stalled and step == "repair":
+                # One failed local repair never shows that more states cannot
+                # help: the corrected model was wrong, not the budget. Fall
+                # back to global tightening; the stall rule judges that step.
+                mains = ", ".join(
+                    f"{main} {mhz:.2f} MHz (was {prev:.2f})"
+                    for main, prev, mhz in stalled
+                )
+                print(
+                    f"AUTO_FSM: the local timing repair did not raise fmax: "
+                    f"{mains}; tightening the per-state budget instead.",
+                    flush=True,
+                )
+                repair_stalled = True
+            elif stalled:
                 states = ", ".join(
                     f"{key} {prev_states[key]}->{schedules[key]['n_states']} states"
                     for key in sorted(prev_states)
@@ -3508,6 +6510,63 @@ def DO_SCHEDULE_PASSES(parser_state, args, src_file):
                     flush=True,
                 )
                 break
+        evidence = _collect_timing_evidence(
+            parser_state, multimain_timing_params, schedules
+        )
+        repaired = dict(schedules)
+        period_du = _period_du(parser_state)
+        for key in sorted(blamed):
+            rows = evidence[key]
+            unmatched = sum(not row["attributed"] for row in rows)
+            schedules[key]["timing_evidence"] = (
+                list(schedules[key].get("timing_evidence", ())) + rows
+            )
+            if unmatched:
+                print(
+                    f"AUTO_FSM {key}: retained {unmatched} unattributed timing path(s); "
+                    "global tightening remains available.",
+                    flush=True,
+                )
+            # Local repair corrects model error. A schedule whose modelled
+            # worst state already exceeds the clock period was predicted to
+            # miss: its budget is the problem, and tightening addresses it.
+            if repair_stalled or (
+                period_du is not None and schedules[key]["worst_state_du"] > period_du
+            ):
+                continue
+            candidates = _timing_repair_candidates(
+                parser_state, key, GET_TAGS(parser_state)[key], schedules[key], rows, {}
+            )
+            for infeasible, _area, reason, candidate in candidates:
+                identity = _schedule_entity_name(candidate["func_entity"], candidate)
+                if infeasible or (key, identity) in attempted_repairs:
+                    continue
+                attempted_repairs.add((key, identity))
+                repaired[key] = candidate
+                print(f"AUTO_FSM {key}: local timing repair: {reason}", flush=True)
+                break
+        DUMP_GENERATED_SOURCE(
+            parser_state, SYN.SYN_OUTPUT_DIRECTORY, schedules=schedules
+        )
+        if (
+            not SCHEDULES_EQUAL(repaired, schedules)
+            and schedule_pass < MAX_SCHEDULE_PASSES
+        ):
+            pending_schedules = repaired
+            tightened_from = (
+                failed_mhz,
+                {key: schedules[key]["n_states"] for key in blamed},
+                "repair",
+            )
+            continue
+        if all(schedules[key]["at_floor"] for key in blamed):
+            print(
+                "AUTO_FSM: every implicated FSM is already at its floor -- its "
+                "slowest state is a single indivisible operation, so no number "
+                "of extra states can make the clock: " + ", ".join(sorted(blamed)),
+                flush=True,
+            )
+            break
         if schedule_pass == MAX_SCHEDULE_PASSES:
             print(
                 f"AUTO_FSM: still missing timing after "
@@ -3546,6 +6605,9 @@ def DO_SCHEDULE_PASSES(parser_state, args, src_file):
             # Only the blamed FSMs' budgets moved, so only they are
             # rescheduled; the others keep this pass's schedule. The next
             # pass reschedules every FSM from its newly measured delays.
+            parser_state = _measure_schedule_inputs(
+                parser_state, budget_scales, schedules
+            )
             trial = dict(schedules)
             trial.update(
                 HARVEST_AUTO_FSM_SCHEDULES(
@@ -3574,6 +6636,7 @@ def DO_SCHEDULE_PASSES(parser_state, args, src_file):
         tightened_from = (
             failed_mhz,
             {key: schedules[key]["n_states"] for key in blamed},
+            "tighten",
         )
         for key in sorted(blamed):
             print(
@@ -3648,6 +6711,50 @@ def _seed_struct_globals(em, types):
             em.globals.setdefault(name, st)
 
 
+class _FsmEmitter(AUTO._Emitter):
+    """Keep every generated line attributable to operations and hardware roles."""
+
+    def __init__(self, owner):
+        super().__init__()
+        self.owner = owner
+        self.records = []
+
+    def line(self, text="", kind=None):
+        import re
+
+        super().line(text)
+        context = dict(self.owner.emission_context)
+        stripped = text.strip()
+        register = re.match(r"(\w+_r)\s*(?::|=)", stripped)
+        if register is not None:
+            context.update(self.owner.register_nodes.get(register.group(1), {}))
+        if kind is None:
+            if ": Reg[" in stripped or ": Feedback[" in stripped:
+                kind = "register"
+            elif register is not None and "=" in stripped:
+                kind = "writeback"
+            elif (
+                "_lut" in stripped
+                or "_slut" in stripped
+                or "st1h" in stripped
+                or stripped.startswith("st_r =")
+            ):
+                kind = "control_table"
+            elif "_af_mux" in stripped:
+                kind = "operand_mux"
+            else:
+                kind = "glue"
+        self.records.append(
+            dict(
+                line=len(self.lines),
+                kind=kind,
+                node_ids=context.get("node_ids", []),
+                fu=context.get("fu"),
+                states=context.get("states", []),
+            )
+        )
+
+
 class _Codegen(AUTO._GraphCodegen):
     """Renders one scheduled DAG as pypeline source.
 
@@ -3680,13 +6787,19 @@ class _Codegen(AUTO._GraphCodegen):
         # field existed cannot reach here (SCHEDULE_VERSION gates them), so the
         # default is for hand-built test schedules only.
         self.ctl = schedule.get("ctl", "v3")
-        self.em = AUTO._Emitter()
+        self.emission_context = {}  # Current shared unit and its scheduled uses.
+        self.register_nodes = {}  # Emitted register name -> write states and source nodes.
+        self.em = _FsmEmitter(self)
         self.types = AUTO._TypeResolver()
+        self.em.type_resolver = self.types
         self.local_of_node = {}  # node id -> local name holding its result
         self.reg_of_node = {}  # node id -> snapshot local of its register
         self.pack_of_node = {}  # output concat-chain root -> rolling reg local
         self.rolling_ref_of_node = {}  # (glue id, state) -> rolling bit expr
         self.input_ref_of_node = {}  # ref id/(ref id,state) -> compact input expr
+        self.glue_local = {}  # (node id, state) -> one materialized shared glue value
+        self.pipeline_output = {}  # FU id -> Feedback local for its registered output
+        self.result_adapters = {}  # Physical output/cast chain -> one typed result local.
         self.input_value_name = "in_v"
         self.cur_state = None
         self._tmp_n = 0
@@ -3730,6 +6843,8 @@ class _Codegen(AUTO._GraphCodegen):
             return self.input_value_name
         if kind == "const":
             return self._render_const(ref[1])
+        if kind == "lit":
+            return self._cast_local(repr(ref[1]), ref[2])
         if kind != "node":
             raise AUTO.AutoError(f"AUTO_FSM: unsupported value reference {ref!r}")
         nid = ref[1]
@@ -3759,8 +6874,13 @@ class _Codegen(AUTO._GraphCodegen):
                 f"state {self.cur_state} but was not given a register "
                 f"(internal scheduling error)"
             )
-        # Zero-delay glue: re-render it inline, here, in this state.
-        return self._render_glue(nid, node)
+        # Preserve shared glue as a DAG instead of expanding reconvergent
+        # expressions every time a factored operand reads the same value.
+        key = nid, self.cur_state
+        if key not in self.glue_local:
+            expression = self._render_glue(nid, node)
+            self.glue_local[key] = self._cast_local(expression, node["out_type"])
+        return self.glue_local[key]
 
     def _st_bit(self, state):
         """Source expression for "the FSM is in this state", one-hot only."""
@@ -3771,6 +6891,18 @@ class _Codegen(AUTO._GraphCodegen):
         return " | ".join(self._st_bit(k) for k in sorted(states))
 
     # ── register allocation ────────────────────────────────────────────
+    def _adapt_unit_result(self, node, expression):
+        casts = tuple(node.get("result_casts", ()))
+        if not casts:
+            return expression
+        key = expression, casts, node["out_type"]
+        if key not in self.result_adapters:
+            result = expression
+            for ctype in casts + (node["out_type"],):
+                result = self._cast_local(result, ctype)
+            self.result_adapters[key] = result
+        return self.result_adapters[key]
+
     def _cross_state_nodes(self):
         return _CROSS_STATE_NODES(self.nodes, self.schedule["output"], self.n_states)
 
@@ -3806,6 +6938,30 @@ class _Codegen(AUTO._GraphCodegen):
             schedule.get("cross_fu_register_types", ()),
         )
         self.reg_of = reg_of
+        for nid, idx in sorted(reg_of.items()):
+            row = self.register_nodes.setdefault(
+                f"v{idx}_r", dict(role="work", node_ids=[], states=[])
+            )
+            row["node_ids"].append(nid)
+            row["states"] = sorted(set(row["states"] + [self.nodes[nid]["state"]]))
+        for state_register in ("st_r", "st1h_r"):
+            self.register_nodes[state_register] = dict(
+                role="control", node_ids=[], states=list(range(self.n_states + 1))
+            )
+        terminal_nodes = set()
+        _scheduled_deps(
+            {"nodes": self.nodes},
+            schedule["output"],
+            _scheduled_ids({"nodes": self.nodes}),
+            terminal_nodes,
+        )
+        self.register_nodes["out_data_r"] = dict(
+            role="output", node_ids=sorted(terminal_nodes), states=[self.n_states]
+        )
+        self.register_nodes["out_valid_r"] = dict(
+            role="control", node_ids=[], states=[self.n_states]
+        )
+        self.register_nodes["in_r"] = dict(role="input", node_ids=[], states=[0])
         cross = sorted(reg_of)
         reg_names = {nid: f"v{reg_of[nid]}" for nid in cross}
         output_packs = _OUTPUT_SHIFT_PACKS(
@@ -3823,6 +6979,9 @@ class _Codegen(AUTO._GraphCodegen):
             for idx, field in enumerate(input_storage["stored_fields"]):
                 local = f"in_f{idx}"
                 input_field_names[field["field"]] = local
+                self.register_nodes[local + "_r"] = dict(
+                    role="input", node_ids=sorted(field["refs"]), states=[0]
+                )
                 for nid in field["refs"]:
                     self.input_ref_of_node[nid] = local
             pack_of_root = {pack["root"]: pack for pack in output_packs}
@@ -3954,9 +7113,13 @@ class _Codegen(AUTO._GraphCodegen):
             else:
                 for field in input_storage["stored_fields"]:
                     local = input_field_names[field["field"]]
-                    em.line(f"        {local}_r = s.data.{field['field']}")
+                    em.line(
+                        f"        {local}_r = s.data{AUTO._path_suffix([field['field']])}"
+                    )
                 for root, field in input_storage["preload_by_pack"].items():
-                    em.line(f"        {pack_names[root]}_r = s.data.{field}")
+                    em.line(
+                        f"        {pack_names[root]}_r = s.data{AUTO._path_suffix([field])}"
+                    )
             for pack in output_packs:
                 if pack.get("source_fusion") is not None:
                     continue
@@ -3969,9 +7132,13 @@ class _Codegen(AUTO._GraphCodegen):
             else:
                 for field in input_storage["stored_fields"]:
                     local = input_field_names[field["field"]]
-                    em.line(f"        {local}_r = s.data.{field['field']}")
+                    em.line(
+                        f"        {local}_r = s.data{AUTO._path_suffix([field['field']])}"
+                    )
                 for root, field in input_storage["preload_by_pack"].items():
-                    em.line(f"        {pack_names[root]}_r = s.data.{field}")
+                    em.line(
+                        f"        {pack_names[root]}_r = s.data{AUTO._path_suffix([field])}"
+                    )
             for pack in output_packs:
                 if pack.get("source_fusion") is not None:
                     continue
@@ -3980,6 +7147,29 @@ class _Codegen(AUTO._GraphCodegen):
             em.line("        st_r = 1")
 
         # ── shared functional units ──
+        for index, fu in enumerate(schedule["fu_order"]):
+            entity = schedule["fus"][fu]
+            implementation = schedule.get("implementations", {}).get(entity)
+            if implementation is None:
+                continue
+            from pypeline import Feedback
+
+            em.inj_named(Feedback, "Feedback")
+            feedback_name = f"pipeline{index}_o"
+            node_ids = [
+                nid for nid in schedule["node_order"] if self.nodes[nid].get("fu") == fu
+            ]
+            first = self.nodes[node_ids[0]]
+            result_type = em.inj(
+                self.types.resolve(first.get("physical_out_type", first["out_type"])),
+                "t",
+            )
+            em.line(f"    {feedback_name}: Feedback[{result_type}]")
+            self.pipeline_output[fu] = feedback_name
+            for nid in node_ids:
+                self.local_of_node[nid] = self._adapt_unit_result(
+                    self.nodes[nid], feedback_name
+                )
         for fu in schedule["fu_order"]:
             # Ascending state, node id breaking ties: the fold index a unit's
             # operand mux selects with is then just "how many earlier states
@@ -3996,6 +7186,7 @@ class _Codegen(AUTO._GraphCodegen):
             if not fu_nodes:
                 continue
             self._emit_fu(fu, fu_nodes)
+        self.emission_context = {}
 
         # One write-data expression per recovered rolling register.  A plain
         # output pack always shifts in the current shared-FU result.  A fused
@@ -4276,7 +7467,7 @@ class _Codegen(AUTO._GraphCodegen):
         _REGISTER_MUX_ENTITIES(self.parser_state, self.mux_shapes)
         return name, em.src(), em.globals
 
-    def _emit_operand_factor_plan(self, plan, result_name, selector):
+    def _emit_operand_factor_plan(self, plan, result_name, selector, memo):
         """Emit one plan made by :func:`_operand_factor_plan`.
 
         Every recursive result is materialized at its consumer's port type.
@@ -4289,6 +7480,11 @@ class _Codegen(AUTO._GraphCodegen):
         em = self.em
         target_t_obj = self.types.resolve(plan["target_type"])
         target_t = em.inj(target_t_obj, "t")
+        cached = memo.get(id(plan))
+        if cached is not None:
+            em.line(f"    {result_name}: {target_t} = {cached}")
+            return result_name
+        memo[id(plan)] = result_name
         kind = plan["kind"]
 
         if kind == "leaf":
@@ -4306,7 +7502,7 @@ class _Codegen(AUTO._GraphCodegen):
             for port_i, child in enumerate(plan["children"]):
                 child_name = f"af{self._tmp_n}_f"
                 self._tmp_n += 1
-                args.append(self._emit_operand_factor_plan(child, child_name, selector))
+                args.append(self._emit_operand_factor_plan(child, child_name, selector, memo))
             expr = AUTO._render_op(node["op"], args, em, self.parser_state, node["entity"])
             for ctype in plan["casts"]:
                 expr = self._cast_local(expr, ctype)
@@ -4320,7 +7516,9 @@ class _Codegen(AUTO._GraphCodegen):
         for child in plan["choices"]:
             child_name = f"af{self._tmp_n}_f"
             self._tmp_n += 1
-            choices.append(self._emit_operand_factor_plan(child, child_name, selector))
+            choices.append(
+                self._emit_operand_factor_plan(child, child_name, selector, memo)
+            )
         sel_name = selector(plan["mapping"], len(choices))
         mux_fn = AUTO._mux_callable(target_t_obj, len(choices))
         if mux_fn is None:
@@ -4376,11 +7574,20 @@ class _Codegen(AUTO._GraphCodegen):
         the cycle, so it resolves in parallel with the operands it steers.
         """
         em = self.em
+        self.emission_context = dict(
+            fu=fu,
+            node_ids=[nid for nid, _n in fu_nodes],
+            states=sorted({n.get("launch_state", n["state"]) for _nid, n in fu_nodes}),
+        )
         n_ports = len(fu_nodes[0][1]["operands"])
+        fu_nodes = [
+            (nid, dict(node, state=node.get("launch_state", node["state"])))
+            for nid, node in fu_nodes
+        ]
         prefix = f"u{self._tmp_n}"
         self._tmp_n += 1
         arg_names = [f"{prefix}_a{i}" for i in range(n_ports)]
-        out_local = f"{prefix}_o"
+        out_local = self.pipeline_output.get(fu, f"{prefix}_o")
         n_users = len(fu_nodes)
 
         em.line(
@@ -4406,6 +7613,7 @@ class _Codegen(AUTO._GraphCodegen):
             sel_name = f"{prefix}_sel{len(selector_of)}"
             sel_elem_t = _mux_sel_type(n_choices)
             sel_t = em.inj(sel_elem_t, "t")
+
             if self.ctl == "onehot":
                 # The operand mux is a MEASURED balanced tree and needs a
                 # binary select, so one-hot has to encode back: select bit j is
@@ -4450,20 +7658,64 @@ class _Codegen(AUTO._GraphCodegen):
             selector_of[selector_key] = sel_name
             return sel_name
 
-        for i, arg in enumerate(arg_names):
-            port_plan = port_plans[i]
-            self._emit_operand_factor_plan(port_plan["factor_plan"], arg, selector)
-
-        out_ct = em.inj(self.types.resolve(first_node["out_type"]), "t")
-        self.cur_state = first_node["state"]
-        em.line(
-            f"    {out_local}: {out_ct} = "
-            + AUTO._render_op(
-                first_node["op"], arg_names, em, self.parser_state, first_node["entity"]
-            )
+        implementation = self.schedule.get("implementations", {}).get(
+            first_node["entity"]
         )
-        for nid, _node in fu_nodes:
-            self.local_of_node[nid] = out_local
+        if implementation is not None and implementation["registered_selection"]:
+            from pypeline import make_array_t
+
+            rows = implementation["selection_rows"]
+            if n_users > rows:
+                raise AutoFsmInternalError(
+                    "AUTO_FSM: operand selection exceeded its concrete row count"
+                )
+            arguments = [selector(tuple(range(n_users)), rows)]
+            for i, arg in enumerate(arg_names):
+                ctype = self.types.resolve(first_node["port_types"][i])
+                array_t = em.inj(make_array_t(ctype, rows), "t")
+                em.line(f"    {arg}: {array_t}")
+                for row in range(rows):
+                    node = fu_nodes[row if row < n_users else 0][1]
+                    self.cur_state = node["state"]
+                    expression = self._render_operand(node, i, at_port_type=True)
+                    em.line(f"    {arg}[{row}] = {expression}")
+                arguments.append(arg)
+        else:
+            factor_emit_memo = {}
+            for i, arg in enumerate(arg_names):
+                port_plan = port_plans[i]
+                self._emit_operand_factor_plan(
+                    port_plan["factor_plan"], arg, selector, factor_emit_memo
+                )
+            arguments = arg_names
+
+        out_ct = em.inj(
+            self.types.resolve(
+                first_node.get("physical_out_type", first_node["out_type"])
+            ),
+            "t",
+        )
+        self.cur_state = first_node["state"]
+        if implementation is not None:
+            pipeline = _make_unit_tag(
+                self.parser_state, self.tag.canonical_key, first_node, implementation
+            )
+            call = em.inj(pipeline, "pipeline")
+            em.line(f"    {out_local} = {call}({', '.join(arguments)})", kind="unit")
+        else:
+            em.line(
+                f"    {out_local}: {out_ct} = "
+                + AUTO._render_op(
+                    first_node["op"],
+                    arg_names,
+                    em,
+                    self.parser_state,
+                    first_node["entity"],
+                ),
+                kind="unit",
+            )
+        for nid, node in fu_nodes:
+            self.local_of_node[nid] = self._adapt_unit_result(node, out_local)
 
     def _note_mux_entity(self, t, n):
         """Remember that this FSM instantiates an operand mux of this shape, so
@@ -4489,10 +7741,7 @@ def _REGISTER_MUX_ENTITIES(parser_state, mux_shapes):
     """
     if not mux_shapes:
         return
-    pending = getattr(parser_state, "pypeline_auto_fsm_mux_callables", None)
-    if pending is None:
-        pending = []
-        parser_state.pypeline_auto_fsm_mux_callables = pending
+    pending = parser_state.pypeline_auto_fsm_mux_callables
     for t, n in mux_shapes:
         fn = AUTO._mux_callable(t, n)
         if fn is not None and fn not in pending:
@@ -4503,7 +7752,10 @@ def AUTO_FSM_MEASURE_ENTITIES(parser_state):
     """FuncLogicLookupTable keys of the operand muxes SYN should measure on
     their own. Empty on any build without AUTO_FSM."""
     out = set()
-    for fn in getattr(parser_state, "pypeline_auto_fsm_mux_callables", ()):
+    for fn in (
+        parser_state.pypeline_auto_fsm_mux_callables
+        + parser_state.pypeline_auto_fsm_measure_callables
+    ):
         entity = AUTO._entity_key_for_callable(parser_state, fn)
         if entity is not None:
             out.add(entity)
@@ -4512,7 +7764,16 @@ def AUTO_FSM_MEASURE_ENTITIES(parser_state):
 
 def GENERATE_FSM_SOURCE(tag, schedule, parser_state):
     """Generate the resource-shared FSM as ordinary pypeline source."""
-    return _Codegen(tag, schedule, parser_state).generate()
+    generator = _Codegen(tag, schedule, parser_state)
+    result = generator.generate()
+    parser_state.pypeline_auto_fsm_provenance[tag.canonical_key] = {
+        "schema_version": 1,
+        "key": tag.canonical_key,
+        "entity": schedule["entity"],
+        "lines": generator.em.records,
+        "registers": generator.register_nodes,
+    }
+    return result
 
 
 def _PREPARE_CANDIDATES(tag, parser_state, elaborator):
@@ -4531,8 +7792,17 @@ def _PREPARE_CANDIDATES(tag, parser_state, elaborator):
 
     AUTO.PREPARE_SOFT_EQUIVALENTS(tag, parser_state, elaborator)
     AUTO.PREPARE_SPLIT_EQUIVALENTS(tag, parser_state, elaborator)
+    AUTO.PREPARE_CONSTANT_SPECIALIZATIONS(tag, parser_state, elaborator)
+
+    _prepare_transform_candidates(tag, parser_state, elaborator)
+
+    _prepare_unit_candidates(tag, parser_state, elaborator)
     AUTO_COMB_OPT.prepare(tag.func, parser_state, elaborator, strict=False)
     AUTO_COMB_OPT.prepare(tag.func, parser_state, elaborator, strict=False, objective="delay")
+    entity = elaborator._elaborate_live_func(tag.func.__name__, tag.func).func_name
+    parser_state.pypeline_auto_fsm_source_identities[tag.canonical_key] = (
+        _source_identity(parser_state, entity)
+    )
 
 
 def BUILD_AUTO_FSM_FUNC(tag, parser_state, elaborator=None):
@@ -4576,6 +7846,28 @@ def BUILD_AUTO_FSM_FUNC(tag, parser_state, elaborator=None):
                 getattr(tag.func, "__name__", "auto_fsm_func"), tag.func
             )
             _PREPARE_CANDIDATES(tag, parser_state, elaborator)
+        rejected = None
+        if not SCHEDULE_CACHE_USABLE(schedule):
+            rejected = "malformed or stale schedule data"
+        elif (
+            schedule["source_identity"]
+            != parser_state.pypeline_auto_fsm_source_identities[tag.canonical_key]
+        ):
+            rejected = "the function's source geometry changed"
+        elif schedule["target_context"] != _target_context(parser_state):
+            rejected = "the target or delay-model context changed"
+        # Pinned unit recipes are verified where they are applied: region
+        # enforcement restores each recipe and checks its digest and latency
+        # (RESTORE_UNIT_PLACEMENT, CHECK_UNIT_PLACEMENT). Re-characterizing them
+        # here would hash untrimmed, mid-elaboration logic.
+        if rejected is not None:
+            # A stale carried schedule is a cache miss; the driver treats a
+            # rejection of a schedule it has just produced as an internal error.
+            parser_state.pypeline_auto_fsm_schedule_rejections[tag.canonical_key] = (
+                rejected
+            )
+            tag._schedule = None
+            return BUILD_AUTO_FSM_FUNC(tag, parser_state, elaborator)
         name, src, extra_globals = GENERATE_FSM_SOURCE(tag, schedule, parser_state)
         fn = AUTO._exec_generated(name, src, extra_globals)
     import inspect
@@ -4597,7 +7889,7 @@ def BUILD_AUTO_FSM_FUNC(tag, parser_state, elaborator=None):
     return fn
 
 
-def DUMP_GENERATED_SOURCE(parser_state, out_dir):
+def DUMP_GENERATED_SOURCE(parser_state, out_dir, schedules=None):
     """Write every generated FSM's Python source next to the build output, so a
     problem inside generated code can be read as source instead of inferred from
     VHDL. Best-effort: never fails a build."""
@@ -4614,6 +7906,22 @@ def DUMP_GENERATED_SOURCE(parser_state, out_dir):
                 continue
             with open(os.path.join(gen_dir, f"{fn.__name__}.py"), "w") as f:
                 f.write(src)
+            provenance = parser_state.pypeline_auto_fsm_provenance.get(
+                tag.canonical_key
+            )
+            if provenance is not None:
+                with open(
+                    os.path.join(gen_dir, f"{fn.__name__}.provenance.json"), "w"
+                ) as f:
+                    json.dump(provenance, f, indent=2, sort_keys=True)
+                    f.write("\n")
+            schedule = (schedules or {}).get(tag.canonical_key, tag.schedule)
+            if schedule is not None:
+                with open(
+                    os.path.join(gen_dir, f"{fn.__name__}.schedule.json"), "w"
+                ) as f:
+                    json.dump(schedule, f, indent=2, sort_keys=True)
+                    f.write("\n")
     except OSError:
         pass
 
@@ -4646,17 +7954,9 @@ def AUTO_FSM_MUX_ENTITIES(parser_state):
     # output directories with --syn_cache (SYN.REUSE_SYNTHESIS_LOG). They stay
     # out of the name-keyed cache/delay, which would not notice an edited
     # library (SYN.LOGIC_PATH_DELAY_IS_CACHEABLE).
-    cached = getattr(parser_state, "_auto_fsm_mux_entities_cache", None)
-    if cached is not None:
-        return cached
-    rv = set()
-    if getattr(parser_state, "pypeline_auto_fsm_mux_callables", None):
-        try:
-            rv = AUTO_FSM_MEASURE_ENTITIES(parser_state)
-        except Exception:
-            rv = set()
-    parser_state._auto_fsm_mux_entities_cache = rv
-    return rv
+    # New shapes can be registered after the first query in the same parse.
+    # Resolve the current list instead of caching an incomplete one-time result.
+    return AUTO_FSM_MEASURE_ENTITIES(parser_state)
 
 
 _FUNC_SUBTREE_HAS_AUTO_FSM_cache = {}

@@ -33,6 +33,8 @@ representation is [`AUTO_PIPELINE_DESIGN.md`](AUTO_PIPELINE_DESIGN.md).
 - [6. Errors and versions](#6-errors-and-versions)
 - [7. Tests](#7-tests)
 
+- [History](#history)
+
 ---
 
 ---
@@ -101,7 +103,22 @@ introduced by a selector), `prune`, `replace`, `add_node`, `mux`, `cast` and
 `common_expressions` (typed CSE, with commutative matching only where operator
 and port types allow it) operate on plain JSON-like graphs; `fingerprint`
 hashes one. `_demanded_bits` propagates the low bits every consumer needs
-backward through modular operators.
+backward through modular operators. `cleanup` folds all-constant integer
+operations with their original port and result assignments, removes built-in
+identities while replaying intermediate casts, prunes dead work and applies typed
+CSE. Custom calls retain their operator scopes. `_known_bits` is shared with
+AUTO_COMB_OPT; `value_ranges` conservatively widens intervals whenever arithmetic
+or truncation can wrap. Only proved interval comparisons are folded.
+Rewrites retain node identifiers while changing operands. If a generated
+content key names an expression changed by a prior rewrite, `add_node` preserves
+that expression and uses the first equal or unused deterministic suffix. It
+never overwrites a live node merely because its former content key matches.
+
+AUTO_FSM prepares constant-operand primitive wrappers before bootstrap delay
+measurement (`PREPARE_CONSTANT_SPECIALIZATIONS`). Unsigned constant products use
+the existing isolated shift/add factory; other wrappers retain the primitive's
+port types and bind its constant internally. The original scoped-graph fallback
+in AUTO_COMB_OPT remains unchanged.
 
 `search(dag, parser_state, seeds=(), timing=None)` is a bounded beam search:
 
@@ -234,3 +251,9 @@ search, BDD predicates, CSE, rewrites and timing model directly;
 area model inside scheduling; `area_model_test.py` holds the area constants
 to the committed sky130 `cache/area`. See
 [`pypeline_TESTS.md`](pypeline_TESTS.md).
+
+## History
+
+### Constant-aware FSM graphs
+
+Typed cleanup is shared by AUTO consumers and runs on AUTO_FSM graphs even when whole-function rewrites retain scoped operators. Specializations are registered before timing collection. Graph and timing versions separate typed rewrite meaning from timing-model meaning; source emitters reuse one seeded type resolver. Generated node keys resolve stale-content conflicts deterministically because rewrites retain ids while changing their expressions.

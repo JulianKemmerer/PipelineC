@@ -5098,6 +5098,11 @@ and `double_parse_file_test.py` covers an AUTO_FSM design for it.
 `.latency` reads resolve to real values (see [`AUTO_PIPELINE_DESIGN.md`](AUTO_PIPELINE_DESIGN.md#5-latency-pin-and-confirm-loop-pypeline-designs-only)). `PARSE_FILE` therefore supports
 being called more than once per process:
 
+- **Resolved target before elaboration:** internal re-parses pass `resolved_part`
+  to `PARSE_FILE`. A source `PART(...)` remains authoritative; otherwise the
+  reconciled target is available before compiler-owned FSM schedules and pinned
+  pipeline recipes are validated. Restoring the target after elaboration is too
+  late for these caches.
 - **`sys.modules` eviction**: `exec_module` only re-executes the top design file;
   modules imported as a consequence of executing a design (sub-file designs, library
   modules) are snapshot-diffed and evicted before a re-parse, so the whole design
@@ -6230,7 +6235,8 @@ top.py  (single-file or multi-file entry point)
   │   ├─ parser_state.part ← pypeline._part_registry   (from PART(...))
   │   └─ parser_state.main_mhz[hw_name] ← _main_mhz_registry.get(func_name)  (from @MAIN(mhz))
   │
-  ├─ Trim/collapse logic + dangling logic check
+  ├─ Trim/collapse logic (MAIN trees and AUTO_FSM measurement roots)
+  │   + dangling logic check
   │
   ├─ _build_func_call_graph()            func_name_to_calls / func_names_to_called_from
   │                                      from each Logic()'s submodule_instances

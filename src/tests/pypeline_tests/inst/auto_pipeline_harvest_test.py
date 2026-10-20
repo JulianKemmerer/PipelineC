@@ -286,7 +286,7 @@ def test_mcp_seed_only_passes_do_not_use_the_pass_budget():
                 (AUTO_MULTI_CYCLE, "PRINT_AUTO_MULTI_CYCLE_NCYCLES", noop),
                 (pypeline, "SET_AUTO_PIPELINE_LATENCY_CACHE", noop),
                 (pypeline, "SET_AUTO_MULTI_CYCLE_LATENCY_CACHE", noop),
-                (PY_TO_LOGIC, "PARSE_FILE", lambda f: SimpleNamespace()),
+                (PY_TO_LOGIC, "PARSE_FILE", lambda f, resolved_part: SimpleNamespace()),
                 (AUTO_PIPELINE_MODULE, "WRITE_0_ADDED_CLKS_INIT_FILES", noop),
                 (SYN, "ADD_PATH_DELAY_TO_LOOKUP", lambda ps: ps),
                 (SWEEP, "DO_SEEDED_CONFIRM_OR_SWEEP", confirm),

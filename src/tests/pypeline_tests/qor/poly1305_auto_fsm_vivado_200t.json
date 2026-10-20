@@ -1,0 +1,513 @@
+{
+ "measurement_date": "2026-10-20",
+ "part": "xc7a200tffg1156-2",
+ "clock_mhz": 80.0,
+ "tool": "Vivado 2019.2",
+ "timing_kind": "out-of-context synthesis timing; no placement or routing",
+ "fixture": {
+  "top": "src/tests/pypeline_tests/qor/poly1305/auto_fsm.py",
+  "kernels": "src/tests/pypeline_tests/qor/poly1305/kernels.py",
+  "arithmetic": "src/tests/pypeline_tests/qor/poly1305/arithmetic.py",
+  "capacity": 10,
+  "parameters": "-D KERNEL=prologue|epilogue -D MAX_LATENCY=32|48|64 (CAPACITY=10, MHZ=80 defaults)"
+ },
+ "baseline_source": {
+  "revision": "32ddc932004bf378626fa53b2f0f2cd253833085",
+  "description": "AUTO_FSM as WireGuard's accepted cap-64 build used it"
+ },
+ "compiler_snapshots": {
+  "description": "Builds ran on frozen snapshots of this change set as it was completed; takeover13 is the final tree. The epilogue at cap 32 was rebuilt on it and reproduced the takeover9 and takeover12 builds exactly: the same schedule, generated source and timing, with its pinned Karatsuba unit measured at 11.00 ns on its own. The other rows come from earlier snapshots and were not rebuilt. After them the compiler gained isolated measurement of pinned unit placements before a build (takeover12) and next-wider merge steps in the area search (takeover13). The cap-48 and cap-64 epilogues pin the same measured placement as cap 32, and the cap-64 prologue pins none, so the first change leaves them alone; the second narrows the search's merge moves, so their schedules can differ on the final compiler.",
+  "takeover8": "epilogue cap 64",
+  "takeover10": "epilogue cap 48, prologue cap 64",
+  "takeover11": "prologue caps 32 and 48",
+  "takeover12": "epilogue cap 32 (reproduced the takeover9 build)",
+  "takeover13": "final tree: epilogue cap 32 (acceptance build)"
+ },
+ "measurement_inputs": {
+  "description": "Each side starts from copies of the WireGuard build's warm synthesis store and delay cache. The final compiler measures what its scheduling decisions need; the baseline's store also received those measurements, so both schedule from the same delays.",
+  "wireguard_equivalence_gate": {
+   "description": "Baseline compiler, this fixture, store holding only WireGuard's measured helpers: the pass-1 epilogue schedule equals the accepted WireGuard record's",
+   "passed": true,
+   "pass1_ops_units_states": [
+    1214,
+    117,
+    60
+   ],
+   "comparator_stored_ns": 2.3
+  }
+ },
+ "reproduction": [
+  "python3 src/pypelinec src/tests/pypeline_tests/qor/poly1305/auto_fsm.py -D KERNEL=epilogue -D MAX_LATENCY=32 --out_dir <out> --syn_cache <store> -j 2",
+  "python3 src/pypelinec src/tests/pypeline_tests/qor/poly1305/auto_fsm.py -D KERNEL=prologue -D MAX_LATENCY=64 --out_dir <out> --syn_cache <store> -j 2",
+  "python3 src/pypeline_sim_debug.py src/tests/pypeline_tests/inst/self_check_auto_fsm_poly1305_test.py --sim --run all -D KERNEL=epilogue -D CAPACITY=10 -D MAX_LATENCY=32 -D MHZ=80 --part xc7a200tffg1156-2 --syn_cache <store> --out_dir <out>"
+ ],
+ "final": {
+  "epilogue": {
+   "32": {
+    "compiler": "takeover13 (final)",
+    "met": true,
+    "achieved_mhz": 86.081,
+    "resources": {
+     "LUT": 10210,
+     "FF": 19155,
+     "DSP": 48,
+     "CARRY4": 1476
+    },
+    "passes": [
+     {
+      "ops": 374,
+      "units": 98,
+      "states": 32,
+      "latency": 32,
+      "budget_ns": 11.2,
+      "scale": 0.9,
+      "worst_state_ns": 11.0
+     }
+    ],
+    "register_bits": [
+     16241
+    ],
+    "dependency_floor_states": [
+     19
+    ],
+    "operations_measured_before_scheduling": [
+     21,
+     23
+    ],
+    "candidate_schedules": [
+     1684
+    ],
+    "local_repairs": [],
+    "tightenings": 0,
+    "synthesis_runs": "48 reused from the output directory, 86 from the store <store>, 2 new run(s)",
+    "elapsed": "1:19:49 (parse/elaborate 0:00:17, whole-design synthesis 0:11:03 over 1 run)",
+    "wall_seconds": 4792.1,
+    "returncode": 0,
+    "generated_source_bytes": 94533,
+    "cap_messages": [],
+    "note": null
+   },
+   "48": {
+    "compiler": "takeover10",
+    "met": true,
+    "achieved_mhz": 86.296,
+    "resources": {
+     "LUT": 7283,
+     "FF": 15300,
+     "DSP": 24,
+     "CARRY4": 726
+    },
+    "passes": [
+     {
+      "ops": 374,
+      "units": 70,
+      "states": 45,
+      "latency": 45,
+      "budget_ns": 11.2,
+      "scale": 0.9,
+      "worst_state_ns": 11.0
+     }
+    ],
+    "register_bits": [
+     10782
+    ],
+    "dependency_floor_states": [
+     19
+    ],
+    "operations_measured_before_scheduling": [
+     44
+    ],
+    "candidate_schedules": [
+     1969
+    ],
+    "local_repairs": [],
+    "tightenings": 0,
+    "synthesis_runs": "63 reused from the output directory, 94 from the store <store>, 6 new run(s)",
+    "elapsed": "1:08:03 (parse/elaborate 0:00:17, whole-design synthesis 0:06:41 over 1 run)",
+    "wall_seconds": 4085.5,
+    "returncode": 0,
+    "generated_source_bytes": 66458,
+    "cap_messages": [],
+    "note": null
+   },
+   "64": {
+    "compiler": "takeover8",
+    "met": true,
+    "achieved_mhz": 86.296,
+    "resources": {
+     "LUT": 7283,
+     "FF": 15300,
+     "DSP": 24,
+     "CARRY4": 726
+    },
+    "passes": [
+     {
+      "ops": 374,
+      "units": 70,
+      "states": 45,
+      "latency": 45,
+      "budget_ns": 11.2,
+      "scale": 0.9,
+      "worst_state_ns": 11.0
+     }
+    ],
+    "register_bits": [
+     10782
+    ],
+    "dependency_floor_states": [
+     19
+    ],
+    "operations_measured_before_scheduling": [
+     44
+    ],
+    "candidate_schedules": [
+     1969
+    ],
+    "local_repairs": [],
+    "tightenings": 0,
+    "synthesis_runs": "21 reused from the output directory, 70 from the store <store>, 74 new run(s)",
+    "elapsed": "2:23:02 (parse/elaborate 0:00:14, whole-design synthesis 0:05:59 over 1 run)",
+    "wall_seconds": 8584.2,
+    "returncode": 0,
+    "generated_source_bytes": 66458,
+    "cap_messages": [],
+    "note": null
+   }
+  },
+  "prologue": {
+   "32": {
+    "compiler": "takeover11",
+    "met": false,
+    "achieved_mhz": 54.514,
+    "resources": {
+     "LUT": 6007,
+     "FF": 9908,
+     "DSP": 63,
+     "CARRY4": 1454
+    },
+    "passes": [
+     {
+      "ops": 184,
+      "units": 33,
+      "states": 32,
+      "latency": 32,
+      "budget_ns": 11.2,
+      "scale": 0.9,
+      "worst_state_ns": 11.2
+     },
+     {
+      "ops": 184,
+      "units": 34,
+      "states": 32,
+      "latency": 32,
+      "budget_ns": 11.2,
+      "scale": 0.9,
+      "worst_state_ns": 11.2
+     }
+    ],
+    "register_bits": [
+     6657,
+     8224
+    ],
+    "dependency_floor_states": [
+     32,
+     32
+    ],
+    "operations_measured_before_scheduling": [
+     4,
+     12
+    ],
+    "candidate_schedules": [
+     1071,
+     0
+    ],
+    "local_repairs": [
+     "pipeline three_product_square_width_34_s92f734bf1764 L=1 selection_rows=None"
+    ],
+    "tightenings": 1,
+    "synthesis_runs": null,
+    "elapsed": null,
+    "wall_seconds": 9965.5,
+    "returncode": -15,
+    "generated_source_bytes": 33904,
+    "cap_messages": [],
+    "note": "stopped by the operator in pass 3 (budget tightened to 0.613). Passes 1 and 2 kept the whole modular multiply as a five-stage pinned unit, predicted at 10.9 and 7.0 ns per stage and measured at 20.2 and 18.3 ns; the final compiler synthesizes each chosen placement on its own before building, and this cap was not rebuilt with it"
+   },
+   "48": {
+    "compiler": "takeover11",
+    "met": true,
+    "achieved_mhz": 86.783,
+    "resources": {
+     "LUT": 9323,
+     "FF": 12912,
+     "DSP": 84,
+     "CARRY4": 1600
+    },
+    "passes": [
+     {
+      "ops": 368,
+      "units": 45,
+      "states": 46,
+      "latency": 46,
+      "budget_ns": 11.2,
+      "scale": 0.9,
+      "worst_state_ns": 11.2
+     },
+     {
+      "ops": 368,
+      "units": 80,
+      "states": 48,
+      "latency": 48,
+      "budget_ns": 11.2,
+      "scale": 0.9,
+      "worst_state_ns": 11.2
+     }
+    ],
+    "register_bits": [
+     6984,
+     9313
+    ],
+    "dependency_floor_states": [
+     40,
+     48
+    ],
+    "operations_measured_before_scheduling": [
+     4
+    ],
+    "candidate_schedules": [
+     1198,
+     0
+    ],
+    "local_repairs": [
+     "duplicate BIN_OP_PLUS_uint130_t_uint130_t"
+    ],
+    "tightenings": 0,
+    "synthesis_runs": "41 reused from the output directory, 47 from the store <store>, 31 new run(s)",
+    "elapsed": "1:53:06 (parse/elaborate 0:00:14, whole-design synthesis 0:15:27 over 2 runs)",
+    "wall_seconds": 6788.0,
+    "returncode": 0,
+    "generated_source_bytes": 98985,
+    "cap_messages": [],
+    "note": null
+   },
+   "64": {
+    "compiler": "takeover10",
+    "met": true,
+    "achieved_mhz": 85.741,
+    "resources": {
+     "LUT": 5460,
+     "FF": 10241,
+     "DSP": 37,
+     "CARRY4": 793
+    },
+    "passes": [
+     {
+      "ops": 368,
+      "units": 39,
+      "states": 62,
+      "latency": 62,
+      "budget_ns": 11.2,
+      "scale": 0.9,
+      "worst_state_ns": 11.2
+     }
+    ],
+    "register_bits": [
+     6395
+    ],
+    "dependency_floor_states": [
+     40
+    ],
+    "operations_measured_before_scheduling": [
+     1,
+     2,
+     3,
+     4
+    ],
+    "candidate_schedules": [
+     1326
+    ],
+    "local_repairs": [],
+    "tightenings": 0,
+    "synthesis_runs": "11 reused from the output directory, 28 from the store <store>, 31 new run(s)",
+    "elapsed": "1:37:35 (parse/elaborate 0:00:15, whole-design synthesis 0:04:03 over 1 run)",
+    "wall_seconds": 5857.1,
+    "returncode": 0,
+    "generated_source_bytes": 52722,
+    "cap_messages": [],
+    "note": null
+   }
+  }
+ },
+ "baseline": {
+  "epilogue": {
+   "32": {
+    "compiler": "baseline 32ddc932",
+    "met": false,
+    "achieved_mhz": 53.576,
+    "resources": {
+     "LUT": 26671,
+     "FF": 26952,
+     "DSP": 88,
+     "CARRY4": 2497
+    },
+    "passes": [
+     {
+      "ops": 878,
+      "units": 277,
+      "states": 32,
+      "latency": 32,
+      "budget_ns": 11.2,
+      "scale": 0.9,
+      "worst_state_ns": 11.2
+     },
+     {
+      "ops": 1055,
+      "units": 349,
+      "states": 32,
+      "latency": 32,
+      "budget_ns": 7.5,
+      "scale": 0.603,
+      "worst_state_ns": 7.5
+     }
+    ],
+    "register_bits": [
+     22477,
+     27953
+    ],
+    "dependency_floor_states": [],
+    "operations_measured_before_scheduling": [],
+    "candidate_schedules": [
+     634,
+     272
+    ],
+    "local_repairs": [],
+    "tightenings": 1,
+    "synthesis_runs": null,
+    "elapsed": null,
+    "wall_seconds": 7777.9,
+    "returncode": -15,
+    "generated_source_bytes": 236711,
+    "cap_messages": [],
+    "note": "stopped by the operator after the pass-2 schedule (tightened to scale 0.603); its pass-1 miss is the comparison point"
+   }
+  }
+ },
+ "baseline_cap64_wireguard_accepted_run": {
+  "record": "wireguard-fpga 3.build/pypeline_build/measurements/shared-poly1305-fsm64-latest-qor-20261017",
+  "compiler": "the baseline compiler (its compiler.patch matches AUTO_FSM at 32ddc932)",
+  "scope": "whole shared WireGuard performance testbench, both kernels at max_latency=64",
+  "epilogue_passes": [
+   {
+    "ops": 1214,
+    "units": 117,
+    "states": 60,
+    "register_bits": 18396,
+    "budget_ns": 11.2,
+    "met": false
+   },
+   {
+    "ops": 1671,
+    "units": 188,
+    "states": 62,
+    "register_bits": 17484,
+    "budget_scale": 0.7,
+    "met": false
+   },
+   {
+    "ops": 21332,
+    "units": 9478,
+    "states": 41,
+    "register_bits": 54346,
+    "budget_ns": 7.0,
+    "budget_scale": 0.565,
+    "met": true,
+    "achieved_mhz": 81.037
+   }
+  ],
+  "prologue_passes": [
+   {
+    "ops": 538,
+    "units": 48,
+    "states": 64,
+    "register_bits": 8301,
+    "budget_ns": 11.2,
+    "met": true,
+    "achieved_mhz": 82.665
+   }
+  ],
+  "whole_design_resources": {
+   "LUT": 104668,
+   "FF": 93372,
+   "DSP": 413,
+   "CARRY4": 11239
+  },
+  "elapsed": "14:51:29 (whole-design synthesis 1:20:20 over 4 runs)"
+ },
+ "baseline_cold_store_runs": {
+  "description": "Baseline compiler with empty stores: derived hierarchy estimates (comparator prefix helpers 10.8-12.8 ns against 2.3 ns measured) force descent into one-bit gates.",
+  "runs": {
+   "epilogue": {
+    "32": {
+     "outcome": "cap infeasible: needs 62 states at 11.20 ns/state",
+     "elapsed": "0:25:19 (parse/elaborate 0:00:13)"
+    },
+    "48": {
+     "outcome": "cap infeasible: needs 62 states at 11.20 ns/state",
+     "elapsed": "0:11:11 (parse/elaborate 0:00:13)"
+    },
+    "64": {
+     "outcome": "pass 1: 33,427 ops / 10,942 units / 62 states AT FLOOR (worst state 12.80 ns); stopped by the user after more than 12 hours, during source generation",
+     "elapsed": null
+    }
+   },
+   "prologue": {
+    "32": {
+     "outcome": "cap infeasible: needs 67 states at 11.20 ns/state",
+     "elapsed": "1:18:10 (parse/elaborate 0:00:15)"
+    },
+    "48": {
+     "outcome": "cap infeasible: needs 67 states at 11.20 ns/state",
+     "elapsed": "0:52:20 (parse/elaborate 0:00:12)"
+    },
+    "64": {
+     "outcome": "cap infeasible: needs 67 states at 11.20 ns/state",
+     "elapsed": "0:41:55 (parse/elaborate 0:00:12)"
+    }
+   }
+  }
+ },
+ "full_capacity_ghdl": {
+  "description": "src/tests/pypeline_tests/inst/self_check_auto_fsm_poly1305_test.py with -D CAPACITY=10 -D MHZ=80, Artix-7 part and the fixture's synthesis store: native simulation and GHDL compared cycle by cycle against independent Python Poly1305 vectors",
+  "epilogue_cap32": {
+   "result": "MATCH, 646 cycles compared",
+   "schedule": "374 ops / 98 units / 32 states, the hardware build's schedule (its build met 86.05 MHz)"
+  },
+  "prologue_cap48": {
+   "result": "MATCH, 912 cycles compared",
+   "schedule": "368 ops / 45 units / 46 states: the first-pass schedule; the self-check top keeps only the first power as a hardware output, so its build met timing without the hardware build's repair pass"
+  }
+ },
+ "wireguard_shared_build_cap64": {
+  "status": "not rebuilt with the final compiler; an intermediate build was stopped after its first whole-design synthesis",
+  "compiler": "takeover10 (before measured pinned-unit stages and isolated placement measurement)",
+  "design": "wireguard-fpga accepted design source (design-source.tar.gz of shared-poly1305-fsm64-latest-qor-20261017), synthesis only, max_latency=64",
+  "prologue_schedule": {
+   "ops": 368,
+   "units": 39,
+   "states": 62
+  },
+  "epilogue_schedule": {
+   "ops": 144,
+   "units": 56,
+   "states": 27,
+   "pinned_unit": "poly1305_math_residue_mul_mod L=4"
+  },
+  "pass1_timing_mhz": {
+   "chacha20_pipeline_shared": 95.91,
+   "encrypt_dataflow": 87.64,
+   "decrypt_dataflow": 87.64,
+   "poly1305_epilogue_shared": 52.57
+  },
+  "finding": "the epilogue's critical path (19.02 ns) ran through its pinned four-stage modular multiply, whose stages the placement landscape predicted within 11.2 ns; this motivated synthesizing chosen placements on their own before a build"
+ }
+}

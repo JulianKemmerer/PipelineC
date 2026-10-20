@@ -3405,6 +3405,8 @@ class AUTO_PIPELINE:
                     f"{func.__qualname__}'s pipeline_latency({fixed})"
                 )
         self.func = func
+        # Compiler-owned fixed placement, populated only by AUTO_FSM codegen.
+        self._auto_fsm_implementation = None
         self.fixed_latency = latency
         self.start_latency = start_latency
         self.max_latency = max_latency
@@ -3736,6 +3738,8 @@ def _auto_pipeline_with_io_regs(
 #   {"version", "key", "entity", "n_states", "latency", "budget_scale",
 #    "at_floor", "floor_ns", "node_to_state", "fu_of_node", "fus",
 #    "fu_order", "descended", "entity_delays_snapshot", ...}
+# Shared schema identity; native simulation checks it without compiler imports.
+_AUTO_FSM_SCHEDULE_VERSION = 15
 _auto_fsm_schedule_cache: dict = {}
 
 
@@ -3928,6 +3932,18 @@ class AUTO_FSM:
         # the compiler.
         if _auto_fsm_schedule_cache:
             self._schedule = _auto_fsm_schedule_cache.get(self.canonical_key)
+            # Native simulation consumes latency/state count and evaluates the
+            # original pure function. Deep graph/recipe validation belongs to
+            # the compiler before emission, without a compiler dependency here.
+            if self._schedule is not None and not (
+                isinstance(self._schedule, dict)
+                and self._schedule.get("version") == _AUTO_FSM_SCHEDULE_VERSION
+                and type(self._schedule.get("n_states")) is int
+                and self._schedule["n_states"] >= 1
+                and type(self._schedule.get("latency")) is int
+                and self._schedule["latency"] >= self._schedule["n_states"]
+            ):
+                self._schedule = None
             # A schedule built under a different latency cap is not this tag's
             # schedule. The cap is a constructor constant, so this can only
             # happen if the design changed between passes -- treat it as a miss

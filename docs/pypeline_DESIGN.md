@@ -141,6 +141,8 @@ one paragraph per change.
 - [`vhdl(text)` — Raw VHDL Passthrough](#vhdltext--raw-vhdl-passthrough)
 - [Reference: `pypeline.py` Public API](#reference-pypelinepy-public-api)
 - [Tests](#tests)
+- [History](#history)
+  - [FSM-owned pipeline placement and native simulation](#fsm-owned-pipeline-placement-and-native-simulation)
 
 ---
 
@@ -1123,6 +1125,11 @@ so binding the module global to a marker object is otherwise inert.
 
 ### `AUTO_PIPELINE(func, latency=None, start_latency=None, max_latency=None)` — Forced Submodule Pipelining with `.latency`
 
+The compiler also uses fixed tags internally for AUTO_FSM functional units.
+`_auto_fsm_implementation` defaults to `None`; an internal tag records a concrete
+placement recipe and digest there. It is copied into the elaborated latency
+constraint and enforced by AUTO_PIPELINE. It adds no public constructor option.
+
 Python equivalent of PipelineC's `#pragma AUTOPIPELINE [N]`, plus a feedback
 channel the C pragma doesn't have. `AUTO_PIPELINE(func)` is a class (all-caps factory
 style, like `MULTI_CYCLE`) whose instances are callable tags. Calls made through one
@@ -1339,7 +1346,12 @@ The differences worth knowing:
   holding register already provides the registered/backpressured boundary.
 - **Native simulation** models the generated FSM's registers directly
   (`_sim_fsm`, keyed on `_SIM_AUTO_FSM_STATE_KEY`), following the same
-  committed-read / buffered-write discipline as `_sim_delay_line`.
+  committed-read / buffered-write discipline as `_sim_delay_line`. It evaluates
+  the original pure function after the scheduled latency; generated adapters,
+  fused groups and pipeline datapaths require GHDL checks. Empty-cache native
+  construction imports no compiler modules. Installed schedules receive
+  lightweight version/state/latency checks here; graph, source, target and pinned
+  recipe validation belongs to the compiler before emission.
 
 Full design in [`AUTO_FSM_DESIGN.md`](AUTO_FSM_DESIGN.md).
 
@@ -2537,3 +2549,14 @@ PASS/FAIL/XFAIL/XPASS/SKIP/TIMEOUT per test, with output directories of any fail
 printed for inspection. `known_issues_tests.py` (expected-to-fail bug reproducers) is
 excluded from the default category set — see [pypeline_TESTS.md](pypeline_TESTS.md).
 Every category module can also be run standalone.
+
+## History
+
+### FSM-owned pipeline placement and native simulation
+
+The internal AUTO_PIPELINE marker carries an FSM unit's concrete placement;
+surrounding sweeps restore and verify it instead of selecting another placement.
+Native AUTO_FSM construction shares a schedule version constant with the
+compiler while keeping deep validation out of the runtime tag. The cycle model
+continues to evaluate the original function, so generated datapath equivalence
+is checked in GHDL.

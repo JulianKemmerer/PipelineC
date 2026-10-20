@@ -379,7 +379,7 @@ measurements above:
 |---|---|---|
 | [`AUTO_PIPELINE`](pypeline_guide.md#auto_pipeline) | How many pipeline registers, and where | A `@MAIN` that is a pure function, and calls tagged `AUTO_PIPELINE` |
 | [`AUTO_MULTI_CYCLE`](pypeline_guide.md#auto_multi_cycle) | How many clock cycles a multi-cycle path may take (Vivado only) | Paths tagged `AUTO_MULTI_CYCLE`, ex. inside `make_stream_auto_multi_cycle` |
-| [`AUTO_FSM`](pypeline_guide.md#auto_fsm-experimental) (experimental) | A minimum-area, resource-shared state machine schedule, re-scheduled with smaller states while timing fails | Calls tagged `AUTO_FSM` |
+| [`AUTO_FSM`](pypeline_guide.md#auto_fsm-experimental) (experimental) | An area-oriented state machine schedule with shared combinational or pipelined units and automatic rescheduling | Calls tagged `AUTO_FSM` |
 | [`AUTO_PIPELINE_RAM`](pypeline_guide.md#auto_pipeline_ram) | RAM register and bank structure (Vivado / ECP5 open tools) | Automatically pipelined RAMs |
 
 Untagged logic with [`Reg[T]` state](pypeline_guide.md#registers-regt) is never changed,
@@ -1237,7 +1237,8 @@ Automatic features add these controls and reports:
 - `AUTO_COMB_AREA_OPT` and `AUTO_COMB_DELAY_OPT` write
   `auto_comb_area_opt_report.json` / `auto_comb_delay_opt_report.json` and candidate
   source under `auto_comb_opt_generated/`.
-- `AUTO_FSM` writes generated implementations under `auto_fsm_generated/`.
+- `AUTO_FSM` writes generated implementations, schedules and `.provenance.json`
+  source maps under `auto_fsm_generated/` for debugging generated hardware.
   `--auto_fsm_budget_scale` sets the initial fraction of one clock available to a
   state. `--auto_fsm_no_area_sweep`, `--auto_fsm_abstract_area`,
   `--auto_fsm_sweep_debug`, repeatable `--auto_fsm_open SUBSTR`, repeatable

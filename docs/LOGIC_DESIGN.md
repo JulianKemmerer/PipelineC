@@ -26,6 +26,8 @@ VHDL generation ([`VHDL_DESIGN.md`](VHDL_DESIGN.md)) work only on that represent
 - [5. Names and C type strings](#5-names-and-c-type-strings)
 - [6. Shared passes and helpers](#6-shared-passes-and-helpers)
 
+- [History](#history)
+
 ---
 
 ## 1. What lives where
@@ -110,6 +112,12 @@ rules must match `pypeline.py`'s; see
 [AUTO_MULTI_CYCLE_DESIGN.md](AUTO_MULTI_CYCLE_DESIGN.md).
 
 ## 3. `ParserState` — the global compiler context
+
+AUTO_FSM declares its constant-specialization table, independent measurement
+callables and operand-mux callables here. `DEEPCOPY` preserves their mappings and
+live callable identities. Characterization resolves the current consumer list,
+so shapes registered after an earlier query are included.
+
 
 ```python
 parser_state.FuncLogicLookupTable       # func_name -> Logic()  (function definitions)
@@ -200,7 +208,9 @@ came from.
   instances that have identical drivers, for each function bottom up. It reconnects
   collapsed instances with `CONNECT_WIRES_LOGIC`; their port types were checked when they
   were first connected, so no cast is needed. Both `PARSE_FILE`s run it after instance
-  lookup.
+  lookup. The Python front end also runs it on AUTO_FSM's measurement roots, which no
+  MAIN instantiates yet; a function without instances has no global instance names to
+  rename.
 - **Clock domains.** `INFER_CLOCK_DOMAINS` and `RECURSIVE_FIND_MAIN_FUNCS` assign globals
   and MAINs to clock groups. The C front end calls it from its clock-crossing pass; the
   Python front end calls it with empty crossing maps after building its call graph.
@@ -226,6 +236,25 @@ came from.
   [Default replacements for C-generated operators](pypeline_DESIGN.md#default-replacements-for-c-generated-operators)).
 - **printf.** `PRTINTF_STRING_TO_FORMATS` splits a format string into `PrintfFormat`s for
   `VHDL.py`.
-- **Caches.** `LOGIC.DEL_ALL_CACHES()` clears the per-parse trim/collapse memo; the Python
-  front end calls it before a re-parse. `C_TO_LOGIC.DEL_ALL_CACHES()` calls it and also
-  clears the C front end's caches.
+- **Caches.** `LOGIC.DEL_ALL_CACHES()` clears the per-parse trim/collapse and
+  clock-enable memos; the Python front end calls it before a re-parse.
+  `C_TO_LOGIC.DEL_ALL_CACHES()` calls it and also clears the C front end's caches.
+  Both memos are keyed by function name, and a re-parse can rebuild a function
+  differently under the same name: AUTO_FSM's scheduled pass turns a MAIN that held
+  only a combinational passthrough into one that holds the stateful FSM.
+
+## History
+
+### Owned FSM characterization state
+
+ParserState initializes and independently copies specialization, pipeline-profile, transform, decode-proxy, source-identity and provenance tables. Fixed-latency constraints carry an optional plain-data FSM placement recipe, avoiding planner state hidden on live objects.
+
+### Name-keyed memos are per parse
+
+`LOGIC_NEEDS_CLOCK_ENABLE` memoizes by function name. The memo once outlived the
+parse: an AUTO_FSM under a MAIN with no registers of its own was first parsed as a
+combinational passthrough, so the MAIN was recorded as needing no clock enable. The
+scheduled re-parse rebuilt the MAIN around the stateful FSM under the same name, read the
+stale answer, and left the FSM's clock enable undriven. Vivado then removed every
+register as constant. `DEL_ALL_CACHES` now clears it with the trim/collapse memo, for the
+same reason.

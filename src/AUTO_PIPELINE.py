@@ -2665,6 +2665,15 @@ def AUTO_PIPELINE_CONSTRAINTS_REALIZED_PROBLEMS(
             problems.append(
                 f"  {sub_inst}: latency memory floor={floor} but {built} clks built"
             )
+        if constraint is not None and constraint.fsm_implementation is not None:
+            import AUTO_FSM
+
+            AUTO_FSM.CHECK_UNIT_PLACEMENT(
+                sub_inst,
+                constraint.fsm_implementation,
+                parser_state,
+                TimingParamsLookupTable,
+            )
     return problems
 
 
@@ -2868,7 +2877,10 @@ def DO_AUTO_PIPELINE_LATENCY_PASSES(parser_state, multimain_timing_params, src_f
         # over, as in the RAM plan re-parse below
         part = getattr(parser_state, "part", None)
         tool = getattr(parser_state, "syn_tool_name", None)
-        parser_state = PY_TO_LOGIC.PARSE_FILE(src_file)
+        parser_state = PY_TO_LOGIC.PARSE_FILE(src_file, resolved_part=part)
+        import AUTO_FSM
+
+        AUTO_FSM.CHECK_SCHEDULES_APPLIED(parser_state)
         if part is not None:
             parser_state.part = part
         if tool is not None:
@@ -3181,7 +3193,10 @@ def RAM_PREPARE_TARGET(parser_state, src_file):
     if plans != RAM_PLANS_FROM_STATE(parser_state):
         pypeline.SET_AUTO_PIPELINE_RAM_PLAN_CACHE(plans)
         part, tool = parser_state.part, parser_state.syn_tool_name
-        parser_state = PY_TO_LOGIC.PARSE_FILE(src_file)
+        parser_state = PY_TO_LOGIC.PARSE_FILE(src_file, resolved_part=part)
+        import AUTO_FSM
+
+        AUTO_FSM.CHECK_SCHEDULES_APPLIED(parser_state)
         parser_state.part, parser_state.syn_tool_name = part, tool
     return parser_state
 
@@ -3292,7 +3307,10 @@ def RAM_SEARCH(parser_state, args, src_file, build):
         pypeline.SET_AUTO_PIPELINE_RAM_PLAN_CACHE(plans)
         if state is None:
             pypeline.SET_AUTO_PIPELINE_LATENCY_CACHE({})
-            state = PY_TO_LOGIC.PARSE_FILE(src_file)
+            state = PY_TO_LOGIC.PARSE_FILE(src_file, resolved_part=original_part)
+            import AUTO_FSM
+
+            AUTO_FSM.CHECK_SCHEDULES_APPLIED(state)
             state.part = original_part
             if set(RAM_PLANS_FROM_STATE(state)) != set(initial):
                 raise ValueError(
@@ -4385,6 +4403,20 @@ def _ENFORCE_ONE_AUTO_PIPELINE_REGION(
 
     marker = LOGIC.SUBMODULE_MARKER
     constraint = region.constraint
+    if constraint.fsm_implementation is not None:
+        import AUTO_FSM
+
+        implementation = constraint.fsm_implementation
+        tpl = AUTO_FSM.RESTORE_UNIT_PLACEMENT(
+            region.inst, implementation, parser_state, tpl
+        )
+        _INVALIDATE_REGION_CACHES(region.inst, tpl)
+        realized = tpl[region.inst].GET_TOTAL_LATENCY(parser_state, tpl)
+        region.cuts = []
+        region.placements = []
+        region.realized = realized
+        region.predicted_ns = implementation["worst_stage_du"] / SYN.DELAY_UNIT_MULT
+        return tpl
     goal = constraint.latency if constraint.is_fixed() else None
     cap = constraint.max_latency
     k = count
@@ -4592,6 +4624,9 @@ def REENFORCE_AUTO_PIPELINE_REGIONS(parser_state, tpl, scope_inst=None):
     for region in regions:
         realized = tpl[region.inst].GET_TOTAL_LATENCY(parser_state, tpl)
         cap = region.constraint.upper_bound()
+        if region.constraint.fsm_implementation is not None:
+            tpl = _ENFORCE_ONE_AUTO_PIPELINE_REGION(region, cap, parser_state, tpl, {})
+            continue
         violates = cap is not None and (
             realized > cap or (region.constraint.is_fixed() and realized != cap)
         )
@@ -4682,6 +4717,9 @@ def AUTO_PIPELINE_REGION_FEEDBACK(plan, region, hotspot_func, target_mhz, curr_m
     Returns (action string, made_change)."""
     import SWEEP
 
+    if region.constraint.fsm_implementation is not None:
+        STOP_AT_AUTO_PIPELINE_LATENCY_LIMIT(plan, parser_state, [region], hotspot_func)
+        return f"stop(AUTO_FSM owns pipeline placement {region.label()})", False
     step = min(
         max((target_mhz / curr_mhz) * 1.05, SWEEP.FUNC_SCALE_MIN_STEP),
         SWEEP.FUNC_SCALE_MAX_STEP,

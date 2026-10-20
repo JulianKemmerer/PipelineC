@@ -108,10 +108,48 @@ def get_tests() -> list:
         Test(
             name="auto_fsm_unit_test",
             category="unit",
-            # Measured 358 s, by far the longest test in unit -- the category
+            # Measured 615 s, by far the longest test in unit -- the category
             # run_all.py submits LAST, since the other 20 finish in seconds.
             long_pole=True,
             cmd=[INST_DIR / "auto_fsm_unit_test.py"],
+        )
+    )
+    # Legality/refusal proofs for selectors, unsigned adapters and closed pairs,
+    # next-wider merge steps and trimmed measurement roots; measured 4.2 s.
+    tests.append(
+        Test(
+            name="auto_fsm_transforms_test",
+            category="unit",
+            cmd=[INST_DIR / "auto_fsm_transforms_test.py"],
+        )
+    )
+    # Stale source/target schedules, applied forced schedules, provenance and
+    # serial unit characterization; measured 15.4 s.
+    tests.append(
+        Test(
+            name="auto_fsm_cache_test",
+            category="unit",
+            cmd=[INST_DIR / "auto_fsm_cache_test.py"],
+        )
+    )
+    # Ordered Vivado arcs, verified sky130 endpoint aliases, late selection, local
+    # edge repair and measured pinned-unit stages; measured 1.3 s.
+    tests.append(
+        Test(
+            name="auto_fsm_attribution_test",
+            category="unit",
+            cmd=[INST_DIR / "auto_fsm_attribution_test.py"],
+        )
+    )
+    # Derived hierarchy estimates are measured before they decide forced
+    # descent, array input elements render as indexes, a register-free MAIN
+    # gets its scheduled FSM's clock enable, and pipelined helpers are not
+    # blocked descents; measured 54.6 s idle, 102.5 s on a loaded machine.
+    tests.append(
+        Test(
+            name="auto_fsm_prefix_tree_test",
+            category="unit",
+            cmd=[INST_DIR / "auto_fsm_prefix_tree_test.py"],
         )
     )
     # Pure-unit tests for the AUTO_PIPELINE .latency machinery

@@ -617,6 +617,15 @@ An unconstrained callee is eligible when it can absorb added latency and contain
 no further AUTO_PIPELINE tags. Otherwise traversal continues toward eligible
 inner tags. Unseeded unconstrained tags under goal-less MAINs need no planning.
 
+AUTO_FSM's internal unit tags additionally carry `_auto_fsm_implementation`,
+copied into `LOGIC.AutoPipelineLatency.fsm_implementation`. These are fixed
+regions whose concrete recipe belongs to the FSM schedule. Enforcement restores
+their relative instance slices, boundary registers and exact bit boundaries,
+then checks the placement digest and realized latency. It does this even when
+the register count already matches. Hotspot feedback cannot rebalance or grow
+such a region; a changed placement is an internal error. The FSM's schedule
+repair owns implementation changes. This marker adds no public tag argument.
+
 Some library wrappers own exactly one core AUTO_PIPELINE and accept the same keyword-only
 arguments:
 - `make_stream_auto_pipeline`;
@@ -1072,6 +1081,10 @@ counts, tool versions and reproduction command are in
 [`auto_pipeline_ram_ecp5_regression.json`](../src/tests/pypeline_tests/qor/auto_pipeline_ram_ecp5_regression.json).
 
 ## History
+
+### FSM-owned pipeline placement
+
+An FSM records and owns its exact internal pipeline recipe. Region enforcement restores it and verifies the digest, rather than independently moving or growing it during the outer sweep. Only complete FSM rescheduling changes that implementation.
 
 ### Why `AUTO_PIPELINE(func, depth=N)` became `latency=N`
 

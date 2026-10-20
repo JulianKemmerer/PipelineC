@@ -248,6 +248,12 @@ reported, and raising a limit never relaxes a semantic check.
 
 ## 6. FSM integration
 
+AUTO_FSM also applies the shared `AUTO.cleanup` directly to its scheduling DAG,
+including designs whose scoped operators prevent whole-graph combinational
+rewrites. Known-bit bounds live in `AUTO._known_bits` and are shared by both
+consumers. Scoped calls retain their original implementations.
+
+
 Default `AUTO_FSM(func)` prepares the same candidates without requiring a tag: the
 area objective's alternatives plus up to two delay-ranked finalists (the first
 three delay-table entries, the first of which is the original). Each eligible candidate goes through the FSM's scheduling/binding search
@@ -340,6 +346,10 @@ python3 src/tests/pypeline_tests/run_all.py -k auto_comb -j 4
 ```
 
 ## History
+
+### Typed cleanup and indexed reads
+
+Literal and known-bit analysis live in AUTO so FSM cleanup and combinational search share typed semantics. Variable-index reads have a source form; an unsupported nested timing candidate retains the original function instead of escaping as an internal regeneration error.
 
 ### Why reconvergent glue walks use visited sets
 

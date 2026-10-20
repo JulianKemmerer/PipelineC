@@ -203,8 +203,11 @@ the tool's syntax), `GET_CLK_TO_MHZ_AND_CONSTRAINTS_PATH` and
 `WRITE_CLK_CONSTRAINTS_FILE` (§7). A single-instance run wraps its table in an
 `AUTO_PIPELINE.MultiMainTimingParams`, imported inside the function.
 
-Vivado additionally returns optional `extra_paths`, `coverage`, `utilization`,
-`input_signature`, `log_path`, and `cache_hit`. Extra reports never replace the
+Vivado and DEVICE_MODELS also return `input_signature`, `log_path`, and
+`cache_hit`, which sweep observations keep; AUTO_FSM reopens a retained
+DEVICE_MODELS log's mapped netlist to name flattened sky130 endpoints. Vivado
+additionally returns optional `extra_paths`, `coverage` and `utilization`.
+Extra reports never replace the
 base one-worst-path-per-clock contract: `SYN.TIMING_REPORT_PATHS(report)` returns
 the base paths followed by any extra ones, for every backend. `SYN.DISTINCT_PATHS`
 groups them by clock and start/end register bank, so the same bit reported for
@@ -317,7 +320,8 @@ Their inspectable children are collected recursively for estimates, down to
 true primitives. Entirely unrelated MAINs and controller subtrees outside
 these dependencies receive no geometry jobs. Explicit `root_func_names`
 select independent consumers for fixed-latency placement. AUTO_FSM operation
-roots and registered operand muxes are also independent consumers, even if no
+roots, constant-specialized wrappers and registered operand muxes are also
+independent consumers, even if no
 pipeline landscape enters their stateful caller. After scheduling, the generated
 stateful FSM is one measured atomic span (added to the measurement frontier) and
 nothing inside it is collected, so rescheduling keeps the operation delays
@@ -340,6 +344,11 @@ The default synthesis jobs are:
   internal critical path or cycle-normalized delay to `Logic.delay`.
 - **Scheduled AUTO_FSM spans:** one whole-module run per generated stateful
   FSM, plus its registered operand muxes (see above).
+- **Pinned AUTO_FSM unit placements:** before a whole-design build, each newly
+  chosen pipelined unit runs once with its pinned recipe, through the
+  backend's ordinary per-instance `SYN_AND_REPORT_TIMING`. Its worst
+  register-to-register stage replaces the planner's prediction for that
+  placement ([`AUTO_FSM_DESIGN.md`](AUTO_FSM_DESIGN.md) §3.2).
 
 Other inspectable hierarchy with state anywhere below stays **estimated**,
 whether or not a pipeline tag lies inside it. Its standalone report can describe an
@@ -937,6 +946,10 @@ Numbers carry the conditions they were measured under, not the date they
 were taken. The planner's own history (the planned sweep, the mux
 select-fanout cliff, divider acceptance) is in
 [`SWEEP_DESIGN.md`](SWEEP_DESIGN.md#history).
+
+### FSM characterization and ordered paths
+
+Constant-specialized operations and width-keyed decode proxies are independent geometry consumers. A later query sees newly registered consumers. Serialized paths preserve ordered Vivado increments and arrivals as well as the existing resource set; endpoint-only evidence remains usable and unmatched evidence is retained.
 
 ### Comparator implementation selection
 

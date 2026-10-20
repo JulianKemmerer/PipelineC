@@ -1,23 +1,9 @@
 #!/usr/bin/env python3
-"""Known issue #377: AUTO_FSM cannot regenerate a variable-index array read.
+"""Regression for #377: direct and nested variable-index array reads.
 
-AUTO.DECODE_OP has no source form for a VAR_REF_RD operation (`arr[i]` with a
-non-constant `i`), and two things follow:
-
-  - nested: when the AUTO_FSM'd function calls a function containing such a
-    read, the bootstrap elaboration itself crashes. AUTO_COMB_OPT.prepare's
-    delay objective times the callee with AUTO.TimingModel, whose BUILD_DAG
-    raises the AutoError uncaught. (A scoped operator registration anywhere in
-    the call tree makes prepare return first, which hides the crash: the
-    WireGuard Poly1305 epilogue elaborated, then the read kept the whole call
-    atomic, pinning a 135.70 ns state AT FLOOR.)
-  - direct: a read in the tagged function itself elaborates, but scheduling
-    fails with "cannot be regenerated as Python source".
-
-Elaborates two small designs in process and schedules them with stand-in
-delays; no synthesis, a few seconds. Fails while the gap exists (registered
-expect_fail in known_issues_tests.py); passes once both elaborate and schedule
-with the read as an operation of its own.
+Both designs elaborate and schedule with the indexed read as an operation of
+its own. The nested case also exercises AUTO_COMB_OPT's timing-model path.
+Uses stand-in delays and no synthesis; registered in elab_introspect_tests.py.
 """
 import os
 import sys

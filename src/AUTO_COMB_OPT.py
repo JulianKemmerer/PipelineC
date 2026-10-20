@@ -35,6 +35,7 @@ class CombEmitter(AUTO._GraphCodegen):
         self.func_entity = entity
         self.em = AUTO._Emitter()
         self.types = AUTO._TypeResolver()
+        self.em.type_resolver = self.types
         self.types.seed_callable(func)
         for callable_ in AUTO._entity_callables(parser_state).values():
             self.types.seed_callable(callable_)
@@ -100,57 +101,6 @@ def _semantic_graph(dag):
     return rv
 
 
-def _literal(parser_state, entity, ref):
-    if ref[0] == "lit":
-        return ref[1]
-    if ref[0] != "const":
-        return None
-    import LOGIC
-
-    try:
-        return int(str(LOGIC.GET_VAL_STR_FROM_CONST_WIRE(
-            ref[1], parser_state.FuncLogicLookupTable[entity], parser_state)), 0)
-    except (ValueError, TypeError):
-        return None
-
-
-def _known_bits(dag, parser_state, entity):
-    """Conservative unsigned upper-bit bounds; unknown/signed values stay full."""
-    known = {}
-    logic = parser_state.FuncLogicLookupTable[entity]
-
-    def operand_bits(ref, casts, port_type):
-        if not AUTO._unsigned(port_type) or any(not AUTO._unsigned(t) for t in casts):
-            return AUTO.width(port_type)
-        if ref[0] == "node":
-            producer = dag["nodes"][ref[1]]
-            n = known.get(ref[1], AUTO.width(producer["out_type"])) if AUTO._unsigned(producer["out_type"]) else AUTO.width(port_type)
-        elif ref[0] == "in":
-            t = logic.wire_to_c_type[ref[1]]
-            n = AUTO.width(t) if AUTO._unsigned(t) else AUTO.width(port_type)
-        else:
-            value = _literal(parser_state, entity, ref)
-            n = max(1, value.bit_length()) if value is not None and value >= 0 else AUTO.width(port_type)
-        return min([n, AUTO.width(port_type)] + [AUTO.width(t) for t in casts])
-
-    inputs = {}
-    for nid in AUTO.order(dag):
-        node = dag["nodes"][nid]
-        bounds = [operand_bits(r, c, t) for r, c, t in zip(node["operands"], node["casts"], node["port_types"])]
-        inputs[nid] = bounds
-        result = AUTO.width(node["out_type"])
-        if AUTO._unsigned(node["out_type"]) and all(AUTO._unsigned(t) for t in node["port_types"]):
-            op = node["op"].get("op")
-            if node["kind"] == "binop" and op in ("+", "*", "&", "|", "^"):
-                result = {"+": max(bounds) + 1, "*": sum(bounds), "&": min(bounds), "|": max(bounds), "^": max(bounds)}[op]
-            elif node["kind"] == "mux":
-                result = max(bounds[1:])
-            elif node["kind"] == "copy":
-                result = bounds[0]
-        known[nid] = min(result, AUTO.width(node["out_type"]))
-    return inputs
-
-
 def _implementation_seeds(func, entity, dag, parser_state, elaborator):
     """Materialize exact integer choices and selective hierarchy opening."""
     from types import SimpleNamespace
@@ -188,7 +138,7 @@ def _implementation_seeds(func, entity, dag, parser_state, elaborator):
     types = AUTO._TypeResolver()
     types.seed_callable(func)
     needed = AUTO._demanded_bits(dag)
-    known_inputs = _known_bits(dag, parser_state, entity)
+    known_inputs = AUTO._known_bits(dag, parser_state, entity)
     trial = copy.deepcopy(dag)
     moves = []
     for nid in AUTO.order(dag):
@@ -206,7 +156,7 @@ def _implementation_seeds(func, entity, dag, parser_state, elaborator):
         factory_func = None
         indices = list(range(len(n["operands"])))
         for i in range(2):
-            value = _literal(parser_state, entity, n["operands"][i])
+            value = AUTO._literal(parser_state, entity, n["operands"][i])
             if value is None:
                 continue
             if any(not AUTO._unsigned(t) for t in n["casts"][i]):
@@ -321,7 +271,7 @@ def prepare(func, parser_state, elaborator, strict=True, objective="area"):
         table[entity] = [(func, {"moves": [], "unsupported": str(e)})]
         return table[entity]
     dag = AUTO.prune(dag)
-    dag["constants"] = {r[1]: _literal(parser_state, entity, r)
+    dag["constants"] = {r[1]: AUTO._literal(parser_state, entity, r)
                         for n in dag["nodes"].values() for r in n["operands"] if r[0] == "const"}
     if len(dag["nodes"]) > AUTO.MAX_NODES:
         table[entity] = [(func, {"moves": [], "limits": ["graph node limit"]})]
@@ -351,7 +301,13 @@ def prepare(func, parser_state, elaborator, strict=True, objective="area"):
            getattr(DEVICE_MODELS, "SELECTED_LIBRARY", None), AUTO.FORCE_ABSTRACT_AREA)
     if key not in _PLANS:
         timing = AUTO.TimingModel(parser_state) if objective == "delay" else None
-        ranked, report = AUTO.search(dag, parser_state, seeds, timing=timing)
+        try:
+            ranked, report = AUTO.search(dag, parser_state, seeds, timing=timing)
+        except AUTO.UnregenerableOpError as error:
+            # A callee can be unsupported even when the root DAG decodes.
+            # Optional timing exploration retains the original in both cases.
+            table[entity] = [(func, {"moves": [], "unsupported": str(error)})]
+            return table[entity]
         # Keep the written graph as candidate zero, plus distinct alternatives.
         original_key = AUTO.fingerprint(dag)
         alternatives = [(g, moves) for g, moves in ranked if AUTO.fingerprint(g) != original_key]

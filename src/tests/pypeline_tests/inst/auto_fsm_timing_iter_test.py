@@ -28,6 +28,7 @@ one met it, and the exit code is 0.
 import argparse
 import json
 import os
+from pathlib import Path
 import re
 import subprocess
 import sys
@@ -80,6 +81,33 @@ def main():
 
     if "timing missed; tightened per-state budget" not in out:
         fail("the driver never tightened an AUTO_FSM budget in response to timing")
+
+    # Exercise the real mapped sky130 endpoints, rather than readable names
+    # invented by a unit test. Preserve raw tool names alongside recovered aliases.
+    evidence = [
+        row
+        for path in Path(out_dir, "auto_fsm_generated").glob("*.schedule.json")
+        for row in json.loads(path.read_text()).get("timing_evidence", ())
+    ]
+    attributed = [
+        row
+        for row in evidence
+        if row.get("attributed")
+        and row.get("node_ids")
+        and row.get("end_role") in ("work", "output")
+    ]
+    if not attributed:
+        fail("no real failing sky130 end register was attributed to its writer chain")
+    if not any(
+        row["path"].get("endpoint_alias_status")
+        == "retained mapped-netlist digest verified"
+        and row["path"].get("end_reg_name")
+        and row["path"].get("end_reg_aliases")
+        for row in attributed
+    ):
+        fail(
+            "attribution did not preserve and authenticate the mapped endpoint aliases"
+        )
 
     schedules = re.findall(
         r"^AUTO_FSM (\S+): (\d+) ops -> (\d+) shared unit\(s\), (\d+) states, "

@@ -300,7 +300,13 @@ class AutoPipelineLatency:
     (AUTO_PIPELINE canonical key / entity-name identity); a unit test checks it.
     """
 
-    __slots__ = ("latency", "start_latency", "max_latency", "seed")
+    __slots__ = (
+        "latency",
+        "start_latency",
+        "max_latency",
+        "seed",
+        "fsm_implementation",
+    )
 
     def __init__(self, latency=None, start_latency=None, max_latency=None, seed=None):
         self.latency = latency
@@ -312,25 +318,30 @@ class AutoPipelineLatency:
         # Equality, hashing, keys, key_suffix() and is_unconstrained() use the
         # source constraint only.
         self.seed = seed
+        # Internal AUTO_FSM placement recipe; ordinary AUTO_PIPELINE has none.
+        self.fsm_implementation = None
 
     @staticmethod
     def from_tag(tag):
-        return AutoPipelineLatency(
+        constraint = AutoPipelineLatency(
             getattr(tag, "fixed_latency", None),
             getattr(tag, "start_latency", None),
             getattr(tag, "max_latency", None),
             getattr(tag, "seed", None),
         )
+        constraint.fsm_implementation = tag._auto_fsm_implementation
+        return constraint
 
     def _source_state(self):
         return (self.latency, self.start_latency, self.max_latency)
 
     def __getstate__(self):
-        return self._source_state() + (self.seed,)
+        return self._source_state() + (self.seed, self.fsm_implementation)
 
     def __setstate__(self, state):
         self.latency, self.start_latency, self.max_latency = state[:3]
         self.seed = state[3] if len(state) > 3 else None
+        self.fsm_implementation = state[4] if len(state) > 4 else None
 
     def start(self):
         """Where a region's planned sweep starts: the seed, else start_latency
@@ -3220,7 +3231,10 @@ def TRIM_COLLAPSE_FUNC_DEFS_RECURSIVE(func_logic, parser_state):
             #  print("func_logic.wire_driven_by",func_logic.wire_driven_by[driven_wire])
 
         # Record global insts by doing process for each global inst of container
-        all_insts_of_container_func = parser_state.FuncToInstances[func_logic.func_name]
+        # (none for an AUTO_FSM measurement root no MAIN instantiates yet)
+        all_insts_of_container_func = parser_state.FuncToInstances.get(
+            func_logic.func_name, ()
+        )
         for global_inst in all_insts_of_container_func:
             # Record new glb inst
             global_new_sub_inst_name = (
@@ -3257,6 +3271,10 @@ def DEL_ALL_CACHES():
     # pruned, but a later parse rebuilds fresh (untrimmed) Logic objects under
     # the same names and must not skip trimming them.
     _TRIM_COLLAPSE_FUNC_DEFS_RECURSIVE_done_cache.clear()
+    # Likewise per parse: AUTO_FSM's scheduled re-parse gives a MAIN that held
+    # only a combinational passthrough the stateful FSM under the same name,
+    # and a stale False left that FSM's clock enable undriven.
+    _LOGIC_NEEDS_CLOCK_ENABLE_cache.clear()
 
 
 # All the state obtained by parsing one design (a C file via C_TO_LOGIC.PARSE_FILE,
@@ -3278,6 +3296,34 @@ class ParserState:
         self.path_delay_funcs = None  # Full-parse delay dependencies in bottom-up order.
         self.path_delay_measure_funcs = None  # Hierarchy eligible for geometry measurements.
         self.path_delay_frontier_funcs = None  # Measured frontiers: comb pipeline roots, scheduled AUTO_FSMs.
+        # Constant-operand implementation shapes prepared by AUTO_FSM.
+        self.pypeline_auto_fsm_specializations = {}
+        # Original typed primitive shapes retained for specialization proofs.
+        self.pypeline_auto_fsm_specialization_shapes = {}
+        # Independent characterization consumers, including constant wrappers.
+        self.pypeline_auto_fsm_measure_callables = []
+        # Operand selection functions emitted by AUTO_FSM.
+        self.pypeline_auto_fsm_mux_callables = []
+        # Live elaboration contexts for compiler-generated unit candidates.
+        self.pypeline_auto_fsm_elaborators = {}
+        # Base entity to the callable used by its pipelined implementation.
+        self.pypeline_auto_fsm_unit_functions = {}
+        # Pipeline characterizations keyed by exact geometry and target context.
+        self.pypeline_auto_fsm_unit_profiles = {}
+        # BDD-proved equality-chain shapes to measured balanced selectors.
+        self.pypeline_auto_fsm_selections = {}
+        # Recurring closed arithmetic-pair shapes to measured pure functions.
+        self.pypeline_auto_fsm_fusions = {}
+        # Single-primitive wrapper proofs used by unsigned width adapters.
+        self.pypeline_auto_fsm_primitive_forms = {}
+        # Generated line/register attribution maps for each scheduled call site.
+        self.pypeline_auto_fsm_provenance = {}
+        # Pre-timing source/operator geometry identities for schedule-cache validation.
+        self.pypeline_auto_fsm_source_identities = {}
+        # Measured state-decode proxies, keyed by encoding and port widths.
+        self.pypeline_auto_fsm_control_proxies = {}
+        # Call site -> why an installed schedule was not applied on this parse.
+        self.pypeline_auto_fsm_schedule_rejections = {}
 
         # Pragma info
         self.main_mhz = {}  # dict[main_inst_name]=mhz # Any inst name can be used
@@ -3348,6 +3394,45 @@ class ParserState:
         rv.path_delay_funcs = copy.deepcopy(self.path_delay_funcs)
         rv.path_delay_measure_funcs = copy.deepcopy(self.path_delay_measure_funcs)
         rv.path_delay_frontier_funcs = copy.deepcopy(self.path_delay_frontier_funcs)
+        rv.pypeline_auto_fsm_specializations = dict(
+            self.pypeline_auto_fsm_specializations
+        )
+        rv.pypeline_auto_fsm_specialization_shapes = copy.deepcopy(
+            self.pypeline_auto_fsm_specialization_shapes
+        )
+        rv.pypeline_auto_fsm_measure_callables = list(
+            self.pypeline_auto_fsm_measure_callables
+        )
+        rv.pypeline_auto_fsm_mux_callables = list(self.pypeline_auto_fsm_mux_callables)
+        rv.pypeline_auto_fsm_unit_functions = dict(
+            self.pypeline_auto_fsm_unit_functions
+        )
+        rv.pypeline_auto_fsm_unit_profiles = copy.deepcopy(
+            self.pypeline_auto_fsm_unit_profiles
+        )
+        rv.pypeline_auto_fsm_selections = dict(self.pypeline_auto_fsm_selections)
+        rv.pypeline_auto_fsm_fusions = dict(self.pypeline_auto_fsm_fusions)
+        rv.pypeline_auto_fsm_primitive_forms = copy.deepcopy(
+            self.pypeline_auto_fsm_primitive_forms
+        )
+        rv.pypeline_auto_fsm_provenance = copy.deepcopy(
+            self.pypeline_auto_fsm_provenance
+        )
+        rv.pypeline_auto_fsm_source_identities = dict(
+            self.pypeline_auto_fsm_source_identities
+        )
+        rv.pypeline_auto_fsm_control_proxies = dict(
+            self.pypeline_auto_fsm_control_proxies
+        )
+        rv.pypeline_auto_fsm_schedule_rejections = dict(
+            self.pypeline_auto_fsm_schedule_rejections
+        )
+        rv.pypeline_auto_fsm_elaborators = {
+            key: copy.copy(elaborator)
+            for key, elaborator in self.pypeline_auto_fsm_elaborators.items()
+        }
+        for elaborator in rv.pypeline_auto_fsm_elaborators.values():
+            elaborator.parser_state = rv
 
         rv.existing_logic = None
         if self.existing_logic is not None:

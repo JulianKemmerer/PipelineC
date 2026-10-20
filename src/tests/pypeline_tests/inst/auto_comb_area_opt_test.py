@@ -54,6 +54,42 @@ ns['test_native']()
     subprocess.run([sys.executable, "-c", code, os.path.abspath(__file__)], check=True)
 
 
+def test_reinsert_after_operand_rewrite_preserves_both_expressions():
+    import copy
+    import AUTO
+
+    seed = dict(
+        kind="copy",
+        op=dict(kind="copy"),
+        entity="seed",
+        delay_du=0,
+        operands=[["in", "c"]],
+        casts=[[]],
+        port_types=["uint8_t"],
+        out_type="uint8_t",
+    )
+    template = dict(
+        kind="binop",
+        op=dict(kind="binop", op="+"),
+        entity="add",
+        delay_du=1,
+        operands=[["node", "seed"], ["in", "b"]],
+        casts=[[], []],
+        port_types=["uint8_t", "uint8_t"],
+        out_type="uint8_t",
+    )
+    graph = dict(nodes={"seed": seed}, output=["in", "a"])
+    first = AUTO.add_node(graph, copy.deepcopy(template))
+    AUTO.replace(graph, "seed", ["in", "a"])
+    second = AUTO.add_node(graph, copy.deepcopy(template))
+    assert first != second
+    assert graph["nodes"][first[1]]["operands"][0] == ["in", "a"]
+    assert graph["nodes"][second[1]] == template
+    assert AUTO.add_node(graph, copy.deepcopy(template)) == second
+    graph["output"] = second
+    assert AUTO.order(graph) == ["seed", second[1]]
+
+
 def test_elaboration():
     import PY_TO_LOGIC
     import SYN

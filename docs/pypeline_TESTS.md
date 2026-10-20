@@ -50,6 +50,35 @@ A fixture that another test builds as a subprocess may instead live one level up
 each built by a corresponding wrapper in `inst/`. Being outside `inst/` is what keeps
 them out of the registration audit; they are not part of the `run_all.py` suite.
 
+`self_check_auto_fsm_constants_test.py` checks constant multiplication,
+truncation and signed extension through both the passthrough and scheduled FSM
+in GHDL. The typed cleanup and scope-refusal unit checks live in
+`auto_fsm_unit_test.py`. `self_check_auto_fsm_pipelined_unit_test.py` checks
+launch/completion timing, busy requests, backpressure and pinned unit arithmetic.
+`self_check_auto_fsm_select_share_test.py` covers compound indexed reads,
+balanced selection, width adapters and pair emission. These run in passthrough
+and scheduled GHDL modes. `auto_fsm_transforms_test.py` checks transformation
+proofs and refusals, and that generated measurement roots are already trimmed
+when parsing ends; `auto_fsm_cache_test.py` checks source/target invalidation,
+deterministic source and restoration of sparse pinned recipes.
+`auto_fsm_attribution_test.py` checks ordered Vivado arcs and authenticated
+sky130 endpoint aliases. It reads a Vivado arc's coordinate only after the FSM
+instance's own label (which carries the caller's line), places boundaries from
+cell arcs only, and never separates an edge that runs against unit emission
+order. Pinned unit stages are measured from netlist endpoint names of the
+elaborated FSM instance, including a unit's launch from the state register,
+and the measurement replaces the placement's predicted stage. A chosen
+placement measured over budget on its own is rescheduled before any build, and
+a miss the search cannot avoid ends those rounds.
+`auto_fsm_cache_test.py` also checks that width merges reuse the cleaned
+graph instead of cleaning it again. The synthesis-iteration test also requires real failing
+sky130 end-register attribution to the writer chain.
+
+`self_check_auto_fsm_poly1305_test.py` checks the unchanged arithmetic at reduced
+capacity in GHDL. Its epilogue takes 2,165–2,501 s and its prologue 721–906 s;
+both use `long_pole=True` and fit the category's 7,200 s timeout. Manual
+full-capacity Vivado fixtures live in `qor/poly1305/` outside the regular suite.
+
 ## Adding a test
 
 Prefer adding a `test_*` function to an **existing** file over creating a new one --
@@ -790,9 +819,19 @@ data/valid under stalls; composition covers pipeline and FSM.
 
 The FSM unit suite includes a counted diamond-DAG regression against
 exponential input-storage traversal. `auto_fsm_var_index_read_test.py`
-(known_issues) schedules AUTO_FSMs around a variable-index array read in process:
-one read sits in a called function, where elaboration crashes today, and one in
-the tagged function, where scheduling fails. `qor_multiplier_auto_fsm_test` keeps its
+(elab_introspect) schedules AUTO_FSMs around variable-index array reads in the
+tagged function and a called helper. Both regenerate typed indexed source;
+compound struct elements and multidimensional arrays are covered in GHDL.
+`auto_fsm_prefix_tree_test.py` (unit) gives a soft comparator prefix tree the
+delays a cold delay scope derives and checks that the scheduler asks for a
+measurement of the helper an estimate would split, keeps it whole once
+measured, and reuses the carried measurement on a later pass. It also renders
+stored array input elements as indexes, and checks that a MAIN with no
+registers of its own drives its scheduled FSM's clock enable after the
+re-parse (a memo kept from the passthrough parse once left it undriven). A
+helper kept whole as a pipelined unit must not be reported as a blocked
+descent.
+`qor_multiplier_auto_fsm_test` keeps its
 1800-second timeout; `auto_fsm_min_area_verify_test` keeps 2700 seconds, all four
 real builds and the 3% area tolerance. The latter saves each variant's complete
 live output in `build.log`, with elapsed/status summaries. Retaining the
@@ -1557,11 +1596,12 @@ submitted late cannot overlap with much and lands in the tail.
 `run_all.py`'s `_DEFAULT_CATEGORY_ORDER` puts the heaviest *categories* first,
 and `Test(long_pole=True)` handles a long test inside an otherwise quick
 category by submitting it ahead of everything, including the Vivado entries
-(`common.run_tests`). Two tests set it: `pdw_tb` (`native_sim`, the longest in
+(`common.run_tests`). Tests setting it include `pdw_tb` (`native_sim`, the longest in
 the suite: ~523 ms/cycle over 7323 cycles alone since native sim executes
 matcher-registered soft operators by default, ~9000 s projected under `-j 5`,
-so it has no timeout, `common.NO_TIMEOUT_S`; it ends itself) and `auto_fsm_unit_test` (`unit`,
-358 s, in the category submitted last). Set it from a measured duration and record that
+so it has no timeout, `common.NO_TIMEOUT_S`; it ends itself), `auto_fsm_unit_test` (`unit`,
+358 s, in the category submitted last), and the Poly1305 GHDL checks described
+above. Set it from a measured duration and record that
 duration at the registration; the sort is stable, so nothing else moves.
 
 Each category module can also run standalone, e.g.

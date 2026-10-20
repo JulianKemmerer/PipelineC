@@ -350,9 +350,14 @@ class PathReport:
         self.logic_delay = None
         self.path_group = None
         self.netlist_resources = set()  # Set of strings
+        # Ordered arcs, including wrapped delay types, for FSM path attribution.
+        self.path_elements = []
 
         # Parsing state
         in_netlist_resources = False
+        resource_column = None
+        pending_delay_type = ""
+        path_phase = "launch"
 
         # Parsing:
         syn_output_lines = single_timing_report.split("\n")
@@ -437,6 +442,10 @@ class PathReport:
 
             # Netlist resources
             tok1 = "    Location             Delay type                Incr(ns)  Path(ns)    "
+            if "Incr(ns)" in syn_output_line and "Netlist Resource" in syn_output_line:
+                resource_column = syn_output_line.index("Netlist Resource")
+            if "data arrival time" in syn_output_line:
+                path_phase = "capture"
             #   Set
             if tok1 in prev_line:
                 in_netlist_resources = True
@@ -449,6 +458,31 @@ class PathReport:
                         if "/" in resource_str:
                             # print "Resource: '",resource_str,"'"
                             self.netlist_resources.add(resource_str)
+                if resource_column is not None:
+                    resource = syn_output_line[resource_column:].strip()
+                    prefix = syn_output_line[:resource_column]
+                    metrics = re.search(
+                        r"([-+]?\d+\.\d+)\s+([-+]?\d+\.\d+)\s*([rf]?)\s*$", prefix
+                    )
+                    if metrics is not None:
+                        description = (
+                            prefix[: metrics.start()].strip() or pending_delay_type
+                        )
+                        if "Prop_" in description and path_phase == "launch":
+                            path_phase = "data"
+                        self.path_elements.append(
+                            {
+                                "resource": resource,
+                                "increment_ns": float(metrics.group(1)),
+                                "arrival_ns": float(metrics.group(2)),
+                                "edge": metrics.group(3) or None,
+                                "delay_type": description,
+                                "phase": path_phase,
+                            }
+                        )
+                        pending_delay_type = ""
+                    elif prefix.strip() and "---" not in prefix and not resource:
+                        pending_delay_type = prefix.strip()
                 # Reset
                 tok1 = "                         slack"
                 if tok1 in syn_output_line:

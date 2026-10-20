@@ -100,6 +100,16 @@ def test_auto_fsm_design_reparses():
     parse_twice_and_compare(os.path.join(INST_DIR, "auto_fsm_test.py"))
 
 
+def test_scheduled_auto_fsm_cache_reparses():
+    # Re-execute an emitted datapath with the same source, target and geometry;
+    # model-only changes must keep its entity identity and complete provenance.
+    from auto_fsm_cache_test import (
+        test_schedule_cache_rejects_stale_source_target_and_version,
+    )
+
+    test_schedule_cache_rejects_stale_source_target_and_version()
+
+
 def test_var_ref_naming_design_reparses():
     # Two sequential runtime variable-index writes to the same array -- the
     # second write's covering wire is the first write's own alias, whose

@@ -45,9 +45,17 @@ figures out the rest — how many stages, or how many states.
   - [3.8 Consuming real sky130 area](#38-consuming-real-sky130-area)
   - [3.9 What the clock goal does to allocation](#39-what-the-clock-goal-does-to-allocation)
 - [4. Results](#4-results)
+  - [Poly1305 kernels on Artix-7](#poly1305-kernels-on-artix-7)
 - [5. Tests](#5-tests)
 - [6. Limitations and future work](#6-limitations-and-future-work)
 - [History](#history)
+  - [Constant-aware cleanup and compact operand plans](#constant-aware-cleanup-and-compact-operand-plans)
+  - [Pipelined units and pinned regions](#pipelined-units-and-pinned-regions)
+  - [Hardware-only entity names](#hardware-only-entity-names)
+  - [Schedules a build produced are applied or the build stops](#schedules-a-build-produced-are-applied-or-the-build-stops)
+  - [Measurements before scheduling decisions](#measurements-before-scheduling-decisions)
+  - [Measured unit stages](#measured-unit-stages)
+  - [Control timing and local repair](#control-timing-and-local-repair)
   - [Tighten loop termination](#tighten-loop-termination)
   - [Forced descent into one-bit gates](#forced-descent-into-one-bit-gates)
   - [Operand multiplexer costing](#operand-multiplexer-costing)
@@ -170,10 +178,10 @@ then correct at latency 0 and at latency 17.
 **`max_latency=N`** caps the FSM's in→out latency at N cycles (execution states
 plus the registered-output cycle). It is a **hard constraint**: if no schedule
 meeting the clock goal fits inside N cycles the build fails, with a message
-naming the FSM and the latency it actually needs. The tool meets a cap the only
-way a cap can be met — by giving back sharing and building more copies of the
-shared units, as few as it can find (§3.2). A cap fails only if even one unit
-per operation cannot meet it: the dependency chain alone then sets the latency.
+naming the FSM and the latency found by scheduling. The search considers more
+unit copies, concrete pipelined units and alternate sharing granularity (§3.2).
+The dependency chain and each implementation's launch/completion delays bound
+the attainable latency; failure means the considered implementations do not fit.
 Note that "no cap" and "generous
 cap" are not the same thing: the area search spends latency to buy area (§3.7),
 and the cap bounds how much of it the search may spend.
@@ -188,6 +196,8 @@ one-cycle valid pulse are driven directly in the final execution state, so
 `True` because a raw call site's `.data` then holds the previous result between
 pulses. Most designs should not set this directly; `make_stream_auto_fsm` uses it
 when its own backpressure holding register is already the output boundary.
+The unregistered raw boundary needs an idle accept cycle after its final state,
+so its initiation interval is `.latency + 1`.
 
 ### 2.1 Stream wrapper: `make_stream_auto_fsm`
 
@@ -281,6 +291,27 @@ submodule instance becomes a node; operand references are traced back through
 the wire graph (`_trace_operand`) to whatever produces them: another node, the
 function's input, or a constant.
 
+Before scheduling, typed constant cleanup removes constant-only work and
+built-in identities, preserves narrowing and signed assignments, and performs
+pruning and typed common-expression elimination. Bootstrap preparation registers
+constant-operand primitive wrappers for independent characterization; their
+measured delay includes the constant. Unsigned constant multiplication uses the
+existing shift/add implementation factory. Scoped user implementations remain
+intact. `DESCRIBE_SCHEDULE` reports the cleanup counts, the dependency floor
+(`_chain_floor`: states with one unit per operation and no operand muxes at the
+schedule's budget), how many bound unit kinds carry measured rather than
+estimated delays, and the chosen width merges and fused pairs.
+
+`AUTO_FSM.py` balances equality-controlled selection chains only after
+a BDD proves distinct constant comparisons on the same unsigned index are
+exclusive. It retains a default row for out-of-range indexes. The search also
+considers compatible unsigned width adapters, recurring closed arithmetic pairs
+and full unsharing of an entity. Original cast chains and scoped operator
+implementations remain part of every legality proof. A width-adapter move binds
+a unit into its next wider compatible unit only (`_local_merge_choices`); a
+later merge moves everything already bound to the narrower unit, so longer
+chains are reached one step at a time.
+
 Three classifications:
 
 - **delay 0 → glue.** Never scheduled, never shared, re-rendered inline at each
@@ -318,8 +349,11 @@ build. When that operation is slower than one state, `DESCRIBE_SCHEDULE`
 appends a `descent blocked:` line naming each such entity and why: it has no
 Python source or soft-operator equivalent to open, or an operation inside it
 cannot be regenerated, named by instance with its source coordinates
-(`UnregenerableOpError`). A variable-index array read is one such operation
-today ([#377](https://github.com/JulianKemmerer/PipelineC/issues/377)).
+(`UnregenerableOpError`). An operation kept whole as a pipelined unit (§3.2)
+is not listed: its stages fit the budget, and its `pipeline` line reports
+it. Variable-index reads are regenerated at their original
+types, including compound elements and multiple dimensions. Their measured
+selection delay participates in scheduling.
 
 **Descent depth is capped** at `_MAX_DESCEND_DEPTH = 8` levels, for the same
 best-effort reason: past that many nested calls, the recursive walk gives up
@@ -362,8 +396,66 @@ longest-remaining-chain order and places one if:
    measured delay of that unit's operand multiplexer at its actual fold count,
    not a flat estimate (§3.2b);
 3. **the units' emission order stays acyclic** — generated source declares units
-   in a fixed order, so if unit A feeds unit B in one state, B can never feed A
-   in another.
+   in a fixed order. Only combinational producer edges constrain that order;
+   a registered producer is read through a `Feedback[T]` local declared before
+   the physical calls.
+
+**Pipelined units.** `AUTO_FSM` characterizes existing pure callable
+boundaries and primitive arithmetic using AUTO_PIPELINE's count-targeted
+landscape and concrete lowering. Depths are planned in order from one, at most
+through the first non-improving predicted worst stage or the last legal
+placement, and only as far as a caller needs: the shallowest depth whose stage
+fits, one level past a chosen depth, or one exact depth. The cache resumes
+where an earlier request stopped. This adds no synthesis. Each plain-data
+implementation records latency L, initiation interval II, input/output/internal
+stage delays, estimated register bits, characterization context and the exact
+placement recipe and digest. The search compares these against combinational
+and decomposed units by rescheduling the whole function. Its PIPELINE moves are
+local steps, as UNSHARE adds one copy at a time: each selection form's
+shallowest feasible depth, one level either side of a chosen depth, and back to
+combinational.
+Recipes retain the root and descendants with concrete register choices;
+omitted descendants mean no added registers. Restoration fixes the entire
+hierarchy, including those implicit zero placements. Characterization reuses
+the existing register estimator's entity/placement cache across depths.
+
+Launch and completion are separate events: launch in state s reserves the unit
+until s+II, while the result becomes available in s+L. Dependent work waits for
+completion; independent launches may overlap. Register allocation starts a
+result's live range at completion and reads its operands at launch. The final
+state and hard latency cap include all outstanding results and any output cycle.
+Pipelines advance on bubbles; only scheduled completions write work registers.
+
+An optional implementation places operand selection inside the same concrete
+AUTO_PIPELINE region as the unit. Its signature carries a selector and typed
+arrays of operand alternatives, with a row count recorded in the implementation.
+The scheduler includes selection in that region's stage delays and enforces its
+row capacity. The area model prices its actual muxes and pipeline storage.
+Codegen emits one physical call per FU, with the selected placement pinned;
+surrounding sweeps cannot move or grow it. A different realized digest or
+latency raises `AutoFsmInternalError`.
+
+**Measured stages.** The landscape predicts stages from the cut positions it
+plans, and the realized registers of a nested parallel hierarchy can sit
+elsewhere. After each build, a path that ends inside a pinned unit measures
+that placement: an isolated stage (both ends inside the unit) or its launch
+(from a register of the FSM proper, through operand selection into the first
+stage). A path from another unit's output also holds that unit and the
+chained logic, so it measures neither. Endpoints are matched through the FSM
+instance's elaborated name, as attribution matches them (§3.4). The measured
+worst stage replaces the prediction for that placement digest wherever a depth
+is judged: forced pipelining, the search's PIPELINE moves and the selected
+implementation. A depth predicted to fit but measured over budget is therefore
+not chosen again. Before any whole-design build, the driver also synthesizes
+each chosen placement without a measurement on its own
+(`_measure_unit_placements`: the recipe applied to an isolated copy of the
+unit, operand selection included, through the backend's ordinary per-instance
+run and synthesis store). A call site whose chosen placement measures over its
+budget is rescheduled at once (`_confirm_unit_placements`). Each round
+measures a placement the search will not choose again, or ends; a miss the
+search cannot avoid is left to the build and its timing loop. The isolated run
+does not include the state register's decode in front of the selection, which
+the in-context measurement above still catches.
 
 Ready operations are tracked incrementally, through a priority heap fed by a
 per-node count of unplaced predecessors. Rescanning every unplaced operation
@@ -535,7 +627,11 @@ rolling-output muxes). `self_check_auto_fsm_array_mux_test.py` covers both.
 
 Operand equivalence preserves shared glue as a DAG: `_value_equiv_key` memoizes
 each node/state traversal, and `_GlueValueKey` caches hashes and compares
-structure iteratively. Repeated children are not expanded again while hashing
+structure iteratively. Operand-factor plans memoize each typed choice group;
+area traversal and emission visit each shared plan once. Generated glue is
+materialized once per node/state, so typed CSE preserves a DAG through code
+generation rather than expanding reconvergent arithmetic back into a tree.
+Repeated children are not expanded again while hashing
 or comparing keys. Hash collisions still trigger exact structural comparison;
 the optimization changes analysis cost, not which values may share a mux row.
 
@@ -584,7 +680,9 @@ Two conservative recurrence recoveries sit alongside the interval allocator:
   write-data mux.
 
 Transaction input storage is likewise lifetime-aware for top-level scalar
-struct fields. A field used after the first state receives its own input
+struct fields and array elements (accepted as `s.data.f` or `s.data[i]`, rendered
+by the same path renderer as other references). A field used after the first
+state receives its own input
 register; unused fields receive none. A uniquely matched first-state-only field
 that feeds a recovered rolling source preloads that work register on accept,
 instead of occupying a separate input bank for the entire transaction. Whole
@@ -701,8 +799,7 @@ Three details that are load-bearing:
   two would silently drop every accepted input.
 - **The select table is off the data path.** `st` is a register output
   available at the start of the cycle, so `st -> table -> mux.sel` resolves in
-  parallel with `operands -> mux.data`. This is why `CTL_LUT_DU` is 0: charging
-  it in series would model a sum where the truth is a max.
+  parallel with `operands -> mux.data`. The scheduler charges `max(data arrival, select arrival) + mux delay`. The select arrival comes from measured decode-shape proxies initially and attributed state-register paths on later passes.
 
 Two shapes were considered and **rejected**: using the state bits *directly* as
 a mux select (with data inputs padded out to one row per state) grows the
@@ -721,13 +818,7 @@ state instead of `log2(states)`, and with a binary encoder per shared unit,
 since the operand mux is a measured balanced tree that needs a binary select.
 Measured results are in §4. `auto` independently performs the area search for
 v3 and onehot, rejects either encoding if it violates the timing budget or
-`max_latency`, and selects the smaller estimate. The encoding reaches packing
-and binding only through the select-table delay `CTL_LUT_DU`, which is 0. So
-`HARVEST_AUTO_FSM_SCHEDULES` gives both searches one memo per call site
-(`BUILD_SCHEDULE`'s `build_memo`). A point the v3 search already scheduled is
-reused by the onehot search with only `ctl` and the entity name restamped, and
-only its area is estimated again. The two searches still rank and walk
-independently. On the WireGuard prologue they visited the same 291 points.
+`max_latency`, and selects the smaller estimate. Each encoding uses its measured selector timing in packing and binding. `HARVEST_AUTO_FSM_SCHEDULES` keeps a build memo per call site, keyed by the encoding, corrected timing model and implementation choices. Searches rank and walk independently.
 The resolved encoding is
 stored in the schedule and printed with both candidate costs. `v2` remains an
 explicit regression/A-B mode rather than an automatic candidate.
@@ -751,10 +842,10 @@ Points that are easy to get wrong, and are deliberate here:
   multi-port reference operation, not a single driver. It is rendered as a typed
   local plus one assignment per field, shortest-path-first so a whole-value base
   lands before field overwrites.
-- **The logical function key hashes the schedule** (`auto_fsm_<func>_<hash8>`), so
-  rescheduling produces a *different* entity. That makes stale cross-pass reuse
-  structurally impossible: nothing can seed pipelining onto, or reuse a cached
-  delay for, an entity whose contents changed underneath it.
+- **The logical function key hashes emitted hardware** (`auto_fsm_<func>_<hash8>`),
+  including typed operations, binding, state assignments and pinned placement
+  digests. Model-only budget or evidence changes keep the entity when the source
+  is identical. Changed hardware receives a new synthesis identity.
 - Given the same schedule, generated source is **byte-identical** across
   re-elaborations. Entity-name stability across the driver's repeated passes
   depends on it, and `auto_fsm_unit_test.py` asserts it.
@@ -781,6 +872,8 @@ bootstrap parse (AUTO_FSM call sites are combinational passthroughs)
 for each schedule pass:
     SYN.ADD_PATH_DELAY_TO_LOOKUP                  <- measure the operations, do NOT sweep
     schedule + bind each AUTO_FSM                 <- the minimum-area search (§3.7)
+    synthesize each new pinned unit placement     <- reschedule a call site whose
+                                                     placement misses its budget
     install schedules, re-PARSE_FILE              <- call sites become the generated FSMs
     AUTO_PIPELINE.DO_SWEEP_AND_AUTO_PIPELINE      <- sweep + AUTO_PIPELINE loop
     timing met, or nothing/only-floors blamed?  -> done
@@ -791,6 +884,39 @@ for each schedule pass:
 The bootstrap design is deliberately **not** swept: it contains the raw
 combinational blob nobody intends to build, so sweeping it would just fail
 timing pointlessly. It exists only to be measured.
+
+Before the first full search, `AUTO_FSM._measure_schedule_inputs` replaces the
+derived estimates that decide the forced-descent grain with measurements (§3.5).
+Then `AUTO_FSM._calibrate_controls` measures small decode proxies keyed only by
+encoding, state-register width and select width. Both use the ordinary synthesis
+store; wiring-only proxies need no run. The FSM keeps its
+inline v3 tables, onehot encoders or v2 comparisons. Exact table contents never
+create characterization entities. Proxies estimate decode depth; they cannot
+measure the fanout and routing of the real FSM. Later attributed paths starting
+at the state register replace the proxy with in-context per-unit select arrival.
+
+After synthesis, the driver reads the observation matching the retained
+implementation signature. Generated source lines and register writer maps
+attribute paths to selection, units, same-state chains and writeback. Ordered
+Vivado arcs refine the attribution; endpoint-only backends retain possible writer
+chains. Unmatched evidence is stored and reported once per pass.
+An arc's source coordinate is read only after the FSM instance's own label,
+because that label carries the call site in the caller (`..._py_l79_.../`). Only
+cell arcs place a boundary: Vivado may name a net after a neighbouring module.
+A boundary sequence that runs against the units' emission order is a merged
+cell named after another unit, so it never selects the edge to separate.
+
+Each attributed miss can produce complete schedules with corrected entity/select
+delays, registered selection, a separated same-state edge, the next pipeline
+depth, or a local extra unit. Feasible candidates compete by the existing area
+objective. Local repair corrects model error, so it applies only where the
+model said the schedule fits: a schedule whose modelled worst state already
+exceeds the clock period was predicted to miss, and global tightening handles
+its budget. A repaired build that does not raise fmax falls back to global
+tightening rather than stopping; the stall rule judges tightening steps.
+The existing pass, stall, floor and hardware-equality stop rules bound the loop;
+no extra repair limit is introduced. Unblamed FSMs keep their schedules during
+repair. Exact isolated unit-stage paths update carried pipeline timing evidence.
 
 **The CLI driver stays thin.** `src/pipelinec` holds only argparse, argument
 validation/combination, propagating flags into module-level settings
@@ -859,8 +985,7 @@ The loop stops when:
   It never stops on missing data, and the stop prints the old and new state
   counts and fmax;
 - further shrinking changes nothing. `SCHEDULES_EQUAL` compares the hardware
-  (`_SCHEDULE_NON_HARDWARE_KEYS` excludes the budget fields and the entity name
-  hashed from them), so this stop can actually fire;
+  (`_SCHEDULE_NON_HARDWARE_KEYS` excludes model diagnostics), so this stop can actually fire;
 - or at the pass cap.
 
 A stop that leaves timing unmet still fails the build through the normal
@@ -901,6 +1026,33 @@ receive operation delays.
   a combinational frontier but must stay estimated. Synthesizing the giant
   parallel body would measure hardware the scheduler was asked to share.
   Its operation dependencies still receive calibration.
+- **Decisions rest on measurements (`_measure_schedule_inputs`).** A helper
+  inside the passthrough is eligible but not a frontier, so its delay is
+  derived from its submodules: standalone leaves, each with its own registers
+  and routing, summed along the deepest chain. Before each pass's search and
+  each tightening attempt, the driver builds the plain forced-descent DAG. It
+  measures every entity that the DAG opens or keeps atomic over budget while
+  carrying only an estimate, then, once no descent changes, every operation
+  the cleaned graph binds, including units cleanup creates (balanced
+  selections, constant-multiply factories). Descents are measured outermost first: a
+  helper measured whole needs none of its children measured. An entity with a
+  measured part already over budget is
+  not measured: the whole cannot be faster, and synthesizing a kernel's whole
+  parallel body is what the passthrough rule above avoids (the first version
+  of this rule queued the entire Poly1305 epilogue kernel for one standalone
+  run). Schedules carry `measured_entities`, covering generated units outside
+  the function's subtree as well, so a later pass that no longer instantiates
+  a helper still knows its carried delay is a measurement.
+- **Uninstantiated entities (`_measure_entities`).** The delay scope only
+  walks instances under a MAIN. Decode proxies, constant wrappers and helpers
+  inside a scheduled FSM have none there, so each gets an isolated root
+  instance: the backend's ordinary per-function run, with output-directory and
+  `--syn_cache` reuse. The design's own instance tables are untouched. A
+  stored report from such a run is the same input identity an ordinary build
+  computes, so a later build of either kind reuses it. `PARSE_FILE` trims every
+  registered measurement root (`AUTO_FSM_MEASURE_ENTITIES`) with the MAIN
+  trees, so the measured entity text is the text a scheduled FSM later
+  instantiates under the same name.
 
 `FUNC_SUBTREE_HAS_AUTO_FSM` remains available to identify scheduling hierarchy;
 `DEL_AUTO_FSM_SUBTREE_CACHE` resets its cache through `SYN.DEL_ALL_CACHES`.
@@ -908,9 +1060,9 @@ receive operation delays.
 ### 3.6 Simulation
 
 `AUTO_FSM._sim_fsm` in `src/pypeline.py` models the generated FSM's registers
-directly — same state register, same input latch, same output registers — so
-native sim and hardware are cycle-accurate against each other by construction
-rather than by a separate argument. It follows the established commit discipline
+for transaction timing — the state count, input latch and output behavior. The
+native datapath evaluates the original pure function. Generated arithmetic,
+adapters and pipeline placement therefore require native-versus-GHDL checks. It follows the established commit discipline
 (`_sim_delay_line`, `_call_sim_model`): the returned value depends only on state
 committed at the last clock edge, so repeated evaluation during convergence
 cannot churn, and the next state is buffered so only the final pass lands.
@@ -1081,12 +1233,21 @@ repeat up to MAX_SWEEP_MOVES times:
 return the best
 ```
 
-**An anchor already past the DAG cap is returned as it is.** Every candidate
-would be refused by the same `MAX_SWEEP_DAG_NODES` cap: an UNSHARE keeps the
-anchor's DAG, and an OPEN replaces one node by a body of at least one node.
-Building each of them only to refuse it cost minutes per candidate list on
-an oversized anchor. The schedule report then prints `area search skipped:`
-with the operation count.
+**An oversized anchor keeps coarsening available.** Expansion and unsharing
+stop at `MAX_SWEEP_DAG_NODES`, while a pipelined helper can replace an opened
+body by one atomic node. Those candidates remain eligible, subject to the same
+per-trial graph-size check. The report identifies the skipped expansion work.
+
+Within one area search, bindings with the same typed graph reuse a compressed
+cleaned-graph cache. Its key includes delays, state budget, opened and preserved
+boundaries, adapters and fused groups. The graph before adapters and fused
+groups is kept too, so MERGE and FUSE moves rebind it without repeating descent
+and cleanup. Each candidate receives an independent decoded graph; scheduling
+and costing still run for every distinct binding.
+This cache does not persist between parses and adds no search cutoff.
+Area contributions use compensated summation so equal modeled costs do not
+acquire a different rank merely from their accumulation order. The terms,
+weights, confidence margins and existing deterministic tie-break stay the same.
 
 Four deliberate properties:
 
@@ -1476,12 +1637,76 @@ states (latency 3) instead. `max_latency=2` on the same design fails the build
 with *"the shortest schedule … needs 2 states (latency 3) … raise max_latency to
 at least 3"*.
 
+### Poly1305 kernels on Artix-7
+
+WireGuard's shared Poly1305 prologue and epilogue, ten lanes each, are built
+as stream FSMs from `src/tests/pypeline_tests/qor/poly1305/` at 80 MHz on
+`xc7a200tffg1156-2`. Timing is Vivado 2019.2 post-synthesis, without placement.
+[`qor/poly1305_auto_fsm_vivado_200t.json`](../src/tests/pypeline_tests/qor/poly1305_auto_fsm_vivado_200t.json)
+records every build, its measurement inputs and its reproduction command.
+
+| kernel | `max_latency` | operations | units | states | register bits | MHz | LUT | FF | DSP | builds |
+|---|---|---|---|---|---|---|---|---|---|---|
+| epilogue | 32 | 374 | 98 | 32 | 16,241 | 86.08 | 10,210 | 19,155 | 48 | 1 |
+| epilogue | 48, 64 | 374 | 70 | 45 | 10,782 | 86.30 | 7,283 | 15,300 | 24 | 1 |
+| prologue | 48 | 368 | 80 | 48 | 9,313 | 86.78 | 9,323 | 12,912 | 84 | 2 |
+| prologue | 64 | 368 | 39 | 62 | 6,395 | 85.74 | 5,460 | 10,241 | 37 | 1 |
+
+The cap-32 epilogue row was built with the final compiler: its pinned Karatsuba
+placement measured 11.00 ns on its own, within the 11.2 ns budget. The other
+rows come from earlier snapshots of this work, before the search's merge moves
+became next-wider steps; the QoR record names each row's compiler.
+
+At caps 48 and 64 the epilogue's area optimum is the same 45-state schedule;
+the two builds generate identical source. The cap-48 prologue missed by 0.66
+ns on its first build, from the state register through a shared 130-bit adder;
+attribution matched the path and one local repair (a second adder) met timing.
+
+The prologue at cap 32 fits only with its whole modular multiply as a pinned
+five-stage unit. Its first two builds missed (49.5 and 54.5 MHz): the
+placements were predicted at 10.9 and 7.0 ns per stage and measured at 20.2 and
+18.3 ns (§3.2, "Measured stages"). Chosen placements are now synthesized on
+their own before a build relies on them; this cap was not rebuilt with that.
+
+The prologue's limiting chain is its power tree: for ten lanes, four dependent
+modular multiplications (r → r² → r³ → r⁵ → r¹⁰), each a 130-bit product
+followed by `uint260_mod_prime`'s reduction. Their measured operation delays
+sum to 351.8 ns over 72 operations, so with the multiply split into
+combinational pieces the dependency floor is 40 states at 11.2 ns.
+
+The baseline compiler, scheduling from the same measurements, also fits the
+epilogue into 32 states, as 878 operations on 277 units, but misses timing at
+53.58 MHz (26,671 LUT, 26,952 FF, 88 DSP); its next pass tightens to 7.5 ns
+states and grows to 1,055 operations on 349 units. WireGuard's accepted cap-64
+build with the baseline compiler needed three epilogue passes (1,214
+operations on 117 units, then 1,671 on 188, then 21,332 on 9,478 with 54,346
+register bits) to reach 81.04 MHz, and the whole run took 14 h 51 m. With empty
+synthesis stores the baseline meets none of these caps: derived estimates split
+the comparator into one-bit gates (33,427 epilogue operations) or report the
+cap infeasible.
+
+Full-capacity GHDL runs check the generated datapaths against independent
+Python Poly1305 vectors, cycle by cycle against native simulation: the
+epilogue at cap 32 (the hardware build's schedule; 646 cycles match) and the
+prologue at cap 48 (its first-pass schedule, 912 cycles match; that self-check
+top keeps only the first power as a hardware output, so it meets timing on its
+first build).
+
 ---
 
 ## 5. Tests
 
 | test | category | what it proves |
 |---|---|---|
+| `auto_fsm_attribution_test.py` | unit | ordered Vivado carry/routing arcs, endpoint-only paths, retained unmatched evidence, parallel late select arrival, edge separation, width-keyed decode proxies, measured pinned-unit stages (isolated and launch) and rescheduling placements measured over budget before a build |
+| `auto_fsm_cache_test.py` | unit | stale source/target/version refusal (recorded, and an internal error inside a build), malformed cache misses, applied forced schedules, provenance completeness, serial unit characterization and stable hardware identities |
+| `auto_fsm_transforms_test.py` | unit | exclusive selection proofs, typed width-adapter legality and next-wider merge steps, closed-pair fusion refusal and trimmed measurement roots |
+| `auto_fsm_prefix_tree_test.py` | unit | a derived hierarchy estimate is measured (outermost first, never when a measured part already exceeds the budget) before it decides forced descent, and the carried measurement is reused on a later pass; array input elements render as indexes; a MAIN with no registers of its own drives its scheduled FSM's clock enable; a helper kept whole as a pipelined unit is not a blocked descent |
+| `auto_fsm_var_index_read_test.py` | elab_introspect | direct and nested variable-index source regeneration (regression for #377) |
+| `self_check_auto_fsm_constants_test.py` | native_vs_vhdl_sim | typed folding, constant arithmetic, signed extension and overflow in generated hardware |
+| `self_check_auto_fsm_pipelined_unit_test.py` | native_vs_vhdl_sim | pinned pipelines, launch/completion timing, ignored busy requests and stalled outputs |
+| `self_check_auto_fsm_select_share_test.py` | native_vs_vhdl_sim | indexed scalar/struct/array reads, defaults, width sharing and generated fused arithmetic |
+| `self_check_auto_fsm_poly1305_test.py` | native_vs_vhdl_sim | unchanged Poly1305 prologue/epilogue arithmetic, transaction stalls and host expected values |
 | `auto_fsm_test.py` | native_sim, (synth via wrapper) | the pure function's semantics, and the passthrough behaviour when unscheduled |
 | `auto_fsm_unit_test.py` | unit | scheduler/codegen internals: binding, one-op-per-unit-per-state, dependency order, distinct-operand mux coalescing and common-glue factoring, same- and cross-FU register reuse, recovered rolling output and consume/produce storage, field-lifetime input compaction, optional output bank, automatic control encoding, budget → states, floors, determinism, schedule is carryable data, a scheduled re-parse prepares the soft equivalents its schedule binds, the `descent blocked:` report, tighten-loop termination (`SCHEDULES_EQUAL` ignores budget bookkeeping, the `TIGHTENING_STALLED` truth table), the tightening step (`TIGHTENED_BUDGET_SCALE` follows the measured miss and always passes the worst state; `_BLAMED_MISS_RATIOS`), forced descent splitting wide adds and inferred multiplies into narrower inferred ones while a chosen open stays bit-level, the area search reaching a jointly feasible binding from an over-budget anchor and skipping candidates when the anchor is past the DAG cap, unmeasured delays resolved rather than zeroed, the zero-op guard (and measured-0 operations still legal), soft-operator equivalents, soft adder sign extension, `_TypeResolver` array reconstruction, real-sky130-area tiering (cold cache falls back to scaled abstract not zero, a cache hit wins over any abstract guess, `--auto_fsm_abstract_area`, real flip-flop area) |
 | `area_model_test.py` (`src/tests/pypeline_tests/inst/`) | unit | not AUTO_FSM-specific (SYN/DEVICE_MODELS leaf-area-cache coverage), but two tests here directly guard AUTO_FSM.py's own constant: the committed `cache/area` excludes STA-harness registers, and `AUTO.UM2_PER_ABSTRACT_AREA_UNIT` refits to what is actually committed |
@@ -1497,7 +1722,7 @@ at least 3"*.
 | `auto_fsm_min_area_verify_test.py` | synth | the search actually MOVES on a design built to reward moving, the move is smaller in real yosys cells, and no alternative point of the search space (built via `--auto_fsm_open` / `--auto_fsm_unshare`) is smaller still |
 | `auto_fsm_real_area_compare_test.py` | build_report | same question under `--syn_tool device_models`, judged by real `Measured area:` rather than yosys cells: real-µm²-ranked vs `--auto_fsm_abstract_area` vs `--auto_fsm_no_area_sweep`, all three built; pins the 25k µm² v7 structural ceiling and beats the lowest committed AUTO_PIPELINE/latchup.app divider area; plus AUTO_FSM's own allocated-storage bit count against the build's real sequential cell count (the register-fidelity question §3.8 raises explicitly) |
 | `auto_fsm_max_latency_test.py` | synth | a meetable `max_latency` is met by unsharing; an unmeetable one fails the build naming the latency actually needed |
-| `auto_fsm_timing_iter_test.py` | build_report (sky130) | a critical path inside an FSM is found and fixed by rescheduling (`auto_fsm_timing_iter_design.py`: narrow inputs, so the states, not the input-capture fanout, set the critical path); checks each pass's full-design timing in sweep history |
+| `auto_fsm_timing_iter_test.py` | build_report (sky130) | a critical path inside an FSM is found and fixed by rescheduling (`auto_fsm_timing_iter_design.py`: narrow inputs, so the states, not the input-capture fanout, set the critical path); checks each pass's full-design timing and authenticated mapped end-register attribution |
 | `auto_fsm_tighten_stall_test.py` | build_report (sky130) | the other half: when rescheduling cannot move the critical path (sky130, 110 MHz, a path the state count cannot change), the driver stops after the first tightened build with no fmax gain in its full-design timing records, prints why, never produces a 0-op schedule, and exits nonzero within a timeout |
 | `auto_fsm_ctl_compare_test.py` | synth | the constant-table control path is not bigger than the comparator chains it replaced, and the donut FSM still meets the clock goal that v2 misses |
 | `double_parse_file_test.py` | elab | re-parsing an AUTO_FSM design is reproducible |
@@ -1522,11 +1747,16 @@ Priorities are discussed in [#347](https://github.com/JulianKemmerer/PipelineC/d
   call site has no backpressure — `valid` while busy is ignored. Wrap with
   `make_stream_auto_fsm` (§2.1) for a real valid/ready port instead.
 - The function must be pure: no `Reg`, `Feedback` or global wires anywhere in
-  its subtree. Dynamic (non-constant) array indexing is not supported yet.
+  its subtree. Variable-index scalar and compound array reads retain their original types.
 - An operation bigger than a state that cannot be decomposed *and* has no
   soft-operator equivalent sets a floor. That is honest — a float64 multiplier
   is not divisible by scheduling — but it means the clock goal must be reachable
   by the slowest single operation.
+- Pinned unit stages are predicted from AUTO_PIPELINE's landscape, whose cut
+  positions a nested parallel hierarchy may not realize. A pipelined Poly1305
+  modular multiply was predicted at 10.9 ns per stage and measured 20.2 ns
+  (§3.2, "Measured stages"). Each mispredicted placement now costs one
+  synthesis of the unit on its own, and one reschedule, before a build uses it.
 - Control overhead grows with the number of folded operations, because the
   operand multiplexers do. At tens of operations this is a clear win; at
   thousands the multiplexers would dominate (see "loop-preserving FSMs" below).
@@ -1621,37 +1851,8 @@ Priorities are discussed in [#347](https://github.com/JulianKemmerer/PipelineC/d
 
 **Future work**
 
-- **Width/capacity subsumption in binding and allocation.** This remains
-  unimplemented: entities and ordinary value registers still require exact C
-  types. A 32-bit adder can serve every compatible <=32-bit add by extending
-  inputs and truncating the result, and a `uint32_t` physical register can hold
-  non-overlapping `uint1_t`/`uint8_t`/`uint16_t`/`uint32_t` lifetimes if every
-  read narrows back to the value's declared type. The seams are already in
-  place: `schedule["fus"]` maps unit id → entity as an explicit indirection,
-  per-node cast chains are the FU adapter mechanism, and live ranges are
-  separate from physical register ids. The next implementation should be a
-  weighted capacity search, not unconditional widening: a bigger unit, wider
-  operand/writeback mux and extension logic can cost more than the narrow unit
-  or FF bank it replaces. Legality is operation-specific too — unsigned
-  add/bitwise operations are straightforward, while signed comparisons,
-  shifts, overflow-visible results and mixed signedness require explicit rules.
-  The current divider has only one scheduled width of each recurrent operation,
-  so this axis would not change its measurement; heterogeneous arithmetic FSMs
-  are the right regression designs for it.
-- **Recurrent operator-chain binding.** A human FSM often executes
-  `compute -> conditional select -> register` in one state and shares the whole
-  chain across iterations. AUTO_FSM binds each entity independently, so a
-  one-time prologue use can phase-shift the recurrence and leave both the
-  compute result and selected recurrence value registered. A forced second
-  generic MUX experiment at the consume/produce-fusion stage did *not* help
-  (25,476.9 → 27,973.6 µm²): ordinary copy binding split recurrence uses
-  across both units and retained the same 105 working bits. A useful
-  implementation needs chain-aware/prologue-aware
-  binding, not merely another copy. This is likely the next large general gap
-  to handwritten FSM area: human-written leaderboard implementations for this
-  divider cluster around 10–17k µm² in the supplied latchup.app view, against
-  this design's current 24,095.7 µm² (§4), so loop/control recovery and
-  recurrent operator chaining still have meaningful headroom.
+- **Register capacity sharing.** Functional units can serve compatible unsigned narrow operations through width adapters (§3.7). Ordinary value registers still require the same type; sharing one wider register among different narrow lifetimes remains future work.
+- **Larger recurrent groups.** Recurring closed multiply→add/subtract and arithmetic→MUX pairs are candidates for whole-unit binding (§3.7). Longer groups and groups with externally used intermediates remain separate operations.
 - **Per-node grain**, rather than per-entity. Opening an operation today opens
   every use of it, because every use must stay bound to one unit for sharing to
   mean anything.
@@ -1664,11 +1865,6 @@ Priorities are discussed in [#347](https://github.com/JulianKemmerer/PipelineC/d
   left-edge pass, not a global weighted matching across all free intervals;
   such a solver could sometimes choose a different set of merges with fewer
   total mux inputs.
-- **A max() chain fit.** The delay model sums a state's operation chain and its
-  operand multiplexers. For the multiplexer that is not quite right: its select
-  and its data arrive on independent paths, so the truth is
-  `max(sel_path, data_path) + mux_delay`. Modelling that is what would let
-  `CTL_LUT_DU` be charged honestly instead of pinned at 0.
 - **A ROM/SRAM primitive.** Constant tables are built today as a constant local array
   read at a variable index, which elaborates to a full selection tree and only
   becomes cheap once synthesis folds the constants. It works (the whole v3
@@ -1711,6 +1907,118 @@ when something changes, revise the entry that owns that topic rather than
 adding a new one. Keep a fact here only if it still changes a decision
 today: an alternative someone would otherwise retry, a measurement that is
 still a live regression reference, or the reason a default is what it is.
+
+### Constant-aware cleanup and compact operand plans
+
+Typed cleanup runs on the FSM DAG even when scoped implementations prevent
+whole-function combinational rewriting. Constant wrappers preserve original
+operator dispatch and are measured independently. Shared operand-factor nodes
+remain shared in both planning and source emission; reconvergent graphs no
+longer expand into an exponential expression tree.
+Binding candidates also reuse the same cleaned graph within one area search;
+repeating typed cleanup for each unit-count choice otherwise dominates large
+kernel probes. Cached candidates retain independent mutable graph data.
+
+### Pipelined units and pinned regions
+
+AUTO_FSM compares complete schedules using combinational, decomposed and
+pipelined units. Placement uses AUTO_PIPELINE's measured-primitive landscape;
+its concrete digest belongs to the hardware identity. Launch and completion are
+separate scheduling events, and surrounding sweeps cannot move an FSM-owned
+recipe. Measured corrections try feasible word-level pipelines before forced
+fine-grained descent, including with area search disabled.
+Sparse placement recipes omit unsliced descendants while restoring and fixing
+their zero placements. Register-estimator results for unchanged child placements
+are reused across characterization depths.
+PIPELINE moves are local steps and depths are characterized lazily. The first
+form proposed every feasible depth of every candidate unit at every search step:
+on the Poly1305 prologue at cap 64 (harvested Artix-7 delays, 11.2 ns states)
+that was about 445 of the roughly 670 candidates per step, 3,343 candidates and
+2,863 CPU seconds in all, with the initial characterization of every depth alone
+taking about 600 CPU seconds. Width-adapter moves became local steps for the
+same reason: proposing every compatible narrow-to-wide pair gave the integer
+square root (`qor/sqrt`, sixteen subtract widths) about 110 merges per step,
+1,068 of its first 1,428 candidates. Its build took over 25 minutes against
+155 seconds before, and `qor_sqrt_auto_fsm_test` timed out.
+
+### Hardware-only entity names
+
+Budgets and model diagnostics formerly renamed byte-identical hardware. Entity
+hashes now exclude those fields while retaining operations, types, bindings,
+states and placements. Stale source, target or recipe data remains a cache miss.
+The `forced` report flag of `--auto_fsm_open`/`--auto_fsm_unshare` schedules,
+set after naming, was first left in the hash: re-elaboration refused every
+forced schedule as stale, which `auto_fsm_min_area_verify_test` exposed once
+refused schedules stopped the build (above).
+
+### Schedules a build produced are applied or the build stops
+
+`BUILD_AUTO_FSM_FUNC` treats an unusable installed schedule as a cache miss and
+elaborates the combinational passthrough. Inside a build every installed
+schedule comes from the build's own passes, so the driver (and AUTO_PIPELINE's
+re-parses) now raise `AutoFsmInternalError` with the refusal reason
+(`CHECK_SCHEDULES_APPLIED`). The first Poly1305 epilogue build at cap 64 showed
+why: a pinned pipelined unit was re-characterized during elaboration, before
+logic trimming, so its context digest never matched the one taken after
+parsing. The refusal was silent, the passthrough was synthesized (11.4 MHz,
+87.7 ns through the whole kernel), and the build carried on. Pinned recipes are
+now verified where they are applied, by region enforcement's digest and latency
+checks, not re-characterized at elaboration.
+
+### Measurements before scheduling decisions
+
+On Artix-7 the Poly1305 comparator's nine-leaf prefix helper derives 10.8 to
+12.8 ns from standalone leaves (with that build's cached leaf delays) against a
+2.3 ns synthesis measurement. On a fresh output directory forced descent split
+it and everything above it into one-bit gates: the epilogue grew to 33,427
+operations and 62 states, and its cap-64 build ran 12 hours without finishing.
+WireGuard's accepted cap-64 run avoided this only because its output directory
+held logs for those helpers from earlier builds. Warm synthesis stores could
+not reproduce that: the fixture's identities differ from WireGuard's.
+Measuring each estimated helper that a descent decision rests on fixes the cause.
+The same isolated-root measurement made the decode proxies real: before it,
+`ADD_PATH_DELAY_TO_LOOKUP(root_func_names=...)` silently skipped them because
+nothing instantiated them, and every first pass charged a zero select delay.
+Constant wrappers likewise went unmeasured until a scheduled FSM instantiated
+them. Once measured they were synthesized twice: the root was written
+untrimmed, and the scheduled FSM's trimmed instance had different text under
+the same entity name (13 extra runs on the epilogue's first cap-64 build).
+
+### Measured unit stages
+
+The Poly1305 prologue at cap 32 kept its whole modular multiply as a pinned
+five-stage unit, predicted at 10.9 ns per stage. Vivado measured 20.2 ns from
+the state register, through the unit's operand selection and two cascaded
+DSP48E1 with 39 CARRY4, to the first stage register: the realized registers
+left the Karatsuba middle product uncut until its subtract. The recorder of
+measured stages matched endpoints with the schedule's entity name, which the
+netlist never contains (it names the elaborated instance), and it required
+both ends inside the unit. No stage was recorded, the search judged depths by
+prediction only, and the next pass rebuilt the same placement. Measurements
+now follow the elaborated instance, include a unit's launch path, and replace
+the prediction wherever a depth is judged. The cause of the misprediction is
+the landscape's scaling: inside a hierarchy measured as a whole (the 130-bit
+Karatsuba at 25.9 ns), children are placed by their standalone delays (38.8 ns
+along its longest chain) scaled to the whole, so a 16.7 ns half-multiply sits
+at 11.1 ns, while the register realized at its output still follows all of
+it. AUTO_PIPELINE's own sweep corrects such predictions by measuring; pinned
+regions skip that. WireGuard's shared build at cap 64 then missed timing the
+same way (52.57 MHz, a four-stage modular multiply), and each in-context
+correction cost a whole-design pass. Chosen placements are therefore measured
+on their own before the first build that uses them.
+
+### Control timing and local repair
+
+The data and select paths are parallel, so the scheduler charges
+`max(data, select) + mux`. A small width-keyed proxy supplies the first estimate;
+state-register paths supply in-context corrections. Selectors remain inline:
+per-table characterization would add runs without capturing real fanout.
+Attributed misses compare local complete reschedules before global tightening.
+Repair applies only where the model predicted a fit. In the first form a
+stalled repair stopped the loop: on sky130, `auto_fsm_timing_iter_test`'s
+deliberately loose 2.5 budget pipelined one adder per pass (76, 94.9, then
+72.9 MHz) and stopped without ever tightening. A stalled repair now falls back
+to tightening, and the stall stop applies to tightening steps.
 
 ### Tighten loop termination
 

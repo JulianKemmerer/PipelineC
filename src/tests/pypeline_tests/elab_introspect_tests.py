@@ -26,6 +26,14 @@ def get_tests() -> list:
     # subtree, not just the levels its scheduler opens (AUTO.FIND_EFFECTS)
     tests.append(Test(name="auto_fsm_purity_test", category="elab_introspect",
                       cmd=[INST_DIR / "auto_fsm_purity_test.py"]))
+    # Both direct indexed reads and descent through a callee (issue #377).
+    tests.append(
+        Test(
+            name="auto_fsm_var_index_read_test",
+            category="elab_introspect",
+            cmd=[INST_DIR / "auto_fsm_var_index_read_test.py"],
+        )
+    )
     # A hardware local must shadow a same-named module global/closure name in
     # every constant-folding path (_try_eval_const and friends). Failure modes
     # range from a raw KeyError to silent miscompiles (const-folded array index,

@@ -34,8 +34,9 @@ BEAM_WIDTH = 4
 MAX_EMITTED_CANDIDATES = 8
 MAX_ROUNDS = 8
 MAX_BDD_NODES = 8192
-GRAPH_VERSION = 6
-TIMING_VERSION = 1
+# Typed graph rewrite/encoding identity used by every AUTO consumer.
+GRAPH_VERSION = 8
+TIMING_VERSION = 2
 
 
 def frozen(value):
@@ -116,11 +117,622 @@ def common_expressions(dag):
     return prune(dag)
 
 
+def _literal(parser_state, entity, ref):
+    if ref[0] == "lit":
+        return ref[1]
+    if ref[0] != "const":
+        return None
+    import LOGIC
+
+    try:
+        return int(
+            str(
+                LOGIC.GET_VAL_STR_FROM_CONST_WIRE(
+                    ref[1], parser_state.FuncLogicLookupTable[entity], parser_state
+                )
+            ),
+            0,
+        )
+    except (ValueError, TypeError):
+        return None
+
+
+def _known_bits(dag, parser_state, entity):
+    """Conservative unsigned upper-bit bounds; unknown/signed values stay full."""
+    known = {}
+    logic = parser_state.FuncLogicLookupTable[entity]
+
+    def operand_bits(ref, casts, port_type):
+        if not _unsigned(port_type) or any(not _unsigned(t) for t in casts):
+            return width(port_type)
+        if ref[0] == "node":
+            producer = dag["nodes"][ref[1]]
+            n = (
+                known.get(ref[1], width(producer["out_type"]))
+                if _unsigned(producer["out_type"])
+                else width(port_type)
+            )
+        elif ref[0] == "in":
+            t = logic.wire_to_c_type[ref[1]]
+            n = width(t) if _unsigned(t) else width(port_type)
+        else:
+            value = _literal(parser_state, entity, ref)
+            n = (
+                max(1, value.bit_length())
+                if value is not None and value >= 0
+                else width(port_type)
+            )
+        return min([n, width(port_type)] + [width(t) for t in casts])
+
+    inputs = {}
+    for nid in order(dag):
+        node = dag["nodes"][nid]
+        bounds = [
+            operand_bits(r, c, t)
+            for r, c, t in zip(node["operands"], node["casts"], node["port_types"])
+        ]
+        inputs[nid] = bounds
+        result = width(node["out_type"])
+        if _unsigned(node["out_type"]) and all(
+            _unsigned(t) for t in node["port_types"]
+        ):
+            op = node["op"].get("op")
+            if node["kind"] == "binop" and op in ("+", "*", "&", "|", "^"):
+                result = {
+                    "+": max(bounds) + 1,
+                    "*": sum(bounds),
+                    "&": min(bounds),
+                    "|": max(bounds),
+                    "^": max(bounds),
+                }[op]
+            elif node["kind"] == "mux":
+                result = max(bounds[1:])
+            elif node["kind"] == "copy":
+                result = bounds[0]
+        known[nid] = min(result, width(node["out_type"]))
+    return inputs
+
+
+def _typed_integer(value, ctype):
+    """Hardware assignment semantics, independent of native-sim mode flags."""
+    bits = width(ctype)
+    value = int(value) & ((1 << bits) - 1)
+    if not _unsigned(ctype) and value >= (1 << (bits - 1)):
+        value -= 1 << bits
+    return value
+
+
+def _constant_operand(node, i, parser_state, entity):
+    value = _literal(parser_state, entity, node["operands"][i])
+    if value is None or not all(
+        integer(t) for t in node["casts"][i] + [node["port_types"][i]]
+    ):
+        return None
+    for t in node["casts"][i] + [node["port_types"][i]]:
+        value = _typed_integer(value, t)
+    return value
+
+
+def _constant_result(node, values, parser_state):
+    """Evaluate decoded integer operations; opaque primitives remain intact."""
+    import operator
+    import pypeline
+
+    if not integer(node["out_type"]) or any(v is None for v in values):
+        return None
+    kind = node["kind"]
+    op = node["op"].get("op")
+    binary = {
+        "+": operator.add,
+        "-": operator.sub,
+        "*": operator.mul,
+        "&": operator.and_,
+        "|": operator.or_,
+        "^": operator.xor,
+        "==": operator.eq,
+        "!=": operator.ne,
+        ">": operator.gt,
+        ">=": operator.ge,
+        "<": operator.lt,
+        "<=": operator.le,
+        "<<": operator.lshift,
+        ">>": operator.rshift,
+    }
+    try:
+        if kind == "binop" and op in binary:
+            result = binary[op](*values)
+        elif kind == "unaryop" and op in ("~", "-"):
+            result = (~values[0]) if op == "~" else -values[0]
+        elif kind == "shift":
+            result = binary[op](values[0], node["op"]["amount"])
+        elif kind == "copy":
+            result = values[0]
+        elif kind == "mux":
+            result = values[1] if values[0] else values[2]
+        elif kind == "bitmanip":
+            args = [
+                pypeline.SimVal(v, _scalar_ctype_to_type(t))
+                for v, t in zip(values, node["port_types"])
+            ]
+            builtin = node["op"]["builtin"]
+            if builtin == "__slice__":
+                high, low = node["op"]["consts"]
+                result = (values[0] >> low) & ((1 << (high - low + 1)) - 1)
+            elif builtin in pypeline.BIT_MANIP_FUNC_NAMES:
+                result = getattr(pypeline, builtin)(*args, *node["op"]["consts"])
+            else:
+                return None
+        elif kind == "call":
+            fn = _entity_callables(parser_state).get(node["entity"])
+            if fn is None or FIND_EFFECTS(parser_state, node["entity"]):
+                return None
+            # Native call replays annotations and scoped operator implementations.
+            result = pypeline.sim_call(fn, *values)
+        else:
+            return None
+        return _typed_integer(result, node["out_type"])
+    except (ArithmeticError, TypeError, ValueError, NotImplementedError):
+        return None
+
+
+def cleanup(dag, parser_state, entity):
+    """Reach the typed constant/identity fixed point without a new search cap."""
+    totals = {"folded": 0, "identities": 0, "removed": 0, "merged": 0, "specialized": 0}
+    while True:
+        cleaned, counts = _cleanup_once(dag, parser_state, entity)
+        for key, count in counts.items():
+            totals[key] += count
+        if cleaned == dag:
+            return cleaned, totals
+        dag = cleaned
+
+
+def _cleanup_once(dag, parser_state, entity):
+    """Fold typed constants/identities without redispatching user operators.
+
+    Only decoded built-ins receive arithmetic identities. Calls retain their
+    entity and scope, except when their complete pure integer result is known.
+    Every bypass explicitly replays the original operand and output casts.
+    """
+    dag = copy.deepcopy(dag)
+    original_ids = set(dag["nodes"])
+    stats = {"folded": 0, "identities": 0, "removed": 0, "merged": 0, "specialized": 0}
+    aliases = {}
+
+    def resolve(ref):
+        while ref[0] == "node" and ref[1] in aliases:
+            ref = aliases[ref[1]]
+        return list(ref)
+
+    for nid in order(dag):
+        node = dag["nodes"][nid]
+        node["operands"] = [resolve(r) for r in node["operands"]]
+        values = [
+            _constant_operand(node, i, parser_state, entity)
+            for i in range(len(node["operands"]))
+        ]
+        result = _constant_result(node, values, parser_state)
+        if result is not None:
+            aliases[nid] = ["lit", result, node["out_type"]]
+            stats["folded"] += 1
+            continue
+        chosen = None
+        if node["kind"] == "mux":
+            if values[0] is not None:
+                chosen = 1 if values[0] else 2
+            elif (node["operands"][1], node["casts"][1], node["port_types"][1]) == (
+                node["operands"][2],
+                node["casts"][2],
+                node["port_types"][2],
+            ):
+                chosen = 1
+        elif node["kind"] == "binop" and all(
+            _unsigned(t) for t in node["port_types"] + [node["out_type"]]
+        ):
+            op = node["op"].get("op")
+            for i, value in enumerate(values):
+                other = 1 - i
+                ones = (1 << width(node["port_types"][i])) - 1
+                if value == 0 and op in ("&", "*"):
+                    aliases[nid] = ["lit", 0, node["out_type"]]
+                    break
+                if value == 0 and (op in ("+", "|", "^") or (op == "-" and i == 1)):
+                    chosen = other
+                elif width(node["port_types"][other]) == 1 and (
+                    (op == "!=" and value == 0) or (op == "==" and value == 1)
+                ):
+                    chosen = other
+                elif value == 1 and op == "*":
+                    chosen = other
+                elif (
+                    value == ones
+                    and op == "&"
+                    and width(node["port_types"][i]) >= width(node["port_types"][other])
+                ):
+                    chosen = other
+                elif (
+                    value == ones
+                    and op == "|"
+                    and width(node["out_type"]) <= width(node["port_types"][i])
+                ):
+                    aliases[nid] = [
+                        "lit",
+                        _typed_integer(value, node["out_type"]),
+                        node["out_type"],
+                    ]
+                    break
+                elif (
+                    value is not None
+                    and value > 1
+                    and value & (value - 1) == 0
+                    and op == "*"
+                ):
+                    source = cast(
+                        dag,
+                        node["operands"][other],
+                        node["casts"][other]
+                        + [node["port_types"][other], node["out_type"]],
+                        node["out_type"],
+                    )
+                    aliases[nid] = add_node(
+                        dag,
+                        {
+                            "kind": "shift",
+                            "op": {
+                                "kind": "shift",
+                                "op": "<<",
+                                "amount": value.bit_length() - 1,
+                            },
+                            "entity": "hls_constant_shift_" + node["out_type"],
+                            "delay_du": 0,
+                            "operands": [source],
+                            "casts": [[]],
+                            "port_types": [node["out_type"]],
+                            "out_type": node["out_type"],
+                        },
+                    )
+                    break
+        if chosen is not None:
+            aliases[nid] = cast(
+                dag,
+                node["operands"][chosen],
+                node["casts"][chosen] + [node["port_types"][chosen], node["out_type"]],
+                node["out_type"],
+            )
+        if nid in aliases:
+            stats["identities"] += 1
+    for node in dag["nodes"].values():
+        node["operands"] = [resolve(r) for r in node["operands"]]
+    dag["output"] = resolve(dag["output"])
+    prune(dag)
+    # Range proofs operate on the folded graph. Unknown casts and wrap widen
+    # intervals, so an unproved comparison retains its original implementation.
+    ranges = value_ranges(dag, parser_state, entity)
+    for nid in order(dag):
+        node = dag["nodes"][nid]
+        if node["kind"] != "binop" or node["op"].get("op") not in (
+            "<",
+            "<=",
+            ">",
+            ">=",
+            "==",
+            "!=",
+        ):
+            continue
+        bounds = []
+        for i, ref in enumerate(node["operands"]):
+            value = _constant_operand(node, i, parser_state, entity)
+            bound = (
+                (value, value)
+                if value is not None
+                else ranges.get(ref[1])
+                if ref[0] == "node"
+                else None
+            )
+            if bound is None or any(not integer(t) for t in node["casts"][i]):
+                break
+            for t in node["casts"][i] + [node["port_types"][i]]:
+                lo = _typed_integer(bound[0], t)
+                hi = _typed_integer(bound[1], t)
+                # Endpoint conversion alone cannot prove an interval survives
+                # truncation: require containment in the destination's range.
+                bits = width(t)
+                limit = (
+                    (0, (1 << bits) - 1)
+                    if _unsigned(t)
+                    else (-(1 << (bits - 1)), (1 << (bits - 1)) - 1)
+                )
+                if not limit[0] <= bound[0] <= bound[1] <= limit[1]:
+                    bound = limit
+                else:
+                    bound = lo, hi
+            bounds.append(bound)
+        if len(bounds) != 2:
+            continue
+        a, b = bounds
+        op = node["op"]["op"]
+        yes = {
+            "<": a[1] < b[0],
+            "<=": a[1] <= b[0],
+            ">": a[0] > b[1],
+            ">=": a[0] >= b[1],
+            "==": a[0] == a[1] == b[0] == b[1],
+            "!=": a[1] < b[0] or b[1] < a[0],
+        }[op]
+        no = {
+            "<": a[0] >= b[1],
+            "<=": a[0] > b[1],
+            ">": a[1] <= b[0],
+            ">=": a[1] < b[0],
+            "==": a[1] < b[0] or b[1] < a[0],
+            "!=": a[0] == a[1] == b[0] == b[1],
+        }[op]
+        if yes or no:
+            replace(dag, nid, ["lit", int(yes), node["out_type"]])
+            stats["folded"] += 1
+    prune(dag)
+    unmerged = len(dag["nodes"])
+    dag = common_expressions(dag)
+    stats["merged"] = unmerged - len(dag["nodes"])
+    stats["removed"] = len(original_ids - set(dag["nodes"]))
+    return dag, stats
+
+
+def value_ranges(dag, parser_state, entity):
+    """Conservative integer intervals; wrap/truncation widens to the type range."""
+    ranges = {}
+
+    def full(t):
+        bits = width(t)
+        return (
+            (0, (1 << bits) - 1)
+            if _unsigned(t)
+            else (-(1 << (bits - 1)), (1 << (bits - 1)) - 1)
+        )
+
+    def assign(interval, t):
+        lo, hi = full(t)
+        if interval[0] == interval[1]:
+            v = _typed_integer(interval[0], t)
+            return v, v
+        return interval if lo <= interval[0] <= interval[1] <= hi else (lo, hi)
+
+    for nid in order(dag):
+        node = dag["nodes"][nid]
+        if not integer(node["out_type"]) or not all(
+            integer(t)
+            for t in node["port_types"] + [t for chain in node["casts"] for t in chain]
+        ):
+            continue
+        args = []
+        for i, ref in enumerate(node["operands"]):
+            value = _constant_operand(node, i, parser_state, entity)
+            interval = (
+                (value, value)
+                if value is not None
+                else ranges.get(ref[1])
+                if ref[0] == "node"
+                else None
+            )
+            interval = interval or full(node["port_types"][i])
+            for t in node["casts"][i] + [node["port_types"][i]]:
+                interval = assign(interval, t)
+            args.append(interval)
+        op = node["op"].get("op")
+        interval = full(node["out_type"])
+        if node["kind"] == "binop" and op == "+":
+            interval = args[0][0] + args[1][0], args[0][1] + args[1][1]
+        elif node["kind"] == "binop" and op == "*":
+            products = [a * b for a in args[0] for b in args[1]]
+            interval = min(products), max(products)
+        elif node["kind"] == "copy":
+            interval = args[0]
+        elif node["kind"] == "shift":
+            amount = node["op"]["amount"]
+            interval = tuple(
+                v << amount if op == "<<" else v >> amount for v in args[0]
+            )
+        elif node["kind"] == "mux":
+            interval = min(a[0] for a in args[1:]), max(a[1] for a in args[1:])
+        ranges[nid] = assign(interval, node["out_type"])
+    return ranges
+
+
+def _constant_shape(node, parser_state, entity):
+    values = [
+        _constant_operand(node, i, parser_state, entity)
+        for i in range(len(node["operands"]))
+    ]
+    if all(v is None for v in values) or all(v is not None for v in values):
+        return None, values
+    return frozen(
+        (node["entity"], node["port_types"], node["out_type"], values)
+    ), values
+
+
+def specialize_constants(dag, parser_state, entity, delays):
+    """Bind previously elaborated constant shapes, preserving typed edges."""
+    count = 0
+    table = parser_state.pypeline_auto_fsm_specializations
+    for node in dag["nodes"].values():
+        key, values = _constant_shape(node, parser_state, entity)
+        specialization = table.get(key)
+        if specialization is None:
+            continue
+        indices = [i for i, v in enumerate(values) if v is None]
+        node.update(
+            kind="call",
+            op={"kind": "call"},
+            entity=specialization,
+            operands=[node["operands"][i] for i in indices],
+            casts=[node["casts"][i] for i in indices],
+            port_types=[node["port_types"][i] for i in indices],
+            delay_du=_resolve_delay_du(parser_state, specialization, delays),
+        )
+        count += 1
+    return count
+
+
+def PREPARE_CONSTANT_SPECIALIZATIONS(tag, parser_state, elaborator):
+    """Prepare exact constant implementations before bootstrap measurements.
+
+    Wrappers only re-emit decoded primitive operations at their original port
+    types. Calls specialize by invoking the original callable, and their
+    elaborated callee identity must match before the wrapper is eligible.
+    """
+    import pypeline
+
+    try:
+        from operators.comb_opt import _primitive_math, make_constant_mult
+    except ImportError:
+        return
+    root = elaborator._elaborate_live_func(tag.func.__name__, tag.func).func_name
+    _RESOLVE_BUILTIN_SUBMODULES(parser_state, root)
+    if any(
+        kind in ("state", "feedback", "global")
+        for _path, _entity, kind, _detail in FIND_EFFECTS(parser_state, root)
+    ):
+        # The scheduling purity check owns the diagnostic. A global input has
+        # no local driver to trace while preparing optional specializations.
+        return
+    types = _TypeResolver()
+    types.seed_callable(tag.func)
+    for parent in sorted(_subtree_entities(parser_state, root)):
+        logic = parser_state.FuncLogicLookupTable[parent]
+        for inst, base in sorted(logic.submodule_instances.items()):
+            primitive = base in parser_state.pypeline_builtin_op_info
+            if not primitive and _entity_callables(parser_state).get(base) is None:
+                continue
+            op = DECODE_OP(logic, inst, base, parser_state)
+            if op["kind"] not in ("binop", "call"):
+                continue
+            ports = [
+                p
+                for p in logic.submodule_instance_to_input_port_names[inst]
+                if p != LOGIC.CLOCK_ENABLE_NAME
+            ]
+            traced = [
+                _trace_operand(logic, inst + LOGIC.SUBMODULE_MARKER + p) for p in ports
+            ]
+            node = {
+                "kind": op["kind"],
+                "op": op,
+                "entity": base,
+                "operands": [r for r, _c in traced],
+                "casts": [c for _r, c in traced],
+                "port_types": [
+                    logic.wire_to_c_type[inst + LOGIC.SUBMODULE_MARKER + p]
+                    for p in ports
+                ],
+                "out_type": logic.wire_to_c_type[
+                    inst + LOGIC.SUBMODULE_MARKER + LOGIC.RETURN_WIRE_NAME
+                ],
+            }
+            if not all(integer(t) for t in node["port_types"] + [node["out_type"]]):
+                continue
+            key, values = _constant_shape(node, parser_state, parent)
+            if key is None or key in parser_state.pypeline_auto_fsm_specializations:
+                continue
+            if primitive:
+                trial_node = dict(
+                    node,
+                    delay_du=1,
+                    operands=[
+                        ref if value is not None else ["in", f"a{i}"]
+                        for i, (ref, value) in enumerate(zip(node["operands"], values))
+                    ],
+                )
+                trial, _counts = cleanup(
+                    {
+                        "nodes": {"op": trial_node},
+                        "output": ["node", "op"],
+                        "output_casts": [],
+                        "out_type": node["out_type"],
+                    },
+                    parser_state,
+                    parent,
+                )
+                if not any(n["delay_du"] for n in trial["nodes"].values()):
+                    # A proven wire or constant needs no characterization;
+                    # zero-path backends cannot measure an Fmax for it.
+                    continue
+            indices = [i for i, v in enumerate(values) if v is None]
+            if (
+                primitive
+                and op.get("op") == "*"
+                and all(_unsigned(t) for t in node["port_types"] + [node["out_type"]])
+            ):
+                const = next(v for v in values if v is not None)
+                fn = make_constant_mult(
+                    types.resolve(node["port_types"][indices[0]]),
+                    types.resolve(node["out_type"]),
+                    const,
+                )
+            else:
+                em = _Emitter()
+                em.inj_named(pypeline.hw_func, "hw_func")
+                args = [
+                    f"a{i}: {em.inj(types.resolve(node['port_types'][i]), 't')}"
+                    for i in indices
+                ]
+                name = (
+                    "auto_fsm_constant_" + hashlib.sha256(key.encode()).hexdigest()[:20]
+                )
+                em.line("@hw_func")
+                em.line(
+                    f"def {name}({', '.join(args)}) -> {em.inj(types.resolve(node['out_type']), 't')}:"
+                )
+                expressions = []
+                for i, value in enumerate(values):
+                    t = em.inj(types.resolve(node["port_types"][i]), "t")
+                    if value is not None:
+                        em.line(f"    c{i}: {t} = {value}")
+                    expressions.append(f"a{i}" if value is None else f"c{i}")
+                expression = _render_op(op, expressions, em, parser_state, base)
+                em.line(f"    return {expression}")
+                fn = _exec_generated(name, em.src(), em.globals)
+                if primitive:
+                    fn = _primitive_math(fn)
+                    opname, port_types = parser_state.pypeline_builtin_op_info[base]
+                    pypeline.register_operator(
+                        opname,
+                        *(types.resolve(t) for t in port_types),
+                        pypeline.INFERRED,
+                        scope=fn,
+                    )
+            specialized = elaborator._elaborate_live_func(fn.__name__, fn).func_name
+            _RESOLVE_BUILTIN_SUBMODULES(parser_state, specialized)
+            if (
+                not primitive
+                and base
+                not in parser_state.FuncLogicLookupTable[
+                    specialized
+                ].submodule_instances.values()
+            ):
+                # An inherited operator scope must not silently change when
+                # moving a call into this new wrapper's scope.
+                continue
+            parser_state.pypeline_auto_fsm_specializations[key] = specialized
+            parser_state.pypeline_auto_fsm_specialization_shapes[specialized] = {
+                "base": base,
+                "values": values,
+                "port_types": node["port_types"],
+                "out_type": node["out_type"],
+                "op": op,
+            }
+            parser_state.pypeline_auto_fsm_measure_callables.append(fn)
+
+
 def add_node(dag, node):
-    nid = "hls_" + hashlib.sha256(frozen(node).encode()).hexdigest()[:16]
-    previous = dag["nodes"].get(nid)
-    if previous is not None and previous != node:
-        raise ValueError("HLS node identity collision")
+    base = "hls_" + hashlib.sha256(frozen(node).encode()).hexdigest()[:16]
+    nid = base
+    suffix = 0
+    # Rewrites retain node ids while replacing their operands. A content key
+    # may therefore name an older, changed node; preserve it and reuse the
+    # first equal or unused deterministic suffix for this new expression.
+    while nid in dag["nodes"] and dag["nodes"][nid] != node:
+        suffix += 1
+        nid = base + "_" + str(suffix)
     dag["nodes"][nid] = node
     return ["node", nid]
 
@@ -242,8 +854,10 @@ class BDD:
                     value &= (1 << width(t)) - 1
                 other = 1 - i
                 t = node["port_types"][other]
-                if t != node["port_types"][i] or width(t) > 64:
+                if width(t) > 64:
                     continue
+                if value >= (1 << width(t)):
+                    return int(op == "!=")
                 result = 1
                 for bit in range(width(t)):
                     atom = self.atom(["hls_bit", node["operands"][other], node["casts"][other], t, bit])
@@ -1218,6 +1832,33 @@ def DECODE_OP(logic, inst, entity, parser_state):
     absence of a catch-all: an operation this cannot decode raises, rather than
     risking an FSM that computes something subtly different.
     """
+    if entity.startswith(LOGIC.VAR_REF_RD_FUNC_NAME_PREFIX + "_"):
+        import ast
+
+        tokens = logic.ref_submodule_instance_to_ref_toks.get(inst, ())
+        coverage = logic.ref_submodule_instance_to_input_port_driven_ref_toks.get(
+            inst, ()
+        )
+        base_type = logic.wire_to_c_type.get(tokens[0]) if tokens else None
+        if base_type is None:
+            raise UnregenerableOpError(
+                "AUTO_FSM: indexed read has no recorded base type", inst
+            )
+        paths = [list(path[1:]) for path in coverage]
+        if any(not isinstance(token, (str, int)) for path in paths for token in path):
+            raise UnregenerableOpError(
+                "AUTO_FSM: indexed read has unresolved covering paths", inst
+            )
+        path = []
+        variable = len(coverage)
+        for token in tokens[1:]:
+            if isinstance(token, ast.AST):
+                path.append(["index", variable])
+                variable += 1
+            else:
+                path.append(["constant", token])
+        return {"kind": "var_ref", "base_type": base_type, "paths": paths, "path": path}
+
     # Compound reference operations. The same builtin covers two very different
     # things, told apart by how many input ports the instance has:
     #   one port   -> a READ of part of a value:  x.field, x[3]
@@ -1298,7 +1939,7 @@ def DECODE_OP(logic, inst, entity, parser_state):
         f"AUTO_FSM: operation {inst!r} (entity {entity!r}) cannot be regenerated "
         f"as Python source, so this function cannot be turned into an FSM. "
         f"Supported: arithmetic/comparison/bitwise operators, constant shifts, "
-        f"struct-field and constant-index reads, if/conditional muxes, and "
+        f"struct-field and array reads, if/conditional muxes, and "
         f"calls to @hw_func functions.",
         inst,
     )
@@ -1928,7 +2569,7 @@ def _open_target(parser_state, entity, logic, forced=False):
     return None, None
 
 
-def BUILD_DAG(parser_state, func_entity, delays, budget_du, opened=()):
+def BUILD_DAG(parser_state, func_entity, delays, budget_du, opened=(), preserved=()):
     """Flatten the AUTO_FSM'd function into a dataflow DAG of operations.
 
     Walks the elaborated Logic graph. Each submodule instance becomes a node.
@@ -1964,6 +2605,7 @@ def BUILD_DAG(parser_state, func_entity, delays, budget_du, opened=()):
         truncated=truncated,
         blocked=blocked,
         opened=frozenset(opened),
+        preserved=frozenset(preserved),
     )
     logic = parser_state.FuncLogicLookupTable[func_entity]
     output_ref, output_casts = _trace_operand(logic, LOGIC.RETURN_WIRE_NAME)
@@ -1979,6 +2621,9 @@ def BUILD_DAG(parser_state, func_entity, delays, budget_du, opened=()):
         # Operations slower than one state kept atomic because they could not
         # be opened, with why -- diagnostic only, like descend_truncated.
         "descend_blocked": blocked,
+        "specialized_nodes": sum(
+            1 for n in nodes.values() if n.get("specialized_from")
+        ),
     }
 
 
@@ -1996,6 +2641,7 @@ def _build_dag_level(
     truncated,
     blocked,
     opened=frozenset(),
+    preserved=frozenset(),
 ):
     """Add one function's operations to the DAG, descending where needed.
 
@@ -2070,19 +2716,50 @@ def _build_dag_level(
             casts.append(cast_chain)
             port_types.append(logic.wire_to_c_type.get(port_wire))
 
+        # Bind a measured constant wrapper before deciding whether to descend.
+        # Inside that wrapper its primitive must remain available for descent;
+        # rebinding it to the enclosing wrapper would create recursive calls.
+        specializations = parser_state.pypeline_auto_fsm_specializations
+        specialized_from = None
+        if entity not in specializations.values():
+            shape_node = {
+                "entity": sub_entity,
+                "operands": operands,
+                "casts": casts,
+                "port_types": port_types,
+                "out_type": logic.wire_to_c_type.get(
+                    f"{inst}{LOGIC.SUBMODULE_MARKER}{LOGIC.RETURN_WIRE_NAME}"
+                ),
+            }
+            shape, values = _constant_shape(shape_node, parser_state, entity)
+            specialized = specializations.get(shape)
+            if specialized is not None:
+                specialized_from = sub_entity
+                keep = [i for i, v in enumerate(values) if v is None]
+                operands = [operands[i] for i in keep]
+                casts = [casts[i] for i in keep]
+                port_types = [port_types[i] for i in keep]
+                sub_entity = specialized
+                sub_logic = parser_state.FuncLogicLookupTable[sub_entity]
+                delay_du = _resolve_delay_du(parser_state, sub_entity, delays)
+
         # Two independent reasons to open this operation up:
         #   forced  -- it is slower than one whole state, so keeping it atomic
         #              would make the clock goal unreachable (v1's only rule);
         #   chosen  -- the area sweep asked for it, because opening it is
         #              estimated to shrink the design (v2).
         too_slow_for_a_state = delay_du + MUX_PENALTY_DU > budget_du
-        want_open = too_slow_for_a_state or sub_entity in opened
+        want_open = (
+            too_slow_for_a_state or sub_entity in opened
+        ) and sub_entity not in preserved
         open_entity, open_logic = (
             _open_target(parser_state, sub_entity, sub_logic, forced=too_slow_for_a_state)
             if want_open
             else (None, None)
         )
-        if too_slow_for_a_state and open_entity is None:
+        # A preserved entity is kept whole on purpose, as a pipelined unit
+        # whose stages fit the budget: not a descent anything blocked.
+        if too_slow_for_a_state and open_entity is None and sub_entity not in preserved:
             blocked.append(
                 (node_id, sub_entity, delay_du,
                  "no Python source or soft-operator equivalent to open")
@@ -2114,6 +2791,7 @@ def _build_dag_level(
                     truncated,
                     child_blocked,
                     opened,
+                    preserved,
                 )
                 child_out_ref, child_out_casts = _trace_operand(
                     open_logic, LOGIC.RETURN_WIRE_NAME
@@ -2138,6 +2816,7 @@ def _build_dag_level(
                 blocked.extend(child_blocked)
                 nodes[node_id] = {
                     "kind": "inlined",
+                    "specialized_from": specialized_from,
                     "entity": sub_entity,
                     "delay_du": 0,
                     "operands": operands,
@@ -2165,6 +2844,7 @@ def _build_dag_level(
         op = DECODE_OP(logic, inst, sub_entity, parser_state)
         nodes[node_id] = {
             "kind": op["kind"],
+            "specialized_from": specialized_from,
             "op": op,
             "entity": sub_entity,
             "delay_du": delay_du,
@@ -2514,6 +3194,8 @@ class _Emitter:
         self.globals = {}
         self._by_obj_key = {}
         self._n = 0
+        # One seeded resolver per source emission, including indexed reads.
+        self.type_resolver = _TypeResolver()
 
     def inj_named(self, obj, name):
         """Inject a live object under an EXACT name, for the few callees the
@@ -2585,6 +3267,22 @@ def _render_op(op, operand_exprs, em, parser_state, entity):
     kind = op["kind"]
     if kind == "ref":
         return operand_exprs[0] + _path_suffix(op["toks"])
+    if kind == "var_ref":
+        name = f"indexed_base{len(em.lines)}"
+        ctype = em.inj(em.type_resolver.resolve(op["base_type"]), "t")
+        em.line(f"    {name}: {ctype}")
+        # Coverage is in temporal order. Later, more specific writes must
+        # override an older whole-value input, just as in the original read.
+        for expression, path in zip(operand_exprs, op["paths"]):
+            em.line(f"    {name}{_path_suffix(path)} = {expression}")
+        expression = name
+        for kind, token in op["path"]:
+            expression += (
+                f"[{operand_exprs[token]}]"
+                if kind == "index"
+                else _path_suffix([token])
+            )
+        return expression
     if kind == "copy":
         return operand_exprs[0]
     if kind == "assemble":

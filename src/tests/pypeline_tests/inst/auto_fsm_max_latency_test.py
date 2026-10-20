@@ -4,10 +4,11 @@
 `max_latency=N` is a HARD constraint, not a preference, and this checks both
 halves of that:
 
-  1. A cap the tool CAN meet is met -- by unsharing, because building a second
-     copy of a unit is the only thing that can shorten a schedule. Without the
-     cap the same design shares everything onto one adder and runs longer, so
-     the test also confirms the cap actually changed the answer.
+  1. A cap the tool CAN meet is met. Here that takes a second adder: five
+     dependent adds on one adder need five states, and pipelining an adder
+     only adds cycles. Without the cap the same design shares everything onto
+     one adder and runs longer, so the test also confirms the cap actually
+     changed the answer.
   2. A cap the tool CANNOT meet fails the build, loudly, naming the FSM and the
      latency it really needs. Quietly returning a slower FSM would defeat the
      entire point of asking for a cap -- the surrounding design has a deadline.

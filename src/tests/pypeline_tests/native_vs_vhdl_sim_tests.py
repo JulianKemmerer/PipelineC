@@ -96,6 +96,12 @@ COMB_TEST_FILES = [
     # AUTO_FSM through real GHDL in --comb mode (passthrough, latency 0). The
     # scheduled FSM hardware is exercised by the non---comb entry below.
     ("self_check_auto_fsm_test.py", INST_DIR, []),
+    # Constant multiply, truncation and signed extension, eight boundary cases.
+    ("self_check_auto_fsm_constants_test.py", INST_DIR, []),
+    # Exact raw latency and stalled stream results, including busy requests.
+    ("self_check_auto_fsm_pipelined_unit_test.py", INST_DIR, []),
+    # Indexed scalar/struct/array results, equality defaults and arithmetic groups.
+    ("self_check_auto_fsm_select_share_test.py", INST_DIR, []),
     # make_stream_auto_fsm's handshake wrapper, same --comb/non---comb split.
     ("self_check_stream_auto_fsm_test.py", INST_DIR, []),
     # AUTO_FSM's operand mux over array values (5- and 7-way uint2_t[4]),
@@ -177,6 +183,16 @@ NON_COMB_TEST_FILES = [
     # the REAL scheduled FSM (replaces synth_tests.py's former
     # auto_fsm_native_sim_test + auto_fsm_vhdl_sim_test pair with one cycle diff).
     ("self_check_auto_fsm_test.py", INST_DIR, []),
+    # Same constants through the generated FSM datapath, checked in GHDL.
+    ("self_check_auto_fsm_constants_test.py", INST_DIR, []),
+    # Requires a selected shared pipelined unit in the generated FSM.
+    ("self_check_auto_fsm_pipelined_unit_test.py", INST_DIR, []),
+    # Same indexed compound reads and sharing arithmetic through scheduled FSMs.
+    ("self_check_auto_fsm_select_share_test.py", INST_DIR, []),
+    # Unchanged canonical Poly1305, two lanes, independent Python vectors.
+    # Epilogue measured 2165–2501 s idle and 6622 s with two Vivado builds
+    # sharing the machine, against the category's 7200 s timeout.
+    ("self_check_auto_fsm_poly1305_test.py", INST_DIR, ["-D", "KERNEL=epilogue"]),
     # Forced descent's width-halving equivalents through the real scheduled
     # FSM: a 0.1 budget scale (4 ns states at 25 MHz) makes the 32-bit
     # add/subtract and the 16x16 inferred multiply too slow for a state, so
@@ -267,6 +283,7 @@ def get_tests() -> list:
             + extra_args
             + SYN_TOOL_ARGS[NON_COMB_SYN_TOOL],
             needs_out_dir=True,
+            long_pole=filename == "self_check_auto_fsm_poly1305_test.py",
         )
         for filename, source_dir, extra_args in NON_COMB_TEST_FILES
     ]
@@ -384,6 +401,25 @@ def get_tests() -> list:
                 "RAM_TARGET_IN_SOURCE=0",
             ],
             needs_out_dir=True,
+        )
+    )
+    # The prologue shares the fixture; measured 721–906 s (timeout 7200 s).
+    tests.append(
+        Test(
+            name="self_check_auto_fsm_poly1305_prologue",
+            category="native_vs_vhdl_sim",
+            cmd=[
+                PYPELINE_SIM_DEBUG,
+                INST_DIR / "self_check_auto_fsm_poly1305_test.py",
+                "--sim",
+                "--run",
+                "all",
+                "-D",
+                "KERNEL=prologue",
+            ]
+            + SYN_TOOL_ARGS[NON_COMB_SYN_TOOL],
+            needs_out_dir=True,
+            long_pole=True,
         )
     )
     return tests

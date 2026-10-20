@@ -154,10 +154,13 @@ def targets_and_resources():
         with patch.object(SYN, "SYN_TOOL", VIVADO), patch.object(
             PY_TO_LOGIC,
             "PARSE_FILE",
-            side_effect=lambda path: state(py.AUTO_PIPELINE_RAM_PLAN_CACHE()["key"]),
+            side_effect=lambda path, resolved_part: state(
+                py.AUTO_PIPELINE_RAM_PLAN_CACHE()["key"]
+            ),
         ) as parse:
             updated = ap.RAM_PREPARE_TARGET(original, "fixture.py")
-            parse.assert_called_once_with("fixture.py")
+            # The re-parse keeps the part the driver already resolved.
+            parse.assert_called_once_with("fixture.py", resolved_part=original.part)
             assert ap.RAM_PLANS_FROM_STATE(updated)["key"].split_depth == 0
             assert updated.part == original.part and updated.syn_tool_name == "vivado"
             ap.RAM_VALIDATE_BACKEND(updated)
@@ -166,7 +169,9 @@ def targets_and_resources():
         with patch.object(SYN, "SYN_TOOL", None), patch.object(
             PY_TO_LOGIC,
             "PARSE_FILE",
-            side_effect=lambda path: state(py.AUTO_PIPELINE_RAM_PLAN_CACHE()["key"]),
+            side_effect=lambda path, resolved_part: state(
+                py.AUTO_PIPELINE_RAM_PLAN_CACHE()["key"]
+            ),
         ):
             updated = ap.RAM_PREPARE_TARGET(original, "fixture.py")
             assert ap.RAM_TARGET(updated) == "vivado"
@@ -342,7 +347,9 @@ def measured_joint_trim_and_restoration():
                     (
                         PY_TO_LOGIC,
                         "PARSE_FILE",
-                        lambda path: state(py.AUTO_PIPELINE_RAM_PLAN_CACHE()),
+                        lambda path, resolved_part: state(
+                            py.AUTO_PIPELINE_RAM_PLAN_CACHE()
+                        ),
                     ),
                     (ap, "WRITE_0_ADDED_CLKS_INIT_FILES", lambda ps: None),
                     (SWEEP, "WRITE_SWEEP_HISTORY", lambda *a, **k: None),

@@ -93,16 +93,13 @@ def main():
     # the top-level entity lives several directories deeper, mirroring the
     # source file's path).
     #
-    # Also excluded: auto_fsm_operand_mux_*, the generated operand multiplexer
-    # entities (include/pypeline/operators/auto_fsm_mux.py). They are named
-    # auto_fsm_* too, but they are what the FSM is BUILT FROM, not the FSM.
+    # Match this fixture's tagged function, excluding generated operand muxes,
+    # constant specializations and pipelined unit helpers.
     candidates = []
     for root, _dirs, files in os.walk(out_dir):
         for f in files:
             if (
-                f.startswith("auto_fsm_")
-                and not f.startswith("auto_fsm_top_")
-                and not f.startswith("auto_fsm_operand_mux")
+                f.startswith("auto_fsm_blob_from_auto_fsm_test_")
                 and f.endswith(".vhd")
                 and not f.endswith("_top.vhd")
                 and "_comb_" not in f

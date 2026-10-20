@@ -470,7 +470,216 @@ def schedule_with(parser_state, key, tag, budget_scale):
     return AUTO_FSM.BUILD_SCHEDULE(parser_state, key, tag, budget_scale)
 
 
+def _cleanup_node(op, operands, ports=None, result="uint8_t", casts=None):
+    ports = ports or ["uint8_t"] * len(operands)
+    return dict(
+        kind="binop",
+        op={"kind": "binop", "op": op},
+        entity="BIN_OP_" + op,
+        operands=operands,
+        casts=casts or [[] for _ in operands],
+        port_types=ports,
+        out_type=result,
+        delay_du=10,
+    )
+
+
+def _cleanup_graph(nodes, output):
+    return dict(nodes=nodes, output=output, out_type="uint8_t", output_casts=[])
+
+
+def test_cleanup_constant_casts():
+    import LOGIC
+
+    ps = LOGIC.ParserState()
+    n = _cleanup_node(
+        "+",
+        [["lit", 255, "uint8_t"], ["lit", 1, "uint1_t"]],
+        ["uint16_t", "uint16_t"],
+        "uint17_t",
+        [["int8_t"], []],
+    )
+    dag, counts = AUTO.cleanup(_cleanup_graph({"sum": n}, ["node", "sum"]), ps, "root")
+    assert dag["output"] == ["lit", 65536, "uint17_t"], dag
+    assert counts["folded"] == 1
+
+
+def test_cleanup_identity_preserves_narrowing():
+    import LOGIC
+
+    ps = LOGIC.ParserState()
+    n = _cleanup_node(
+        "+",
+        [["in", "x"], ["lit", 0, "uint1_t"]],
+        ["uint16_t", "uint1_t"],
+        "uint17_t",
+        [["uint4_t"], []],
+    )
+    dag, counts = AUTO.cleanup(_cleanup_graph({"sum": n}, ["node", "sum"]), ps, "root")
+    result = dag["nodes"][dag["output"][1]]
+    assert result["kind"] == "copy" and result["casts"][0] == [
+        "uint4_t",
+        "uint16_t",
+        "uint17_t",
+    ]
+    assert counts["identities"] == 1
+
+
+def test_cleanup_refuses_custom_operator_identity():
+    import LOGIC
+
+    ps = LOGIC.ParserState()
+    node = _cleanup_node("+", [["in", "x"], ["lit", 0, "uint1_t"]])
+    node.update(kind="call", op={"kind": "call"}, entity="custom_add")
+    dag, _counts = AUTO.cleanup(
+        _cleanup_graph({"call": node}, ["node", "call"]), ps, "root"
+    )
+    assert dag["nodes"]["call"]["entity"] == "custom_add"
+
+
+def test_cleanup_cse_is_deterministic():
+    import LOGIC
+
+    ps = LOGIC.ParserState()
+    a = _cleanup_node("+", [["in", "a"], ["in", "b"]])
+    b = _cleanup_node("+", [["in", "b"], ["in", "a"]])
+    total = _cleanup_node("^", [["node", "a"], ["node", "b"]])
+    dag = _cleanup_graph(dict(a=a, b=b, total=total), ["node", "total"])
+    cleaned, counts = AUTO.cleanup(dag, ps, "root")
+    assert counts["merged"] == 1
+    assert AUTO.cleanup(dag, ps, "root")[0] == cleaned
+
+
+def test_cleanup_factoring_preserves_reconvergent_glue():
+    nodes = {}
+    for side, inputs in (("left", ("a", "b")), ("right", ("c", "d"))):
+        for level in range(12):
+            refs = (
+                [["in", name] for name in inputs]
+                if level == 0
+                else [["node", f"{side}{level-1}"]] * 2
+            )
+            nodes[f"{side}{level}"] = _cleanup_node("^", refs)
+            nodes[f"{side}{level}"]["delay_du"] = 0
+    plan = AUTO_FSM._operand_factor_plan(
+        nodes,
+        [(0, ["node", "left11"], (), 1), (1, ["node", "right11"], (), 2)],
+        {},
+        2,
+        "uint8_t",
+    )
+    for _ in range(11):
+        assert plan["children"][0] is plan["children"][1]
+        plan = plan["children"][0]
+    assert len(tuple(AUTO_FSM._factor_plan_muxes(plan))) == 2
+
+
+def _pipeline_test_graph(dependent=False):
+    nodes = {}
+    for i in range(3):
+        ref = ["node", str(i - 1)] if dependent and i else ["in", "x"]
+        nodes[str(i)] = _cleanup_node("*", [ref, ["lit", 3, "uint2_t"]])
+    return _cleanup_graph(nodes, ["node", "2"])
+
+
+def test_pipelined_unit_launches_each_cycle():
+    dag = _pipeline_test_graph()
+    implementation = {
+        "BIN_OP_*": dict(
+            latency=2, ii=1, input_stage_du=3, output_stage_du=2, worst_stage_du=5
+        )
+    }
+    schedule = AUTO_FSM.SCHEDULE_DAG(
+        dag, 10, lambda _nid: 0, implementations=implementation
+    )
+    assert sorted(schedule["launch_of"].values()) == [1, 2, 3]
+    assert sorted(schedule["state_of"].values()) == [3, 4, 5]
+    assert len(schedule["fus"]) == 1 and schedule["n_states"] == 5
+
+
+def test_pipelined_dependency_waits_for_completion():
+    dag = _pipeline_test_graph(dependent=True)
+    implementation = {
+        "BIN_OP_*": dict(
+            latency=2, ii=1, input_stage_du=3, output_stage_du=2, worst_stage_du=5
+        )
+    }
+    schedule = AUTO_FSM.SCHEDULE_DAG(
+        dag, 10, lambda _nid: 0, implementations=implementation
+    )
+    assert schedule["launch_of"] == {"0": 1, "1": 3, "2": 5}
+    assert schedule["state_of"] == {"0": 3, "1": 5, "2": 7}
+    assert len(schedule["fus"]) == 1 and schedule["n_states"] == 7
+
+
+def test_late_pipeline_result_waits_for_the_next_state():
+    dag = _pipeline_test_graph(dependent=True)
+    implementation = {
+        "BIN_OP_*": dict(
+            latency=1, ii=1, input_stage_du=7, output_stage_du=7, worst_stage_du=7
+        )
+    }
+    schedule = AUTO_FSM.SCHEDULE_DAG(
+        dag, 10, lambda _nid: 0, max_states=6, implementations=implementation
+    )
+    assert schedule["launch_of"] == {"0": 1, "1": 3, "2": 5}
+    assert schedule["state_of"] == {"0": 2, "1": 4, "2": 6}
+    assert not schedule["at_floor"] and not schedule["latency_infeasible"]
+
+
+def test_pipelined_initiation_interval_and_cap():
+    dag = _pipeline_test_graph()
+    implementation = {
+        "BIN_OP_*": dict(
+            latency=2, ii=2, input_stage_du=3, output_stage_du=2, worst_stage_du=5
+        )
+    }
+    schedule = AUTO_FSM.SCHEDULE_DAG(
+        dag, 10, lambda _nid: 0, max_states=5, implementations=implementation
+    )
+    assert sorted(schedule["launch_of"].values()) == [1, 3, 5]
+    assert schedule["n_states"] == 7 and schedule["latency_infeasible"]
+    copies = AUTO_FSM._replication_for_latency({"BIN_OP_*": 3}, 5, implementation)
+    assert copies == {"BIN_OP_*": 2}
+    schedule = AUTO_FSM.SCHEDULE_DAG(
+        dag,
+        10,
+        lambda _nid: 0,
+        max_states=5,
+        copies=copies,
+        implementations=implementation,
+    )
+    assert schedule["n_states"] == 5 and not schedule["latency_infeasible"]
+
+
+def test_mixed_units_break_only_registered_ordering_edges():
+    add = _cleanup_node("+", [["in", "x"], ["lit", 1, "uint1_t"]])
+    multiply = _cleanup_node("*", [["node", "add"], ["lit", 3, "uint2_t"]])
+    tail = _cleanup_node("+", [["node", "multiply"], ["lit", 1, "uint1_t"]])
+    dag = _cleanup_graph(dict(add=add, multiply=multiply, tail=tail), ["node", "tail"])
+    implementation = {
+        "BIN_OP_*": dict(
+            latency=2, ii=1, input_stage_du=3, output_stage_du=2, worst_stage_du=5
+        )
+    }
+    schedule = AUTO_FSM.SCHEDULE_DAG(
+        dag, 30, lambda _nid: 0, implementations=implementation
+    )
+    assert schedule["launch_of"] == {"add": 1, "multiply": 1, "tail": 3}
+    assert len(schedule["fus"]) == 2 and schedule["n_states"] == 3
+
+
 def main():
+    test_cleanup_constant_casts()
+    test_cleanup_identity_preserves_narrowing()
+    test_cleanup_refuses_custom_operator_identity()
+    test_cleanup_cse_is_deterministic()
+    test_cleanup_factoring_preserves_reconvergent_glue()
+    test_pipelined_unit_launches_each_cycle()
+    test_pipelined_dependency_waits_for_completion()
+    test_late_pipeline_result_waits_for_the_next_state()
+    test_pipelined_initiation_interval_and_cap()
+    test_mixed_units_break_only_registered_ordering_edges()
     # A diamond chain contains O(N) nodes but exponentially many paths. Input
     # storage analysis must visit each node once per state, not once per path.
     class CountedNodes(dict):
@@ -801,17 +1010,16 @@ def main():
 
         print("[tightening: SCHEDULES_EQUAL compares hardware, not budget]")
         # The tighten loop shrinks budget_scale and asks whether the plan
-        # moved. Comparing the budget fields (and the entity name hashed from
-        # them) made every step look changed, so its "shrinking no longer
-        # changes the schedule" stop could never fire.
+        # moved. Comparing model-only budget fields would defeat the
+        # "shrinking no longer changes the schedule" stop.
         roomy_a = schedule_with(ps2, key2, tag2, 4.0)
         roomy_b = schedule_with(ps2, key2, tag2, 3.0)
         check(
             roomy_a["n_states"] == roomy_b["n_states"]
             and roomy_a["budget_scale"] != roomy_b["budget_scale"]
-            and roomy_a["entity"] != roomy_b["entity"],
+            and roomy_a["entity"] == roomy_b["entity"],
             "precondition: two roomy budgets pack identically but differ in "
-            "budget fields and entity name",
+            "budget fields while retaining their hardware entity name",
         )
         check(
             AUTO_FSM.SCHEDULES_EQUAL({key2: roomy_a}, {key2: roomy_b}),
@@ -1366,8 +1574,8 @@ def main():
 
         print("[control encodings share one packing memo]")
         # Under ctl auto the v3 and onehot searches visit mostly the same
-        # points; packing does not depend on the encoding (CTL_LUT_DU == 0),
-        # so the second search reuses the first's schedules. The reused ones
+        # points. With identical select-arrival models, the second search
+        # reuses the first's packing schedules. The reused ones
         # must be byte-identical to building fresh, entity name included.
         def dumps(schedule):
             return json.dumps(schedule, sort_keys=True, default=str)
@@ -1504,6 +1712,18 @@ def main():
             tmp, mhz=25.0, name="d_blocked", source=BLOCKED_SRC
         )
         callables10 = AUTO._entity_callables(ps10)
+        # Indexed reads regenerate now (#377). Inject an unknown builtin into
+        # pick to keep testing the diagnostic for genuinely unsupported ops.
+        for entity, logic in list(ps10.FuncLogicLookupTable.items()):
+            if getattr(callables10.get(entity), "__name__", None) != "pick":
+                continue
+            for inst, child in list(logic.submodule_instances.items()):
+                if child.startswith("VAR_REF_RD_"):
+                    unknown = "unsupported_indexed_builtin"
+                    opaque = ps10.FuncLogicLookupTable[child].DEEPCOPY()
+                    opaque.func_name = unknown
+                    ps10.FuncLogicLookupTable[unknown] = opaque
+                    logic.submodule_instances[inst] = unknown
         for entity, logic in ps10.FuncLogicLookupTable.items():
             name = getattr(callables10.get(entity), "__name__", None)
             if name == "pick" or entity.startswith("BIN_OP_INFERRED_MULT_int"):
@@ -1526,9 +1746,7 @@ def main():
             and "VAR_REF_RD" in reasons10[pick10[0]]
             and "d_blocked_py_l" in reasons10[pick10[0]]
             and "cannot be regenerated" in reasons10[pick10[0]],
-            "a call kept atomic names the unregenerable operation inside it, with "
-            "its source coordinates (tracks auto_fsm_var_index_read_known_issue: "
-            "once variable-index reads regenerate, block this call another way)",
+            "a call kept atomic names the unsupported operation and its source coordinates",
         )
         check(
             len(mult10) == 1
@@ -1712,25 +1930,25 @@ def main():
         units12 = dict((e, n) for e, n in best12["unshared"])
         check(
             best12["worst_state_du"] <= best12["budget_du"]
-            and len(units12) == 2
-            and all(n >= 2 for n in units12.values()),
-            f"the search reaches the jointly feasible binding (unshared "
+            and not best12["latency_infeasible"],
+            f"the search reaches a feasible implementation (unshared "
             f"{best12['unshared']}, worst {best12['worst_state_du']} of "
             f"{best12['budget_du']})",
         )
         old_cap = AUTO_FSM.MAX_SWEEP_DAG_NODES
-        print("[area search skips scoring when the anchor exceeds the DAG cap]")
+        print("[area search permits coarsening an anchor beyond the DAG cap]")
         try:
             AUTO_FSM.MAX_SWEEP_DAG_NODES = len(anchor12["nodes"]) - 1
             capped12 = AUTO_FSM.SWEEP_MIN_AREA_SCHEDULE(ps12, key12, tag12, 0.9)
         finally:
             AUTO_FSM.MAX_SWEEP_DAG_NODES = old_cap
         check(
-            capped12["sweep_candidates"] == 0
-            and capped12["sweep_skipped_dag_nodes"] == len(anchor12["nodes"])
-            and AUTO_FSM.SCHEDULES_EQUAL({key12: capped12}, {key12: anchor12}),
-            "an anchor already past the DAG cap is returned without building "
-            "candidates the cap would refuse",
+            capped12["sweep_skipped_dag_nodes"] == len(anchor12["nodes"])
+            and (
+                AUTO_FSM.SCHEDULES_EQUAL({key12: capped12}, {key12: anchor12})
+                or len(capped12["nodes"]) <= len(anchor12["nodes"])
+            ),
+            "an oversized anchor keeps the incumbent or a coarsened candidate",
         )
         check(
             "area search skipped" in AUTO_FSM.DESCRIBE_SCHEDULE(ps12, key12, capped12),

@@ -1031,8 +1031,11 @@ def SERIALIZE_PATH_REPORT(path):
         "path_delay_ns",
         "data_path_ns",
         "logic_levels",
+        "path_elements",
     )
-    return {k: getattr(path, k, None) for k in fields}
+    result = {k: getattr(path, k, None) for k in fields}
+    result["netlist_resources"] = sorted(getattr(path, "netlist_resources", ()) or ())
+    return result
 
 
 _PATH_TRIE_INST = "\0inst"
@@ -3339,6 +3342,11 @@ def ADD_PATH_DELAY_TO_LOOKUP(parser_state, root_func_names=None):
         logic = parser_state.FuncLogicLookupTable[logic_func_name]
         if logic.delay is None:
             print("None delay for func to synth?", logic_func_name)
+        if logic.state_regs or logic.feedback_vars:
+            # An embedded AUTO_PIPELINE can absorb latency even though its
+            # stateful container has no zero-clock combinational geometry.
+            # Its measured FSM delay remains valid; draw maps for the regions.
+            continue
         # What if do want pipeline map for something that will never be pipelined? --synth_all?
         if not AUTO_PIPELINE.FUNC_HAS_HIER_ALLOWING_ADDED_LATENCY_TO_RAW_VHDL(
             logic.func_name, parser_state

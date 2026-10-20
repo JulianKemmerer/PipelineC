@@ -7867,7 +7867,7 @@ def _elaborate_live_roots(roots):
     return parser_state
 
 
-def PARSE_FILE(py_file, run_syn_initial_hooks=False):
+def PARSE_FILE(py_file, run_syn_initial_hooks=False, resolved_part=None):
     """Import and elaborate a Pypeline design file.
 
     run_syn_initial_hooks: run the design's @initial(syn) hooks right after the
@@ -7875,6 +7875,8 @@ def PARSE_FILE(py_file, run_syn_initial_hooks=False):
     for the matching @final(syn) hooks. Only the pipelinec driver's first parse
     passes True -- re-parses (pin-and-confirm passes, the no-synth-tool
     re-elaboration) must not re-run them.
+    resolved_part carries the driver's reconciled target into internal re-parses
+    before elaboration validates compiler-owned schedules and placements.
     """
     import AUTO_PIPELINE
 
@@ -7974,6 +7976,8 @@ def PARSE_FILE(py_file, run_syn_initial_hooks=False):
     # ── Apply pypeline pragmas (PART, MAIN_MHZ) from the live module ──
     if pypeline._part_registry is not None:
         parser_state.part = pypeline._part_registry
+    elif resolved_part is not None:
+        parser_state.part = resolved_part
     if pypeline._syn_tool_registry is not None:
         parser_state.syn_tool_name = pypeline._syn_tool_registry
 
@@ -8154,7 +8158,15 @@ def PARSE_FILE(py_file, run_syn_initial_hooks=False):
     # Trim logic (currently PipelineC backend has bug that needs this)
     if LOGIC.TRIM_COLLAPSE_LOGIC:
         print("Doing simple logic trimming/collapsing...", flush=True)
-        for main_func in list(parser_state.main_mhz.keys()):
+        import AUTO_FSM
+
+        # AUTO_FSM's standalone measurement roots are trimmed like what a MAIN
+        # instantiates: a scheduled FSM later instantiates them, and the entity
+        # text measured now must be the text synthesized then.
+        trim_roots = list(parser_state.main_mhz.keys()) + sorted(
+            AUTO_FSM.AUTO_FSM_MEASURE_ENTITIES(parser_state)
+        )
+        for main_func in trim_roots:
             main_func_logic = parser_state.FuncLogicLookupTable[main_func]
             parser_state = LOGIC.TRIM_COLLAPSE_FUNC_DEFS_RECURSIVE(
                 main_func_logic, parser_state
