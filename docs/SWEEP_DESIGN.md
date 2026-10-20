@@ -57,7 +57,7 @@ same nonzero-exit timing-failure gate as an ordinary pipeline search.
 
 | file | role in a sweep |
 |---|---|
-| `src/SWEEP.py` | The common machinery: cut subtrees, slice landscapes, floor prediction, cut planning and typed placement, applying placements to `TimingParams`, hotspot attribution and mini-sweeps, plan accounting, `sweep_history.json`, the latency memory (§5), and the drivers — `DO_THROUGHPUT_SWEEP` (entry point), `DO_PLANNED_THROUGHPUT_SWEEP` (the refinement loop), `DO_COARSE_THROUGHPUT_SWEEP` (`--coarse` and mini-sweeps), `DO_SEEDED_CONFIRM_OR_SWEEP` (the pin-and-confirm confirmation run). |
+| `src/SWEEP.py` | The common machinery: cut subtrees, slice landscapes, floor prediction, cut planning and typed placement, applying placements to `TimingParams`, hotspot attribution and mini-sweeps, plan accounting, `sweep_history.json`, the latency memory (§5; a build's `INSTALL_LATENCY_HINTS` and `APPLY_LATENCY_MEMORY`), the end-of-build results (`WRITE_SWEEP_RESULTS`), and the drivers — `DO_THROUGHPUT_SWEEP` (entry point), `DO_PLANNED_THROUGHPUT_SWEEP` (the refinement loop), `DO_COARSE_THROUGHPUT_SWEEP` (`--coarse` and mini-sweeps), `DO_SEEDED_CONFIRM_OR_SWEEP` (the pin-and-confirm confirmation run). |
 | `src/SYN.py` | The synthesis API the sweep calls: delay collection, single-instance and whole-design synthesis, parsed timing reports ([`SYN_DESIGN.md`](SYN_DESIGN.md)). |
 | `src/AUTO_PIPELINE.py` | The pipeline representation the sweep edits (including the concrete-pipeline snapshots that locks replay), and AUTO_PIPELINE-specific feedback: independent tag regions are planned and enforced on every iteration, including eligible unconstrained tags with clock goals ([`AUTO_PIPELINE_DESIGN.md`](AUTO_PIPELINE_DESIGN.md#6-constrained-auto_pipeline-regions-latency--start_latency--max_latency)). |
 | `src/AUTO_MULTI_CYCLE.py` | AUTO_MULTI_CYCLE feedback: failing multi-cycle paths raise their cycle count ([`AUTO_MULTI_CYCLE_DESIGN.md`](AUTO_MULTI_CYCLE_DESIGN.md#3-sweep-feedback)). |
@@ -750,8 +750,9 @@ iteration".
   printed `Pipeline depth summary`.
 - **When it's written.** Each deciding run writes the file provisionally
   (`build_complete: false`), so a build that dies later still leaves data.
-  The driver rewrites it at *Writing Results* (`build_complete: true`) before
-  the TIMING NOT MET exit, so failing builds get it too. A `--comb`
+  `WRITE_SWEEP_RESULTS` rewrites it at *Writing Results* (`build_complete: true`)
+  before the driver's TIMING NOT MET exit, so failing builds get it too. The
+  final files, the syn `@final` hooks and `latency_profile.json` follow it there. A `--comb`
   characterization can also retain an observation without a verified goal verdict.
 
 Schema 3 retains the schema-2 final field names. `observations` records each
@@ -1253,10 +1254,11 @@ changing the count/ready controller does not invalidate that datapath piece.
   is intentional. `SYN.SYNTHESIS_STORE_PRUNE` also covers latency files, which are
   touched on use and write.
 
-**Resolution (`src/pipelinec`, sweep mode only).**
+**Resolution (sweep mode only).**
 
-1. Parse normally with hints and `start_latency=`; resolve part, tool and goals.
-2. Emit zero-clock VHDL and select each piece: current goal first, otherwise the
+1. Parse normally with hints (`INSTALL_LATENCY_HINTS`, before the first parse) and
+   `start_latency=`; resolve part, tool and goals.
+2. Emit zero-clock VHDL and, in `APPLY_LATENCY_MEMORY`, select each piece: current goal first, otherwise the
    highest lower goal. A digest/part/tool mismatch or higher goal is ignored.
    Matching memory beats hints; at equal goals the out_dir record beats the store.
 3. If selected served values differ, re-parse with them and re-check digests. Drop

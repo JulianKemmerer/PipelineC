@@ -501,7 +501,7 @@ Within each group, bugs that affect both front ends come first, problems in the 
 
 - **Front ends:** both.
 - **What happens:** the command line only checks the file extension. A missing `.c` file shows a traceback ending in a failed `cpp -MM -MG …` command; a missing `.py` file shows a `FileNotFoundError` traceback from Python's import system.
-- **Where to look:** `src/pipelinec:315`.
+- **Where to look:** `src/pipelinec`, the source-file type check right after `parse_args()`.
 - **Reproduce:** `./src/pipelinec does_not_exist.c` or `./src/pypelinec does_not_exist.py`.
 
 ### 24. [#360][i360]: `sim_print` and `printf` values of 2³¹ or more overflow in VHDL simulation

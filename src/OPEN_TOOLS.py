@@ -946,7 +946,7 @@ def GENERATE_BITSTREAM(parser_state, multimain_timing_params):
         )
 
     # Fail before an expensive final implementation when conversion cannot
-    # possibly complete. The pipelinec driver performs the same preflight
+    # possibly complete. SYN.RESOLVE_BUILD_TARGET performs the same preflight
     # earlier for --pins builds; this keeps direct backend calls safe too.
     fasm2frames, frames2bit, architecture_db, part_yaml = (
         GET_XC7_BITSTREAM_TOOLS_AND_DB(parser_state.part)

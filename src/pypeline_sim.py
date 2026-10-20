@@ -508,6 +508,15 @@ def import_design(path: str):
     return module
 
 
+def design_param_list_text(path: str) -> str:
+    """pypelinec --list_params: import the design (no elaboration) and return
+    the parameters it declares (pypeline.DESIGN_PARAM_LIST_TEXT). The listing
+    replaces the parameter banner the import would otherwise print."""
+    pypeline._design_param_banner_printed = True
+    import_design(path)
+    return pypeline.DESIGN_PARAM_LIST_TEXT(path)
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(
         description="Simulate a pypeline design with global wires for N clock cycles."

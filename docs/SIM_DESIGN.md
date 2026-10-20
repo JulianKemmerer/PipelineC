@@ -40,7 +40,7 @@ simulator for Pypeline designs, or an external HDL simulator run on the generate
 
 | module | role |
 |---|---|
-| `src/SIM.py` | selects the simulator (`SET_SIM_TOOL`), decides whether a native run needs a build (`NATIVE_SIM_SKIPS_BUILD`, `SIM_AT_COMB_STAGE`), runs it (`DO_OPTIONAL_SIM`) and gathers what every backend needs (`GET_SIM_GEN_INFO`, `GET_SIM_FILES`, `GET_MAIN_FUNC_LATENCIES`) |
+| `src/SIM.py` | selects the simulator (`SET_SIM_TOOL`), decides whether a native run needs a build (`NATIVE_SIM_SKIPS_BUILD`, `SIM_AT_COMB_STAGE`), runs it (`DO_OPTIONAL_SIM`, and `DO_COMB_STAGE_SIM` after a `--comb` build's final files) and gathers what every backend needs (`GET_SIM_GEN_INFO`, `GET_SIM_FILES`, `GET_MAIN_FUNC_LATENCIES`) |
 | `src/pypeline_sim.py` | the native simulator, used as `SIM_TOOL` for `.py` designs ([`pypeline_sim_DESIGN.md`](pypeline_sim_DESIGN.md)) |
 | `src/COCOTB.py` | cocotb + GHDL on the generated VHDL, with a generated or user Makefile and testbench |
 | `src/VERILATOR.py` | GHDL + yosys to Verilog, then Verilator with a generated or user `main.cpp` |
@@ -84,9 +84,12 @@ calls `SIM` at three points:
 
   is therefore `python3 src/pypeline_sim.py my_design.py --run 1000` **plus a full build
   first when `--comb` is absent**.
-- **After a `--comb` build's final files.** `SIM_AT_COMB_STAGE(args)` is true for
-  `--sim_comb`, and for a native `--sim` run that was degraded to comb because no
-  synthesis tool is installed (zero latency, with a warning).
+- **After a `--comb` build's final files.** `DO_COMB_STAGE_SIM` runs the sim when
+  `SIM_AT_COMB_STAGE(args)` is true: for `--sim_comb`, and for a native `--sim` run
+  that was degraded to comb because no synthesis tool is installed (zero latency,
+  with a warning). The native simulator gets no timing params (zero MAIN latencies;
+  a fixed `latency=` call site keeps its own `.latency` delay line); the others get
+  the comb build's fixed-latency timing params.
 - **After a pipelined build.** A non-`--comb` `--sim` run falls through to the full build
   (path-delay measurement, throughput sweep, AUTO_PIPELINE pin-and-confirm), and the
   simulator starts on the final VHDL, or, for the native simulator, with the built

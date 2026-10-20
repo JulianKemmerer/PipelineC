@@ -1,8 +1,10 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
-"""The pypelinec command-line build driver: parse arguments, parse the design, write VHDL,
-run the build and optional simulation. See docs/SYN_DESIGN.md, "The build driver
-(src/pipelinec)"; the flags are documented for users in docs/README.md.
+"""The pypelinec command-line build driver: parse arguments, set the settings for the
+whole run, and dispatch -- --list_params, the comb-only native simulation, or a build
+as a sequence of named calls into the compiler modules. Steps with any logic of their
+own live in those modules. See docs/SYN_DESIGN.md, "The build driver (src/pipelinec)";
+the flags are documented for users in docs/README.md.
 """
 
 import argparse
@@ -18,7 +20,6 @@ import PY_TO_LOGIC
 import OPEN_TOOLS
 import SIM
 import pypeline_sim
-import pypeline_host
 import utilities
 
 # import CLANG_TO_LOGIC
@@ -400,9 +401,7 @@ try:
     if args.list_params:
         if not src_file.endswith(".py"):
             sys.exit("--list_params applies to Pypeline (.py) designs.")
-        pypeline._design_param_banner_printed = True  # the listing says it all
-        pypeline_sim.import_design(src_file)
-        print(pypeline.DESIGN_PARAM_LIST_TEXT(src_file))
+        print(pypeline_sim.design_param_list_text(src_file))
         sys.exit(0)
 except pypeline.DesignParamError as e:
     sys.exit(f"ERROR: {e}")
@@ -492,14 +491,14 @@ SYN.PIN_CONSTRAINTS_FILE = pins_file
 # parsing itself calls PART_SET_TOOL(allow_fail=True) in places, and that
 # respects an already-set SYN.SYN_TOOL (its own `if SYN_TOOL is None:` guard).
 # The full reconciliation against the source's own PART()/SYN_TOOL() has to
-# wait until after parsing -- see RESOLVE_PART_AND_TOOL below.
+# wait until after parsing -- see SYN.RESOLVE_BUILD_TARGET below.
 if args.syn_tool is not None:
     SYN.SYN_TOOL = SYN.GET_TOOL_MODULE(args.syn_tool)
 elif args.part is not None:
     # Same idea for a CLI part with no CLI tool: without this the in-parse
     # calls see no part yet and announce PyRTL, which the resolver then
     # contradicts a few lines later. Any disagreement with the source's own
-    # PART()/SYN_TOOL() is still caught by RESOLVE_PART_AND_TOOL below.
+    # PART()/SYN_TOOL() is still caught by SYN.RESOLVE_BUILD_TARGET below.
     SYN.SYN_TOOL = SYN.PART_TO_TOOL(args.part)
 # Parallel synthesis run cap (None = config/num_processes.cfg)
 if args.jobs is not None and args.jobs < 1:
@@ -517,122 +516,44 @@ SYN.MUX_DELAY_KEY_BY_WIDTH = args.mux_delay_by_width
 # whenever SYN.SYN_TOOL is DEVICE_MODELS; this forces the abstract per-bit
 # model instead, for A/B comparison.
 AUTO.FORCE_ABSTRACT_AREA = args.auto_fsm_abstract_area
+# What kind of build executes the design (pypeline.SET_AUTO_PIPELINE_BUILD_MODE):
+# AUTO_PIPELINE .latency semantics depend on it -- a fixed latency= gets
+# registers in every build, start_latency= only means something to a sweep.
+# Set only after the native-sim shortcut above, which runs with no build mode.
+pypeline.SET_AUTO_PIPELINE_BUILD_MODE(
+    "fixed_only" if (args.comb or args.no_synth or args.yosys_json) else "sweep"
+)
+# Latency memory (SWEEP.APPLY_LATENCY_MEMORY) on unless --no_latency_memory or
+# PIPELINEC_INTERNAL_NO_LATENCY_MEMORY=1 (the test suite's default)
+SWEEP.LATENCY_MEMORY_ENABLED = not args.no_latency_memory and (
+    os.environ.get("PIPELINEC_INTERNAL_NO_LATENCY_MEMORY", "") != "1"
+)
 
 # Every exit from here on -- done, TIMING NOT MET, or an error -- ends by
 # saying how long the build ran and where the time went
 atexit.register(lambda: print(SYN.ELAPSED_SUMMARY_STR(), flush=True))
-
-
-def _syn_cache_exit():
-    # Registered after the elapsed summary, so it prints just before it
-    line = SYN.SYNTHESIS_REUSE_SUMMARY_LINE()
-    if line:
-        print(line, flush=True)
-    if args.syn_cache_prune is not None:
-        removed = SYN.SYNTHESIS_STORE_PRUNE(args.syn_cache_prune)
-        print(
-            f"Synthesis store {SYN.SYNTHESIS_STORE_DIR}: removed {removed} "
-            f"entr{'y' if removed == 1 else 'ies'} unused for "
-            f"{args.syn_cache_prune:g} days",
-            flush=True,
-        )
-
-
-atexit.register(_syn_cache_exit)
+# Registered after the elapsed summary, so it prints just before it
+atexit.register(SYN.SYNTHESIS_REUSE_EXIT_REPORT, args.syn_cache_prune)
 
 print(
     "================== Parsing C Code to Logical Hierarchy ================================",
     flush=True,
 )
-# AUTO_PIPELINE .latency semantics depend on the kind of build executing the
-# design (see pypeline.SET_AUTO_PIPELINE_BUILD_MODE): a fixed latency= gets
-# registers in every build, start_latency= only means something to a sweep.
-import pypeline
-
-pypeline.SET_AUTO_PIPELINE_BUILD_MODE(
-    "fixed_only" if (args.comb or args.no_synth or args.yosys_json) else "sweep"
-)
-# Parse hints/source starts first. Matching memory pieces are selected below,
-# once part, tool, goals and zero-clock hardware digests are known.
-SWEEP.LATENCY_MEMORY_ENABLED = not args.no_latency_memory and (
-    os.environ.get("PIPELINEC_INTERNAL_NO_LATENCY_MEMORY", "") != "1"
-)
-if src_file.endswith(".py") and pypeline.AUTO_PIPELINE_BUILD_MODE() == "sweep":
-    _latency_seeds = SWEEP.LOAD_LATENCY_SEEDS(
-        SYN.SYN_OUTPUT_DIRECTORY, args.latency_hints
-    )
-    pypeline.SET_LATENCY_SEEDS(_latency_seeds)
-elif args.latency_hints:
-    print(
-        "NOTE: --latency_hints only applies to synthesizing builds of Pypeline "
-        "designs; ignored.",
-        flush=True,
-    )
-
-# Do parsing
+latency_hints = SWEEP.INSTALL_LATENCY_HINTS(src_file, args.latency_hints)
 if src_file.endswith(".c"):
     parser_state = C_TO_LOGIC.PARSE_FILE(src_file)
 elif src_file.endswith(".py"):
-    # Later AUTO_PIPELINE passes re-parse the design: freeze its source first
-    PY_TO_LOGIC.FREEZE_DESIGN_SOURCES(SYN.SYN_OUTPUT_DIRECTORY)
-    # First parse only: runs the design's @initial(syn) hooks after its import,
-    # before elaboration
-    try:
-        parser_state = PY_TO_LOGIC.PARSE_FILE(src_file, run_syn_initial_hooks=True)
-    except pypeline.DesignParamError as e:
-        sys.exit(f"ERROR: {e}")
-    # Every struct this design serializes to bytes registered itself while the
-    # design was imported (pypeline._host_register, called from
-    # make_type_to_bytes/make_type_from_bytes). Write the standalone Python
-    # module a host program copies to a machine with no Pypeline checkout.
-    # Nothing is written if the design puts no struct on a wire. C designs keep
-    # the C front end's generated-header path instead.
-    # Non-fatal on purpose: the host module is an additional artifact, not part
-    # of the hardware, so a design that cannot express one (a struct field named
-    # like a generated attribute, say) must still finish its build and get its
-    # VHDL. The warning is what makes the omission visible.
-    try:
-        host_types_path = pypeline_host.write_host_types(
-            SYN.SYN_OUTPUT_DIRECTORY, src_file
-        )
-        if host_types_path is not None:
-            print("Host software types:", host_types_path, flush=True)
-    except Exception as host_types_err:
-        print(
-            f"WARNING: could not generate host software types: {host_types_err}",
-            flush=True,
-        )
-
-
+    parser_state = PY_TO_LOGIC.PARSE_FILE_FOR_BUILD(src_file, SYN.SYN_OUTPUT_DIRECTORY)
 SYN.PARSE_DONE_TIME = timer()
 print(f"Parsing done, elapsed time {SYN.ELAPSED_STR()}", flush=True)
 
-# Settle part and tool from all four possible sources (--part / PART(...),
-# --syn_tool / SYN_TOOL(...)) now that the design has been parsed and its own
-# values are known. Errors on any contradiction; fills in a tool's default
-# part when only a tool was named. Must run before WRITE_0_ADDED_CLKS_INIT_FILES
-# below, which is the first step to consume the tool.
-SYN.SYN_TOOL = None  # let the resolver have the final say, not the early set above
-parser_state.part, _resolved_tool = SYN.RESOLVE_PART_AND_TOOL(
-    cli_part=args.part,
-    cli_tool=args.syn_tool,
-    src_part=parser_state.part,
-    src_tool=parser_state.syn_tool_name,
-    allow_fail=True,
+parser_state = SYN.RESOLVE_BUILD_TARGET(
+    parser_state,
+    src_file,
+    args.part,
+    args.syn_tool,
+    check_bitstream_tools=not args.no_synth,
 )
-if src_file.endswith(".py"):
-    parser_state = AUTO_PIPELINE.RAM_PREPARE_TARGET(parser_state, src_file)
-
-# A requested XC7 bitstream needs Project X-Ray conversion tools in addition
-# to the synthesis/P&R payload CHECK_TOOL_INSTALLED already verified. Diagnose
-# that before generating files or spending time in a throughput sweep.
-if (
-    not args.no_synth
-    and _resolved_tool is OPEN_TOOLS
-    and OPEN_TOOLS.IS_XC7_PART(parser_state.part)
-    and SYN.PIN_CONSTRAINTS_FILE
-):
-    OPEN_TOOLS.GET_XC7_BITSTREAM_TOOLS_AND_DB(parser_state.part)
 
 print(
     "================== Writing Resulting Logic to File ================================",
@@ -640,126 +561,29 @@ print(
 )
 print("Writing output files before adding pipelining...", flush=True)
 AUTO_PIPELINE.WRITE_0_ADDED_CLKS_INIT_FILES(parser_state)
-
-# Resolve independent memory pieces now: part/tool/goals and fresh zero-clock
-# VHDL are available, and no synthesis has run.
-if src_file.endswith(".py") and pypeline.AUTO_PIPELINE_BUILD_MODE() == "sweep" and SYN.SYN_TOOL is not None:
-    def _reparse_latency_memory(seeds):
-        pypeline.SET_LATENCY_SEEDS(seeds)
-        state = PY_TO_LOGIC.PARSE_FILE(src_file)
-        state.part = parser_state.part
-        state.syn_tool_name = parser_state.syn_tool_name
-        AUTO_PIPELINE.WRITE_0_ADDED_CLKS_INIT_FILES(state)
-        return state
-
-    parser_state = SWEEP.RESOLVE_LATENCY_MEMORY(parser_state, _latency_seeds, _reparse_latency_memory)
-    SWEEP.PRINT_LATENCY_SEEDS(parser_state.part, SYN.TOOL_NAME(SYN.SYN_TOOL))
+parser_state = SWEEP.APPLY_LATENCY_MEMORY(parser_state, src_file, latency_hints)
 
 # If no synth tools installed, switch over to --comb --no_synth mode for user with warning...
 SYN.PART_SET_TOOL(parser_state.part, allow_fail=True)
 if SYN.SYN_TOOL is None:
-    warn = not args.no_synth or not args.comb
-    args.comb = True
-    args.no_synth = True
-    if warn:
+    if not args.no_synth or not args.comb:
         print(
             "WARNING: No synthesis tool install detected based on PART. Skipping synthesis and auto-pipelining."
         )
-    # The design was elaborated for a sweep; without one, start_latency=
-    # values its Python already read no longer describe the hardware.
-    pypeline.SET_AUTO_PIPELINE_BUILD_MODE("fixed_only")
-    seeds_applied = pypeline.LATENCY_SEEDS_APPLIED()
-    pypeline.SET_LATENCY_SEEDS({})
-    if src_file.endswith(".py") and (
-        seeds_applied
-        or any(
-            ap.fixed_latency is None and value
-            for ap, value in pypeline._auto_pipeline_served
-        )
-    ):
-        print(
-            "Re-elaborating: AUTO_PIPELINE start_latency= values and starting "
-            "latencies read during parsing do not apply without a synthesis "
-            "tool...",
-            flush=True,
-        )
-        parser_state = PY_TO_LOGIC.PARSE_FILE(src_file)
-        AUTO_PIPELINE.WRITE_0_ADDED_CLKS_INIT_FILES(parser_state)
-
-_syn_final_hooks_ran = False
-
-
-def _run_syn_final_hooks():
-    """The design's @final(syn) hooks, once, right after the final VHDL is first
-    written (a --comb build writes it again after its pipelined-build step).
-    Run from the snapshot @initial(syn) ran from, so both see one import of the
-    design (see PY_TO_LOGIC.PARSE_FILE's run_syn_initial_hooks)."""
-    global _syn_final_hooks_ran
-    if _syn_final_hooks_ran or not src_file.endswith(".py"):
-        return
-    _syn_final_hooks_ran = True
-    pypeline.RUN_FINAL_HOOKS("syn", pypeline._syn_hook_snapshot or [])
-
+    args.comb = True
+    args.no_synth = True
+    parser_state = AUTO_PIPELINE.SWITCH_TO_FIXED_ONLY_BUILD(parser_state, src_file)
 
 if args.comb or args.no_synth:
-    # Zero added pipelining, except fixed AUTO_PIPELINE latency= call sites
-    # (None when there are none: exactly the historical zero-clock files)
-    comb_timing_params = AUTO_PIPELINE.BUILD_FIXED_AUTO_PIPELINE_TIMING_PARAMS(parser_state)
-if args.comb:
-    SYN.WRITE_FINAL_FILES(comb_timing_params, parser_state)
-    _run_syn_final_hooks()
-    # Here is a good point to check basic single cycle/comb logic functionality before pipelining with synth tools
-    # (A native non---comb --sim run degraded to comb by the no-synth-tool
-    # fallback above still sims here -- zero latency, warning already printed.)
-    SIM.DO_OPTIONAL_SIM(
-        SIM.SIM_AT_COMB_STAGE(args),
-        parser_state,
-        args,
-        multimain_timing_params=(
-            None if SIM.SIM_TOOL is pypeline_sim else comb_timing_params
-        ),
-        source_file=src_file,
-    )
-elif args.no_synth and comb_timing_params is not None:
-    SYN.WRITE_FINAL_FILES(comb_timing_params, parser_state)
-    _run_syn_final_hooks()
-elif args.no_synth:
-    # No fixed AUTO_PIPELINE latencies: the zero-added-clocks files written
-    # above are the final VHDL
-    _run_syn_final_hooks()
+    comb_timing_params = AUTO_PIPELINE.WRITE_COMB_FINAL_FILES(parser_state, args.comb)
+    if args.comb:
+        SIM.DO_COMB_STAGE_SIM(parser_state, args, comb_timing_params, src_file)
 
 if not args.no_synth:
     parser_state, multimain_timing_params = AUTO_PIPELINE.DO_PIPELINED_BUILD(
         parser_state, args, src_file
     )
-    # Starting latencies only start the build's own sweep: the --sim import
-    # below uses the built values
-    pypeline.SET_LATENCY_SEEDS({})
-
-    print(
-        "================== Writing Results of Throughput Sweep ================================",
-        flush=True,
-    )
-    print(f"Throughput sweep done, elapsed time {SYN.ELAPSED_STR()}", flush=True)
-    SWEEP.PRINT_PIPELINE_DEPTH_SUMMARY(
-        parser_state, multimain_timing_params.TimingParamsLookupTable
-    )
-    # An over-capacity final netlist fails the build even when its timing met
-    SWEEP.ADD_OVER_CAPACITY_FAILURES(parser_state, multimain_timing_params)
-    # The machine-readable verdict for the design as built, written before the
-    # TIMING NOT MET exit below so failing builds get it too
-    sweep_history = SWEEP.WRITE_SWEEP_HISTORY(
-        parser_state, multimain_timing_params, build_complete=True
-    )
-    SYN.WRITE_FINAL_FILES(multimain_timing_params, parser_state)
-    _run_syn_final_hooks()
-    # What this build built for each AUTO_PIPELINE / AUTO_MULTI_CYCLE, and the
-    # verified results remembered for the next one -- written before the
-    # TIMING NOT MET exit so failing builds get their profile too
-    if src_file.endswith(".py") and pypeline.AUTO_PIPELINE_BUILD_MODE() == "sweep":
-        SWEEP.RECORD_LATENCY_PROFILE(
-            parser_state, multimain_timing_params, sweep_history
-        )
+    SWEEP.WRITE_SWEEP_RESULTS(parser_state, multimain_timing_params, src_file)
 
     # The build must FAIL if any timing goal was not met - results above are
     # still written (useful for debugging) but simulation and bitstream
@@ -777,6 +601,8 @@ if not args.no_synth:
 
 import AUTO_COMB_OPT
 
+# A --no_synth build with no fixed latencies never calls SYN.WRITE_FINAL_FILES,
+# which otherwise writes the generated sources
 AUTO_COMB_OPT.DUMP_GENERATED_SOURCE(parser_state, SYN.SYN_OUTPUT_DIRECTORY)
 SYN.WRITE_NAME_INDEX_LOG(parser_state)
 print("Done.", flush=True)

@@ -53,7 +53,8 @@ Where the pieces live:
                               schedule -> re-elaborate -> synthesize -> if an
                               FSM is blamed for a timing failure, tighten its
                               budget and reschedule -- until a tightening stops
-                              raising fmax. Called from src/pipelinec.
+                              raising fmax. Called from
+                              AUTO_PIPELINE.DO_PIPELINED_BUILD.
 
 Generating Python source (rather than a new backend IR) is what keeps this
 feature small: the generated FSM is elaborated by the same path as hand-written

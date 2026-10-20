@@ -49,6 +49,9 @@ from pypeline import (
     _sim_only_call_message,
 )
 import pypeline as _pypeline_mod
+# Imported here, not where it is used: PARSE_FILE evicts every module first
+# imported after the first parse whenever it re-parses
+import pypeline_host
 
 # Recognized by name in FuncElaborator._elab_stmt as a raw-VHDL-passthrough statement.
 # Distinct from LOGIC.VHDL_FUNC_NAME ("__vhdl__") — Pypeline's user-facing surface
@@ -7872,9 +7875,9 @@ def PARSE_FILE(py_file, run_syn_initial_hooks=False, resolved_part=None):
 
     run_syn_initial_hooks: run the design's @initial(syn) hooks right after the
     import, before elaboration, and keep them as pypeline._syn_hook_snapshot
-    for the matching @final(syn) hooks. Only the pipelinec driver's first parse
-    passes True -- re-parses (pin-and-confirm passes, the no-synth-tool
-    re-elaboration) must not re-run them.
+    for the matching @final(syn) hooks. Only a build's first parse
+    (PARSE_FILE_FOR_BUILD) passes True -- re-parses (pin-and-confirm passes,
+    the no-synth-tool re-elaboration) must not re-run them.
     resolved_part carries the driver's reconciled target into internal re-parses
     before elaboration validates compiler-owned schedules and placements.
     """
@@ -8292,6 +8295,56 @@ def PARSE_FILE(py_file, run_syn_initial_hooks=False, resolved_part=None):
         logic.pypeline_emission_names = names
     return parser_state
 
+
+
+def PARSE_FILE_FOR_BUILD(py_file, out_dir):
+    """A pypelinec build's first parse of a .py design.
+
+    Later AUTO_PIPELINE passes re-parse the design, so its sources are frozen
+    first (FREEZE_DESIGN_SOURCES). This parse runs the design's @initial(syn)
+    hooks after its import, before elaboration; a -D error ends the build with
+    one line. Then every struct the design serializes to bytes, registered
+    while it was imported (pypeline._host_register, called from
+    make_type_to_bytes/make_type_from_bytes), goes into the standalone Python
+    module a host program copies to a machine with no Pypeline checkout.
+    Nothing is written if the design puts no struct on a wire. Non-fatal on
+    purpose: the host module is an additional artifact, not part of the
+    hardware, so a design that cannot express one (a struct field named like a
+    generated attribute, say) must still finish its build and get its VHDL. The
+    warning is what makes the omission visible.
+    """
+    FREEZE_DESIGN_SOURCES(out_dir)
+    try:
+        parser_state = PARSE_FILE(py_file, run_syn_initial_hooks=True)
+    except _pypeline_mod.DesignParamError as e:
+        sys.exit(f"ERROR: {e}")
+    try:
+        host_types_path = pypeline_host.write_host_types(out_dir, py_file)
+        if host_types_path is not None:
+            print("Host software types:", host_types_path, flush=True)
+    except Exception as host_types_err:
+        print(
+            f"WARNING: could not generate host software types: {host_types_err}",
+            flush=True,
+        )
+    return parser_state
+
+
+# Whether this build's @final(syn) hooks have run (RUN_SYN_FINAL_HOOKS)
+_syn_final_hooks_ran = False
+
+
+def RUN_SYN_FINAL_HOOKS():
+    """The design's @final(syn) hooks, once, right after the build's final VHDL
+    is first written (a --comb build writes it again after its synthesizing
+    step). Run from the snapshot @initial(syn) ran from, so both see one import
+    of the design (see PARSE_FILE's run_syn_initial_hooks). No snapshot means
+    no Pypeline design was parsed for this build (a C design): nothing runs."""
+    global _syn_final_hooks_ran
+    if _syn_final_hooks_ran or _pypeline_mod._syn_hook_snapshot is None:
+        return
+    _syn_final_hooks_ran = True
+    _pypeline_mod.RUN_FINAL_HOOKS("syn", _pypeline_mod._syn_hook_snapshot)
 
 def _check_no_overlapping_driven_paths(writer_paths):
     """writer_paths: {writer_func_name: set(path_tuple)}, one entry per writer of a

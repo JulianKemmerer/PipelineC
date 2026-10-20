@@ -57,6 +57,7 @@ Memory banks are never treated as zero-cycle combinational operators.
 | `SLICE_DOWN_HIERARCHY_WRITE_VHDL_PACKAGES`, `ADD_SLICES_DOWN_HIERARCHY_...`, `BUILD_AND_WRITE_COARSE_SLICED_TIMING_PARAMS`, `GET_BEST_GUESS_IDEAL_SLICES` | fractional (coarse/compatibility) slicing down the hierarchy |
 | `PiplineHDLParams`, `GLOBAL_WIRE_TIMING`, `ALIGNED_GLOBAL_READS`, `ALIGNED_GLOBAL_WRITES` | each wire's register lifetime and the aligned global wires carried in the IO registers, from which `VHDL.py` renders the pipelined architecture (§3) |
 | `DO_PIPELINED_BUILD`, `DO_SWEEP_AND_AUTO_PIPELINE`, `DO_AUTO_PIPELINE_LATENCY_PASSES`, `HARVEST_AUTO_PIPELINE_LATENCIES`, `SEED_TIMING_PARAMS_FROM_PREVIOUS` | the build entry point and the `.latency` pin-and-confirm loop (§4, §5) |
+| `WRITE_COMB_FINAL_FILES`, `SWITCH_TO_FIXED_ONLY_BUILD` | the final files of a `--comb` / `--no_synth` build, and the switch to one when the part has no synthesis tool (§4) |
 | `CAPTURE_CONCRETE_PIPELINE`, `CONCRETE_PIPELINE_COMPATIBLE`, `CONCRETE_PIPELINE_CONTAINS`, `RESTORE_CONCRETE_PIPELINE` | a subtree's timing params as data, keyed by path relative to its root (function, wire types, slices, exact bit boundaries, IO-register and fixed flags) and holding no reference to a parse's `Logic`; replayed exactly across re-elaboration (§5) and by the sweep's [hotspot locks](SWEEP_DESIGN.md#concrete-hotspot-locks) |
 | `BUILD_FIXED_AUTO_PIPELINE_TIMING_PARAMS`, `COLLECT_AUTO_PIPELINE_REGIONS`, `ENFORCE_AUTO_PIPELINE_REGIONS`, `REENFORCE_AUTO_PIPELINE_REGIONS`, `AUTO_PIPELINE_REGION_FEEDBACK`, ... | constrained call sites: `latency=` / `start_latency=` / `max_latency=` (§6) |
 | `FUNC_HAS_HIER_ALLOWING_ADDED_LATENCY_TO_RAW_VHDL`, `FUNC_SUBTREE_HAS_AUTO_PIPELINE` | "can registers be added below here?" predicates, used by slicing, the sweep and SYN's delay collection |
@@ -426,8 +427,8 @@ reused only for identical inputs. User-facing contract:
 
 ## 4. Build entry points
 
-`src/pipelinec` calls `AUTO_PIPELINE.DO_PIPELINED_BUILD` for every non-`--comb`
-build. It dispatches to `AUTO_FSM.DO_SCHEDULE_PASSES` when the design has
+`src/pipelinec` calls `AUTO_PIPELINE.DO_PIPELINED_BUILD` for every build without
+`--no_synth`; a `--comb` build runs it too, as one combinational synthesis. It dispatches to `AUTO_FSM.DO_SCHEDULE_PASSES` when the design has
 AUTO_FSM call sites (which wraps the flow below, see
 [`AUTO_FSM_DESIGN.md`](AUTO_FSM_DESIGN.md#34-the-driver-loop)) and otherwise to
 `DO_SWEEP_AND_AUTO_PIPELINE`:
@@ -443,7 +444,14 @@ DO_SWEEP_AND_AUTO_PIPELINE
 ```
 
 Builds that run no sweep (`--comb`, `--no_synth`, `--yosys_json`) use
-`BUILD_FIXED_AUTO_PIPELINE_TIMING_PARAMS` instead (§6).
+`BUILD_FIXED_AUTO_PIPELINE_TIMING_PARAMS` instead (§6). A `--comb` or `--no_synth`
+build writes its final files with it through `WRITE_COMB_FINAL_FILES`, then runs
+the syn `@final` hooks. A `--no_synth` build with no fixed call sites keeps the
+zero-added-clocks files as its final VHDL. With no synthesis tool for the part,
+the driver continues as `--comb --no_synth`, and `SWITCH_TO_FIXED_ONLY_BUILD`
+switches the build mode to `"fixed_only"` and drops the starting latencies. It
+re-elaborates the design if its Python already read a `start_latency=` or a
+starting latency.
 
 ## 5. `.latency` pin-and-confirm loop (Pypeline designs only)
 
@@ -677,7 +685,7 @@ delay axis, and the container can't count the region's latency.
     even when this predicate is false, so a hint changes the initial count rather
     than whether the tag has its own landscape. A callee that holds another
     AUTO_PIPELINE or can't take added latency remains outside the independent
-    region planner. The driver selects matching callee-subtree digests,
+    region planner. `SWEEP.APPLY_LATENCY_MEMORY` selects matching callee-subtree digests,
     part and tool at the current goal or highest lower goal before the final parse
     ([SWEEP_DESIGN.md §5](SWEEP_DESIGN.md#5-latency-memory)). In pass 2 and later
     the harvested cache supersedes the seed (`constraint.seed` is `None`), so every

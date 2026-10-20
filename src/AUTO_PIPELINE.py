@@ -3507,6 +3507,55 @@ def DO_PIPELINED_BUILD(parser_state, args, src_file):
     return DO_SWEEP_AND_AUTO_PIPELINE(parser_state, args, src_file)
 
 
+def WRITE_COMB_FINAL_FILES(parser_state, comb):
+    """Final files of a --comb or --no_synth build: zero added pipelining
+    except fixed AUTO_PIPELINE latency= call sites
+    (BUILD_FIXED_AUTO_PIPELINE_TIMING_PARAMS, None when there are none:
+    exactly the historical zero-clock files). A --no_synth build with no fixed
+    call sites keeps the zero-added-clocks files WRITE_0_ADDED_CLKS_INIT_FILES
+    already wrote as its final VHDL. Then the syn @final hooks. Returns the
+    timing params (None: zero added clocks)."""
+    import PY_TO_LOGIC
+
+    comb_timing_params = BUILD_FIXED_AUTO_PIPELINE_TIMING_PARAMS(parser_state)
+    if comb or comb_timing_params is not None:
+        SYN.WRITE_FINAL_FILES(comb_timing_params, parser_state)
+    PY_TO_LOGIC.RUN_SYN_FINAL_HOOKS()
+    return comb_timing_params
+
+
+def SWITCH_TO_FIXED_ONLY_BUILD(parser_state, src_file):
+    """No synthesis tool for the part: the build continues as --comb --no_synth.
+    The design was elaborated for a sweep; without one, start_latency= values
+    and starting latencies its Python already read no longer describe the
+    hardware, so the build mode becomes "fixed_only", the starting latencies
+    are dropped, and a .py design that was served one is re-elaborated (and
+    its zero-clock files rewritten). Returns the (maybe re-parsed)
+    parser_state."""
+    import pypeline
+    import PY_TO_LOGIC
+
+    pypeline.SET_AUTO_PIPELINE_BUILD_MODE("fixed_only")
+    seeds_applied = pypeline.LATENCY_SEEDS_APPLIED()
+    pypeline.SET_LATENCY_SEEDS({})
+    if src_file.endswith(".py") and (
+        seeds_applied
+        or any(
+            ap.fixed_latency is None and value
+            for ap, value in pypeline._auto_pipeline_served
+        )
+    ):
+        print(
+            "Re-elaborating: AUTO_PIPELINE start_latency= values and starting "
+            "latencies read during parsing do not apply without a synthesis "
+            "tool...",
+            flush=True,
+        )
+        parser_state = PY_TO_LOGIC.PARSE_FILE(src_file)
+        WRITE_0_ADDED_CLKS_INIT_FILES(parser_state)
+    return parser_state
+
+
 # Entity files WRITE_ALL_NON_ZERO_CLK_VHDL_FILES rendered in this process.
 # Within one build an entity name fixes its rendered content (design source is
 # frozen and the name carries the timing hash), so a file written earlier in

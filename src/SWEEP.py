@@ -3129,8 +3129,8 @@ def WRITE_SWEEP_HISTORY(parser_state, multimain_timing_params, build_complete):
     """Write <out_dir>/<top>/sweep_history.json (SWEEP_HISTORY_SCHEMA_VERSION).
 
     Runs that decide mains write it provisionally (build_complete=False) so a
-    build that dies later still leaves its data; the driver rewrites it at
-    'Writing Results' (build_complete=True) against the final table and the
+    build that dies later still leaves its data; WRITE_SWEEP_RESULTS rewrites
+    it at 'Writing Results' (build_complete=True) against the final table and the
     final sweep_timing_failures. Writes nothing when no run recorded anything
     (--comb characterization builds). Returns the written document."""
     if not SWEEP_HISTORY and not SWEEP_OUTCOMES and not SYNTHESIS_OBSERVATIONS:
@@ -3376,6 +3376,27 @@ def LOAD_LATENCY_SEEDS(out_dir, hints_files):
         for pair, entry in table.items():
             seeds[pair] = (entry["latency"], f"hints {os.path.basename(path)}")
     return seeds
+
+
+def INSTALL_LATENCY_HINTS(src_file, hints_files):
+    """Before a build's first parse: a synthesizing build of a .py design starts
+    its AUTO_PIPELINE / AUTO_MULTI_CYCLE tags from the --latency_hints files
+    (LOAD_LATENCY_SEEDS). Matching memory pieces are selected later
+    (APPLY_LATENCY_MEMORY), once part, tool, goals and zero-clock hardware
+    digests are known. Returns the installed seeds ({} for any other build)."""
+    import pypeline
+
+    if src_file.endswith(".py") and pypeline.AUTO_PIPELINE_BUILD_MODE() == "sweep":
+        seeds = LOAD_LATENCY_SEEDS(SYN.SYN_OUTPUT_DIRECTORY, hints_files)
+        pypeline.SET_LATENCY_SEEDS(seeds)
+        return seeds
+    if hints_files:
+        print(
+            "NOTE: --latency_hints only applies to synthesizing builds of Pypeline "
+            "designs; ignored.",
+            flush=True,
+        )
+    return {}
 
 
 def PRINT_LATENCY_SEEDS(part=None, tool=None):
@@ -3624,6 +3645,36 @@ def RESOLVE_LATENCY_MEMORY(parser_state, hints, reparse):
             os.utime(piece["path"], None)
         except OSError:
             pass
+    return parser_state
+
+
+def APPLY_LATENCY_MEMORY(parser_state, src_file, hints):
+    """Resolve the independent memory pieces of a synthesizing .py build, right
+    after its zero-clock VHDL is written: part/tool/goals and fresh zero-clock
+    digests are available, and no synthesis has run. Each re-parse keeps the
+    resolved part and tool and rewrites the zero-clock files. hints are the
+    INSTALL_LATENCY_HINTS seeds. Returns the (maybe re-parsed) parser_state;
+    other builds, and builds with no synthesis tool, return it unchanged."""
+    import pypeline
+    import PY_TO_LOGIC
+
+    if not (
+        src_file.endswith(".py")
+        and pypeline.AUTO_PIPELINE_BUILD_MODE() == "sweep"
+        and SYN.SYN_TOOL is not None
+    ):
+        return parser_state
+
+    def reparse(seeds):
+        pypeline.SET_LATENCY_SEEDS(seeds)
+        state = PY_TO_LOGIC.PARSE_FILE(src_file)
+        state.part = parser_state.part
+        state.syn_tool_name = parser_state.syn_tool_name
+        AUTO_PIPELINE.WRITE_0_ADDED_CLKS_INIT_FILES(state)
+        return state
+
+    parser_state = RESOLVE_LATENCY_MEMORY(parser_state, hints, reparse)
+    PRINT_LATENCY_SEEDS(parser_state.part, SYN.TOOL_NAME(SYN.SYN_TOOL))
     return parser_state
 
 
@@ -4005,6 +4056,41 @@ def ADD_OVER_CAPACITY_FAILURES(parser_state, multimain_timing_params):
             )
     multimain_timing_params.sweep_timing_failures = failures + added
     return added
+
+
+def WRITE_SWEEP_RESULTS(parser_state, multimain_timing_params, src_file):
+    """'Writing Results of Throughput Sweep', after a synthesizing build
+    (AUTO_PIPELINE.DO_PIPELINED_BUILD). Everything here is written before the
+    driver's TIMING NOT MET exit, so failing builds get it too: the depth
+    summary, over-capacity failures (an over-capacity final netlist fails the
+    build even when its timing met), the final sweep_history.json (the
+    machine-readable verdict for the design as built), the final files and the
+    syn @final hooks, and the latency profile (what this build built for each
+    AUTO_PIPELINE / AUTO_MULTI_CYCLE, and the verified results remembered for
+    the next one)."""
+    import pypeline
+    import PY_TO_LOGIC
+
+    # Starting latencies only start the build's own sweep: a --sim import
+    # after this uses the built values
+    pypeline.SET_LATENCY_SEEDS({})
+
+    print(
+        "================== Writing Results of Throughput Sweep ================================",
+        flush=True,
+    )
+    print(f"Throughput sweep done, elapsed time {SYN.ELAPSED_STR()}", flush=True)
+    PRINT_PIPELINE_DEPTH_SUMMARY(
+        parser_state, multimain_timing_params.TimingParamsLookupTable
+    )
+    ADD_OVER_CAPACITY_FAILURES(parser_state, multimain_timing_params)
+    sweep_history = WRITE_SWEEP_HISTORY(
+        parser_state, multimain_timing_params, build_complete=True
+    )
+    SYN.WRITE_FINAL_FILES(multimain_timing_params, parser_state)
+    PY_TO_LOGIC.RUN_SYN_FINAL_HOOKS()
+    if src_file.endswith(".py") and pypeline.AUTO_PIPELINE_BUILD_MODE() == "sweep":
+        RECORD_LATENCY_PROFILE(parser_state, multimain_timing_params, sweep_history)
 
 
 def RECORD_CONFIRMATION_RESULTS(

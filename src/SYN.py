@@ -463,6 +463,47 @@ def RESOLVE_PART_AND_TOOL(
     return part, tool
 
 
+def RESOLVE_BUILD_TARGET(
+    parser_state, src_file, cli_part, cli_tool, check_bitstream_tools
+):
+    """Settle a build's target right after the first parse, before any file is
+    written (AUTO_PIPELINE.WRITE_0_ADDED_CLKS_INIT_FILES is the first step to
+    consume the tool).
+
+    Part and tool come from all four sources (--part / PART(...), --syn_tool /
+    SYN_TOOL(...)) now that the design's own values are known: errors on any
+    contradiction, fills in a tool's default part when only a tool was named.
+    The SYN_TOOL the driver set from --syn_tool / --part alone before parsing
+    does not get the final say. A .py design's RAMs are then planned for that
+    target. A requested XC7 bitstream (check_bitstream_tools, --pins with
+    open_tools) needs Project X-Ray conversion tools in addition to the
+    synthesis/P&R payload CHECK_TOOL_INSTALLED verified: diagnosed here, before
+    time goes into a throughput sweep. Returns the (maybe re-parsed)
+    parser_state.
+    """
+    global SYN_TOOL
+    SYN_TOOL = None
+    parser_state.part, resolved_tool = RESOLVE_PART_AND_TOOL(
+        cli_part=cli_part,
+        cli_tool=cli_tool,
+        src_part=parser_state.part,
+        src_tool=parser_state.syn_tool_name,
+        allow_fail=True,
+    )
+    if src_file.endswith(".py"):
+        import AUTO_PIPELINE
+
+        parser_state = AUTO_PIPELINE.RAM_PREPARE_TARGET(parser_state, src_file)
+    if (
+        check_bitstream_tools
+        and resolved_tool is OPEN_TOOLS
+        and OPEN_TOOLS.IS_XC7_PART(parser_state.part)
+        and PIN_CONSTRAINTS_FILE
+    ):
+        OPEN_TOOLS.GET_XC7_BITSTREAM_TOOLS_AND_DB(parser_state.part)
+    return parser_state
+
+
 def PART_SET_TOOL(part_str, allow_fail=False):
     """Set the SYN_TOOL global from a part string, if not already set.
 
@@ -2580,6 +2621,24 @@ def SYNTHESIS_REUSE_SUMMARY_LINE():
     if stats["stale"]:
         line += f", {stats['stale']} stale log(s) set aside"
     return line
+
+
+def SYNTHESIS_REUSE_EXIT_REPORT(prune_days):
+    """End of a build (an atexit hook, so it prints just before the elapsed
+    summary): the SYNTHESIS_REUSE_SUMMARY_LINE, then, for --syn_cache_prune,
+    removing store entries no build has used for prune_days days (None: no
+    pruning)."""
+    line = SYNTHESIS_REUSE_SUMMARY_LINE()
+    if line:
+        print(line, flush=True)
+    if prune_days is not None:
+        removed = SYNTHESIS_STORE_PRUNE(prune_days)
+        print(
+            f"Synthesis store {SYNTHESIS_STORE_DIR}: removed {removed} "
+            f"entr{'y' if removed == 1 else 'ies'} unused for "
+            f"{prune_days:g} days",
+            flush=True,
+        )
 
 
 def _FUNC_NEEDS_SUBMODULE_DELAYS(func_name, parser_state):

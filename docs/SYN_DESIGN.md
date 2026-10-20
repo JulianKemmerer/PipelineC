@@ -80,6 +80,14 @@ come from `PART("...")` in the source or `--part` on the command line; the tool
 from `SYN_TOOL("...")` in the source or `--syn_tool`. `RESOLVE_PART_AND_TOOL()`
 settles all four in one place, right after the design is parsed.
 
+A build calls it through `RESOLVE_BUILD_TARGET`, before any file is written.
+That function first clears the `SYN_TOOL` that `src/pipelinec` set from
+`--syn_tool` or `--part` alone before parsing (so in-parse `PART_SET_TOOL` calls
+see the right tool), so the resolver has the final say. It then plans a `.py`
+design's RAMs for the resolved target (`AUTO_PIPELINE.RAM_PREPARE_TARGET`). For an
+OpenXC7 `--pins` build, it checks the Project X-Ray bitstream conversion tools
+before any time goes into a sweep.
+
 | part prefix | `SYN_TOOL` | `--syn_tool` name | `DEFAULT_PART` | runs |
 |---|---|---|---|---|
 | none | `PYRTL` | `pyrtl` | *(none)* | PyRTL's software gate-delay model (no FPGA part) |
@@ -563,7 +571,7 @@ several share. Examples: WireGuard's per-profile build directories, a fresh
 - **Hygiene.**
   - A hit refreshes the entry's `manifest.json` time.
   - `--syn_cache_prune DAYS` removes entries no build has used for that long, at
-    the end of the build, and any half-written entry an interrupted insert left
+    the end of the build (`SYNTHESIS_REUSE_EXIT_REPORT`, an `atexit` hook), and any half-written entry an interrupted insert left
     that long ago. It also removes the store's latency memory pieces
     (`DIR/latency/v2/<tool>/<part>/<kind>/<key digest>.json`, shared by every output
     directory, see [SWEEP_DESIGN.md](SWEEP_DESIGN.md#5-latency-memory)) that no
@@ -571,7 +579,8 @@ several share. Examples: WireGuard's per-profile build directories, a fresh
     builds no longer read.
   - Deleting the store is always safe.
   - Each build ends with `Synthesis results: N reused from the output directory,
-    M from the store DIR, K new run(s)`, plus a count of stale logs set aside.
+    M from the store DIR, K new run(s)`, plus a count of stale logs set aside
+    (`SYNTHESIS_REUSE_EXIT_REPORT`, just before the elapsed-time line).
 
 ### Stored measurements
 
@@ -782,29 +791,53 @@ Sweep flags (`--coarse`, `--no_sweep`, `--pipeline_min_effort`, ...) are in
 ### The build driver (`src/pipelinec`)
 
 `src/pipelinec` (also reachable as `pypelinec`) is the command-line script. It has
-no design document of its own; this subsection describes it. In order, it:
+no design document of its own; this subsection describes it.
 
-1. parses the arguments and sets the module globals the rest of the compiler reads
-   (`SYN.*`, `SWEEP.*`, `C_TO_LOGIC.MULT_STYLE`, `OPEN_TOOLS.YOSYS_JSON_ONLY`,
-   `AUTO.FORCE_ABSTRACT_AREA`), selects the simulator (`SIM.SET_SIM_TOOL`), and, for
-   `-D`, the Pypeline design parameters. A comb-only native simulation of a `.py`
-   design stops here and simulates without building (`SIM.NATIVE_SIM_SKIPS_BUILD`);
-2. parses the design with `C_TO_LOGIC.PARSE_FILE` or `PY_TO_LOGIC.PARSE_FILE` (a
-   `.py` design's sources are frozen first, and its host software types are
-   written after);
-3. settles part and tool with `RESOLVE_PART_AND_TOOL` (§2), then writes the
-   zero-added-latency files with `AUTO_PIPELINE.WRITE_0_ADDED_CLKS_INIT_FILES`;
-4. for `--comb` / `--no_synth`, writes the final files with any fixed
-   `AUTO_PIPELINE(latency=)` call sites
-   (`AUTO_PIPELINE.BUILD_FIXED_AUTO_PIPELINE_TIMING_PARAMS`). Otherwise it runs
-   `AUTO_PIPELINE.DO_PIPELINED_BUILD`
-   ([build entry points](AUTO_PIPELINE_DESIGN.md#4-build-entry-points)), writes the
-   sweep history and final files, and exits non-zero if a timing goal was missed;
-5. generates the bitstream (`--pins`), runs the requested simulation
-   (`SIM.DO_OPTIONAL_SIM`, see [`SIM_DESIGN.md`](SIM_DESIGN.md)), and writes
+**The driver stays thin.** It holds only:
+- argparse, argument validation and combination;
+- the settings for the whole run, written to module globals (`SYN.*`, `SWEEP.*`,
+  `C_TO_LOGIC.MULT_STYLE`, `OPEN_TOOLS.YOSYS_JSON_ONLY`, `AUTO.FORCE_ABSTRACT_AREA`,
+  `pypeline.SET_AUTO_PIPELINE_BUILD_MODE`, `SIM.SET_SIM_TOOL`, ...);
+- dispatch on those arguments: a top-level sequence of named calls.
+
+It defines no functions and no loops. A step with logic of its own is a function
+in the module whose feature it serves. In order, it:
+
+1. parses the arguments and installs the `-D` Pypeline design parameters.
+   `--list_params` prints `pypeline_sim.design_param_list_text` and exits. It then
+   sets the module globals and selects the simulator. A comb-only native simulation
+   of a `.py` design stops here and simulates without building
+   (`SIM.NATIVE_SIM_SKIPS_BUILD`). The build settings come after that shortcut, and
+   then the `atexit` hooks that end every build with `SYN.SYNTHESIS_REUSE_EXIT_REPORT`
+   (§6) and then the elapsed summary (§7);
+2. installs `--latency_hints` starting latencies (`SWEEP.INSTALL_LATENCY_HINTS`). It
+   then parses the design with `C_TO_LOGIC.PARSE_FILE` or
+   `PY_TO_LOGIC.PARSE_FILE_FOR_BUILD` (sources frozen, `@initial(syn)` hooks, host
+   software types);
+3. settles part and tool with `RESOLVE_BUILD_TARGET` (§2) and writes the
+   zero-added-latency files (`AUTO_PIPELINE.WRITE_0_ADDED_CLKS_INIT_FILES`). It then
+   applies the latency memory (`SWEEP.APPLY_LATENCY_MEMORY`, sweep builds only);
+4. with no synthesis tool for the part, continues as `--comb --no_synth`, with a
+   warning. `AUTO_PIPELINE.SWITCH_TO_FIXED_ONLY_BUILD` re-elaborates a design that
+   already read a `start_latency=` or a starting latency;
+5. for `--comb` or `--no_synth`, writes the final files with any fixed
+   `AUTO_PIPELINE(latency=)` call sites (`AUTO_PIPELINE.WRITE_COMB_FINAL_FILES`).
+   For `--comb`, it then runs the comb-stage simulation (`SIM.DO_COMB_STAGE_SIM`);
+6. for every build without `--no_synth` (`--comb` included: its synthesis run
+   reports combinational fmax), runs `AUTO_PIPELINE.DO_PIPELINED_BUILD`
+   ([build entry points](AUTO_PIPELINE_DESIGN.md#4-build-entry-points)). Next,
+   `SWEEP.WRITE_SWEEP_RESULTS` writes the sweep history, final files and latency
+   profile. The build exits non-zero if a timing goal was missed
+   (`SWEEP.PRINT_TIMING_FAILURES`). Otherwise it generates the bitstream (`--pins`)
+   and runs the requested simulation (`SIM.DO_OPTIONAL_SIM`, see
+   [`SIM_DESIGN.md`](SIM_DESIGN.md));
+7. writes the generated sources (`AUTO_COMB_OPT.DUMP_GENERATED_SOURCE`, needed by a
+   `--no_synth` build without fixed latencies, which writes no final files) and
    `name_index.log` (§7).
 
-With no synthesis tool for the part, it falls back to `--comb --no_synth`.
+`src_module_import_test.py` (unit) runs the fallback of step 4 in an environment with
+no tools: a plain build falls back with the warning, and a design that read a
+`start_latency=` `.latency` is re-elaborated so the read becomes 0.
 
 ## 9. Operator QoR benchmark
 

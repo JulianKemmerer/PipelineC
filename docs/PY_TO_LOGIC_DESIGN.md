@@ -5114,8 +5114,9 @@ being called more than once per process:
 - **Design source frozen for the whole build:** a later pass re-parses the design
   hours after the first one. If a design file were edited in between, that pass
   would elaborate different code than the one the sweep measured, or
-  `inspect.getsource` would return shifted lines. So `pypelinec` calls
-  `FREEZE_DESIGN_SOURCES(out_dir)` right before the first `PARSE_FILE`. After
+  `inspect.getsource` would return shifted lines. So a build's first parse
+  (`PARSE_FILE_FOR_BUILD`) calls `FREEZE_DESIGN_SOURCES(out_dir)` right before
+  `PARSE_FILE`. After
   that, three kinds of read return a file's first-read bytes for the rest of the
   process:
   - the import loader (`SourceFileLoader.get_code` is patched), so eviction
@@ -5700,16 +5701,21 @@ in three places:
   run_syn_initial_hooks=False)`: with `True`, right after Step 1's `exec_module` (the hooks
   only exist once the design is imported) and before any elaboration, it stores
   `pypeline._syn_hook_snapshot = pypeline.SNAPSHOT_HOOKS()` and runs
-  `RUN_INITIAL_HOOKS("syn", <snapshot>)`. Only the driver's first parse passes `True`. The
+  `RUN_INITIAL_HOOKS("syn", <snapshot>)`. Only a build's first parse
+  (`PARSE_FILE_FOR_BUILD`) passes `True`. The
   no-synth-tool re-elaboration and every pin-and-confirm re-parse keep the default, so the
   hooks run once per `pypelinec` run.
 
-**Syn `@final` hooks run in the driver** (`src/pipelinec`), in `_run_syn_final_hooks()`.
-It is called right after each `SYN.WRITE_FINAL_FILES` (the `--comb` path, the `--no_synth`
-fixed-latency path, the pipelined path), plus once for a `--no_synth` build whose
-zero-added-clocks files are already the final VHDL. A once-guard makes the first call the
-only one that runs, because a `--comb` build without `--no_synth` writes its final files
-again after `DO_PIPELINED_BUILD`. So the hooks run after the final VHDL (and `--verilog`
+**Syn `@final` hooks run at the end of the build**, in `RUN_SYN_FINAL_HOOKS()`.
+It is called right after each final-files step:
+- `AUTO_PIPELINE.WRITE_COMB_FINAL_FILES`, the `--comb` / `--no_synth` final files. This
+  includes a `--no_synth` build whose zero-added-clocks files are already the final
+  VHDL;
+- `SWEEP.WRITE_SWEEP_RESULTS`, the pipelined build's final files.
+
+A once-guard (`_syn_final_hooks_ran`) makes the first call the only one that runs,
+because a `--comb` build without `--no_synth` writes its final files again after
+`DO_PIPELINED_BUILD`. A C build never set a snapshot, so nothing runs. So the hooks run after the final VHDL (and `--verilog`
 conversion) exists, and before the timing-failure exit, `GENERATE_FINAL_BITSTREAM` and any
 simulation of the built design. A build that fails before writing final files never
 reaches them.

@@ -258,7 +258,9 @@ def get_tests() -> list:
         )
     )
     # Every src module imports first in a fresh interpreter (import cycles stay
-    # import-time safe), and a .py build needs no C preprocessor (#363).
+    # import-time safe), a .py build needs no C preprocessor (#363), and a
+    # build with no synthesis tool for its part falls back to --comb --no_synth
+    # (re-elaborating a design that read a start_latency= .latency).
     tests.append(
         Test(
             name="src_module_import_test",

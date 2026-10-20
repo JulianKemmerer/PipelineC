@@ -918,15 +918,6 @@ The existing pass, stall, floor and hardware-equality stop rules bound the loop;
 no extra repair limit is introduced. Unblamed FSMs keep their schedules during
 repair. Exact isolated unit-stage paths update carried pipeline timing evidence.
 
-**The CLI driver stays thin.** `src/pipelinec` holds only argparse, argument
-validation/combination, propagating flags into module-level settings
-(`SYN.HIER_SYN_MODE`, `AUTO.FORCE_ABSTRACT_AREA`, `SIM.SET_SIM_TOOL`, ...), and a
-top-level sequence of named calls (parse → comb path →
-`AUTO_PIPELINE.DO_PIPELINED_BUILD` → write results →
-`SWEEP.PRINT_TIMING_FAILURES` → optional bitstream → optional sim). It defines
-no functions and no loops; every loop lives in the module whose feature it
-drives.
-
 **Why a generated FSM needs no sweep support.** It holds non-volatile `Reg`
 state, so `CAN_HAVE_ADDED_LATENCY` is already False: the sweep treats it as an
 unsliceable atomic block whose measured delay is a soft floor (the

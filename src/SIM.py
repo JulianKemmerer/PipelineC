@@ -58,6 +58,25 @@ def SIM_AT_COMB_STAGE(args) -> bool:
     return args.sim_comb or (SIM_TOOL is pypeline_sim and args.sim)
 
 
+def DO_COMB_STAGE_SIM(parser_state, args, comb_timing_params, source_file):
+    """A --comb build's optional simulation, right after its final files: a
+    good point to check basic single cycle/comb logic before pipelining with
+    synth tools (SIM_AT_COMB_STAGE). A native non---comb --sim run degraded to
+    comb by the no-synth-tool fallback also sims here, with zero latency (its
+    warning already printed). The native simulator gets no timing params (zero
+    MAIN latencies; a fixed latency= call site keeps its own .latency delay
+    line); every other simulator gets comb_timing_params."""
+    DO_OPTIONAL_SIM(
+        SIM_AT_COMB_STAGE(args),
+        parser_state,
+        args,
+        multimain_timing_params=(
+            None if SIM_TOOL is pypeline_sim else comb_timing_params
+        ),
+        source_file=source_file,
+    )
+
+
 def DO_OPTIONAL_SIM(
     do_sim, parser_state, args, multimain_timing_params=None, source_file=None
 ):

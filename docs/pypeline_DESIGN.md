@@ -1187,8 +1187,8 @@ driver calls before its first `PARSE_FILE`. There are three modes:
 - `"sweep"`: a synthesizing build.
 - `"fixed_only"`: `--comb`, `--no_synth` and `--yosys_json` builds.
 
-The no-tool fallback also switches to `"fixed_only"`, and re-elaborates the design if
-it had already read a `start_latency`.
+The no-tool fallback (`AUTO_PIPELINE.SWITCH_TO_FIXED_ONLY_BUILD`) also switches to
+`"fixed_only"`, and re-elaborates the design if it had already read a `start_latency`.
 
 In native simulation, a call site with a nonzero `.latency` behaves as an N-stage
 pipeline, implemented as a per-call-site delay line. At 0 it is a plain passthrough
@@ -1586,7 +1586,9 @@ injected constants in hardware bodies, provenance) is in
   - a declared name some file reads as an unbound global.
 - **Recording.** `PRINT_DESIGN_PARAM_BANNER_ONCE` prints the table after the first
   import of a process. `DESIGN_PARAM_REPORT()` is the `design_params` record in
-  `source_provenance.json`, and `DESIGN_PARAM_LIST_TEXT` is the `--list_params` output.
+  `source_provenance.json`, and `DESIGN_PARAM_LIST_TEXT` is the `--list_params` output
+  (`pypeline_sim.design_param_list_text` imports the design without elaborating it, and
+  the listing replaces the banner).
 - **Drivers.** `pipelinec` and `pypeline_sim.py` both parse `-D`
   (`PARSE_DESIGN_PARAM_DEFINES`). `pipelinec` installs the table before anything
   imports the design: the comb native-sim shortcut, `--list_params`, or the first
