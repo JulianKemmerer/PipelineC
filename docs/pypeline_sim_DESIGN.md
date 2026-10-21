@@ -55,6 +55,7 @@ For the shared pypeline.py type system and `SimVal` foundations, see
 - [`Wire[T]` / `Input[T]` / `Output[T]` Global Wire Simulation](#wiret--inputt--outputt-global-wire-simulation)
   - [Global Wire State](#global-wire-state)
 - [`pypeline_sim.py` — Multi-MAIN Clock-Cycle Simulation](#pypeline_simpy--multi-main-clock-cycle-simulation)
+  - [Global FIFOs and the multi-rate refusal](#global-fifos-and-the-multi-rate-refusal)
   - [Per Clock Cycle](#per-clock-cycle)
   - [Delta-Cycle Convergence Queue](#delta-cycle-convergence-queue)
   - [Register Commit Timing](#register-commit-timing)
@@ -1089,6 +1090,12 @@ the body; the ordinary wrapper frames remain unchanged.
 `_sim_current_inst_path()` returns `tuple(_sim_inst_stack)` — an immutable snapshot used
 as the dict key for register state.
 
+A stateless `@hw_func` pushes a frame only when a `@sim_model` is attached to it, for that
+model's own call. Its callers' frames are not on the stack, so two stateless MAINs calling
+one model at the same source line get the same instance path. `pypeline_sim._call_main`
+gives each global FIFO MAIN a frame of its own for that reason
+([Global FIFOs](#global-fifos-and-the-multi-rate-refusal)).
+
 ### Per-Instance Register State
 
 ```python
@@ -1579,6 +1586,32 @@ the table with `pypeline.SET_DESIGN_PARAMS` before the import. `import_design` r
 the `param()` declarations, then runs the same post-import `-D` checks as `PARSE_FILE`
 and prints the parameter table once per process. In the `pypelinec --sim` flow the
 table is the one the build installed, so the simulation sees the build's values.
+
+### Global FIFOs and the multi-rate refusal
+
+**Refusal.** After the import, `_refuse_multi_rate` groups the registered `@MAIN`s by the
+rate stamped on each (`_pypeline_main_mhz`, set by `pypeline._register_main`). When they
+name more than one rate, `run_sim` exits non-zero with a message naming each rate and its
+`@MAIN`s: stepping every MAIN once per cycle would run different clocks in lockstep
+([#354](https://github.com/JulianKemmerer/PipelineC/issues/354)). Bare `@MAIN`s name no rate
+and do not count. Both `pypeline_sim.py` and `pypelinec --sim` stop here. Phase 2 of the
+multi-clock work will count clock identities instead of rates.
+
+**Global FIFOs.** `_discover_wire_names` returns the `Fifo[T]` declarations next to the
+wires: a FIFO is a compound wire, so its state is seeded like any other. For each one,
+`run_sim` builds the FIFO MAIN with the compiler's own generator,
+`pypeline._make_global_fifo_main`, named `<name>_FIFO` (module-prefixed outside the top
+file), and appends it to the cycle loop's MAIN list. It is never added to
+`_main_registry`. The FIFO MAIN is an ordinary `@hw_func`, so the wire rewriter, claim
+tracking and reader re-queueing apply to it unchanged. The library FIFO's class
+`@sim_model` (`_FifoFwftModel`) works on a deep copy of its committed state, so the
+convergence loop may call it repeatedly in a cycle.
+
+`_call_main` pushes an instance frame `(<name>_FIFO, None)` around a FIFO MAIN. A stateless
+function pushes no frame of its own (see [Instance Path Stack](#instance-path-stack)), so
+without it the FIFO model inside would share state with every other stateless caller of the
+same model at the same source line, for example two FIFOs built from one
+`make_stream_fifo(T, n)`.
 
 ### Per Clock Cycle
 

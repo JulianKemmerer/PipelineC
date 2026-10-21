@@ -2169,6 +2169,9 @@ def _register_main(func, mhz):
     if mhz is not None:
         _main_mhz_registry[func.__name__] = float(mhz)
     wrapped = _sim_type_wrap(func)
+    # Native sim refuses designs whose MAINs name more than one rate; the
+    # registry above is keyed by bare name, so the rate rides on the MAIN too
+    wrapped._pypeline_main_mhz = None if mhz is None else float(mhz)
     _main_registry.append(wrapped)
     return wrapped
 
@@ -5634,6 +5637,255 @@ class Output(metaclass=_OutputMeta):
     pass
 
 
+# Fifo[T] — global FIFOs, with global_fifo(n) / global_sync_fifo(n)
+# ──────────────────────────────────────────────────────────────────
+
+
+class GlobalFifoError(Exception):
+    """A Fifo[T] declaration whose hardware cannot be a global FIFO of T: a
+    module initializer without exactly one valid/ready input port and one
+    output port of T. Raised by native sim and the compiler alike (the
+    compiler reports it as an ElaborationError naming the declaration)."""
+
+
+# data type -> (end type, wire type) of Fifo[data type], built once per type
+_global_fifo_type_cache: dict = {}
+
+
+def _global_fifo_types(data_t):
+    """(end_t, wire_t) for Fifo[data_t]: wire_t is {wr: end_t, rd: end_t} and
+    end_t is {stream: make_stream_t(data_t), ready: uint1_t}. The stream half
+    is the library's make_stream_t, so a stream port's `.stream` assigns to an
+    end in one statement. Imported at first use, not at load: pypeline.py must
+    not depend on include/pypeline (see _make_auto_fsm_stream_t)."""
+    types = _global_fifo_type_cache.get(data_t)
+    if types is None:
+        from stream.stream import make_stream_t
+
+        stream_t = make_stream_t(data_t)
+
+        @struct
+        class global_fifo_end_t(NamedTuple):
+            stream: stream_t
+            ready: uint1_t
+
+        @struct
+        class global_fifo_t(NamedTuple):
+            wr: global_fifo_end_t
+            rd: global_fifo_end_t
+
+        types = (global_fifo_end_t, global_fifo_t)
+        _global_fifo_type_cache[data_t] = types
+    return types
+
+
+class _FifoType(_WireType):
+    """Produced by Fifo[T]. A global FIFO travels as an ordinary compound
+    global wire of _global_fifo_types(T)'s wire type, so every global-wire
+    path (native-sim rewriting and lens writes, elaboration, multi-writer
+    regions, readback) carries its two ends unchanged. The FIFO hardware
+    between the ends is a compiler-made MAIN (_make_global_fifo_main)."""
+
+    def __init__(self, data_t):
+        super().__init__(_global_fifo_types(data_t)[1])
+        self.data_t = data_t
+
+    def __str__(self):
+        return f"Fifo[{_ctype_str(self.data_t)}]"
+
+
+class _FifoMeta(type):
+    def __getitem__(cls, item):
+        if isinstance(item, tuple):
+            raise TypeError(
+                f"Fifo[...] takes one data type, Fifo[T]; got Fifo{list(item)}"
+            )
+        if (
+            getattr(item, "_pypeline_is_interface", False)
+            or _interface_half_of(item)[0] is not None
+        ):
+            raise TypeError(
+                f"Fifo[T]: T must be a data type, not the interface or port half "
+                f"{getattr(item, '__name__', item)!r}. A global FIFO supplies valid "
+                f"and ready itself: each end is a valid/ready stream of T."
+            )
+        if not (_is_compound_pypeline_type(item) or _is_scalar_pypeline_int(item)):
+            raise TypeError(f"Fifo[T]: T must be a hardware type, got {item!r}")
+        return _FifoType(item)
+
+
+class Fifo(metaclass=_FifoMeta):
+    """Marks a module-level variable as a global FIFO between two functions.
+
+    Usage at module level only, with the FIFO hardware as the initializer:
+        cmds: Fifo[cmd_t] = global_fifo(16)
+
+    One function uses the write end (drives cmds.wr.stream, reads
+    cmds.wr.ready) and one the read end (drives cmds.rd.ready, reads
+    cmds.rd.stream). Fifo[T] inside a function body is an ElaborationError.
+    See pypeline_guide.md "Fifo[T] — global FIFOs".
+    """
+
+    pass
+
+
+class _GlobalFifoInit:
+    """Produced by global_fifo(n) / global_sync_fifo(n): a Fifo[T]
+    initializer asking for the library FIFO, make_stream_fifo, holding at
+    least n words (_global_fifo_hardware). `kind` is the function's name."""
+
+    def __init__(self, kind, n):
+        if isinstance(n, bool) or not isinstance(n, int):
+            raise TypeError(f"{kind}(n): n is a number of words, an int; got {n!r}")
+        if n <= 0:
+            raise ValueError(f"{kind}(n): n must be at least 1, got {n}")
+        self.kind = kind
+        self.n = n
+
+    def __repr__(self):
+        return f"{self.kind}({self.n})"
+
+
+def global_fifo(n):
+    """Initializer of a Fifo[T] declaration: a FIFO holding at least n words.
+
+        rx: Fifo[uint8_t] = global_fifo(64)
+
+    n is rounded up to a power of two, at least 2. With both ends on one
+    clock this is the library FIFO, make_stream_fifo(T, n). Ends on two clocks
+    are not supported yet.
+    """
+    return _GlobalFifoInit("global_fifo", n)
+
+
+def global_sync_fifo(n):
+    """Like global_fifo(n), stating that the FIFO's ends stay on one clock."""
+    return _GlobalFifoInit("global_sync_fifo", n)
+
+
+def _global_fifo_hardware(data_t, init):
+    """The single-clock module a Fifo[data_t] initializer stands for: the
+    library FIFO for global_fifo(n) / global_sync_fifo(n), else the
+    initializer itself (any stream module, _stream_module_ports checks it)."""
+    if not isinstance(init, _GlobalFifoInit):
+        return init
+    from stream.stream_fifo import make_stream_fifo
+
+    return make_stream_fifo(data_t, 1 << (max(init.n, 2) - 1).bit_length())
+
+
+def _stream_module_ports(module, data_t, what):
+    """(input port name, output port name, input port's fwd_t, output port's
+    fb_t) of a stream module used as `what`'s hardware: exactly one valid/ready
+    input port and one output port, each a stream of make_stream_t(data_t)
+    with a uint1_t ready. Found from the module's annotations
+    (_interface_half_of): an input port is a .fwd_t argument plus a .fb_t
+    return field of the same name, an output port the reverse. Raises
+    GlobalFifoError naming the module otherwise."""
+    fn = _inspect.unwrap(module) if callable(module) else None
+    desc = getattr(fn, "__qualname__", None) or repr(module)
+
+    def fail(why):
+        raise GlobalFifoError(
+            f"{what}: its hardware {desc} must be a single-clock stream module "
+            f"with one valid/ready input port and one output port of "
+            f"{_ctype_str(data_t)} (like make_stream_fifo({_ctype_str(data_t)}, n) "
+            f"or make_skid_buffer({_ctype_str(data_t)})): {why}"
+        )
+
+    if fn is None or not hasattr(fn, "__code__"):
+        fail("it is not a hardware function")
+    ann = getattr(fn, "__annotations__", {})
+    roles = {}  # port name -> (arg role, return field role)
+    for p in _inspect.signature(fn).parameters:
+        _iface, role, is_array = _interface_half_of(ann.get(p))
+        if role is None or is_array:
+            fail(f"argument {p!r} is not one half of a stream port")
+        roles[p] = [role, None]
+    ret_t = ann.get("return")
+    ret_anns = getattr(ret_t, "__annotations__", {}) if ret_t is not None else {}
+    for f in getattr(ret_t, "_fields", ()):
+        _iface, role, is_array = _interface_half_of(ret_anns.get(f))
+        if f not in roles or role is None or is_array:
+            fail(f"return field {f!r} is not the other half of an argument's port")
+        roles[f][1] = role
+    in_ports = [p for p, r in roles.items() if r == ["fwd", "fb"]]
+    out_ports = [p for p, r in roles.items() if r == ["fb", "fwd"]]
+    if len(in_ports) != 1 or len(out_ports) != 1 or len(roles) != 2:
+        fail(f"its ports are {sorted(roles)}")
+    in_port, out_port = in_ports[0], out_ports[0]
+    stream_t = _global_fifo_types(data_t)[0].__annotations__["stream"]
+    for port, fwd_t, fb_t in (
+        (in_port, ann[in_port], ret_anns[in_port]),
+        (out_port, ret_anns[out_port], ann[out_port]),
+    ):
+        fwd_fields = getattr(fwd_t, "__annotations__", {})
+        fb_fields = getattr(fb_t, "__annotations__", {})
+        if list(fwd_fields) != ["stream"] or _ctype_str(
+            fwd_fields["stream"]
+        ) != _ctype_str(stream_t):
+            fail(f"port {port!r} does not carry make_stream_t({_ctype_str(data_t)})")
+        if list(fb_fields) != ["ready"] or _ctype_str(fb_fields["ready"]) != "uint1_t":
+            fail(f"port {port!r} has no uint1_t ready")
+    return in_port, out_port, ann[in_port], ann[out_port]
+
+
+def _make_global_fifo_main(func_name, wire_name, fifo_type, init, module_globals, reserved=()):
+    """The FIFO MAIN of one Fifo[T] declaration: a flat generated hw_func
+    `func_name` making one call of the FIFO hardware. It reads wr.stream and
+    rd.ready and drives wr.ready and rd.stream, so the wire's ends meet the
+    module's ports. Native sim and the compiler both build it here, so native
+    sim stays compiler-free.
+
+    It is exec'd in a copy of the declaring module's globals, so its body
+    names the wire by its bare name `wire_name`, like user code in that module
+    (native sim's rewriter and the elaborator resolve wires by module). The
+    injected names and the one local avoid every name of that module and
+    `reserved` (the compiler passes the top design file's globals, which
+    elaboration merges in)."""
+    data_t = fifo_type.data_t
+    module = _global_fifo_hardware(data_t, init)
+    in_port, out_port, in_fwd_t, out_fb_t = _stream_module_ports(
+        module, data_t, f"global FIFO '{wire_name}'"
+    )
+    taken = set(module_globals) | set(module_globals.get("__annotations__", {}))
+    taken |= set(reserved)
+
+    def free(base):
+        name, i = base, 1
+        while name in taken:
+            i += 1
+            name = f"{base}_{i}"
+        taken.add(name)
+        return name
+
+    hw, in_t, out_t, io = (
+        free(n) for n in ("fifo_hardware", "fifo_in_t", "fifo_out_t", "fifo_ports")
+    )
+    w = wire_name
+    src = (
+        f"def {func_name}():\n"
+        f"    {io} = {hw}(\n"
+        f"        {in_port}={in_t}(stream={w}.wr.stream),\n"
+        f"        {out_port}={out_t}(ready={w}.rd.ready),\n"
+        f"    )\n"
+        f"    {w}.wr.ready = {io}.{in_port}.ready\n"
+        f"    {w}.rd.stream = {io}.{out_port}.stream\n"
+    )
+    ns = dict(module_globals)
+    ns.update({hw: module, in_t: in_fwd_t, out_t: out_fb_t})
+
+    def global_fifo_main(fifo, data_t, hardware):
+        # The frame _exec_generated_func describes: name, data type, hardware
+        return _exec_generated_func(
+            func_name, src, ns, folder="pypeline_generated_fifos"
+        )
+
+    main = hw_func(global_fifo_main(wire_name, data_t, module))
+    main._pypeline_global_fifo = wire_name
+    return main
+
+
 # make_clock(mhz) — tag a global Wire/Input as a clock (PipelineC's CLK_MHZ)
 # ──────────────────────────────────────────────────────────────────────────
 
@@ -6098,13 +6350,15 @@ def _exec_generated_func(
 # Directory-name markers of the synthetic "/<marker>/<name>.py" absolute-path
 # convention used by _exec_generated_func (default folder
 # "pypeline_generated_bytes", or "pypeline_generated_casts" -- the
-# lazily-built @cast functions in include/pypeline/stream/stream.py -- via
-# its folder= override) and AUTO._exec_generated ("pypeline_auto_fsm_gen");
+# lazily-built @cast functions in include/pypeline/stream/stream.py -- or
+# "pypeline_generated_fifos", the global FIFO MAINs of _make_global_fifo_main,
+# via its folder= override) and AUTO._exec_generated ("pypeline_auto_fsm_gen");
 # see dump_generated_sources.
 _GENERATED_SOURCE_DIR_MARKERS = (
     "pypeline_generated_bytes",
     "pypeline_generated_casts",
     "pypeline_auto_fsm_gen",
+    "pypeline_generated_fifos",
 )
 
 

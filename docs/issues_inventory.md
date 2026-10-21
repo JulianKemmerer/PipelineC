@@ -90,7 +90,7 @@ Within each group, bugs that affect both front ends come first, problems in the 
 | 10 | [#192][i192] | C | A FEEDBACK variable with no default assignment becomes an undriven net | Yes |
 | 11 | [#146][i146] | C | A `static` declared inside an `if` never updates | Yes, GHDL |
 | 12 | [#353][i353] | Python | Two calls to one stateful function on one line share state in native simulation | Yes, GHDL |
-| 13 | [#354][i354] | Python | Native simulation runs `@MAIN`s with different clock rates in lockstep | Yes |
+| 13 | [#354][i354] | Python | Native simulation runs `@MAIN`s with different clock rates in lockstep (now refused; recommend closing) | Yes |
 | 14 | [#355][i355] | Python | `@sim_input` ignores its arguments within a cycle | Yes |
 | 15 | [#356][i356] | Both | String literals containing `_` produce invalid VHDL | Yes, GHDL |
 | 16 | [#357][i357] | Both | A `char` register with an integer initial value: invalid VHDL in C, rejected in Python | Yes, GHDL |
@@ -398,6 +398,7 @@ Within each group, bugs that affect both front ends come first, problems in the 
 - **Where to look:** `_run_clock_cycle` (`src/pypeline_sim.py:270`). Moving data between clock domains is a separate feature request, [Discussion #342][d342].
 - **Reproduce:** in the issue.
 - **Workaround:** none for simulation. The generated hardware is not affected.
+- **Fixed by refusal:** native simulation (`pypeline_sim.py` and `pypelinec --sim`) now stops with a non-zero exit when the `@MAIN`s name more than one rate, naming each rate and its `@MAIN`s (`pypeline_sim._refuse_multi_rate`; test `multi_rate_sim_refusal_test.py`). Bare `@MAIN`s name no rate and do not count. Recommend closing the issue: simulating several clocks is new work, which stays in [Discussion #342][d342].
 
 ### 14. [#355][i355]: `@sim_input` ignores its arguments within a cycle
 

@@ -15,6 +15,24 @@ from common import INST_DIR, Test, main
 
 def get_tests() -> list:
     tests = []
+    # Global FIFO API: Fifo[T], global_fifo/global_sync_fifo, the stream-module
+    # port helper and the FIFO MAIN generator's names.
+    tests.append(
+        Test(
+            name="global_fifo_api_unit_test",
+            category="unit",
+            cmd=[INST_DIR / "global_fifo_api_unit_test.py"],
+        )
+    )
+    # The sweep's view of a FIFO MAIN: paths inside it go to it alone, a path
+    # leaving it to the user MAIN; WHY_NOT_SLICEABLE; the TIMING NOT MET name.
+    tests.append(
+        Test(
+            name="global_fifo_path_unit_test",
+            category="unit",
+            cmd=[INST_DIR / "global_fifo_path_unit_test.py"],
+        )
+    )
     # Wrapper suffixes can exceed the body-name budget; select the emitted name.
     tests.append(
         Test(

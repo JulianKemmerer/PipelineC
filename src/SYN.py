@@ -1166,6 +1166,32 @@ def PATH_CELLS_BY_MAIN(path_report, parser_state, TimingParamsLookupTable):
     return by_main
 
 
+def PATH_ENDS_IN_MAIN(path_report, main_inst, parser_state, TimingParamsLookupTable):
+    """True if a path's start and end registers are both inside main_inst's
+    entity: named under its instance, as GET_MAIN_INSTS_FROM_PATH_REPORT
+    matches them, in any case (OPEN_TOOLS reports lower case) and also when
+    a flattening tool prefixes the hierarchy (sky130 STA:
+    `$flatten\\rx_fifo_0clk_d60bc461.\\fifo_hardware_...`)."""
+    if path_report.start_reg_name is None or path_report.end_reg_name is None:
+        return False
+    entity = VHDL.GET_ENTITY_NAME(
+        main_inst,
+        parser_state.LogicInstLookupTable[main_inst],
+        TimingParamsLookupTable,
+        parser_state,
+    ).lower()
+
+    def hierarchy(name):
+        name = name.lower()
+        if name.startswith("$flatten"):
+            name = name[len("$flatten") :]
+        return name.lstrip("\\")
+
+    return hierarchy(path_report.start_reg_name).startswith(entity) and hierarchy(
+        path_report.end_reg_name
+    ).startswith(entity)
+
+
 def GET_MAIN_INSTS_FROM_PATH_REPORT(path_report, parser_state, TimingParamsLookupTable):
     main_insts = set()
     if path_report.start_reg_name is None:

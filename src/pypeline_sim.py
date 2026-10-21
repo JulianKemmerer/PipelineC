@@ -153,7 +153,7 @@ def run_sim(
             pypeline.RESET_AUTO_MULTI_CYCLE_TRACKING()
             module = import_design(design_file)
 
-    wire_info = _discover_wire_names(module)
+    wire_info, fifo_decls = _discover_wire_names(module)
 
     # Reset and initialise all wire and register state.
     pypeline.sim_reset()
@@ -165,6 +165,21 @@ def run_sim(
     if not mains:
         print("No @MAIN functions found in design — nothing to simulate.")
         return
+    _refuse_multi_rate(mains)
+    # Each global FIFO runs as the MAIN the compiler would add for it, built by
+    # the same generator; never registered in _main_registry
+    for mod, bare_name, ann in fifo_decls:
+        mod_globals = vars(mod)
+        prefix = "" if mod.__name__ == "pypeline_design" else mod.__name__ + "_"
+        mains.append(
+            pypeline._make_global_fifo_main(
+                f"{prefix.replace('.', '_')}{bare_name}_FIFO",
+                bare_name,
+                ann,
+                mod_globals[bare_name],
+                mod_globals,
+            )
+        )
 
     # A @MAIN's arguments are top-level input ports with no driver in native sim:
     # they read as typed zeros, like an undriven Input[T] (see _call_main).
@@ -306,10 +321,40 @@ def run_sim(
         pypeline.RUN_FINAL_HOOKS("sim", pending_exc=pending_exc)
 
 
+def _refuse_multi_rate(mains) -> None:
+    """Stop when the @MAINs name more than one rate: each cycle steps every
+    MAIN once, so different clocks would run in lockstep (issue #354). Bare
+    @MAINs name no rate and do not count."""
+    by_rate = {}
+    for fn in mains:
+        mhz = getattr(fn, "_pypeline_main_mhz", None)
+        if mhz is not None:
+            by_rate.setdefault(mhz, []).append(fn.__qualname__)
+    if len(by_rate) > 1:
+        rates = "; ".join(
+            f"{mhz} MHz: {', '.join(names)}" for mhz, names in sorted(by_rate.items())
+        )
+        sys.exit(
+            f"ERROR: native simulation runs one clock, but this design's @MAINs "
+            f"name {len(by_rate)} rates ({rates}). Simulate one clock domain at a "
+            f"time, or the generated VHDL."
+        )
+
+
 def _call_main(main_fn, arg_types: tuple) -> None:
     # Fresh zeros on every call, so no call can see an argument object a previous
     # call (or cycle) was handed.
     args = [pypeline.sim_zero(t) for t in arg_types]
+    if getattr(main_fn, "_pypeline_global_fifo", None) is not None:
+        # A stateless function pushes no instance frame, so without its own the
+        # FIFO model inside would share state with every other caller of the
+        # same model at the same source line
+        pypeline._sim_inst_stack.append((main_fn.__qualname__, None))
+        try:
+            pypeline.sim_call(main_fn, *args)
+        finally:
+            pypeline._sim_inst_stack.pop()
+        return
     region = pypeline._sim_pipelined_main_info.get(main_fn)
     if region is None:
         pypeline.sim_call(main_fn, *args)
@@ -406,17 +451,20 @@ def _convergence_loop(mains: list, main_arg_types: dict, cycle: int) -> None:
                         queued.add(reader)
 
 
-def _discover_wire_names(module) -> list:
-    """Return (qualified_name, inner_ctype) for all Wire/Input/Output in module and
-    imported sub-modules, recursively/transitively. Names are module-qualified
-    ("<module>.<wire>", matching pypeline.py's _GlobalWireRewriter) so two unrelated
-    modules declaring a same-named Wire[T] (e.g. both calling it "key") don't collide.
+def _discover_wire_names(module) -> tuple:
+    """Return (wires, fifos): (qualified_name, inner_ctype) for all
+    Wire/Input/Output/Fifo in module and imported sub-modules,
+    recursively/transitively, and (module, name, Fifo annotation) for each
+    Fifo[T] declaration. Names are module-qualified ("<module>.<wire>",
+    matching pypeline.py's _GlobalWireRewriter) so two unrelated modules
+    declaring a same-named Wire[T] (e.g. both calling it "key") don't collide.
     """
     import types
 
     seen_ids: set = set()
     result: list = []
     result_keys: set = set()
+    fifos: list = []
 
     def _scan(mod):
         if id(mod) in seen_ids:
@@ -430,6 +478,8 @@ def _discover_wire_names(module) -> list:
                 if qualified not in result_keys:
                     result.append((qualified, pypeline._wire_ann_inner_ctype(ann)))
                     result_keys.add(qualified)
+                    if isinstance(ann, pypeline._FifoType):
+                        fifos.append((mod, name, ann))
                 if ann.volatile:
                     pypeline._sim_wire_volatile.add(qualified)
         for attr in vars(mod).values():
@@ -437,7 +487,7 @@ def _discover_wire_names(module) -> list:
                 _scan(attr)
 
     _scan(module)
-    return result
+    return result, fifos
 
 
 def _evict_design_modules():

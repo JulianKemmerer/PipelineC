@@ -530,35 +530,50 @@ See [pypeline_guide.md: Pipelined Stream Wrappers: `make_stream_auto_pipeline`](
 and [examples/pypeline/stream_pipeline.py](../examples/pypeline/stream_pipeline.py) for a
 complete design with a producer and a consumer `@MAIN`.
 
-### 8d. GLOBAL_STREAM_FIFO — synchronous FIFO
+### 8d. GLOBAL_FIFO / GLOBAL_STREAM_FIFO — synchronous FIFO
 
 ```c
-// PipelineC
+// PipelineC (include/global_fifo.h), both ends on one clock
 // Declares: fifo_name_in, fifo_name_in_ready,
 //           fifo_name_out, fifo_name_out_ready
 GLOBAL_STREAM_FIFO(T, fifo_name, depth)
+
+// Or the raw form: fifo_name_WRITE_1(data[1], write_enable) -> .ready
+//                  fifo_name_READ_1(read_enable)            -> .data[1], .valid
+GLOBAL_FIFO(T, fifo_name, depth)
 ```
 ```python
-# pypeline
-from stream.stream import make_stream_t
-from stream.stream_fifo import make_stream_fifo
-
-stream_T = make_stream_t(T)
-fifo_func = make_stream_fifo(T, depth)
-
-fifo_name_in:        Wire[stream_T]
-fifo_name_out:       Wire[stream_T]
-fifo_name_in_ready:  Wire[uint1_t]
-fifo_name_out_ready: Wire[uint1_t]   # driven by downstream consumer
+# pypeline: a global FIFO, Fifo[T]
+fifo_name: Fifo[T] = global_fifo(depth)   # or global_sync_fifo(depth)
 
 @MAIN
-def fifo_name_main():
-    result = fifo_func(fifo_name_out_ready, fifo_name_in)
-    fifo_name_out      = result.out_stream
-    fifo_name_in_ready = result.in_ready
+def producer():
+    fifo_name.wr.stream.data = x          # fifo_name_in.data
+    fifo_name.wr.stream.valid = 1         # fifo_name_in.valid
+    if fifo_name.wr.ready:                # fifo_name_in_ready
+        ...
+
+@MAIN
+def consumer():
+    fifo_name.rd.ready = 1                # fifo_name_out_ready
+    if fifo_name.rd.stream.valid:         # fifo_name_out.valid
+        use(fifo_name.rd.stream.data)     # fifo_name_out.data
 ```
 
-See [pypeline_guide.md: FIFOs: `make_stream_fifo`](pypeline_guide.md#fifos-make_stream_fifo).
+| PipelineC | pypeline |
+|---|---|
+| `fifo_name_in` (`stream(T)`), `fifo_name_in_ready` | `fifo_name.wr.stream`, `fifo_name.wr.ready` |
+| `fifo_name_out`, `fifo_name_out_ready` | `fifo_name.rd.stream`, `fifo_name.rd.ready` |
+| `fifo_name_WRITE_1(data, write_enable).ready` | drive `fifo_name.wr.stream`, read `fifo_name.wr.ready` |
+| `fifo_name_READ_1(read_enable)` | drive `fifo_name.rd.ready`, read `fifo_name.rd.stream` |
+| the generated `_wr_stream_in` / `_rd_stream_out` MAINs | one compiler-made MAIN, `fifo_name_FIFO` |
+| `depth` | `n`, the minimum number of words, rounded up to a power of two |
+
+The FIFO is the library's `make_stream_fifo`; any single-clock stream module can be the
+initializer instead (`make_stream_fifo(T, n)`, `make_skid_buffer(T)`). Exactly one function
+uses each end, and both ends run on one clock. Across clocks, see
+[§13](#13-not-yet-supported). Full rules:
+[pypeline_guide.md: `Fifo[T]` — global FIFOs](pypeline_guide.md#fifot--global-fifos).
 
 ### 8e. SKID_BUF — registered stream handshake
 
@@ -592,8 +607,9 @@ behind a one-line face.
 
 The `GLOBAL_STREAM_FIFO_SKID_BUFF` / `_SKID_IN_BUFF` / `_SKID_OUT_BUFF` variants
 in `include/global_fifo.h` are a `SKID_BUF` composed with a
-`GLOBAL_STREAM_FIFO`; build them by instantiating both (8d above) rather than
-looking for a single combined factory.
+`GLOBAL_STREAM_FIFO`; build them from a global FIFO (8d above) and a
+`make_skid_buffer` instance on the side that needs it, rather than looking for a single
+combined factory.
 
 ### 8f. GLOBAL_VALID_READY_MCP_INST — multi-cycle path pipeline
 
@@ -922,8 +938,8 @@ The following PipelineC features do not yet have a pypeline equivalent.
 
 | PipelineC feature | Notes |
 |---|---|
-| Multiple clock domains (`MAIN_MHZ_GROUP`, `#pragma ASYNC_WIRE`) | Partly supported — `@MAIN`s at different rates build, each with its own clock, and `make_clock(mhz)` (§11 above) can name or generate one, but a tagged clock must match some `@MAIN`'s rate exactly. Nothing can cross between domains: clock groups (distinct domains at the same rate) and async wires are not supported, and simulation handles a single clock rate ([#342](https://github.com/JulianKemmerer/PipelineC/discussions/342), [#354](https://github.com/JulianKemmerer/PipelineC/issues/354)) |
-| Async clock-crossing FIFOs (`GLOBAL_STREAM_FIFO` across clock domains) | Not supported ([#342](https://github.com/JulianKemmerer/PipelineC/discussions/342)) |
+| Multiple clock domains (`MAIN_MHZ_GROUP`, `#pragma ASYNC_WIRE`) | Partly supported — `@MAIN`s at different rates build, each with its own clock, and `make_clock(mhz)` (§11 above) can name or generate one, but a tagged clock must match some `@MAIN`'s rate exactly. Nothing can cross between domains: clock groups (distinct domains at the same rate) and async wires are not supported, and simulation handles a single clock rate: native simulation refuses a design whose `@MAIN`s name more than one rate ([#342](https://github.com/JulianKemmerer/PipelineC/discussions/342), [#354](https://github.com/JulianKemmerer/PipelineC/issues/354)) |
+| Async clock-crossing FIFOs (`GLOBAL_FIFO` / `GLOBAL_STREAM_FIFO` across clock domains) | Not supported yet ([#342](https://github.com/JulianKemmerer/PipelineC/discussions/342)); planned as `Fifo[T]` with `global_fifo(n)` or `global_async_fifo(n)` ([Clock-Crossing FIFOs](pypeline_guide.md#clock-crossing-fifos-coming-soon)). A same-clock FIFO is `Fifo[T]` today ([8d](#8d-global_fifo--global_stream_fifo--synchronous-fifo)) |
 | Multiple / early `return` statements (returning from inside an `if` branch) | Not supported — a pypeline function has exactly one `return`, which must be the final top-level statement; restructure to assign a result variable in each branch and return it once at the end (see [pypeline_guide.md: Your First Hardware Function](pypeline_guide.md#your-first-hardware-function)); discussed in [#343](https://github.com/JulianKemmerer/PipelineC/discussions/343) |
 | `Reg[char_t[N]] = <initializer>` (register power-on value for a char array, e.g. equivalent of C's `static char name[16] = "boot";`) | Not supported for hardware elaboration — raises `ElaborationError`. `Reg[char_t[N]]` with no initializer (zero-init) works normally. See [pypeline_DESIGN.md](pypeline_DESIGN.md#char-array-support) and [#357](https://github.com/JulianKemmerer/PipelineC/issues/357) |
 | C-style casts to an `@enum` type or an array type | Not supported (scalar int↔int, `char_t`, and struct/`@interface`-half casts are — see [§3d Casting](#3d-casting)) |

@@ -76,6 +76,7 @@ See [auto-pipelined RAM compilation](AUTO_PIPELINE_DESIGN.md#ram-compiler-sweep-
   - [Const-path bypass](#const-path-bypass)
   - [Pre-scan: `_prescan_written_globals`](#pre-scan-_prescan_written_globals)
   - [`AugAssign` on ref targets (not just bare names)](#augassign-on-ref-targets-not-just-bare-names)
+  - [Access records](#access-records)
   - [Constraints](#constraints)
   - [Implementation mapping](#implementation-mapping)
 - [Global I/O (`Input[T]` / `Output[T]`)](#global-io-inputt--outputt)
@@ -85,6 +86,11 @@ See [auto-pipelined RAM compilation](AUTO_PIPELINE_DESIGN.md#ram-compiler-sweep-
   - [Write side — `Output[T]`](#write-side--outputt)
   - [Constraints](#constraints-1)
   - [Implementation mapping](#implementation-mapping-1)
+- [Global FIFOs (`Fifo[T]`)](#global-fifos-fifot)
+  - [FIFO discovery](#fifo-discovery)
+  - [Realization: `_realize_global_fifos`](#realization-_realize_global_fifos)
+  - [Pipelines: `func_no_added_latency`](#pipelines-func_no_added_latency)
+  - [Which parts are FIFO-specific](#which-parts-are-fifo-specific)
 - [Multi-File Import Support](#multi-file-import-support)
   - [Motivating example](#motivating-example)
   - [Name mangling rule](#name-mangling-rule)
@@ -2535,6 +2541,24 @@ purely on node type, never `node.ctx` (Store vs Load is never inspected). This w
 unmodified for `Attribute`/`Subscript` targets, including global-wire fields
 (`main_a_out.x += ~main_a_in.x`), not just plain `Name` targets.
 
+### Access records
+
+Each function also records where its source touches each global wire:
+
+- `Logic.global_wire_read_paths`: wire → {path tuple: `(src_file, line)` of the first read}.
+  `_note_global_read` fills it from the source reads only: `_elab_ref_read` (which covers
+  CONST_REF_RD and VAR_REF_RD reads), and the whole-wire reads in `_elab_name` and in
+  `_elab_expr`'s module-qualified branch. The internal reads of `_connect_final_state_wires`
+  and of branch merging are not recorded.
+- `Logic.global_wire_write_locs`: wire → {path: `(src_file, line)` of the first write}.
+  `_write_ref` and `_emit_var_ref_assign` fill it, next to `global_wire_driven_paths`. The
+  implicit zero-init first write is not recorded.
+
+A variable index records its constant prefix (`w.arr[i].x` → `("arr",)`). Unlike
+`global_wire_driven_paths`, these hold both directions with source lines.
+[Global FIFOs](#global-fifos-fifot) find each end's users from them; phase 2's crossing
+check will use the lines.
+
 ### Constraints
 
 - `Wire[T]` inside a function body — `ElaborationError`.
@@ -2573,6 +2597,7 @@ unmodified for `Attribute`/`Subscript` targets, including global-wire fields
 | Base wire | `logic.wires`, `logic.wire_to_c_type` (no driver) |
 | Alias chain | `logic.wire_aliases_over_time[name]` |
 | Final connection | `_connect_final_state_wires` → `wire_driven_by[name] = final_alias` |
+| Source accesses | `logic.global_wire_read_paths[name]`, `logic.global_wire_write_locs[name]` |
 
 `Wire` is exported from `pypeline` as `_WireType`; `Wire[T]` uses `__class_getitem__`
 to produce a typed descriptor, mirroring the `Reg` / `Feedback` pattern exactly.
@@ -2657,6 +2682,87 @@ end of elaboration, exactly as for `Wire[T]`.
 
 `Input` and `Output` are exported from `pypeline` as `_InputType` / `_OutputType`;
 both use `__class_getitem__` to produce typed descriptors, mirroring `Wire` exactly.
+
+---
+
+## Global FIFOs (`Fifo[T]`)
+
+`rx: Fifo[T] = global_fifo(n)` ([guide](pypeline_guide.md#fifot--global-fifos)) is an
+ordinary compound global wire, `{wr: end, rd: end}`, plus a compiler-made MAIN that holds
+the FIFO hardware. `_FifoType` is a `_WireType`
+([`pypeline_DESIGN.md`](pypeline_DESIGN.md#fifot--_fifotype--global-fifos)), so discovery,
+elaboration, the multi-writer rules, readback and the VHDL top treat the wire like any other.
+Three functions write it: the producer drives `wr.stream`, the consumer drives `rd.ready`,
+and the FIFO MAIN drives `wr.ready` and `rd.stream`. Each reads the leaves the others drive
+through its `<name>_PYPELINE_READBACK` input.
+
+### FIFO discovery
+
+`_discover_global_wires` registers a `_FifoType` declaration like a `Wire` (module-prefixed
+key) and adds a `GlobalFifoDecl` to `ParserState.pypeline_global_fifos`: key, Python name,
+annotation, initializer, `kind` (`global_fifo`, `global_sync_fifo` or `module`), `n`, the
+declaring module's globals, file and line, and `main_name` = `<key>_FIFO`.
+`describe()` gives the report name, `global FIFO rx [top.py:14]`. The initializer is
+required; a declaration without one, or with a value that is neither a `_GlobalFifoInit`
+nor callable, is an `ElaborationError`. The local-annotation ban covers `Fifo` too.
+
+Clock inference must not join a FIFO's producer and consumer: phase 2 makes a FIFO async
+when its ends are on two clocks. `LOGIC.INFER_CLOCK_DOMAINS` skips the keys of
+`pypeline_global_fifos`, next to its `async_wires` skip
+([Clock Domain Inference](#clock-domain-inference-infer_clock_domains)).
+
+`_elab_name` resolves a module's own wire (step 3) before its module globals (step 4):
+a FIFO's name is also bound to its initializer at module level, and so is a
+`make_clock` wire's.
+
+### Realization: `_realize_global_fifos`
+
+`PARSE_FILE` calls it right after `INFER_CLOCK_DOMAINS`, and so after trimming and
+`_build_func_call_graph`, before the global-wire rule checks. For each FIFO and each end
+`E`, the users are the functions whose access records
+([Access records](#access-records)) overlap `(E,)` (`_path_overlaps`: one path contains
+the other). Each of these is an `ElaborationError` naming the FIFO, the functions and
+their first access lines:
+
+- an end no function uses;
+- an end used by more than one function, or by a function with more than one instance;
+- a user that drives the half the FIFO drives (`wr.ready`, `rd.stream`), a whole end or the
+  whole wire;
+- the ends' MAINs (the first element of each user's instance path) on different
+  `(main_mhz, main_clk_group)`: "Clock-crossing FIFOs are not supported yet". A bare MAIN
+  gets a note that it does not take its rate through a FIFO.
+
+Then it builds the FIFO MAIN with `pypeline._make_global_fifo_main`, passing
+`top_level_module_globals` as `reserved`. A port mismatch (`GlobalFifoError`) becomes an
+`ElaborationError` with the declaration's line, and an existing function of the same name
+(compared case-insensitively) is an error. The MAIN is elaborated with
+`_elaborate_live_func`, as `ELABORATE_LIVE_ROOTS` does; its key is `<key>_FIFO` because the
+generated file is not in `file_to_module_prefix`. It is registered in `main_mhz`,
+`main_syn_mhz` and `main_clk_group` with the write end's MAIN's values, walked into the
+instance tables (`_build_inst_lookup(parser_state, new_mains)`), trimmed, checked for
+dangling logic, and added to the call graph (`_build_func_call_graph` again; it only adds).
+Being in `main_mhz` makes its name protected in the emission registry. The global-wire
+rule loop then runs as usual: every writer of the FIFO wire has one instance, and the
+writers' regions are disjoint.
+
+### Pipelines: `func_no_added_latency`
+
+`ParserState.func_no_added_latency` (function → reason) is honored by
+`Logic.CAN_HAVE_ADDED_LATENCY` and mirrored in `SWEEP.WHY_NOT_SLICEABLE`
+([`AUTO_PIPELINE_DESIGN.md`](AUTO_PIPELINE_DESIGN.md#functions-that-take-no-added-latency)).
+Realization adds every FIFO MAIN ("global FIFO") and every user that both drives and reads
+one end ("global FIFO handshake"): in a pipeline its reads would be sampled at the first
+stage and its writes published at the last. An `AUTO_PIPELINE` call site whose target is a
+handshake user is an `ElaborationError` that points to `make_stream_auto_pipeline`.
+
+### Which parts are FIFO-specific
+
+The FIFO MAIN is a compiler-made MAIN that calls one module and binds the wire's paths to
+its ports. Generating it, registering it, the instance-table walk, the sweep's path
+ownership and its report name are not specific to FIFOs. What is FIFO-specific: the
+`{wr, rd}` wire type and its mapping onto the module's port names
+(`_stream_module_ports`), one user per end, the halves a user must not drive, the skip in
+clock inference, and the handshake rule.
 
 ---
 
@@ -2973,7 +3079,7 @@ is not involved; it is `None` for a sub-file function reached through
 - `i` in a function from a module that does not declare `i` never resolves to any wire,
   even when some other module's wire key is literally spelled `i`.
 
-`_elab_name` (step 4 global wire path), `_elab_assign` (const-bypass check and
+`_elab_name` (step 3 global wire path), `_elab_assign` (const-bypass check and
 ref_toks normalization), and `_elab_ref_read` (base-var normalization) all call
 `_resolve_global_wire` so that compound and indexed accesses also resolve correctly.
 
@@ -3066,7 +3172,7 @@ reaches a hardware body of another file the same ways it reaches Python code:
   `_resolve_module_wire_name` finds no wire, and `_elab_ref_read` falls back to
   `_try_eval_const`, which evaluates the attribute against the file's globals.
 - **Bare `SHIFT_AMOUNT` after `from pypeline_tests import SHIFT_AMOUNT`.** The name is
-  in `module_globals`, step 3 of `_elab_name`.
+  in `module_globals`, step 4 of `_elab_name`.
 
 A bare name the file never imported is an unknown name, as in Python. This is how a
 `param()` value declared in one config module is used everywhere (see
@@ -4651,6 +4757,9 @@ The logic lives in `LOGIC.INFER_CLOCK_DOMAINS(var_to_rw_main_funcs, var_to_read_
 - A second pass handles C-style clock-crossing variables (`_WRITE`/`_READ` pairs) via
   `var_to_rw_main_funcs`; these are empty for the Python path.
 - Repeats until no further propagation occurs (fixed-point loop).
+- Skips `async_wires` and the wires of `parser_state.pypeline_global_fifos`: a global
+  FIFO's ends keep their own clocks, and its FIFO MAIN takes theirs when it is realized
+  ([Global FIFOs](#global-fifos-fifot)).
 
 `INFER_CLOCK_DOMAINS` is a standalone function so it can be reused by both paths —
 `GET_CLK_CROSSING_INFO` (C path only) calls it too, rather than embedding its own copy of
@@ -6223,7 +6332,7 @@ top.py  (single-file or multi-file entry point)
   │               ├─ module-attr RHS    file_a.o  →  _resolve_module_wire_name → 'file_a_o'
   │               ├─ _elab_ref_read     CONST_REF_RD or VAR_REF_RD
   │               │   └─ bare-name (sub)  _resolve_global_wire → prefixed name
-  │               ├─ _elab_name (step 4) _resolve_global_wire → direct or prefixed global wire
+  │               ├─ _elab_name (step 3) _resolve_global_wire → direct or prefixed global wire
   │               ├─ _elab_bit_select   BIT_SELECT submodule (scalar x[N])
   │               ├─ _elab_bit_slice    BIT_SLICE submodule (scalar x[hi:lo] or s.field[hi:lo])
   │               ├─ _elab_tuple_concat TUPLE_CONCAT submodule ((a, b, c))
@@ -6250,6 +6359,8 @@ top.py  (single-file or multi-file entry point)
   │
   ├─ INFER_CLOCK_DOMAINS({}, {}, {}, parser_state)
   │   Propagates known MHz to board-support MAINs sharing global wires (fixed-point loop)
+  │
+  ├─ _realize_global_fifos()            check each Fifo[T]'s ends, add its <key>_FIFO MAIN
   │
   └─ ParserState → throughput placement → VHDL backend
                   (SWEEP_DESIGN.md)      (VHDL_DESIGN.md)

@@ -153,6 +153,16 @@ def get_tests() -> list:
             cmd=[INST_DIR / "global_wire_errors_test.py"],
         )
     )
+    # Global FIFOs, Fifo[T]: the FIFO MAIN (clock, protected name, no added
+    # latency, handshake users), access records, an imported module's FIFO, and
+    # every end/initializer/clock/AUTO_PIPELINE/name error.
+    tests.append(
+        Test(
+            name="global_fifo_elab_test",
+            category="elab_introspect",
+            cmd=[INST_DIR / "global_fifo_elab_test.py"],
+        )
+    )
     # @wires must be literally just wires: registers or logic anywhere in its
     # hierarchy (a stateful testbench MAIN, an adder, a variable index, a
     # stateful callee, an auto-@wires @cast with logic, an untagged raw-VHDL

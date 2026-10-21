@@ -149,6 +149,8 @@ SYNTH_TEST_FILES = [
     # Structurally richest multi-writer global wire design: 3 writers splitting
     # nested struct leaves + a mixed-depth whole-subtree claim + readback.
     ("global_wire_nested_split_test.py", INST_DIR, ["--comb"], DM),
+    # A global FIFO: its compiler-made FIFO MAIN and the three-writer FIFO wire
+    ("self_check_global_fifo_test.py", INST_DIR, ["--comb"], DM),
 ]
 # fmt: on
 

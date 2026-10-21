@@ -464,6 +464,15 @@ class Logic:
         # flattened-leaf semantics for a writer reading foreign leaves. Pypeline
         # frontend only; empty for C-frontend Logic objects.
         self.readback_global_wires = {}
+        # global_wire_read_paths / global_wire_write_locs: global wire name ->
+        # {path tuple: (src_file, line) of this function's first read / write of
+        # that path}, e.g. {("wr", "ready"): ("top.py", 14)}. A variable-index
+        # access records its constant prefix. Unlike global_wire_driven_paths
+        # these are the source's own accesses, read or written, never the
+        # implicit zero-init first write. Pypeline frontend only (global FIFO
+        # end checks, PY_TO_LOGIC._realize_global_fifos); empty for C.
+        self.global_wire_read_paths = {}
+        self.global_wire_write_locs = {}
         self.uses_nonvolatile_state_regs = False
         self.submodule_instances = {}  # instance name -> logic func_name
         self.next_user_inst_name = None  # User name for func
@@ -620,6 +629,12 @@ class Logic:
         }
         rv.global_wire_dynamic_index_writes = set(self.global_wire_dynamic_index_writes)
         rv.readback_global_wires = dict(self.readback_global_wires)
+        rv.global_wire_read_paths = {
+            k: dict(v) for k, v in self.global_wire_read_paths.items()
+        }
+        rv.global_wire_write_locs = {
+            k: dict(v) for k, v in self.global_wire_write_locs.items()
+        }
         rv.feedback_vars = dict.fromkeys(self.feedback_vars)
         rv.uses_nonvolatile_state_regs = self.uses_nonvolatile_state_regs
         rv.submodule_instances = dict(
@@ -1640,6 +1655,9 @@ class Logic:
 
     def CAN_HAVE_ADDED_LATENCY(self, parser_state):
         if self.func_name in parser_state.func_fixed_latency:
+            return False
+        # getattr: a C parser state pickled by an older compiler lacks it
+        if self.func_name in getattr(parser_state, "func_no_added_latency", ()):
             return False
         if self.vhdl_module_text is not None:
             return False
@@ -3331,6 +3349,10 @@ class ParserState:
         self.main_clk_group = {}  # dict[main_inst_name]=clk_group_str
         self.func_marked_wires = set()
         self.func_fixed_latency = {}
+        # func name -> why it can take no compiler-added latency, beyond the
+        # Logic-level reasons in CAN_HAVE_ADDED_LATENCY (Pypeline global FIFOs:
+        # "global FIFO", "global FIFO handshake")
+        self.func_no_added_latency = {}
         self.auto_pipeline_rams = {}
         self.func_marked_blackbox = set()
         self.func_marked_no_add_io_regs = set()
@@ -3341,6 +3363,9 @@ class ParserState:
         self.syn_tool_name = None
         self.inst_array_dict = dict()
         self.async_wires = set()
+        # Pypeline Fifo[T] declarations: global wire name -> PY_TO_LOGIC
+        # GlobalFifoDecl (kind, depth, data type, declaring module and line)
+        self.pypeline_global_fifos = {}
         self.input_wires = set()
         self.output_wires = set()
         self.clk_mhz = {}
@@ -3454,6 +3479,7 @@ class ParserState:
         rv.func_mult_style = dict(self.func_mult_style)
         rv.func_marked_wires = set(self.func_marked_wires)
         rv.func_fixed_latency = dict(self.func_fixed_latency)
+        rv.func_no_added_latency = dict(self.func_no_added_latency)
         rv.auto_pipeline_rams = dict(self.auto_pipeline_rams)
         rv.func_marked_blackbox = set(self.func_marked_blackbox)
         rv.func_marked_no_add_io_regs = set(self.func_marked_no_add_io_regs)
@@ -3464,6 +3490,7 @@ class ParserState:
         rv.io_pairs = set(self.io_pairs)
         rv.inst_array_dict = dict(self.inst_array_dict)
         rv.async_wires = set(self.async_wires)
+        rv.pypeline_global_fifos = dict(self.pypeline_global_fifos)
         rv.input_wires = set(self.input_wires)
         rv.output_wires = set(self.output_wires)
         rv.clk_mhz = dict(self.clk_mhz)
@@ -3546,6 +3573,10 @@ def INFER_CLOCK_DOMAINS(
                 continue
             # Cannot do inferring for async wires
             if global_var in parser_state.async_wires:
+                continue
+            # Nor across a Pypeline global FIFO: its ends' functions keep their
+            # own clocks, and the FIFO MAIN takes theirs when it is realized
+            if global_var in getattr(parser_state, "pypeline_global_fifos", ()):
                 continue
             # Read+write mains for func
             rw_mains = set()

@@ -1265,7 +1265,7 @@ discussions are listed under their discussion number.
 | [#342](https://github.com/JulianKemmerer/PipelineC/discussions/342) | discussion | Pypeline: crossing between clock domains | open questions: annotation, library factory, or both; how native simulation schedules several rates ([section 16](#16-ideas-for-multiple-clock-domains-in-pypeline)) |
 | [#346](https://github.com/JulianKemmerer/PipelineC/discussions/346) | discussion | multi-cycle constraints on tools other than Vivado | the same per-tool question CDC constraints raise |
 | [#349](https://github.com/JulianKemmerer/PipelineC/discussions/349) | discussion | clearing a FIFO on reset | no FIFO has a clear input |
-| [#354](https://github.com/JulianKemmerer/PipelineC/issues/354) | issue, open | Pypeline native simulation runs different rates in lockstep | [section 16](#native-simulation-with-several-clocks) |
+| [#354](https://github.com/JulianKemmerer/PipelineC/issues/354) | issue, open | Pypeline native simulation runs different rates in lockstep; it now refuses such designs, and closing the issue is recommended | [section 16](#native-simulation-with-several-clocks) |
 
 ## 10. IR: what the compiler records
 
@@ -2293,13 +2293,14 @@ code:
 | One clock per top-level function | `@MAIN`, `@MAIN(100.0)`, `@MAIN(mhz=100.0)`; `_register_main` stores the MHz in `pypeline._main_mhz_registry` | `#pragma MAIN`, `MAIN_MHZ` |
 | Synthesis-only target | none; `PARSE_FILE` writes the same value to `main_mhz` and `main_syn_mhz` | `MAIN_SYN_MHZ` |
 | Clock groups | none; `main_clk_group` is always `None` | `MAIN_MHZ_GROUP`, `MAIN_GROUP` |
-| Inference for bare `@MAIN` | `LOGIC.INFER_CLOCK_DOMAINS({}, {}, {}, parser_state)` after `_build_func_call_graph`; shared globals only | the same function, plus crossings |
+| Inference for bare `@MAIN` | `LOGIC.INFER_CLOCK_DOMAINS({}, {}, {}, parser_state)` after `_build_func_call_graph`; shared globals only, never through a global FIFO | the same function, plus crossings |
 | Named or generated clock | `make_clock(mhz)` as the initializer of an `Input[uint1_t]` or `Wire[uint1_t]`, written to `parser_state.clk_mhz`. Its rate must equal some `@MAIN`'s rate; two tagged wires at one rate are rejected | `CLK_MHZ`, `CLK_MHZ_GROUP` |
 | Same-clock wires between MAINs | `Wire[T]`, `Input[T]`, `Output[T]`, with multi-writer splitting and pipeline alignment (`VOLATILE` turns alignment off) | shared globals |
 | Crossing between clocks | none. A global used on two clocks fails in the VHDL writer with `Cannot have multiple clock domains for shared global ...` | crossings, FIFOs, `ASYNC_WIRE` |
-| Native simulation | one loop, every `@MAIN` once per cycle whatever its rate ([#354](https://github.com/JulianKemmerer/PipelineC/issues/354)) | none |
+| Native simulation | one loop, every `@MAIN` once per cycle; a design whose `@MAIN`s name more than one rate is refused with the rates and their `@MAIN`s ([#354](https://github.com/JulianKemmerer/PipelineC/issues/354)) | none |
 | VHDL simulation | the same cocotb template: one clock only | the same |
-| Single-clock FIFO | `make_fifo` / `make_stream_fifo` over `pipelinec_fifo_fwft`, with a `@sim_model` | `FIFO_FWFT`, same-clock `GLOBAL_FIFO` |
+| Single-clock FIFO | `make_fifo` / `make_stream_fifo` over `pipelinec_fifo_fwft`, with a `@sim_model` | `FIFO_FWFT` |
+| Single-clock global FIFO | `name: Fifo[T] = global_fifo(n)` (or `global_sync_fifo(n)`, or a stream module) with `.wr` / `.rd` ends; a compiler-made MAIN `<key>_FIFO` holds the FIFO; ends on two clocks are an error ([guide](pypeline_guide.md#fifot--global-fifos)) | same-clock `GLOBAL_FIFO`, `GLOBAL_STREAM_FIFO` |
 
 Everything below the front end is shared, so the back end already handles several clocks
 for Pypeline designs: clock ports, user clocks, constraints and the sweep's per-MAIN

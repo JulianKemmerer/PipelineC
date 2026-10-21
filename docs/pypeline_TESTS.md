@@ -951,6 +951,20 @@ The remaining global wire tests:
   units. It also rejects a direct global read and still schedules a pure core. The
   two callee cases fail on the tree before the change.
 
+## Global FIFO coverage
+
+`Fifo[T]` on one clock ([guide](pypeline_guide.md#fifot--global-fifos)) and native
+simulation's multi-rate refusal:
+
+| Test | Category | What it covers |
+|---|---|---|
+| `global_fifo_api_unit_test` | `unit` | `Fifo[T]`'s wire type and its errors (extra arguments, an interface or port half, a non-hardware `T`); `global_fifo`/`global_sync_fifo` argument errors and the depth each `n` builds; the stream-module port helper's errors; the FIFO MAIN generator avoiding the module's names |
+| `global_fifo_elab_test` | `elab_introspect` | realization: the FIFO MAIN's clock, protected name and `func_no_added_latency` entry, the handshake users, the access records and their lines, a FIFO in an imported module. Errors: an unused end, two users of one end, a user with two instances, driving `wr.ready` or `rd.stream`, a missing initializer, a module whose ports don't carry `T`, ends on two rates, a bare end beside a rate, `Fifo[T]` in a function, `AUTO_PIPELINE` of a handshake user, a function already named `rx_FIFO` |
+| `global_fifo_sim_test` | `native_sim` | order and backpressure through `global_fifo`, `global_sync_fifo`, `make_stream_fifo` and `make_skid_buffer` initializers, and a FIFO declared in an imported module (`global_fifo_sim_sub_design.py`). Two of its FIFOs build the same `make_stream_fifo(uint8_t, 4)`, which checks that FIFO MAINs keep separate model state |
+| `multi_rate_sim_refusal_test` | `native_sim` | `pypeline_sim.py` and `pypelinec --sim --comb` exit non-zero on two rates and name both with their `@MAIN`s; one rate beside a bare `@MAIN` still simulates |
+| `self_check_global_fifo_test` | `native_vs_vhdl_sim` (`--comb`), `synth_device_models` (`--comb`) | a struct-typed FIFO between two `@MAIN`s with backpressure: native sim and GHDL match cycle by cycle, and sky130 synthesizes it |
+| `global_fifo_path_unit_test` | `unit` | the sweep's view of a FIFO MAIN: Vivado-style and sky130-flattened paths inside it go to it alone, a path out of it to the user `@MAIN`, unattributable paths to the user `@MAIN`s; `WHY_NOT_SLICEABLE`; the `TIMING NOT MET` line names `global FIFO rx [...]` |
+
 ## Augmented assignment coverage
 
 `reg_aug_assign_test.py` covers `t op= rhs` in native simulation (see

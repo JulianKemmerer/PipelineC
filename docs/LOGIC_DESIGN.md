@@ -86,13 +86,22 @@ logic.alias_to_orig_var_name         # alias_wire -> base_var name
 
 Other fields carry state registers and global wires (`state_regs`,
 `read_only_global_wires`, `write_only_global_wires` and the Pypeline-only
-`global_wire_driven_paths` / `readback_global_wires`), feedback wires, multi-cycle paths
+`global_wire_driven_paths` / `readback_global_wires` / `global_wire_read_paths` /
+`global_wire_write_locs`), feedback wires, multi-cycle paths
 (`mcp_tuples`, `auto_multi_cycle_tuples`), AUTO_PIPELINE and AUTO_FSM tags
 (`sub_inst_to_auto_pipeline_latency`, `sub_inst_to_auto_pipeline_key`,
 `sub_inst_to_auto_fsm_key`), how a built-in is emitted (`is_c_built_in`, `is_vhdl_func`,
 `is_vhdl_expr`, `vhdl_module_text`), and the measured `delay`. Each field's comment in
 `Logic.__init__` says which front end fills it. `DEEPCOPY`, `MERGE_COMB_LOGIC` and
-`MERGE_SEQ_LOGIC` must be updated with every new field.
+`MERGE_SEQ_LOGIC` must be updated with every new field. The merges are called by the C
+front end only, so a Pypeline-only field (the global-wire records above) is copied in
+`DEEPCOPY` alone.
+
+`global_wire_read_paths` and `global_wire_write_locs` map a global wire to
+`{path tuple: (src_file, line)}` of the function's first source read and write of that
+path, a variable index recording its constant prefix
+([PY_TO_LOGIC_DESIGN.md](PY_TO_LOGIC_DESIGN.md#access-records)). Global FIFO
+realization reads them.
 
 `Logic.c_ast_node` returns `ast_meta.raw`, the original syntax node: a pycparser node for C
 logic, a Python `ast` node for Pypeline logic. Only C-specific code may navigate it.
@@ -131,11 +140,21 @@ parser_state.func_names_to_called_from  # func_name -> {calling func names}
 parser_state.part                       # FPGA part string or None
 parser_state.main_mhz                   # main_name -> float MHz or None
 parser_state.func_fixed_latency         # func_name -> fixed latency (@pipeline_latency / FUNC_LATENCY)
+parser_state.func_no_added_latency      # func_name -> reason it takes no compiler-added latency
+parser_state.pypeline_global_fifos      # global FIFO wire -> PY_TO_LOGIC.GlobalFifoDecl
 parser_state.clk_cross_var_info         # var name -> LOGIC.ClkCrossVarInfo
 ```
 
 `FuncLogicLookupTable` holds one `Logic()` per unique function definition.
 `LogicInstLookupTable` holds one entry per call-site instance.
+
+`func_no_added_latency` and `pypeline_global_fifos` are filled only by the Python front
+end, for global FIFOs, but shared code reads them: `Logic.CAN_HAVE_ADDED_LATENCY` refuses
+the functions in `func_no_added_latency`
+([AUTO_PIPELINE_DESIGN.md](AUTO_PIPELINE_DESIGN.md#functions-that-take-no-added-latency)),
+and `INFER_CLOCK_DOMAINS` skips the wires in `pypeline_global_fifos`. Both read them with
+`getattr`, since a C parser state pickled by an older compiler
+(`C_TO_LOGIC.GET_PARSER_STATE_CACHE`) lacks them. Both are copied in `DEEPCOPY`.
 
 `path_delay_funcs`, `path_delay_measure_funcs` and `path_delay_frontier_funcs`
 are declared as `None` until unrooted `SYN.ADD_PATH_DELAY_TO_LOOKUP` fills the
@@ -213,7 +232,8 @@ came from.
   rename.
 - **Clock domains.** `INFER_CLOCK_DOMAINS` and `RECURSIVE_FIND_MAIN_FUNCS` assign globals
   and MAINs to clock groups. The C front end calls it from its clock-crossing pass; the
-  Python front end calls it with empty crossing maps after building its call graph.
+  Python front end calls it with empty crossing maps after building its call graph. It
+  joins no MAINs through async wires or Pypeline global FIFOs.
 - **Clock enables.** `LOGIC_NEEDS_CLOCK_ENABLE(logic, parser_state)` decides whether a
   function gets a `CLOCK_ENABLE` port.
 - **Global wires.** `GLOBAL_VAR_IS_SHARED` (a top-level IO or clock wire, or a global

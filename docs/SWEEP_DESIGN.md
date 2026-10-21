@@ -1171,7 +1171,7 @@ explicitly during the sweep:
 
 ## 4. Feature-specific feedback in the loop
 
-The loop above is shared. Three features add their own steps, each owned by the
+The loop above is shared. Four features add their own steps, each owned by the
 feature's module:
 
 - **Constrained AUTO_PIPELINE regions.** Every iteration, right after
@@ -1201,6 +1201,22 @@ feature's module:
   latencies and calls `DO_SEEDED_CONFIRM_OR_SWEEP`: one confirmation synthesis of
   the seeded table, falling back to a full planned sweep only if it fails.
   `RECORD_CONFIRMATION_RESULTS` records it in `sweep_history.json`.
+- **Global FIFO MAINs.** Each Pypeline global FIFO is a compiler-made MAIN,
+  `<key>_FIFO`, on its ends' clock
+  ([PY_TO_LOGIC_DESIGN.md](PY_TO_LOGIC_DESIGN.md#global-fifos-fifot)). It takes no
+  added latency (`"global FIFO"` in `func_no_added_latency`), so it is planless.
+  `GET_MAIN_INSTS_FOR_PATH_REPORT` gives it only the paths shown to be inside it:
+  first, before any other attribution, a path whose start and end registers are
+  both named under its instance goes to it alone (`SYN.PATH_ENDS_IN_MAIN`, which
+  also reads sky130 STA's flattened `$flatten\rx_fifo_0clk_<hash>.\...` names).
+  Every other path leaves FIFO MAINs out: one with one end in a FIFO stays with
+  the user MAIN at its other end, and the "all MAINs" fallbacks (no register names,
+  sky130 cells with no hierarchy) cover the user MAINs only. So a path inside a
+  FIFO is reported once. `MAIN_DISPLAY_NAME` names the FIFO MAIN as
+  `global FIFO rx [top.py:14]` in the planless warning and in
+  `PRINT_TIMING_FAILURES`, whose `TIMING NOT MET` line fails the build. The user
+  MAIN of a path out of a FIFO is often a handshake user
+  (`"global FIFO handshake"`), which is planless too.
 
 ## 5. Latency memory
 
@@ -1357,6 +1373,7 @@ wrappers that assert on build output in `build_report_tests.py`:
 | `sweep_fsm_auto_pipeline_test.py` | Reg-FSM main + AUTO_PIPELINE region (via `_auto_pipeline_with_io_regs`): cut subtree is the tagged child, FSM latency stays 0 |
 | `sweep_stateful_boundary_test.py` | comb→stateful→comb: cuts stop at the stateful boundary |
 | `sweep_floor_detect_test.py` (build_report_device_models, sky130, 100 MHz; its unregistered `--syn_tool pyrtl` mode uses 50 MHz) | unreachable goal: floor predicted & blamed up front, sweep stops within 6 syn runs with `plateau` (sky130, prediction off) / `empirical_floor` (PyRTL, prediction matches) in `sweep_history.json`, results written, then `TIMING NOT MET` + non-zero exit |
+| `global_fifo_path_unit_test.py` (unit) | a parsed global FIFO design with fake path reports: Vivado-style and sky130-flattened paths inside the FIFO go to its MAIN alone, a FIFO→consumer path to the consumer, unattributable paths to the user MAINs; `WHY_NOT_SLICEABLE` reasons; the `TIMING NOT MET` line names `global FIFO rx [...]` |
 | `sweep_unpipelinable_test.py` | stateful MAIN with a goal but nothing cuttable: told plainly that auto-pipelining cannot help (planning time + failing full-design report; no standalone as-written job), one full syn run, `TIMING NOT MET` + non-zero exit, and `sweep_history.json` `final` agrees (not met, same MHz, a failure reason) |
 | `sweep_planless_test.py` | stateful MAIN with a met goal but nothing cuttable: no standalone as-written synthesis, one full syn run, exit 0, `sweep_history.json` `final` is a met `as_written` record with null `standalone_mhz` |
 | `sweep_float32_test.py` (registered once per backend, **every** `--syn_tool`) | the sweep still runs end to end on each synthesis tool: one part-neutral float32 adder MAIN, each tool supplying its own `DEFAULT_PART` and clock goal. See [pypeline_TESTS.md](pypeline_TESTS.md#per-syn_tool-sweep-coverage) |

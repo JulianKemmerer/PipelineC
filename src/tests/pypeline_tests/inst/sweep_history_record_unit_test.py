@@ -381,7 +381,7 @@ def test_over_capacity_final_netlist_fails_the_build():
             final = doc["mains"]["m"]["final"]
             assert final["met"] is False and final["met_basis"] == "device_over_capacity"
             assert doc["mains"]["goalless"]["final"]["met"] is None
-            assert SWEEP.PRINT_TIMING_FAILURES(params) is True
+            assert SWEEP.PRINT_TIMING_FAILURES(parser_state, params) is True
         finally:
             (
                 SYN.SYN_OUTPUT_DIRECTORY,

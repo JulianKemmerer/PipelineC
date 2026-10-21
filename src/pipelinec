@@ -588,7 +588,7 @@ if not args.no_synth:
     # The build must FAIL if any timing goal was not met - results above are
     # still written (useful for debugging) but simulation and bitstream
     # generation are skipped and the exit code is non zero
-    if SWEEP.PRINT_TIMING_FAILURES(multimain_timing_params):
+    if SWEEP.PRINT_TIMING_FAILURES(parser_state, multimain_timing_params):
         sys.exit(1)
 
     if SYN.PIN_CONSTRAINTS_FILE:

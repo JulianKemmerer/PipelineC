@@ -28,7 +28,7 @@ For getting started information see the [README](README.md).
 15. [Factory-Generated Types](#factory-generated-types)
 16. [Custom Operators](#custom-operators)
 17. [Global Signals](#global-signals)
-    - [`Fifo[T]` — global FIFOs (COMING SOON)](#fifot--global-fifos-coming-soon)
+    - [`Fifo[T]` — global FIFOs](#fifot--global-fifos)
 
 **Part II — Temporal behavior**
 
@@ -2751,11 +2751,7 @@ In code without pipeline stages, such as a stateful `@MAIN` or a `--comb` build,
   `@MAIN`s and every `--comb` simulation apart from `AUTO_PIPELINE(..., latency=N)`
   call sites.
 
-### `Fifo[T]` — global FIFOs (COMING SOON)
-
-> **COMING SOON.** Not implemented yet. Today a FIFO between two `@MAIN`s is a
-> [`make_stream_fifo`](#fifos-make_stream_fifo) instance in a wiring `@MAIN`, with global
-> wires on both sides.
+### `Fifo[T]` — global FIFOs
 
 A global FIFO is a buffer between a producer function and a consumer function anywhere in
 the design. It is declared at module level like a wire, with the FIFO hardware as its
@@ -2807,40 +2803,66 @@ def cmd_source():                         # the producer, written with a stream 
     cmds.wr.stream = r.cmd_out_if.stream
 ```
 
-**The hardware.** On one clock, `global_fifo(n)` builds the library FIFO,
-[`make_stream_fifo`](#fifos-make_stream_fifo). Any other single-clock module with one
-valid/ready input port and one valid/ready output port of `T` can be the initializer
+**The hardware.** `global_fifo(n)` builds the library FIFO,
+[`make_stream_fifo`](#fifos-make_stream_fifo). `global_sync_fifo(n)` builds the same
+FIFO and also states that both ends stay on one clock. Any other single-clock module with
+one valid/ready input port and one valid/ready output port of `T` can be the initializer
 instead, written in Pypeline or in raw VHDL: for example `make_stream_fifo(T, 256)` or
-`make_skid_buffer(T)`. The compiler checks its port types against `T`.
+`make_skid_buffer(T)`. Its ports must carry `make_stream_t(T)` with a `uint1_t` ready, as
+the stream modules built on `make_stream_interface(T)` do. The compiler checks them and
+names the module if they don't match.
 
-**Across clocks.** The same `global_fifo(n)` becomes an async FIFO when its two ends are
-used on different clocks. `global_sync_fifo(n)` and `global_async_fifo(n)` say which one
-you expect. See [Clock-Crossing FIFOs](#clock-crossing-fifos-coming-soon).
+The compiler adds one `@MAIN` per global FIFO, `<name>_FIFO` (`rx_FIFO` for `rx`, prefixed
+with the module's name for a FIFO declared in an imported module). It holds the FIFO
+hardware and runs on its ends' clock. Generated VHDL shows it under that name, and timing
+reports call it `global FIFO rx [top.py:14]`.
+
+**Across clocks (COMING SOON).** Today both ends must be on one clock. The same
+`global_fifo(n)` will become an async FIFO when its two ends are used on different clocks,
+and `global_sync_fifo(n)` and `global_async_fifo(n)` will say which one you expect. See
+[Clock-Crossing FIFOs](#clock-crossing-fifos-coming-soon).
 
 Rules:
 
 - Exactly one function uses each end, so a FIFO is point-to-point. Fan out through a
-  broadcast module, as for any interface ([Array ports](#array-ports-fan-out)).
+  broadcast module, as for any interface ([Array ports](#array-ports-fan-out)). That
+  function may be a helper anywhere in the hierarchy, with exactly one instance.
 - Both ends must be used. An unused end is an error that names it.
-- Driving a half that the FIFO drives (`cmds.wr.ready`, `cmds.rd.stream`) is an error that
-  names the end.
+- Driving a half that the FIFO drives (`cmds.wr.ready`, `cmds.rd.stream`), or a whole end,
+  is an error that names the end.
+- Both ends' `@MAIN`s run on one clock: the same rate, or both bare. Ends on two clocks are
+  an error until [clock-crossing FIFOs](#clock-crossing-fifos-coming-soon) arrive. Clock
+  inference does not pass through a FIFO, so a bare `@MAIN` does not take its rate from the
+  other end.
+- Writes into an end use constant indices or whole values. A FIFO's wire always has
+  several writers (the producer, the consumer and the FIFO), and a variable-index write
+  is not supported on a wire with more than one writer function
+  ([Splitting a compound wire](#splitting-a-compound-wire-across-multiple-writer-functions)).
 - `T` is a data type, never an interface: `Fifo[some_intrf]` is an error, since the FIFO
   supplies valid and ready itself.
 - `n` is the minimum number of words. It is rounded up to a power of two, at least 2. The
   output register holds one word more, as in `make_stream_fifo`.
 - Wider words are an array type: `Fifo[uint8_t[4]]`.
 - Unlike a `Wire[T]`, a `Fifo[T]` needs its initializer.
-- It replaces PipelineC's `GLOBAL_FIFO` and `GLOBAL_STREAM_FIFO`.
+- A function named `<name>_FIFO` would clash with the FIFO's `@MAIN` and is an error.
+- It replaces PipelineC's `GLOBAL_FIFO` and `GLOBAL_STREAM_FIFO` on one clock.
 
-**In pipelined code.** A function with
-[pipeline stages](#global-wires-in-pipelined-code) cannot both drive `.stream` and read
-`.ready` of one end. The read is sampled at its first stage and the write published at its
-last, so the handshake would break. Keep the handshake outside the pipeline with
+**In pipelined code.** A function that both drives and reads one end, as a producer
+driving `.stream` and reading `.ready` does, never gets
+[pipeline stages](#global-wires-in-pipelined-code). With stages its reads would be sampled
+at the first stage and its writes published at the last, so the handshake would break. The
+sweep leaves such a function unpipelined, and `AUTO_PIPELINE` of it is an error. Keep the
+handshake outside the pipeline with
 [`make_stream_auto_pipeline`](#pipelined-stream-wrappers-make_stream_auto_pipeline). A
-global FIFO itself is never pipelined.
+function that only drives an end, or only reads one, pipelines as usual. A global FIFO
+itself is never pipelined. A critical path inside a FIFO fails the build naming the FIFO,
+since auto-pipelining cannot cut it; a path from the FIFO into a function's logic belongs
+to that function's `@MAIN`.
 
-**Simulation.** Native simulation runs a single-clock design's global FIFOs through the
-library FIFO's [`@sim_model`](#sim_model--python-simulation-models-for-hardware-functions).
+**Simulation.** Native simulation runs each global FIFO as the same compiler-made
+`@MAIN`, so the library FIFO runs through its
+[`@sim_model`](#sim_model--python-simulation-models-for-hardware-functions), and any other
+initializer through its own simulation.
 
 ---
 
@@ -4809,8 +4831,8 @@ don't have to unpack/repack `.data`/`.valid` by hand. (It's a thin layer over
 `include/pypeline/fifo.py`'s lower-level `make_fifo` — most users should just use
 `make_stream_fifo` directly and never need to touch `make_fifo` itself.)
 
-To put a FIFO between two functions anywhere in the design, on one clock or across two,
-declare a global FIFO instead: [`Fifo[T]`](#fifot--global-fifos-coming-soon) (COMING SOON).
+To put a FIFO between two functions anywhere in the design, declare a global FIFO
+instead: [`Fifo[T]`](#fifot--global-fifos). Across two clocks this is COMING SOON.
 
 ```python
 from pypeline import uint32_t, MAIN
@@ -5825,7 +5847,7 @@ line up with, so alignment registers would only add delay.
 
 ## Clock-Crossing FIFOs (COMING SOON)
 
-A [global FIFO](#fifot--global-fifos-coming-soon) whose write end is used on one clock and
+A [global FIFO](#fifot--global-fifos) whose write end is used on one clock and
 its read end on another is an async FIFO. The FIFO hardware itself crosses the clocks, and
 both ends keep their valid/ready handshakes: a global FIFO is always a valid/ready stream,
 on one clock or across two. The declaration and the ends are the same as on one clock:
@@ -5933,14 +5955,14 @@ cmds              clk_None                  global_sync_fifo    make_stream_fifo
 - An async wire is `VOLATILE` in pipelined code
   ([Async wires in pipelined code](#async-wires-in-pipelined-code)). A function with
   pipeline stages cannot use both halves of one FIFO end, and a global FIFO is never
-  pipelined ([`Fifo[T]`](#fifot--global-fifos-coming-soon)).
+  pipelined ([`Fifo[T]`](#fifot--global-fifos)).
 
 ### Simulation across clocks
 
 Native simulation runs one clock. A design with more than one clock is refused with a
-message that names its clocks. Today, by contrast, native simulation steps every `@MAIN`
-once per cycle whatever its rate. Single-clock designs with global FIFOs simulate natively,
-through the library FIFO's
+message that names its clocks. Today the refusal counts rates: a design whose `@MAIN`s
+name more than one rate is refused, and two named clocks of one rate will count as two.
+Single-clock designs with global FIFOs simulate natively, through the library FIFO's
 [`@sim_model`](#sim_model--python-simulation-models-for-hardware-functions). Simulating
 several clocks is listed under [Limitations](#limitations--not-yet-supported).
 
@@ -6539,7 +6561,7 @@ tracks the row.
 | Language | **Initializers on `Wire[T]` / `Input[T]` / `Output[T]`** | Not allowed | Assign inside `@MAIN` instead | — |
 | Language | **Control flow inside an interface function** | Rejected | `if`/`for`/`while` and conditional expressions in an interface-function body raise an `InterfaceError`; route conditional steering through an explicit handshake mux/demux module instead (see [`@interface`](#bidirectional-ports-interface)). Interfaces are also point-to-point: fan-out of a single interface, dangling outputs and input-to-output bypass are rejected — fan out through a module with an [array port](#array-ports-fan-out) instead. Array *input* ports are not supported. Compile-time `for`/`while` unrolling in ordinary `@hw_func`s is unaffected | — |
 | Source model | **Named clocks (single domain)** | Supported | Use `make_clock(mhz)` on a global `Input[uint1_t]`/`Wire[uint1_t]`; see [Top-Level Entry Points](#top-level-entry-points) | — |
-| Source model | **Multiple clock domains** | Partly supported | `@MAIN`s at different rates build, each with its own clock, including a clock generated by another `@MAIN` (see [Naming a clock with `make_clock`](#naming-a-clock-with-make_clock)). Nothing can cross between domains: a global wire shared by two rates is rejected, and there are no clock groups or asynchronous wires. Simulation handles one rate: native simulation steps every `@MAIN` once per cycle whatever its rate, so a multi-rate design simulates incorrectly, and cocotb testbench generation supports a single clock. Named clocks, async wires and clock-crossing FIFOs are COMING SOON ([Part IV](#part-iv--multiple-clock-domains)) | [#342](https://github.com/JulianKemmerer/PipelineC/discussions/342), [#354](https://github.com/JulianKemmerer/PipelineC/issues/354) |
+| Source model | **Multiple clock domains** | Partly supported | `@MAIN`s at different rates build, each with its own clock, including a clock generated by another `@MAIN` (see [Naming a clock with `make_clock`](#naming-a-clock-with-make_clock)). Nothing can cross between domains: a global wire shared by two rates is rejected, and there are no clock groups or asynchronous wires. Simulation handles one rate: native simulation refuses a design whose `@MAIN`s name more than one rate, and cocotb testbench generation supports a single clock. Global FIFOs work on one clock ([`Fifo[T]`](#fifot--global-fifos)). Named clocks, async wires and clock-crossing FIFOs are COMING SOON ([Part IV](#part-iv--multiple-clock-domains)) | [#342](https://github.com/JulianKemmerer/PipelineC/discussions/342), [#354](https://github.com/JulianKemmerer/PipelineC/issues/354) |
 | Source model | **Async clock-crossing FIFOs** | COMING SOON | `rx: Fifo[T] = global_async_fifo(n)`; see [Clock-Crossing FIFOs](#clock-crossing-fifos-coming-soon) | [#342](https://github.com/JulianKemmerer/PipelineC/discussions/342) |
 | Source model | **Related clocks** | Not supported | Clocks from one source with an integer ratio, whose paths between them would be timed. Until then every pair of different clocks is asynchronous, with untimed paths | [#342](https://github.com/JulianKemmerer/PipelineC/discussions/342) |
 | Source model | **Crossings between related clocks** | Not supported | Free-flowing integer-ratio crossings like PipelineC's `volatile` crossings. Use an async wire or a global FIFO | [#342](https://github.com/JulianKemmerer/PipelineC/discussions/342) |
@@ -6560,7 +6582,7 @@ tracks the row.
 | Source model | **`AUTO_PIPELINE(...).latency` before implementation** | Usually reads `0` | `latency=N` reads N immediately; an active automatic implementation bootstraps `start_latency=S` at S. The selected value becomes visible when source is re-elaborated with the implemented plan | — |
 | Simulation | **Simulation of `vhdl()`** | Needs a model | `vhdl()`-based functions raise `NotImplementedError` in simulation unless a [`@sim_model`](#sim_model--python-simulation-models-for-hardware-functions) is attached (as `make_fifo`, `make_ram` and `make_stream_ram` do, covering `make_stream_fifo`/`make_stream_auto_pipeline` too) | — |
 | Simulation | **Two calls to one stateful function on the same source line** | Wrong in native simulation | Native simulation keys register state by source line, so `acc(a) + acc(b)` shares one register there but has two in hardware. Put each call on its own line (see [Registers in simulation](#registers-in-simulation--multiple-instances)) | [#353](https://github.com/JulianKemmerer/PipelineC/issues/353) |
-| Simulation | **More than one clock** | Not supported | Native simulation and generated VHDL testbenches run one clock. Native simulation will refuse a multi-clock design (COMING SOON); today it steps every `@MAIN` once per cycle whatever its rate | [#354](https://github.com/JulianKemmerer/PipelineC/issues/354) |
+| Simulation | **More than one clock** | Not supported | Native simulation and generated VHDL testbenches run one clock. Native simulation refuses a design whose `@MAIN`s name more than one rate, naming the rates and the `@MAIN`s on each; bare `@MAIN`s name no rate and do not count | [#354](https://github.com/JulianKemmerer/PipelineC/issues/354), [#342](https://github.com/JulianKemmerer/PipelineC/discussions/342) |
 | Simulation | **`@sim_input` called with different arguments in one cycle** | Wrong in native simulation | The once-per-cycle cache ignores arguments, so every call in a cycle returns the first call's value. Use one function per value | [#355](https://github.com/JulianKemmerer/PipelineC/issues/355) |
 | Simulation | **A `@sim_input` result stored in a local, or used inside an expression** | Rejected | `x = stim()` and `stim() + 1` raise a clear error in native sim (at import) and in elaboration. Declare a module-level `Input[T]` and assign the call to it as its own statement (`in0 = stim()`); it becomes a real top-level port (see [`@sim_input`](#sim_input--driving-simulation-inputs)). A future version could accept a local by turning it into an implicit `Input[T]` port of the function's return type | — |
 | Simulation | **`sim_print` of a `uint32_t` value ≥ 2³¹** | Fails in VHDL only | `sim_print` lowers to `integer'image(to_integer(x))`, and VHDL's `integer` is 32-bit *signed*, so GHDL raises `overflow detected` at runtime. Native simulation prints it happily, so this only ever appears in a cocotb/GHDL run — mask or narrow the value before probing it | [#360](https://github.com/JulianKemmerer/PipelineC/issues/360) |

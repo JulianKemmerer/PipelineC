@@ -598,6 +598,32 @@ def get_tests() -> list:
                 ],
             )
         )
+    # Global FIFOs, Fifo[T]: order and backpressure through each initializer
+    # kind (global_fifo, global_sync_fifo, make_stream_fifo, make_skid_buffer)
+    # and a FIFO declared in an imported module.
+    tests.append(
+        Test(
+            name="global_fifo_sim_test",
+            category="native_sim",
+            cmd=[
+                PYPELINEC,
+                INST_DIR / "global_fifo_sim_test.py",
+                "--sim",
+                "--comb",
+                "--run",
+                "all",
+            ],
+        )
+    )
+    # Native sim refuses @MAINs that name more than one rate (#354), through
+    # pypeline_sim.py and pypelinec --sim --comb; a bare MAIN still simulates.
+    tests.append(
+        Test(
+            name="multi_rate_sim_refusal_test",
+            category="native_sim",
+            cmd=[INST_DIR / "multi_rate_sim_refusal_test.py"],
+        )
+    )
     return tests
 
 

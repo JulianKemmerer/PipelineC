@@ -30,6 +30,7 @@ Memory banks are never treated as zero-cycle combinational operators.
 - [1. Who does what](#1-who-does-what)
 - [2. How pipelines physically form](#2-how-pipelines-physically-form)
   - [Fixed user pipelines](#fixed-user-pipelines)
+  - [Functions that take no added latency](#functions-that-take-no-added-latency)
 - [3. Pipeline stages and register lifetimes](#3-pipeline-stages-and-register-lifetimes)
   - [Global wires in pipelines](#global-wires-in-pipelines)
 - [4. Build entry points](#4-build-entry-points)
@@ -306,6 +307,28 @@ their stage-zero consumption does not authorize extra compiler latency.
 The native simulator uses these same placements only for affected user-pipeline
 regions. Its architecture and compatibility gate are documented in
 [pypeline_sim_DESIGN.md](pypeline_sim_DESIGN.md#fixed-user-pipelines).
+
+### Functions that take no added latency
+
+`parser_state.func_no_added_latency` maps a function name to the reason it must never
+get compiler-added registers, for reasons that are not visible in its `Logic`. Its
+entries are refused by `Logic.CAN_HAVE_ADDED_LATENCY`, right after
+`func_fixed_latency`. Every placement path goes through that method, and
+`ADDED_LATENCY_BLOCKER` therefore also keeps the function's descendants unpipelined,
+except below a direct `AUTO_PIPELINE` call. `SWEEP.WHY_NOT_SLICEABLE` reports the
+stored reason, so landscapes and blame messages name it. The reasons are hard floors,
+not in `SOFT_FLOOR_REASONS`.
+
+Pypeline global FIFOs fill it
+([PY_TO_LOGIC_DESIGN.md](PY_TO_LOGIC_DESIGN.md#pipelines-func_no_added_latency)):
+
+| Reason | Function | Why |
+|---|---|---|
+| `"global FIFO"` | each FIFO MAIN `<key>_FIFO` | its users see the FIFO's handshake in the same cycle |
+| `"global FIFO handshake"` | a user that both drives and reads one FIFO end | its end reads would be sampled at its first stage and its writes published at its last |
+
+A sweep-unpipelined handshake user meets its goal as written or fails timing with the
+reason above. `AUTO_PIPELINE` of a handshake user is an elaboration error.
 
 ## 3. Pipeline stages and register lifetimes
 

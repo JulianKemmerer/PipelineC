@@ -95,6 +95,7 @@ one paragraph per change.
   - [Pipeline timing: aligned globals and `VOLATILE`](#pipeline-timing-aligned-globals-and-volatile)
   - [`Input[T]` / `_InputType`](#inputt--_inputtype)
   - [`Output[T]` / `_OutputType`](#outputt--_outputtype)
+  - [`Fifo[T]` / `_FifoType` — global FIFOs](#fifot--_fifotype--global-fifos)
 - [`PART()` and `@MAIN` Pragmas](#part-and-main-pragmas)
   - [`PART(part_string)`](#partpart_string)
   - [`@MAIN` / `@MAIN(mhz)` — Three-Form Decorator](#main--mainmhz--three-form-decorator)
@@ -1048,6 +1049,47 @@ Module-level annotation declaring a **top-level FPGA output port**.
 - Name appears verbatim as VHDL entity port (no module prefix)
 - Must be a legal VHDL identifier
 
+### `Fifo[T]` / `_FifoType` — global FIFOs
+
+`rx: Fifo[T] = hardware` declares a global FIFO
+([guide](pypeline_guide.md#fifot--global-fifos)). `_FifoType` subclasses `_WireType`, so
+a FIFO is an ordinary compound global wire everywhere wires are handled: native-sim
+rewriting and lens writes, elaboration, multi-writer regions and readback all carry its
+ends unchanged.
+
+- **The wire type.** `_global_fifo_types(T)` builds `{wr: end, rd: end}` with
+  end = `{stream: make_stream_t(T), ready: uint1_t}`. The stream half is the library's
+  `make_stream_t` (`include/pypeline/stream/stream.py`), so `rx.wr.stream =
+  r.x_out_if.stream` type-matches. It is imported when a `Fifo[T]` is first evaluated,
+  never at load: `pypeline.py` keeps no load-time dependency on `include/pypeline` (see
+  `_make_auto_fsm_stream_t`). `_global_fifo_type_cache` keeps one pair of types per `T`.
+- **Subscript errors** (`_FifoMeta`): `Fifo[T, ...]`; `T` an interface or a port half
+  (the message says the FIFO supplies valid and ready itself); `T` not a hardware type.
+- **Initializers.** `global_fifo(n)` and `global_sync_fifo(n)` return a
+  `_GlobalFifoInit(kind, n)`; a non-int or non-positive `n` is an error. Both build
+  `make_stream_fifo(T, 2**ceil(log2(max(n, 2))))` (`_global_fifo_hardware`). Any other
+  initializer is the FIFO's module itself.
+- **Port helper.** `_stream_module_ports(module, T, what)` finds the module's one
+  valid/ready input port (a `.fwd_t` argument and a `.fb_t` return field of one name) and
+  one output port (the reverse) from its annotations, with `_interface_half_of`. Both must
+  carry `make_stream_t(T)` with a `uint1_t` ready; otherwise `GlobalFifoError` names the
+  module. Native sim and the compiler both use it.
+- **FIFO MAIN generator.** `_make_global_fifo_main(func_name, wire_name, fifo_type,
+  init, module_globals, reserved)` builds the flat hw_func `<key>_FIFO` with
+  `_exec_generated_func` (folder `pypeline_generated_fifos`, so
+  `dump_generated_sources` writes it). Its body makes one call of the module, with keyword
+  arguments for the two ports: it reads `wr.stream` and `rd.ready`, and drives
+  `wr.ready` and `rd.stream`. It is exec'd in a copy of the declaring module's globals, so
+  the body names the wire by its bare name and both the native-sim rewriter and the
+  elaborator resolve it by that module. The injected names (the module and the two port
+  halves) and the one local avoid every name of that module and `reserved`. The compiler
+  passes the top design file's globals as `reserved`, since elaboration merges them in.
+  The result is marked `_pypeline_global_fifo` (the wire's name). It is never added to
+  `_main_registry`: `PY_TO_LOGIC._realize_global_fifos` and `pypeline_sim.run_sim` each add
+  it to their own MAIN lists
+  ([`PY_TO_LOGIC_DESIGN.md`](PY_TO_LOGIC_DESIGN.md#global-fifos-fifot),
+  [`pypeline_sim_DESIGN.md`](pypeline_sim_DESIGN.md#global-fifos-and-the-multi-rate-refusal)).
+
 ---
 
 ## `PART()` and `@MAIN` Pragmas
@@ -1098,6 +1140,10 @@ def _register_main(func, mhz):
 **`@MAIN` implies `@hw_func`:** `_register_main` calls `_sim_type_wrap` before registering,
 so every `@MAIN` function automatically gets simulation type wrapping. Users do not need both
 `@MAIN` and `@hw_func` on the same function.
+
+`_register_main` also stamps the rate on the wrapper as `_pypeline_main_mhz` (`None` for a
+bare `@MAIN`). `_main_mhz_registry` is keyed by bare name, so native sim's multi-rate
+refusal reads the stamp instead.
 
 ### `make_clock(mhz)` — Naming a Clock (`CLK_MHZ` Equivalent)
 
@@ -1541,6 +1587,7 @@ flag). See
 |---|---|---|---|
 | `_main_registry` | `list` | All `@MAIN`-wrapped functions, in decoration order | `pypeline_sim.py` — to discover MAINs for multi-MAIN sim |
 | `_main_mhz_registry` | `dict[str, float]` | `func.__name__` → MHz | `PY_TO_LOGIC.PARSE_FILE` — populates `parser_state.main_mhz` |
+| `_global_fifo_type_cache` | `dict[type, (type, type)]` | `T` → the end and wire types of `Fifo[T]` | `_global_fifo_types` |
 | `_part_registry` | `str \| None` | FPGA part string | `PY_TO_LOGIC.PARSE_FILE` — populates `parser_state.part` |
 | `_design_param_decls` | `dict[str, _ParamDecl]` | `param()` declarations of the current design import (reset per import) | `DESIGN_PARAM_LIST_TEXT` (`--list_params`), the parameter banner, `DESIGN_PARAM_REPORT` (`source_provenance.json`) |
 | `_design_param_values` | `dict[str, (value, source)]` | Each design parameter's value and its source (`-D`, `env:VAR`, `default`), resolved once per process | every later `param()` call: re-elaboration passes and simulation imports |
@@ -2446,6 +2493,9 @@ shared `Logic.vhdl_module_text` field (also used by the C frontend's `__vhdl__("
 | `GlobalWireNameError` / `_local_name_bindings` / `_check_no_local_binds_wire_name` | Rejects, at decoration time, a local binding of a same-module wire name or wire-module alias; `_local_name_bindings` is the binding list shared with `PY_TO_LOGIC` |
 | `Input` / `_InputType` | Top-level input port; `Input[T]` at module level; any function may read, none may write |
 | `Output` / `_OutputType` | Top-level output port; `Output[T]` at module level; exactly one function/instance may write |
+| `Fifo` / `_FifoType` | Global FIFO; `name: Fifo[T] = hardware` at module level; one function uses each end `.wr` / `.rd` ([`Fifo[T]`](#fifot--_fifotype--global-fifos)) |
+| `global_fifo(n)` / `global_sync_fifo(n)` | `Fifo[T]` initializers asking for the library FIFO holding at least `n` words |
+| `GlobalFifoError` | A `Fifo[T]` initializer module without one stream input port and one output port of `T` |
 | `register_operator(op, lhs, rhs, impl, scope=None)` | Binds a binary operator on an exact `(lhs, rhs)` type pair |
 | `register_left_operator(op, lhs, impl, scope=None)` | Binds a binary operator matching only on left operand type |
 | `register_unary_operator(op, operand, impl, scope=None)` | Binds a unary operator for a specific operand type |

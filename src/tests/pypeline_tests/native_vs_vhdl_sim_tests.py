@@ -59,6 +59,8 @@ COMB_TEST_FILES = [
     ("global_wire_pipeline_aligned_test.py", INST_DIR, []),
     ("self_check_counter_test.py", INST_DIR, []),
     ("self_check_fifo_test.py", INST_DIR, []),
+    # A global FIFO, Fifo[T] of a struct, between two MAINs with backpressure
+    ("self_check_global_fifo_test.py", INST_DIR, []),
     # make_stream_auto_pipeline at fixed core latencies 0 and 3: one word per
     # cycle in, results back to back exactly L+4 cycles after the first accept.
     ("self_check_stream_auto_pipeline_ii1_test.py", INST_DIR, []),
