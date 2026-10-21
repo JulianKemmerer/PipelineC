@@ -438,7 +438,7 @@ DO_SWEEP_AND_AUTO_PIPELINE
     AUTO_MULTI_CYCLE.CHECK_AUTO_MULTI_CYCLE_TAGS_READ
     SWEEP.DO_THROUGHPUT_SWEEP                 <- pass 1: the full sweep
     DO_AUTO_PIPELINE_LATENCY_PASSES           <- §5: harvest, and if needed
-        re-PARSE_FILE with .latency pinned,
+        AUTO_FSM.REPARSE with .latency pinned,
         SEED_TIMING_PARAMS_FROM_PREVIOUS,
         SWEEP.DO_SEEDED_CONFIRM_OR_SWEEP      <- one confirmation synthesis
 ```
@@ -473,6 +473,8 @@ repeat-the-sweep one:
    mutates submodule `_slices` after container totals were first memoized,
    and a stale memo here would feed `.latency` (and the native simulator's
    delay lines) a number contradicting the entities actually written.
+   Pinned AUTO_FSM units (§6) are not harvested: their latency is part of
+   their FSM's schedule, not a bottom-up value.
 2. **Early exits (the zero-added-cost invariant):** if there are no AUTO_PIPELINE call
    sites, or the design's Python never *read* any `.latency`
    (`pypeline.AUTO_PIPELINE_LATENCY_WAS_READ()`, a read-tracked property flag), or every
@@ -486,8 +488,12 @@ repeat-the-sweep one:
    sweep. `.c` designs never enter the loop at all (`AUTO_PIPELINE` is
    Pypeline-only syntax).
 3. **Pass 2 (pin + confirm):** install the harvested latencies
-   (`pypeline.SET_AUTO_PIPELINE_LATENCY_CACHE`), re-run `PARSE_FILE` (re-executes the
-   whole design import graph; `.latency` reads now resolve), rewrite the zero-clk
+   (`pypeline.SET_AUTO_PIPELINE_LATENCY_CACHE`), re-run `PARSE_FILE` through
+   `AUTO_FSM.REPARSE` (re-executes the whole design import graph; `.latency` reads now
+   resolve). When the new values change an AUTO_FSM's function, for example compute
+   sized from a depth, the call site is new to the build, and `REPARSE` schedules it
+   before the confirmation
+   ([`AUTO_FSM_DESIGN.md`](AUTO_FSM_DESIGN.md#34-the-driver-loop)). Then rewrite the zero-clk
    VHDL (a struct sized from `.latency` can change layout under an unchanged VHDL type
    name, and `c_structs_pkg` then starts over from pass 2's types instead of declaring
    that name twice, see
@@ -507,8 +513,10 @@ repeat-the-sweep one:
    choice keeps `.latency` true, and confirmation checks timing. A region whose
    interior instances, functions or types match no previous replica breaks the
    rule that an AUTO_PIPELINE'd function must not depend on `.latency`, and
-   fails (`SeedReplayError`) before confirmation synthesis. An exact full-path
-   match is used outside replayed regions. A function-name fallback there
+   fails (`SeedReplayError`) before confirmation synthesis. Pinned AUTO_FSM
+   units are not replayed as regions: region enforcement restores them from
+   their FSM's schedule (§6), and a newly scheduled FSM brings units no
+   previous pass had. An exact full-path match is used outside replayed regions. A function-name fallback there
    requires all previous occurrences in that MAIN to agree, including empty
    occurrences.
    Matching checks function and wire types. Every nonempty placement also obeys
@@ -633,6 +641,9 @@ then checks the placement digest and realized latency. It does this even when
 the register count already matches. Hotspot feedback cannot rebalance or grow
 such a region; a changed placement is an internal error. The FSM's schedule
 repair owns implementation changes. This marker adds no public tag argument.
+For the same reason the pin-and-confirm loop neither harvests these regions
+as `.latency` values nor replays them from the previous pass (§5,
+`_PINNED_AUTO_FSM_UNIT`).
 
 Some library wrappers own exactly one core AUTO_PIPELINE and accept the same keyword-only
 arguments:
@@ -799,6 +810,7 @@ for the full coverage list. The ones that exercise this module end to end
 | test | proves |
 |---|---|
 | `auto_pipeline_latency_test.py` | end-to-end factory design (`make_stream_auto_pipeline`) at 100 MHz, above its unpipelined speed, through the full sweep **plus** the §5 pin-and-confirm loop: pass 2 runs, harvested `.latency` > 0, the seeded confirmation synthesis passes with no fallback sweep, the loop settles within the pass cap, and `sweep_history.json` `final` records come from the confirmation run |
+| `auto_fsm_latency_sized_test.py` | the same core sizing an AUTO_FSM's function (lanes = depth + 2): the AUTO_FSM call site pass 2 creates is scheduled by `AUTO_FSM.REPARSE` before the one seeded confirmation synthesis, and the build exits 0 |
 | `auto_pipeline_constraints_test.py` | §6 constrained regions: `latency=2` / `start_latency=1` call sites built with exactly 2 / 1 registers and pass 2 skipped; a `max_latency=1` cap stops an unreachable goal promptly, naming the cap, then `TIMING NOT MET`; `make_stream_auto_pipeline(..., start_latency=1)` sizes its bootstrap FIFO from the hint, settles in one sweep iteration and skips pass 2 when the hint matches, and grows past a too-small hint (pass 2 resizes the FIFO) |
 | `auto_pipeline_region_minisweep_test.py` | `start_latency=1` is only a starting guess: a ChaCha-shaped chain of a repeated helper (quarter rounds written in series on a shared state) takes the same mini-sweep lock and reaches the same depth (11) in at most five whole-design checks including two optional trim probes, with and without the hint; final history retains six locks and measured passing timing (before the fix the hinted build reached 22 in five) |
 | `auto_pipeline_c_pragma_test.py` | C `#pragma AUTOPIPELINE 2` is a fixed latency, built with exactly 2 clocks even by a `--comb` build |
@@ -809,8 +821,8 @@ In-process: [`added_latency_context_test.py`](../src/tests/pypeline_tests/inst/a
 checks the shared caller rule, pre-write rejection, seeding eligibility, per-MAIN
 locks, and bridge gaps with an elaborated fixed/auto MCP design and synthetic
 delays. `auto_pipeline_harvest_test.py` (harvest grouping and divergence,
-concrete region replay, guarded fallback matching, call-site-change detection, latency cache/read flag,
-constructor validation), `auto_pipeline_region_planning_test.py` (region
+concrete region replay, guarded fallback matching, call-site-change detection, pinned AUTO_FSM
+units skipped by harvest and replay, latency cache/read flag, constructor validation), `auto_pipeline_region_planning_test.py` (region
 planning), `pipeline_latency_test.py` (fixed user pipelines),
 `typed_pipeline_placement_test.py` and `mux_fanout_planning_test.py`
 (placement lowering through `TimingParams` and the pipeline map).

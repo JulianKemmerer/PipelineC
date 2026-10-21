@@ -54,7 +54,9 @@ Where the pieces live:
                               FSM is blamed for a timing failure, tighten its
                               budget and reschedule -- until a tightening stops
                               raising fmax. Called from
-                              AUTO_PIPELINE.DO_PIPELINED_BUILD.
+                              AUTO_PIPELINE.DO_PIPELINED_BUILD. Every re-parse
+                              inside a build goes through REPARSE (below), which
+                              schedules call sites new to the build.
 
 Generating Python source (rather than a new backend IR) is what keeps this
 feature small: the generated FSM is elaborated by the same path as hand-written
@@ -5472,11 +5474,14 @@ def _select_delay(snapshot, ctl):
     )
 
 
-def _calibrate_controls(parser_state, budget_scales, ctl, previous):
-    """Measure distinct decode shapes before the first full area search."""
+def _calibrate_controls(parser_state, budget_scales, ctl, previous, keys=None):
+    """Measure distinct decode shapes before the first full area search, for
+    every call site or only those in `keys`."""
     snapshots = {}
     modes = ("v3", "onehot") if ctl == "auto" else (ctl,)
     for key, tag in sorted(GET_TAGS(parser_state).items()):
+        if keys is not None and key not in keys:
+            continue
         old = (previous or {}).get(key)
         snapshot = _control_snapshot(
             parser_state, (old or {}).get("control_delays_snapshot")
@@ -5587,8 +5592,9 @@ def _measure_entities(parser_state, entities):
     return parser_state
 
 
-def _measure_schedule_inputs(parser_state, budget_scales, previous):
-    """Measure every delay that decides the forced-descent grain.
+def _measure_schedule_inputs(parser_state, budget_scales, previous, keys=None):
+    """Measure every delay that decides the forced-descent grain, for every
+    call site or only those in `keys`.
 
     A helper that is not a delay-scope frontier carries a delay derived from
     its submodules: standalone leaves, each with its own registers and routing,
@@ -5608,6 +5614,8 @@ def _measure_schedule_inputs(parser_state, budget_scales, previous):
     while True:
         descents, bound = set(), set()
         for key, tag in sorted(GET_TAGS(parser_state).items()):
+            if keys is not None and key not in keys:
+                continue
             func_entity = AUTO._entity_key_for_callable(parser_state, tag.func)
             if func_entity is None:
                 continue
@@ -6307,7 +6315,8 @@ def CHECK_SCHEDULES_APPLIED(parser_state):
 
     A refused or missing schedule elaborates the combinational passthrough,
     which is a cache miss elsewhere. Inside a build every installed schedule
-    comes from the build's own passes, so the passthrough would be synthesized
+    comes from the build's own passes, and REPARSE schedules the call sites
+    new to the build before checking, so the passthrough would be synthesized
     in place of the chosen FSM: an internal error naming why.
     """
     import pypeline
@@ -6332,6 +6341,57 @@ def CHECK_SCHEDULES_APPLIED(parser_state):
         )
 
 
+def REPARSE(src_file, part, tool=None, schedule_call_sites=None):
+    """Re-execute the design inside a pipelined build: DO_SCHEDULE_PASSES' own
+    re-parse, AUTO_PIPELINE's pin-and-confirm passes and its RAM plan re-parses.
+
+    part and tool, when given, are the driver's resolved target and carry over
+    to the new parser_state. A call site with no installed schedule is new to
+    the build: its function changed with a value the design read during
+    elaboration, such as an AUTO_PIPELINE .latency sizing it (WireGuard's
+    Poly1305 kernels have capacity = body depth + 2). With DO_SCHEDULE_PASSES'
+    schedule_call_sites, (parser_state, keys) -> (parser_state, schedules),
+    those call sites (passthroughs in this parse) are measured and scheduled,
+    installed beside the others, and the design is executed again. Each round
+    installs every new key, and a construction depends only on values read
+    before it (AUTO_PIPELINE latencies are fixed for the re-parse, an earlier
+    AUTO_FSM's latency once its schedule is installed), so each round settles
+    the next construction and the rounds end. A refused schedule is still an
+    internal error (CHECK_SCHEDULES_APPLIED). Returns the parser_state.
+    """
+    import pypeline
+    import PY_TO_LOGIC
+
+    while True:
+        parser_state = PY_TO_LOGIC.PARSE_FILE(src_file, resolved_part=part)
+        if part is not None:
+            parser_state.part = part
+        if tool is not None:
+            parser_state.syn_tool_name = tool
+        if schedule_call_sites is None:
+            break
+        installed = pypeline.AUTO_FSM_SCHEDULE_CACHE()
+        new = sorted(key for key in GET_TAGS(parser_state) if key not in installed)
+        if not new:
+            break
+        print(
+            "AUTO_FSM: re-elaboration created call site(s) with no schedule yet "
+            "(their functions changed with a value read during elaboration, such "
+            "as an AUTO_PIPELINE .latency); scheduling: " + ", ".join(new),
+            flush=True,
+        )
+        parser_state, schedules = schedule_call_sites(parser_state, new)
+        unscheduled = sorted(set(new) - set(schedules))
+        if unscheduled:
+            raise AutoFsmInternalError(
+                "AUTO_FSM: scheduling produced no schedule for new call site(s): "
+                + ", ".join(unscheduled)
+            )
+        pypeline.SET_AUTO_FSM_SCHEDULE_CACHE(dict(installed, **schedules))
+    CHECK_SCHEDULES_APPLIED(parser_state)
+    return parser_state
+
+
 def DO_SCHEDULE_PASSES(parser_state, args, src_file):
     """AUTO_FSM schedule-and-confirm loop, wrapping the sweep + AUTO_PIPELINE flow.
 
@@ -6350,6 +6410,12 @@ def DO_SCHEDULE_PASSES(parser_state, args, src_file):
     adding pipeline stages, and the reason an AUTO_FSM can be tuned by iteration
     rather than by hand.
 
+    A re-elaboration inside a pass (the pass's own, AUTO_PIPELINE's
+    pin-and-confirm passes, or the RAM plan search) can create call sites no
+    pass scheduled: a function sized from an AUTO_PIPELINE .latency changes
+    with it. REPARSE schedules them with schedule_new_call_sites, and after the
+    sweep the loop follows the call sites the design now builds.
+
     The loop stops when timing is met, when no AUTO_FSM is blamed, when every
     blamed FSM is at its floor, when a tightened build did not raise any
     failing MAIN's fmax (TIGHTEN_MIN_FMAX_GAIN -- the critical path is not in
@@ -6362,13 +6428,9 @@ def DO_SCHEDULE_PASSES(parser_state, args, src_file):
 
     import SWEEP
     import SYN
-    import PY_TO_LOGIC
     import pypeline
 
     budget_scales = {}
-    if args.auto_fsm_budget_scale is not None:
-        for key in COLLECT_AUTO_FSM_KEYS(parser_state):
-            budget_scales[key] = args.auto_fsm_budget_scale
     force_unshare = list(args.auto_fsm_unshare)
     force_open = list(args.auto_fsm_open)
     prev_schedules = None
@@ -6378,56 +6440,45 @@ def DO_SCHEDULE_PASSES(parser_state, args, src_file):
     tightened_from = None
     pending_schedules = None
     attempted_repairs = set()
-    for schedule_pass in range(1, MAX_SCHEDULE_PASSES + 1):
-        print(
-            f"================== AUTO_FSM Pass {schedule_pass}: Scheduling "
-            f"Shared-Resource FSMs ================================",
-            flush=True,
+
+    def harvest(state, previous, keys):
+        return HARVEST_AUTO_FSM_SCHEDULES(
+            state,
+            budget_scales,
+            previous,
+            area_sweep=not args.auto_fsm_no_area_sweep,
+            ctl=args.auto_fsm_ctl,
+            sweep_debug=args.auto_fsm_sweep_debug,
+            force_open=force_open,
+            force_unshare=force_unshare,
+            keys=keys,
         )
-        parser_state = SYN.ADD_PATH_DELAY_TO_LOOKUP(parser_state)
-        if pending_schedules is not None:
-            schedules, pending_schedules = pending_schedules, None
-        else:
-            parser_state = _measure_schedule_inputs(
-                parser_state, budget_scales, prev_schedules
-            )
-            parser_state, control_snapshots = _calibrate_controls(
-                parser_state, budget_scales, args.auto_fsm_ctl, prev_schedules
-            )
-            previous = {
-                key: dict(
-                    (prev_schedules or {}).get(key, {}),
-                    control_delays_snapshot=snapshot,
-                )
-                for key, snapshot in control_snapshots.items()
-            }
-            schedules = HARVEST_AUTO_FSM_SCHEDULES(
-                parser_state,
-                budget_scales,
-                previous,
-                area_sweep=not args.auto_fsm_no_area_sweep,
-                ctl=args.auto_fsm_ctl,
-                sweep_debug=args.auto_fsm_sweep_debug,
-                force_open=force_open,
-                force_unshare=force_unshare,
-            )
 
-        def harvest(state, previous, keys):
-            return HARVEST_AUTO_FSM_SCHEDULES(
-                state,
-                budget_scales,
-                previous,
-                area_sweep=not args.auto_fsm_no_area_sweep,
-                ctl=args.auto_fsm_ctl,
-                sweep_debug=args.auto_fsm_sweep_debug,
-                force_open=force_open,
-                force_unshare=force_unshare,
-                keys=keys,
+    def measure_and_harvest(state, previous, keys=None):
+        """Measure what scheduling decisions rest on, then schedule every call
+        site, or only those in keys."""
+        if args.auto_fsm_budget_scale is not None:
+            # Every call site the build schedules starts from the requested
+            # scale, including one created by a re-elaboration during a pass
+            for key in GET_TAGS(state) if keys is None else keys:
+                budget_scales.setdefault(key, args.auto_fsm_budget_scale)
+        state = _measure_schedule_inputs(state, budget_scales, previous, keys)
+        state, control_snapshots = _calibrate_controls(
+            state, budget_scales, args.auto_fsm_ctl, previous, keys
+        )
+        previous = {
+            key: dict(
+                (previous or {}).get(key, {}),
+                control_delays_snapshot=snapshot,
             )
+            for key, snapshot in control_snapshots.items()
+        }
+        return state, harvest(state, previous, keys)
 
-        schedules = _confirm_unit_placements(parser_state, schedules, harvest)
+    def confirm_and_report(state, schedules):
+        schedules = _confirm_unit_placements(state, schedules, harvest)
         for key in sorted(schedules):
-            print(DESCRIBE_SCHEDULE(parser_state, key, schedules[key]), flush=True)
+            print(DESCRIBE_SCHEDULE(state, key, schedules[key]), flush=True)
             for fu_line in DESCRIBE_FUS(schedules[key]):
                 print(fu_line, flush=True)
         # A max_latency= cap is a hard constraint, so failing to meet it fails
@@ -6440,16 +6491,53 @@ def DO_SCHEDULE_PASSES(parser_state, args, src_file):
             for key in infeasible:
                 print(LATENCY_INFEASIBLE_MESSAGE(key, schedules[key]), flush=True)
             sys.exit(-1)
+        return schedules
+
+    def schedule_new_call_sites(state, keys):
+        """REPARSE's scheduler. The parse holds these call sites'
+        passthroughs, so their operations are measured as on the bootstrap
+        pass."""
+        AUTO_PIPELINE.WRITE_0_ADDED_CLKS_INIT_FILES(state)
+        state = SYN.ADD_PATH_DELAY_TO_LOOKUP(state)
+        state, schedules = measure_and_harvest(state, None, keys)
+        return state, confirm_and_report(state, schedules)
+
+    for schedule_pass in range(1, MAX_SCHEDULE_PASSES + 1):
+        print(
+            f"================== AUTO_FSM Pass {schedule_pass}: Scheduling "
+            f"Shared-Resource FSMs ================================",
+            flush=True,
+        )
+        parser_state = SYN.ADD_PATH_DELAY_TO_LOOKUP(parser_state)
+        if pending_schedules is not None:
+            schedules, pending_schedules = pending_schedules, None
+        else:
+            parser_state, schedules = measure_and_harvest(parser_state, prev_schedules)
+        schedules = confirm_and_report(parser_state, schedules)
         prev_schedules = schedules
 
         pypeline.SET_AUTO_FSM_SCHEDULE_CACHE(schedules)
-        parser_state = PY_TO_LOGIC.PARSE_FILE(src_file, resolved_part=parser_state.part)
-        CHECK_SCHEDULES_APPLIED(parser_state)
+        parser_state = REPARSE(
+            src_file, parser_state.part, schedule_call_sites=schedule_new_call_sites
+        )
         AUTO_PIPELINE.WRITE_0_ADDED_CLKS_INIT_FILES(parser_state)
         DUMP_GENERATED_SOURCE(parser_state, SYN.SYN_OUTPUT_DIRECTORY)
         parser_state, multimain_timing_params = AUTO_PIPELINE.DO_SWEEP_AND_AUTO_PIPELINE(
-            parser_state, args, src_file
+            parser_state, args, src_file, schedule_call_sites=schedule_new_call_sites
         )
+        current = set(GET_TAGS(parser_state))
+        if current != set(schedules):
+            # Blame, repair and tightening follow the call sites built. The
+            # stall rule judges a tightening of the same FSMs, not this pass.
+            print(
+                "AUTO_FSM: re-elaboration changed the design's call sites; now "
+                "building: " + ", ".join(sorted(current)),
+                flush=True,
+            )
+            installed = pypeline.AUTO_FSM_SCHEDULE_CACHE()
+            schedules = {key: installed[key] for key in sorted(current)}
+            prev_schedules = schedules
+            tightened_from = None
 
         observation = SWEEP.RETAINED_OBSERVATION(parser_state, multimain_timing_params)
         for key, schedule in schedules.items():

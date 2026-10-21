@@ -60,7 +60,13 @@ balanced selection, width adapters and pair emission. These run in passthrough
 and scheduled GHDL modes. `auto_fsm_transforms_test.py` checks transformation
 proofs and refusals, and that generated measurement roots are already trimmed
 when parsing ends; `auto_fsm_cache_test.py` checks source/target invalidation,
-deterministic source and restoration of sparse pinned recipes.
+deterministic source and restoration of sparse pinned recipes. It also checks
+`AUTO_FSM.REPARSE`: a call site new to the build (an AUTO_FSM sized from an
+AUTO_PIPELINE depth) is scheduled, and a refused schedule still raises. A
+stubbed driver run schedules, blames and tightens a call site created during a
+pass. `auto_fsm_latency_sized_test.py` builds that shape under sky130: the call
+site pin-and-confirm pass 2 creates is scheduled before its one confirmation
+synthesis.
 `auto_fsm_attribution_test.py` checks ordered Vivado arcs and authenticated
 sky130 endpoint aliases. It reads a Vivado arc's coordinate only after the FSM
 instance's own label (which carries the caller's line), places boundaries from
@@ -459,6 +465,8 @@ replicas (majority replay; an error without a shared key), changed region
 interiors, empty placements, fixed flags and exact bit boundaries during
 re-elaboration. It also scripts the latency-pass driver: a pass ended by
 isolated MCP seeding runs no synthesis and does not use the pass budget.
+Pinned AUTO_FSM units are neither harvested nor required to have a
+previous-pass counterpart.
 
 ## OpenXC7 `--pins` bitstream coverage
 

@@ -1,4 +1,5 @@
-"""Carried schedule validity, pinned recipe integrity and model-only updates."""
+"""Carried schedule validity, pinned recipe integrity, model-only updates and
+call sites new to a build (AUTO_FSM.REPARSE)."""
 
 import copy
 import json
@@ -103,6 +104,243 @@ def test_schedule_cache_rejects_stale_source_target_and_version():
             assert changed_key == key and changed.schedule is None
     finally:
         pypeline.SET_AUTO_FSM_SCHEDULE_CACHE({})
+
+
+# An AUTO_FSM sized from an AUTO_PIPELINE depth, the shape of WireGuard's
+# Poly1305 kernels (lanes = depth + 2): a different depth is a different function
+# and so a different call site.
+LATENCY_SIZED_DESIGN = textwrap.dedent("""
+from pypeline import AUTO_FSM, AUTO_PIPELINE, MAIN, NamedTuple, hw_func, struct, uint1_t, uint8_t, uint16_t
+@hw_func
+def core(x: uint8_t) -> uint8_t:
+    return x + 1
+CORE = AUTO_PIPELINE(core)
+CAPACITY = CORE.latency + 2
+def make_lane_sum(capacity):
+    @struct
+    class lanes_t(NamedTuple):
+        values: uint8_t[capacity]
+    @hw_func
+    def lane_sum(x: lanes_t) -> uint16_t:
+        total: uint16_t = 0
+        for i in range(capacity):
+            total = total + x.values[i]
+        return total
+    return lanes_t, lane_sum
+lanes_t, lane_sum = make_lane_sum(CAPACITY)
+FSM = AUTO_FSM(lane_sum)
+@MAIN(10.0)
+def core_top(x: uint8_t) -> uint8_t:
+    return CORE(x)
+@MAIN(10.0)
+def fsm_top(x: lanes_t, valid: uint1_t) -> uint16_t:
+    request: FSM.in_stream_t
+    request.data = x
+    request.valid = valid
+    response = FSM(request)
+    return response.data
+""")
+
+
+def fake_delay_schedule(parser, key, tag):
+    for name, logic in parser.FuncLogicLookupTable.items():
+        if name.startswith("BIN_OP_PLUS_"):
+            logic.delay = 30
+    return AUTO_FSM.BUILD_SCHEDULE(parser, key, tag, 0.9)
+
+
+def test_reparse_schedules_call_sites_new_to_the_build():
+    # AUTO_PIPELINE pin-and-confirm pass 2 re-executes the design with the
+    # built depth installed; the AUTO_FSM call site it creates has no schedule
+    # (WireGuard's cold 40 MHz build stopped here with AutoFsmInternalError).
+    pypeline.SET_AUTO_FSM_SCHEDULE_CACHE({})
+    pypeline.SET_AUTO_PIPELINE_LATENCY_CACHE({})
+    try:
+        with tempfile.TemporaryDirectory() as tmp:
+            path = os.path.join(tmp, "latency_sized_design.py")
+            Path(path).write_text(LATENCY_SIZED_DESIGN)
+            parser, old_key, tag = parse(path)
+            assert old_key.startswith("lane_sum_capacity_2_"), old_key
+            pypeline.SET_AUTO_FSM_SCHEDULE_CACHE(
+                {old_key: fake_delay_schedule(parser, old_key, tag)}
+            )
+            (core_key,) = {
+                key
+                for logic in parser.FuncLogicLookupTable.values()
+                for key in logic.sub_inst_to_auto_pipeline_key.values()
+                if key is not None
+            }
+            pypeline.SET_AUTO_PIPELINE_LATENCY_CACHE({core_key: 1})
+            calls = []
+
+            def schedule_call_sites(state, keys):
+                calls.append(list(keys))
+                tags = AUTO_FSM.GET_TAGS(state)
+                return state, {
+                    key: fake_delay_schedule(state, key, tags[key]) for key in keys
+                }
+
+            state = AUTO_FSM.REPARSE(
+                path, None, schedule_call_sites=schedule_call_sites
+            )
+            ((new_key, new_tag),) = AUTO_FSM.GET_TAGS(state).items()
+            assert new_key.startswith("lane_sum_capacity_3_"), new_key
+            assert calls == [[new_key]], calls
+            assert new_tag.schedule is not None
+            assert not state.pypeline_auto_fsm_schedule_rejections
+            assert set(pypeline.AUTO_FSM_SCHEDULE_CACHE()) == {old_key, new_key}
+    finally:
+        pypeline.SET_AUTO_FSM_SCHEDULE_CACHE({})
+        pypeline.SET_AUTO_PIPELINE_LATENCY_CACHE({})
+
+
+def test_reparse_still_refuses_a_rejected_schedule():
+    # Only a call site with no installed schedule is new. One whose schedule
+    # was refused is never rescheduled: that is still an internal error.
+    pypeline.SET_AUTO_FSM_SCHEDULE_CACHE({})
+    try:
+        with tempfile.TemporaryDirectory() as tmp:
+            path = os.path.join(tmp, "refused_design.py")
+            Path(path).write_text(DESIGN)
+            parser, key, tag = parse(path)
+            stale = fake_delay_schedule(parser, key, tag)
+            stale["target_context"][2] = "different-part"
+            pypeline.SET_AUTO_FSM_SCHEDULE_CACHE({key: stale})
+            calls = []
+
+            def schedule_call_sites(state, keys):
+                calls.append(list(keys))
+                return state, {}
+
+            try:
+                AUTO_FSM.REPARSE(path, None, schedule_call_sites=schedule_call_sites)
+            except AUTO_FSM.AutoFsmInternalError as error:
+                assert key in str(error), error
+            else:
+                raise AssertionError("a refused schedule must not pass silently")
+            assert calls == [], calls
+    finally:
+        pypeline.SET_AUTO_FSM_SCHEDULE_CACHE({})
+
+
+def test_call_site_created_during_a_pass_is_scheduled_blamed_and_tightened():
+    # DO_SCHEDULE_PASSES with measurement, search and sweep stubbed. Pass 1's
+    # sweep re-elaborates the design into a new call site (as AUTO_PIPELINE
+    # pass 2 does for a function sized from a depth) and that FSM misses
+    # timing. It must be scheduled from the requested budget scale, blamed,
+    # tightened, and rescheduled by pass 2.
+    from contextlib import ExitStack
+    from types import SimpleNamespace
+    from unittest.mock import patch
+
+    import AUTO_PIPELINE
+    import SWEEP
+    import SYN
+
+    design = ["old"]
+
+    def state():
+        key = design[0]
+        logic = SimpleNamespace(sub_inst_to_auto_fsm_key={"fsm": key})
+        return SimpleNamespace(
+            part="part",
+            pypeline_auto_fsm_tags={key: SimpleNamespace(schedule={})},
+            pypeline_auto_fsm_schedule_rejections={},
+            pypeline_auto_fsm_provenance={},
+            FuncLogicLookupTable={"top": logic},
+            LogicInstLookupTable={"top": logic},
+        )
+
+    harvested = []
+
+    def harvest(parser, budget_scales, previous, keys=None, **_options):
+        keys = sorted(parser.pypeline_auto_fsm_tags if keys is None else keys)
+        scales = {
+            key: budget_scales.get(key, AUTO_FSM.DEFAULT_BUDGET_SCALE) for key in keys
+        }
+        harvested.append(sorted(scales.items()))
+        return {
+            key: dict(
+                entity="auto_fsm_" + key,
+                budget_scale=scales[key],
+                # Hardware that follows the budget, so a tightening changes it
+                n_states=int(4 / scales[key]),
+                worst_state_du=150,
+                at_floor=False,
+                latency_infeasible=False,
+            )
+            for key in keys
+        }
+
+    sweeps = []
+
+    def sweep(parser, args, src_file, schedule_call_sites=None):
+        sweeps.append(design[0])
+        if len(sweeps) == 1:
+            design[0] = "new"
+            parser = AUTO_FSM.REPARSE(
+                src_file, "part", schedule_call_sites=schedule_call_sites
+            )
+            failures = [("top", 100.0, 80.0, "auto_fsm_new")]
+        else:
+            failures = []
+        return parser, SimpleNamespace(sweep_timing_failures=failures)
+
+    def calibrate(parser, budget_scales, ctl, previous, keys=None):
+        keys = parser.pypeline_auto_fsm_tags if keys is None else keys
+        return parser, {key: {} for key in keys}
+
+    noop = lambda *args, **kwargs: None
+    args = SimpleNamespace(
+        auto_fsm_budget_scale=2.5,
+        auto_fsm_unshare=[],
+        auto_fsm_open=[],
+        auto_fsm_ctl="auto",
+        auto_fsm_no_area_sweep=False,
+        auto_fsm_sweep_debug=False,
+    )
+    pypeline.SET_AUTO_FSM_SCHEDULE_CACHE({})
+    try:
+        with ExitStack() as stack:
+            for obj, name, value in [
+                (SYN, "ADD_PATH_DELAY_TO_LOOKUP", lambda parser: parser),
+                (AUTO_FSM, "_measure_schedule_inputs", lambda parser, *a: parser),
+                (AUTO_FSM, "_calibrate_controls", calibrate),
+                (AUTO_FSM, "HARVEST_AUTO_FSM_SCHEDULES", harvest),
+                (AUTO_FSM, "_confirm_unit_placements", lambda parser, s, h: s),
+                (AUTO_FSM, "DESCRIBE_SCHEDULE", lambda *a: ""),
+                (AUTO_FSM, "DESCRIBE_FUS", lambda schedule: []),
+                (AUTO_FSM, "DUMP_GENERATED_SOURCE", noop),
+                (AUTO_FSM, "_unit_measurements", lambda *a: {}),
+                (AUTO_FSM, "_fsm_instance_aliases", lambda *a: ()),
+                (
+                    AUTO_FSM,
+                    "_collect_timing_evidence",
+                    lambda p, t, s: {k: [] for k in s},
+                ),
+                (AUTO_FSM, "_period_du", lambda parser: 100.0),
+                (
+                    PY_TO_LOGIC,
+                    "PARSE_FILE",
+                    lambda src_file, resolved_part=None: state(),
+                ),
+                (AUTO_PIPELINE, "WRITE_0_ADDED_CLKS_INIT_FILES", noop),
+                (AUTO_PIPELINE, "DO_SWEEP_AND_AUTO_PIPELINE", sweep),
+                (SWEEP, "RETAINED_OBSERVATION", noop),
+            ]:
+                stack.enter_context(patch.object(obj, name, value))
+            AUTO_FSM.DO_SCHEDULE_PASSES(state(), args, "design.py")
+            # 80 of 100 MHz, a 15 ns worst state against a 10 ns period
+            tightened = AUTO_FSM.TIGHTENED_BUDGET_SCALE(state(), 2.5, 0.8, 150)
+    finally:
+        pypeline.SET_AUTO_FSM_SCHEDULE_CACHE({})
+    assert sweeps == ["old", "new"], sweeps
+    assert harvested == [
+        [("old", 2.5)],  # pass 1
+        [("new", 2.5)],  # REPARSE, during pass 1's sweep
+        [("new", tightened)],  # tightened after pass 1's miss
+        [("new", tightened)],  # pass 2
+    ], harvested
 
 
 def test_unit_characterization_counts_repeated_serial_operations():

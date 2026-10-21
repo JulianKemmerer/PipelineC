@@ -378,6 +378,19 @@ def get_tests() -> list:
             needs_out_dir=True,
         )
     )
+    # An AUTO_FSM sized from an AUTO_PIPELINE depth (lanes = depth + 2, the
+    # WireGuard Poly1305 shape): the sweep pipelines the divider, and the call
+    # site the pin-and-confirm re-elaboration creates must be scheduled before
+    # the confirmation synthesis instead of stopping the build. About 5
+    # minutes standalone (one sweep plus one confirmation).
+    tests.append(
+        Test(
+            name="auto_fsm_latency_sized_test",
+            category=DM,
+            cmd=[INST_DIR / "auto_fsm_latency_sized_test.py"],
+            needs_out_dir=True,
+        )
+    )
     # @initial/@final hooks through a sky130 build + native sim, and a --comb
     # build + cocotb+GHDL sim: syn hooks once each, before elaboration / after
     # the final VHDL, sim hooks around the clock loop

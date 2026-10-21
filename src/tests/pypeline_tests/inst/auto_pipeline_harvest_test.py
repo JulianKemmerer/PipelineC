@@ -3,6 +3,8 @@
 #   - AUTO_PIPELINE.HARVEST_AUTO_PIPELINE_LATENCIES grouping + divergence detection
 #   - AUTO_PIPELINE.SEED_TIMING_PARAMS_FROM_PREVIOUS concrete replay + the
 #     unseeded-auto_pipeline-instance (call-site-set-changed) detection
+#   - pinned AUTO_FSM units are neither harvested nor required to have a
+#     previous-pass counterpart
 #   - PY_TO_LOGIC.CANONICAL_CALLABLE_KEY determinism
 #   - pypeline.AUTO_PIPELINE latency cache + read-flag behavior
 #   - AUTO_PIPELINE(func, latency= / start_latency= / max_latency=): constructor
@@ -75,6 +77,16 @@ def make_logic(func_name, auto_pipeline_subs=None):
         logic.sub_inst_to_auto_pipeline_latency[local_sub] = (
             LOGIC.AutoPipelineLatency()
         )
+    return logic
+
+
+def make_fsm_logic(func_name, pinned_unit_key):
+    # A generated AUTO_FSM whose "unit" call site is a pinned unit: an internal
+    # fixed-latency AUTO_PIPELINE tag carrying its placement recipe
+    logic = make_logic(func_name, {"unit": pinned_unit_key})
+    constraint = LOGIC.AutoPipelineLatency(latency=2)
+    constraint.fsm_implementation = {"latency": 2}
+    logic.sub_inst_to_auto_pipeline_latency["unit"] = constraint
     return logic
 
 
@@ -253,6 +265,50 @@ def test_seed_rejects_changed_region_interior():
         assert "must not depend on .latency" in str(exc)
     else:
         raise AssertionError("changed region interior was replayed")
+
+
+def test_harvest_skips_pinned_auto_fsm_units():
+    # A pinned unit's latency comes from its FSM's schedule, not from the
+    # sweep: a different FSM brings different units, which must not read as
+    # changed .latency values between pin-and-confirm passes
+    ps = FakeParserState()
+    ps.LogicInstLookupTable["main"] = make_logic("main_func", {"core": "keyA"})
+    ps.LogicInstLookupTable["main" + M + "fsm"] = make_fsm_logic(
+        "fsm_func", "auto_fsm_pinned_a_latency_2"
+    )
+    tpl = {
+        "main" + M + "core": FakeTimingParams(3),
+        "main" + M + "fsm" + M + "unit": FakeTimingParams(2),
+    }
+    latencies, divergences = AUTO_PIPELINE_MODULE.HARVEST_AUTO_PIPELINE_LATENCIES(
+        ps, tpl
+    )
+    assert latencies == {"keyA": 3}, latencies
+    assert divergences == {}, divergences
+
+
+def test_seed_does_not_require_previous_pinned_auto_fsm_units():
+    # Pass 2 re-elaboration scheduled a different FSM (a function sized from a
+    # depth), whose pinned unit no previous pass had. Region enforcement
+    # restores it from the schedule, so it is not a changed call-site set.
+    def state(fsm, unit_key):
+        ps = FakeParserState()
+        ps.LogicInstLookupTable["main"] = make_logic("main_func", {"core": "keyA"})
+        ps.LogicInstLookupTable["main" + M + "core"] = make_logic("core_func")
+        ps.LogicInstLookupTable["main" + M + fsm] = make_fsm_logic(fsm, unit_key)
+        ps.LogicInstLookupTable["main" + M + fsm + M + "unit"] = make_logic(
+            unit_key + "_func"
+        )
+        return ps, {i: FakeTimingParams(0) for i in ps.LogicInstLookupTable}
+
+    prev, old = state("fsm_capacity_2", "auto_fsm_pinned_a_latency_2")
+    new, fresh = state("fsm_capacity_3", "auto_fsm_pinned_b_latency_2")
+    old["main" + M + "core"]._slices = [0.5]
+    seeded, unseeded = AUTO_PIPELINE_MODULE.SEED_TIMING_PARAMS_FROM_PREVIOUS(
+        prev, old, new, fresh
+    )
+    assert unseeded == [], unseeded
+    assert seeded["main" + M + "core"]._slices == [0.5]
 
 
 def test_mcp_seed_only_passes_do_not_use_the_pass_budget():
@@ -686,6 +742,8 @@ if __name__ == "__main__":
     test_seed_preserves_relative_instances_and_independent_mains()
     test_seed_ambiguous_region_implementations()
     test_seed_rejects_changed_region_interior()
+    test_harvest_skips_pinned_auto_fsm_units()
+    test_seed_does_not_require_previous_pinned_auto_fsm_units()
     test_mcp_seed_only_passes_do_not_use_the_pass_budget()
     test_hash_ext_is_content_aware()
     test_canonical_callable_key_deterministic()

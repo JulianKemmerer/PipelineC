@@ -507,13 +507,17 @@ everything the FSM's own control adds, so leave headroom),
 reported no achieved MHz, §3.4), `MAX_SCHEDULE_PASSES = 6`. `MUX_PENALTY_DU = 10`
 is the descent test's flat operand-mux allowance (§3.1) and the seed for a mux
 shape nothing has ever measured. Override the starting budget with
-`--auto_fsm_budget_scale`.
+`--auto_fsm_budget_scale`. It applies to every call site the build schedules,
+including one a re-elaboration creates during the build (§3.4).
 
 Determinism is load-bearing: node ids come from source coordinates, ties break
 on node id, and the schedule is a pure function of (Logic graphs, delays,
 budget_scale, the search's grain and binding choices). Independence from the
 surrounding design is what makes the driver's loop converge trivially — only an
 explicit tightening can change the answer, so there is no fixed-point search.
+Which functions get scheduled can still change, when the design sizes one from
+a value it reads such as an AUTO_PIPELINE `.latency`; §3.4 covers those call
+sites.
 The area search is bounded by move and DAG-size caps, never by a wall clock,
 for the same reason.
 
@@ -874,8 +878,11 @@ for each schedule pass:
     schedule + bind each AUTO_FSM                 <- the minimum-area search (§3.7)
     synthesize each new pinned unit placement     <- reschedule a call site whose
                                                      placement misses its budget
-    install schedules, re-PARSE_FILE              <- call sites become the generated FSMs
-    AUTO_PIPELINE.DO_SWEEP_AND_AUTO_PIPELINE      <- sweep + AUTO_PIPELINE loop
+    install schedules, REPARSE                    <- call sites become the generated FSMs;
+                                                     one new to the build is scheduled first
+    AUTO_PIPELINE.DO_SWEEP_AND_AUTO_PIPELINE      <- sweep + AUTO_PIPELINE loop (its
+                                                     re-parses also go through REPARSE)
+    follow the call sites the design now builds
     timing met, or nothing/only-floors blamed?  -> done
     last tightening gained no fmax?             -> done (path is not in the states)
     otherwise shrink the blamed FSMs' per-state budget by the measured miss and go again
@@ -884,6 +891,33 @@ for each schedule pass:
 The bootstrap design is deliberately **not** swept: it contains the raw
 combinational blob nobody intends to build, so sweeping it would just fail
 timing pointlessly. It exists only to be measured.
+
+**Call sites new to the build.** A call site's key is its function's identity,
+closure values included. A design that sizes an AUTO_FSM's function from a value
+it reads during elaboration gets a different function, and so a different call
+site, when that value changes. WireGuard's Poly1305 kernels have
+`capacity = body AUTO_PIPELINE depth + 2`: the bootstrap parse reads depth 0, the
+sweep builds depth 1, and AUTO_PIPELINE's pin-and-confirm pass 2 re-executes the
+design with depth 1 installed. Every re-parse inside the build goes through
+`REPARSE`: the driver's own, the pin-and-confirm passes and the RAM plan
+re-parses. A call site with no installed schedule is new. It elaborated as a
+passthrough, so its operations are measured as on the bootstrap pass. It is
+then scheduled by the steps a pass uses (measurement, control calibration, the
+area search, pinned placements, the `max_latency=` exit) and installed beside
+the existing schedules, and the design is executed again. The loop then
+carries on where it was, so pin-and-confirm still runs one seeded confirmation
+synthesis rather than a fresh sweep. Each round installs every new key, and a
+construction can depend only on values read before it (AUTO_PIPELINE latencies
+are fixed for the re-parse, an earlier AUTO_FSM's latency once its schedule is
+installed), so the rounds end without a bound of their own. A call site whose
+installed schedule was refused is not new: that is still an internal error
+(`CHECK_SCHEDULES_APPLIED`).
+
+After the sweep the driver takes the installed schedules of the call sites the
+design now builds, so blame, local repair and tightening follow them
+(`_BLAMED_MISS_RATIOS` blames only keys the driver holds). A pass whose call
+sites changed is not a tightening of the same FSMs, so the stall rule does not
+judge it.
 
 Before the first full search, `AUTO_FSM._measure_schedule_inputs` replaces the
 derived estimates that decide the forced-descent grain with measurements (§3.5).
@@ -986,7 +1020,9 @@ timing exit.
 function of (the function's Logic graphs, its operations' delays, the budget
 scale) and is independent of the surrounding design, so nothing can oscillate:
 only an explicit tightening changes the answer, and tightening is monotonic and
-capped (`MAX_SCHEDULE_PASSES`).
+capped (`MAX_SCHEDULE_PASSES`). The set of call sites can change with an
+AUTO_PIPELINE latency the design reads. Such changes happen inside the
+AUTO_PIPELINE loop and are bounded by its pass limit.
 
 ### 3.5 Delay measurement
 
@@ -1690,7 +1726,7 @@ first build).
 | test | category | what it proves |
 |---|---|---|
 | `auto_fsm_attribution_test.py` | unit | ordered Vivado carry/routing arcs, endpoint-only paths, retained unmatched evidence, parallel late select arrival, edge separation, width-keyed decode proxies, measured pinned-unit stages (isolated and launch) and rescheduling placements measured over budget before a build |
-| `auto_fsm_cache_test.py` | unit | stale source/target/version refusal (recorded, and an internal error inside a build), malformed cache misses, applied forced schedules, provenance completeness, serial unit characterization and stable hardware identities |
+| `auto_fsm_cache_test.py` | unit | stale source/target/version refusal (recorded, and an internal error inside a build), malformed cache misses, applied forced schedules, provenance completeness, serial unit characterization and stable hardware identities; `REPARSE` schedules a call site new to the build and still refuses a rejected schedule; a call site created during a pass is scheduled from `--auto_fsm_budget_scale`, blamed and tightened (stubbed driver) |
 | `auto_fsm_transforms_test.py` | unit | exclusive selection proofs, typed width-adapter legality and next-wider merge steps, closed-pair fusion refusal and trimmed measurement roots |
 | `auto_fsm_prefix_tree_test.py` | unit | a derived hierarchy estimate is measured (outermost first, never when a measured part already exceeds the budget) before it decides forced descent, and the carried measurement is reused on a later pass; array input elements render as indexes; a MAIN with no registers of its own drives its scheduled FSM's clock enable; a helper kept whole as a pipelined unit is not a blocked descent |
 | `auto_fsm_var_index_read_test.py` | elab_introspect | direct and nested variable-index source regeneration (regression for #377) |
@@ -1714,6 +1750,7 @@ first build).
 | `auto_fsm_real_area_compare_test.py` | build_report | same question under `--syn_tool device_models`, judged by real `Measured area:` rather than yosys cells: real-µm²-ranked vs `--auto_fsm_abstract_area` vs `--auto_fsm_no_area_sweep`, all three built; pins the 25k µm² v7 structural ceiling and beats the lowest committed AUTO_PIPELINE/latchup.app divider area; plus AUTO_FSM's own allocated-storage bit count against the build's real sequential cell count (the register-fidelity question §3.8 raises explicitly) |
 | `auto_fsm_max_latency_test.py` | synth | a meetable `max_latency` is met by unsharing; an unmeetable one fails the build naming the latency actually needed |
 | `auto_fsm_timing_iter_test.py` | build_report (sky130) | a critical path inside an FSM is found and fixed by rescheduling (`auto_fsm_timing_iter_design.py`: narrow inputs, so the states, not the input-capture fanout, set the critical path); checks each pass's full-design timing and authenticated mapped end-register attribution |
+| `auto_fsm_latency_sized_test.py` | build_report (sky130) | an AUTO_FSM sized from an AUTO_PIPELINE depth (`auto_fsm_latency_sized_design.py`: lanes = divider depth + 2): the call site pin-and-confirm pass 2 creates is scheduled before its single seeded confirmation synthesis, and the build exits 0 |
 | `auto_fsm_tighten_stall_test.py` | build_report (sky130) | the other half: when rescheduling cannot move the critical path (sky130, 110 MHz, a path the state count cannot change), the driver stops after the first tightened build with no fmax gain in its full-design timing records, prints why, never produces a 0-op schedule, and exits nonzero within a timeout |
 | `auto_fsm_ctl_compare_test.py` | synth | the constant-table control path is not bigger than the comparator chains it replaced, and the donut FSM still meets the clock goal that v2 misses |
 | `double_parse_file_test.py` | elab | re-parsing an AUTO_FSM design is reproducible |
@@ -1955,6 +1992,25 @@ parsing. The refusal was silent, the passthrough was synthesized (11.4 MHz,
 87.7 ns through the whole kernel), and the build carried on. Pinned recipes are
 now verified where they are applied, by region enforcement's digest and latency
 checks, not re-characterized at elaboration.
+
+A call site with no installed schedule was first treated the same way, which
+is wrong for a call site new to the build. WireGuard's cold 40 MHz shared build
+scheduled the capacity-2 Poly1305 kernels, the sweep settled the body at 1
+clock, and pin-and-confirm pass 2 re-elaborated capacity-3 functions: an
+`AutoFsmInternalError` after 1:46:44 and three whole-design syntheses.
+`REPARSE` now schedules such call sites before the check (§3.4). Three more
+changes keep the new FSMs first-class:
+- The driver re-reads its schedules after the sweep. `_BLAMED_MISS_RATIOS`
+  ignores keys the driver does not hold, so a new FSM that missed timing would
+  have ended the loop with "no AUTO_FSM region is implicated".
+- `--auto_fsm_budget_scale` applies to every call site, not only to those of the
+  bootstrap parse.
+- Pinned units of a newly scheduled FSM are neither harvested as `.latency`
+  values nor required to have a previous-pass counterpart in pin-and-confirm
+  seeding
+  ([`AUTO_PIPELINE_DESIGN.md`](AUTO_PIPELINE_DESIGN.md#5-latency-pin-and-confirm-loop-pypeline-designs-only)).
+  Otherwise the new FSM's units would read as changed latencies (another pass)
+  or as a changed set of call sites (an exit).
 
 ### Measurements before scheduling decisions
 

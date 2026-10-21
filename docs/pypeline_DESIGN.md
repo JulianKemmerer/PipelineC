@@ -1313,7 +1313,8 @@ UPDATE.latency                   # fixed in->out cycle count; 0 until a real bui
 Structurally a sibling of `AUTO_PIPELINE`, and deliberately so: a duck-type marker
 the elaborator probes for (`_is_auto_fsm_pragma`), a module-global cache
 `AUTO_FSM.DO_SCHEDULE_PASSES` installs between passes (`SET_AUTO_FSM_SCHEDULE_CACHE`,
-carrying `canonical_key -> schedule dict` instead of `-> stage count`), a
+carrying `canonical_key -> schedule dict` instead of `-> stage count`; `AUTO_FSM.REPARSE`
+adds call sites new to the build), a
 snapshot taken at construction so one design execution sees one consistent view,
 a `canonical_key` computed lazily via `PY_TO_LOGIC.CANONICAL_CALLABLE_KEY`, and
 an address-free `__repr__` for the same entity-naming-determinism reason.

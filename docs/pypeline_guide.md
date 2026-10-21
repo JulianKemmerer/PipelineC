@@ -3703,6 +3703,9 @@ all of the time.
   interval == `.latency`.
 - Construct `AUTO_FSM(...)` once, eagerly, at module or factory level and capture
   it by closure — same rule and same reason as `AUTO_PIPELINE`.
+- Its function may be sized from an `AUTO_PIPELINE` `.latency`, for example compute
+  lanes = depth + 2 from a factory. When the build changes that depth, it schedules
+  the resized function before confirming timing.
 - Hardware array indices are supported, including reads of struct and array elements.
 
 **Write the caller to react to `valid`, not to count cycles.** Before an implemented

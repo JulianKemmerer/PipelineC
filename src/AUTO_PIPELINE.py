@@ -2282,13 +2282,24 @@ def GET_BEST_GUESS_IDEAL_SLICES(latency):
     return ideal_slices
 
 
+def _PINNED_AUTO_FSM_UNIT(logic, local_sub):
+    """True for a pinned AUTO_FSM unit (AUTO_FSM._make_unit_tag): an internal
+    AUTO_PIPELINE tag whose latency and placement come from its FSM's
+    schedule. Region enforcement restores it (RESTORE_UNIT_PLACEMENT), so it is
+    not a bottom-up value, and a different FSM schedule brings different ones."""
+    constraint = logic.sub_inst_to_auto_pipeline_latency.get(local_sub)
+    return constraint is not None and constraint.fsm_implementation is not None
+
+
 # Todo just coarse for now until someone other than me care to squeeze performance?
 # Course then fine - knowhaimsayin
 def HARVEST_AUTO_PIPELINE_LATENCIES(parser_state, TimingParamsLookupTable):
     """Collect the discovered pipeline latency of every AUTO_PIPELINE-tagged
     submodule instance, grouped by the tag's canonical latency-cache key
     (pypeline.AUTO_PIPELINE.canonical_key, recorded per local submodule in
-    Logic.sub_inst_to_auto_pipeline_key by the Pypeline elaborator).
+    Logic.sub_inst_to_auto_pipeline_key by the Pypeline elaborator). Pinned
+    AUTO_FSM units are skipped (_PINNED_AUTO_FSM_UNIT): when a re-elaboration
+    schedules a new FSM, its units must not read as changed latencies.
 
     Returns (latencies, divergences):
       latencies:   canonical_key -> latency (int) for keys whose instances
@@ -2319,7 +2330,7 @@ def HARVEST_AUTO_PIPELINE_LATENCIES(parser_state, TimingParamsLookupTable):
         if not logic.sub_inst_to_auto_pipeline_key:
             continue
         for local_sub, canonical_key in logic.sub_inst_to_auto_pipeline_key.items():
-            if canonical_key is None:
+            if canonical_key is None or _PINNED_AUTO_FSM_UNIT(logic, local_sub):
                 continue
             sub_inst = inst_name + LOGIC.SUBMODULE_MARKER + local_sub
             sub_timing_params = TimingParamsLookupTable.get(sub_inst)
@@ -2446,6 +2457,8 @@ def SEED_TIMING_PARAMS_FROM_PREVIOUS(
     when their placements differ the most common one (then the first path) is
     replayed and reported. A region whose interior no longer matches any
     previous replica raises SeedReplayError before confirmation synthesis.
+    Pinned AUTO_FSM units are not replayed as regions (_PINNED_AUTO_FSM_UNIT);
+    REENFORCE_AUTO_PIPELINE_REGIONS restores them.
 
     Returns the table and tagged instances without a previous counterpart.
     """
@@ -2477,9 +2490,12 @@ def SEED_TIMING_PARAMS_FROM_PREVIOUS(
         current.INVALIDATE_CACHE()
 
     def regions(state):
+        # Pinned AUTO_FSM units need no previous counterpart: region
+        # enforcement restores them from their FSM's schedule, and a
+        # re-elaboration that schedules a new FSM brings new ones
         for inst, logic in state.LogicInstLookupTable.items():
             for local, key in logic.sub_inst_to_auto_pipeline_key.items():
-                if key is not None:
+                if key is not None and not _PINNED_AUTO_FSM_UNIT(logic, local):
                     yield inst + marker + local, (owner(inst), key)
 
     def subtree(keys, table, root):
@@ -2777,14 +2793,18 @@ def RECORD_LATENCY_PASS(pass_number, built_auto_pipeline, built_auto_multi_cycle
     print(f"  => {outcome}", flush=True)
 
 
-def DO_AUTO_PIPELINE_LATENCY_PASSES(parser_state, multimain_timing_params, src_file):
+def DO_AUTO_PIPELINE_LATENCY_PASSES(
+    parser_state, multimain_timing_params, src_file, schedule_call_sites=None
+):
     """AUTO_PIPELINE .latency pin-and-confirm passes (Pypeline designs only, see
     docs/AUTO_PIPELINE_DESIGN.md): if the design's Python read any AUTO_PIPELINE(...).latency,
     re-execute it with the discovered stage counts installed so those reads resolve to
     real values (e.g. for FIFO sizing), carrying the sweep's pipelining over as pinned
     seeds so only one confirmation synthesis is needed instead of a fresh sweep. A
     design with no AUTO_PIPELINE call sites, or one that never reads .latency, pays
-    nothing beyond the in-memory harvest walk below."""
+    nothing beyond the in-memory harvest walk below. schedule_call_sites is
+    AUTO_FSM.DO_SCHEDULE_PASSES' scheduler: a re-execution that sizes an AUTO_FSM's
+    function from the new values creates a call site it schedules (AUTO_FSM.REPARSE)."""
     global CURRENT_LATENCY_PASS
     import pypeline
     import SWEEP
@@ -2833,7 +2853,8 @@ def DO_AUTO_PIPELINE_LATENCY_PASSES(parser_state, multimain_timing_params, src_f
 
     RECORD_LATENCY_PASS(1, latencies, auto_multi_cycle, "re-elaborate with the built values (pass 2)")
     print("AUTO_PIPELINE: timing in the current latency-sized hardware is provisional; re-elaboration and confirmation are required.", flush=True)
-    import PY_TO_LOGIC
+    import AUTO_FSM
+
     auto_pipeline_pass = 1
     # Passes ended by isolated MCP seeding ran no synthesis; they have their
     # own bound instead of using the confirmation-pass budget.
@@ -2877,14 +2898,7 @@ def DO_AUTO_PIPELINE_LATENCY_PASSES(parser_state, multimain_timing_params, src_f
         # over, as in the RAM plan re-parse below
         part = getattr(parser_state, "part", None)
         tool = getattr(parser_state, "syn_tool_name", None)
-        parser_state = PY_TO_LOGIC.PARSE_FILE(src_file, resolved_part=part)
-        import AUTO_FSM
-
-        AUTO_FSM.CHECK_SCHEDULES_APPLIED(parser_state)
-        if part is not None:
-            parser_state.part = part
-        if tool is not None:
-            parser_state.syn_tool_name = tool
+        parser_state = AUTO_FSM.REPARSE(src_file, part, tool, schedule_call_sites)
         WRITE_0_ADDED_CLKS_INIT_FILES(parser_state)
         parser_state = SYN.ADD_PATH_DELAY_TO_LOOKUP(parser_state)
         try:
@@ -3179,8 +3193,8 @@ def RAM_PREPARE_TARGET(parser_state, src_file):
     simulation without an installed synthesis tool. Hooks run only on first parse.
     """
     import pypeline
-    import PY_TO_LOGIC
     import SYN
+    import AUTO_FSM
 
     plans = {}
     for entry in RAM_COLLECT(parser_state).values():
@@ -3193,11 +3207,7 @@ def RAM_PREPARE_TARGET(parser_state, src_file):
     if plans != RAM_PLANS_FROM_STATE(parser_state):
         pypeline.SET_AUTO_PIPELINE_RAM_PLAN_CACHE(plans)
         part, tool = parser_state.part, parser_state.syn_tool_name
-        parser_state = PY_TO_LOGIC.PARSE_FILE(src_file, resolved_part=part)
-        import AUTO_FSM
-
-        AUTO_FSM.CHECK_SCHEDULES_APPLIED(parser_state)
-        parser_state.part, parser_state.syn_tool_name = part, tool
+        parser_state = AUTO_FSM.REPARSE(src_file, part, tool)
     return parser_state
 
 
@@ -3279,15 +3289,17 @@ def RAM_REPORT_PLANS(parser_state):
     }
 
 
-def RAM_SEARCH(parser_state, args, src_file, build):
+def RAM_SEARCH(parser_state, args, src_file, build, schedule_call_sites=None):
     """Measure a bounded frontier, then trim each RAM against the whole design.
 
     Advancing all groups permits progress when several RAMs tie for the critical
     path. Per-group trim and same-latency probes recover unnecessary registers.
     Every probe uses the ordinary logic sweep, so RAM/operator timing is checked
-    together. No fractional pipeline cut ever enters a memory.
+    together. No fractional pipeline cut ever enters a memory. Plan re-parses
+    schedule AUTO_FSM call sites new to the build with schedule_call_sites
+    (AUTO_FSM.REPARSE).
     """
-    import PY_TO_LOGIC
+    import AUTO_FSM
     import SYN
     import SWEEP
     import pypeline
@@ -3307,11 +3319,9 @@ def RAM_SEARCH(parser_state, args, src_file, build):
         pypeline.SET_AUTO_PIPELINE_RAM_PLAN_CACHE(plans)
         if state is None:
             pypeline.SET_AUTO_PIPELINE_LATENCY_CACHE({})
-            state = PY_TO_LOGIC.PARSE_FILE(src_file, resolved_part=original_part)
-            import AUTO_FSM
-
-            AUTO_FSM.CHECK_SCHEDULES_APPLIED(state)
-            state.part = original_part
+            state = AUTO_FSM.REPARSE(
+                src_file, original_part, schedule_call_sites=schedule_call_sites
+            )
             if set(RAM_PLANS_FROM_STATE(state)) != set(initial):
                 raise ValueError(
                     "auto-pipelined RAM call sites changed during plan re-elaboration"
@@ -3433,7 +3443,9 @@ def RAM_SEARCH(parser_state, args, src_file, build):
     return state, timing
 
 
-def DO_SWEEP_AND_AUTO_PIPELINE(parser_state, args, src_file, _ram_search=True):
+def DO_SWEEP_AND_AUTO_PIPELINE(
+    parser_state, args, src_file, _ram_search=True, schedule_call_sites=None
+):
     """Measure delays, run the throughput sweep, then converge AUTO_PIPELINE
     .latency feedback -- i.e. everything between "here is an elaborated design"
     and "here is a pipelined design whose Python agrees with what was built".
@@ -3443,7 +3455,9 @@ def DO_SWEEP_AND_AUTO_PIPELINE(parser_state, args, src_file, _ram_search=True):
     build; if an FSM is blamed for missing timing, reschedule it into more states and
     go again). Returns the final (parser_state, multimain_timing_params): the
     AUTO_PIPELINE loop below re-parses the design internally, so the parser_state
-    handed in is not necessarily the one that comes back out.
+    handed in is not necessarily the one that comes back out. Those re-parses
+    schedule AUTO_FSM call sites new to the build with schedule_call_sites, the
+    AUTO_FSM loop's scheduler (AUTO_FSM.REPARSE).
     """
     import SWEEP
 
@@ -3452,7 +3466,10 @@ def DO_SWEEP_AND_AUTO_PIPELINE(parser_state, args, src_file, _ram_search=True):
         if _ram_search and not args.comb and not args.yosys_json and not args.no_sweep:
             return RAM_SEARCH(
                 parser_state, args, src_file,
-                lambda state: DO_SWEEP_AND_AUTO_PIPELINE(state, args, src_file, False),
+                lambda state: DO_SWEEP_AND_AUTO_PIPELINE(
+                    state, args, src_file, False, schedule_call_sites
+                ),
+                schedule_call_sites,
             )
 
     if not args.comb and not args.yosys_json:
@@ -3483,7 +3500,7 @@ def DO_SWEEP_AND_AUTO_PIPELINE(parser_state, args, src_file, _ram_search=True):
 
     if src_file.endswith(".py") and not args.comb and not args.yosys_json:
         parser_state, multimain_timing_params = DO_AUTO_PIPELINE_LATENCY_PASSES(
-            parser_state, multimain_timing_params, src_file
+            parser_state, multimain_timing_params, src_file, schedule_call_sites
         )
 
     return parser_state, multimain_timing_params

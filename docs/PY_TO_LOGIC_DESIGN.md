@@ -5010,7 +5010,8 @@ whose shape depends on whether a schedule has been computed yet.
             callee_def = self._elaborate_live_func(callee_name, generated)
 ```
 
-- **No schedule installed** (bootstrap pass, `--comb`, `--no_synth`): a
+- **No schedule installed** (bootstrap pass, a call site new to the build until
+  `AUTO_FSM.REPARSE` schedules it, `--comb`, `--no_synth`): a
   combinational passthrough, `o.data = func(s.data); o.valid = s.valid`. Its job
   is to put `func` — and every operation inside it — into the design so
   `SYN.ADD_PATH_DELAY_TO_LOOKUP` measures the delays the scheduler needs.
