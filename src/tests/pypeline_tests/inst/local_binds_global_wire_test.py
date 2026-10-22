@@ -311,7 +311,7 @@ def test_other_module_local_is_not_the_wire():
     pypeline.sim_reset()
     assert int(pypeline.sim_call(mod.top, 5)) == 6 + 8
 
-    def check(state, how):
+    def check(state, how, drive_name):
         for fname in ("helper", "helper_plain"):
             logic = _func_logic(state, fname)
             assert not logic.write_only_global_wires, (
@@ -324,10 +324,16 @@ def test_other_module_local_is_not_the_wire():
             n for n, l in state.FuncLogicLookupTable.items()
             if "valid" in getattr(l, "write_only_global_wires", {})
         ]
-        assert writers == ["drive"], (how, writers)
+        assert writers == [drive_name], (how, writers)
 
-    check(py.ELABORATE_LIVE_ROOTS([mod.top, mod.drive]), "live")
-    check(py.PARSE_FILE(path), "parse")
+    # A live @MAIN root is keyed by its MAIN name, which has the prefix of
+    # the module it was imported as; PARSE_FILE imports the file as the top
+    check(
+        py.ELABORATE_LIVE_ROOTS([mod.top, mod.drive]),
+        "live",
+        mod.drive._pypeline_main.name,
+    )
+    check(py.PARSE_FILE(path), "parse", "drive")
     print("test_other_module_local_is_not_the_wire PASS")
 
 

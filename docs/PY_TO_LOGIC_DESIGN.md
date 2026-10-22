@@ -96,7 +96,8 @@ See [auto-pipelined RAM compilation](AUTO_PIPELINE_DESIGN.md#ram-compiler-sweep-
   - [Name mangling rule](#name-mangling-rule)
   - [`PARSE_FILE` import pre-pass (`_process_imports`)](#parse_file-import-pre-pass-_process_imports)
   - [Conditional imports (module-level `if` / `try`)](#conditional-imports-module-level-if--try)
-  - [Registered MAINs must be elaborated](#registered-mains-must-be-elaborated)
+  - [Registered MAINs: Step 7.2](#registered-mains-step-72)
+  - [MAINs added after clock assignment: `_add_late_mains`](#mains-added-after-clock-assignment-_add_late_mains)
   - [Elaboration ordering — sub-files first](#elaboration-ordering--sub-files-first)
   - [Wire access in hardware function bodies](#wire-access-in-hardware-function-bodies)
   - [Function name mangling](#function-name-mangling)
@@ -229,7 +230,7 @@ Design file (.py)
 
 **Layer 1** (`PARSE_FILE`):
 - Executes the design file as a Python module
-- Discovers `@MAIN` entry points via `pypeline._main_registry`
+- Discovers `@MAIN` entry points via `pypeline._main_registry`: `@MAIN` defs and MAINs made in code
 - Discovers struct types via `_discover_structs_from_module`
 - Discovers enum types via `_discover_enums_from_module` (registers them in `parser_state.enum_info_dict`)
 - Captures all module-level names (constants `N`, `M`, helper functions, closures) into
@@ -1257,7 +1258,19 @@ invokes `_elaborate_live_func`:
 5. Dedup check: if the canonical name is already in `FuncLogicLookupTable`, return the
    existing Logic() immediately — no re-elaboration
 6. Otherwise, a fresh `FuncElaborator` elaborates the function; the result is stored under
-   the canonical name in `FuncLogicLookupTable` with `logic.func_name = canonical`
+   the canonical name in `FuncLogicLookupTable` with `logic.func_name = canonical`. The
+   elaborator's `logic.func_name` is that key from the start, before `elaborate()`: a
+   global wire records each function that uses it (`VariableInfo.used_in_funcs`, read
+   by clock inference and VHDL) under `logic.func_name`, and a def name there (`writer`)
+   would name no table entry. Messages still use the def name (`FuncElaborator.func_name`).
+
+A forced key, `_elaborate_live_func(name, func, key=name)`, replaces only the key choice:
+`_elaborate_main` uses it to key a @MAIN by its MAIN name (see
+[Registered MAINs: Step 7.2](#registered-mains-step-72)). The function's description is
+still recorded under that key, giving its VHDL a `-- Python:` / `-- Specialization:`
+comment and a name-index row; `_record_user_name` and `pypeline_name_full`, which
+describe a canonical name, are skipped. When the owner guard trips on a key that is a
+MAIN's name (a function made after that MAIN), its message says so.
 
 The Python alias (`"concat_3_4"`) is **not** stored in `FuncLogicLookupTable`. The dict
 only holds concrete functions that map to VHDL entities. The next time `concat_3_4` is
@@ -2734,13 +2747,12 @@ their first access lines:
 
 Then it builds the FIFO MAIN with `pypeline._make_global_fifo_main`, passing
 `top_level_module_globals` as `reserved`. A port mismatch (`GlobalFifoError`) becomes an
-`ElaborationError` with the declaration's line, and an existing function of the same name
-(compared case-insensitively) is an error. The MAIN is elaborated with
-`_elaborate_live_func`, as `ELABORATE_LIVE_ROOTS` does; its key is `<key>_FIFO` because the
-generated file is not in `file_to_module_prefix`. It is registered in `main_mhz`,
-`main_syn_mhz` and `main_clk_group` with the write end's MAIN's values, walked into the
-instance tables (`_build_inst_lookup(parser_state, new_mains)`), trimmed, checked for
-dangling logic, and added to the call graph (`_build_func_call_graph` again; it only adds).
+`ElaborationError` with the declaration's line. After the handshake checks below, every
+FIFO MAIN goes to `_add_late_mains`
+([MAINs added after clock assignment](#mains-added-after-clock-assignment-_add_late_mains))
+as a `LateMain` on the write end's MAIN's clock (`main_mhz`, `main_syn_mhz`,
+`main_clk_group`), with reason `"global FIFO"` and owner `"<describe()>: its FIFO MAIN"`.
+An existing function of the same name, compared case-insensitively, is an error there.
 Being in `main_mhz` makes its name protected in the emission registry. The global-wire
 rule loop then runs as usual: every writer of the FIFO wire has one instance, and the
 writers' regions are disjoint.
@@ -2758,8 +2770,9 @@ handshake user is an `ElaborationError` that points to `make_stream_auto_pipelin
 ### Which parts are FIFO-specific
 
 The FIFO MAIN is a compiler-made MAIN that calls one module and binds the wire's paths to
-its ports. Generating it, registering it, the instance-table walk, the sweep's path
-ownership and its report name are not specific to FIFOs. What is FIFO-specific: the
+its ports. Generating it, adding it (`_add_late_mains`, which any MAIN made after clock
+assignment uses), the instance-table walk, the sweep's path ownership and its report name
+are not specific to FIFOs. What is FIFO-specific: the
 `{wr, rd}` wire type and its mapping onto the module's port names
 (`_stream_module_ports`), one user per end, the halves a user must not drive, the skip in
 clock inference, and the handshake rule.
@@ -2917,6 +2930,11 @@ be robust to it**:
   `main_func_ids = {id(f) for f in pypeline._main_registry}`, checked via
   `id(fglobals.get(node.name)) in main_func_ids` — true only for the exact function
   object `@MAIN` registered, never a same-named unrelated function in another file.
+  Step 5 takes a registered def through Steps 6/7 only when its MAIN name
+  (`_pypeline_main.name`) is its own `HW_FUNC_NAME(mod_prefix, node.name)`, as for every
+  `@MAIN` def without `name=`. A renamed MAIN, and a def passed to `MAIN()` unwrapped (its
+  module binding is the raw function, `main_raw_ids`), are left to Step 7.2, so neither
+  is elaborated twice.
 
 ### Conditional imports (module-level `if` / `try`)
 
@@ -2984,20 +3002,63 @@ Everything after discovery is unchanged:
 - Source freezing is path-based (`_is_frozen_source`), so a conditionally imported file
   is frozen at its first read like any other.
 
-### Registered MAINs must be elaborated
+### Registered MAINs: Step 7.2
 
-Running the design registers every `@MAIN` it executes in `pypeline._main_registry`, and
-native sim runs all of them. Hardware reaches a MAIN only as a top-level def of a
-discovered file. A module that ran but was never discovered would silently drop its
-MAINs from the HDL while sim kept running them. This can happen with a module imported
-only inside a function body (`def f(): import res`), or with a `@MAIN` defined inside an
-`if` block or a factory. PARSE_FILE Step 7.5 therefore compares the registry against
-the elaborated top-level defs, by function identity like Steps 5/7. It raises
-`ElaborationError` naming each lost MAIN, its module and its source file, and tells the
-user to import that module at module level.
+Running the design registers every `@MAIN` it executes in `pypeline._main_registry`
+([`pypeline_DESIGN.md`](pypeline_DESIGN.md#main--mainfn--registering-mains)), and native
+sim runs all of them: `@MAIN` defs, and MAINs made in code with `MAIN(fn, name=...)` (a
+factory's function, one per lane in a loop, generated source, a plain def). Step 7
+elaborates the top-level defs whose MAIN name is their own. `_elaborate_registered_mains`
+(Step 7.2) elaborates every other registered MAIN, in registration order, after Step 7 so
+that its callees exist. It reads the registry when it runs, not at Step 3, so MAINs
+registered while global declarations are discovered (Steps 4.5/4.6) are included.
 
-`ELABORATE_LIVE_ROOTS` has no such check: it elaborates the roots it is given, not the
-registry.
+- **One name per MAIN.** `pypeline._duplicate_main_names` over the whole registry: two
+  MAINs whose names are equal ignoring case are an `ElaborationError` naming both
+  functions and where each was made.
+- **Lost MAINs.** A MAIN's module counts as discovered when `fn.__module__` is the
+  `__name__` of one of `files_to_elaborate`'s globals. The top file's is
+  `"pypeline_design"`; a generated function's is its declaring module's, as it runs in a
+  copy of those globals. A MAIN whose module was not discovered but holds explicit
+  Pypeline content (`_module_has_explicit_pypeline_content`) is an `ElaborationError`
+  naming the MAIN, its module and file. That happens to a module imported only inside a
+  function body (`def f(): import res`): native sim would run its MAIN, but its wires and
+  names are unknown to the hardware. A second copy of the top file, imported by name from
+  a sub-module, is caught the same way. A pure-factory module has no content and needs no
+  discovery: its closures are elaborated on demand anyway.
+- **Elaboration.** `_elaborate_main(parser_state, fn, name, owner)` first refuses a name
+  that a table key already has, ignoring case (an `ElaborationError` naming `owner`), then
+  calls `_elaborate_live_func(name, fn, key=name)`. The Logic is keyed by the MAIN name
+  whatever key its function would otherwise get (a closure's canonical name, a def's own
+  name). Step 7.2 then sets `main_mhz` and `main_syn_mhz` from `_MainInfo.mhz`, and
+  `main_clk_group` to `None`.
+
+A MAIN's name is its table key, its entity name and its port prefix. Being in `main_mhz`
+makes it protected in `EmissionNames`, so it is emitted verbatim.
+
+`ELABORATE_LIVE_ROOTS` has no lost-MAIN check: it elaborates the roots it is given. A
+root in `_main_registry` goes through `_elaborate_main` under its MAIN name, so native
+sim's pipeline models are keyed like the build's MAINs.
+
+### MAINs added after clock assignment: `_add_late_mains`
+
+`_add_late_mains(parser_state, late_mains)` adds MAINs that cannot exist before clock
+assignment, such as a global FIFO's, whose kind depends on its ends' clocks. Each
+`LateMain(fn, name, clock, reason, owner)` is elaborated by `_elaborate_main` under
+`name`. It gets `clock = (mhz, syn_mhz, clk_group)` and `func_no_added_latency[name] =
+reason`, and it takes no part in clock inference. Then the functions added get what
+PARSE_FILE gives the others, in its order:
+
+1. `_build_inst_lookup` from the new MAINs;
+2. `_validate_auto_pipeline_constraints` and `_validate_pipeline_latencies`, on the new
+   functions only and before they are trimmed. The other functions are already trimmed,
+   and trimming leaves stale `sub_inst_to_auto_pipeline_latency` entries behind (it
+   copies a collapsed call's tag to the surviving instance). Re-checking them would look
+   up instances that no longer exist, and would recompute
+   `submodule_latencies_are_self_timed` from the collapsed ones;
+3. trimming of the new MAINs and of new AUTO_FSM measurement roots;
+4. `LOGIC.FIND_DANGLING_LOGIC` on the new functions;
+5. `_validate_wires_funcs` (read-only) and `_build_func_call_graph` (it only adds).
 
 ### Elaboration ordering — sub-files first
 
@@ -3087,7 +3148,9 @@ ref_toks normalization), and `_elab_ref_read` (base-var normalization) all call
 
 All hardware functions in sub-files — both `@MAIN` entry points and plain hardware
 helper functions (`def adder_extra(a: T, b: T) -> T`) — are elaborated under a
-module-prefixed name, via the single source of truth `HW_FUNC_NAME(mod_prefix, name)`:
+module-prefixed name, via the single source of truth `HW_FUNC_NAME(mod_prefix, name)`
+(defined in `pypeline.py` as `_hw_func_name`, with `_sanitize_vhdl_name`, so native sim
+names @MAINs the same way without the compiler):
 
 ```python
 safe_name = _sanitize_vhdl_name(name)
@@ -3210,7 +3273,7 @@ are pre-existing and documented.
   inside module-level `if`/`try`/`with`/loop blocks that ran (see
   [Conditional imports](#conditional-imports-module-level-if--try)), but never
   imports inside a function or class body. A `@MAIN` in a module reached only that
-  way raises (see [Registered MAINs must be elaborated](#registered-mains-must-be-elaborated)).
+  way raises when that module holds hardware (see [Registered MAINs: Step 7.2](#registered-mains-step-72)).
 - Because every file's own aliases are folded into the same shared
   `parser_state.module_alias_to_actual` dict, two different files that reuse the
   same local alias name for two *different* modules raise `ElaborationError`
@@ -3225,7 +3288,7 @@ are pre-existing and documented.
 | Cross-file alias collision guard | `_process_imports` — `ElaborationError` if an alias already maps to a different actual module |
 | Module-level imports, incl. inside `if`/`try`/`with`/loops | `_module_level_imports(tree)` → `(node, conditional)` |
 | Did a conditional import run? | `_nested_import_ran(node, module_globals)` — live-binding proof |
-| Registered-but-unelaborated `@MAIN` guard | `PARSE_FILE` Step 7.5 — `ElaborationError` naming the MAIN and module |
+| Registered `@MAIN`s that are not top-level defs, duplicate MAIN names, lost MAINs | `PARSE_FILE` Step 7.2 (`_elaborate_registered_mains`) — elaborates them under their MAIN names; `ElaborationError` for a duplicate name, a clash, or a MAIN in an undiscovered module with hardware |
 | Sub-file wire discovery | `_discover_global_wires(..., name_prefix=actual_name)` |
 | Module-attr wire lookup | `FuncElaborator._resolve_module_wire_name(base, attr)` |
 | Bare-name sub-file wire lookup | `FuncElaborator._resolve_global_wire(bare_name)` |
@@ -4733,14 +4796,13 @@ writes it to `parser_state.part`. This value is forwarded to the synthesis backe
 def my_main(): ...
 ```
 
-When an MHz value is provided, `_register_main` records it in `pypeline._main_mhz_registry`
-keyed by the function's Python name. `PARSE_FILE` reads this registry and stores the value
-in `parser_state.main_mhz[hw_name]` and `parser_state.main_syn_mhz[hw_name]` for every
-function found in `main_names`.
+`_register_main` records the rate in the MAIN's record, `wrapped._pypeline_main.mhz`
+(also for `MAIN(fn, mhz=...)`). `PARSE_FILE` stores it in `parser_state.main_mhz[name]`
+and `parser_state.main_syn_mhz[name]` for each MAIN: in Step 7 for a `@MAIN` def, in
+Step 7.2 for the others.
 
-`hw_name` is the module-prefixed form (`file_a_main` for imported sub-files, bare name
-for the top file), so the synthesiser sees consistent naming regardless of how the MAIN
-is reached.
+`name` is the MAIN's name: the module-prefixed function name (`file_a_main` for imported
+sub-files, bare name for the top file), or its `name=`.
 
 ### Clock Domain Inference (`INFER_CLOCK_DOMAINS`)
 
@@ -5515,7 +5577,11 @@ The native-sim side of that design is the last section of `PY_TO_LOGIC.py`.
 `PREPARE_PIPELINE_LATENCY_SIM(roots, build_timing=None)` runs `ELABORATE_LIVE_ROOTS`,
 builds zero-added-clock (or the build's) `AUTO_PIPELINE.TimingParams`, and installs a
 dispatch closure in each outermost sliceable function's `_sim_model_cell`. The dispatch
-evaluates a `_SimPipelineGraph` stage by stage. `pypeline.py` and `pypeline_sim.py` import
+evaluates a `_SimPipelineGraph` stage by stage. A function with several graphs picks the
+one for this call: first the graphs under the running MAIN, named by the root frame
+`pypeline_sim._call_main` pushes (lanes made by one factory share every call-site
+location), then by call-site location, skipping frames with none. Different timing among
+graphs it cannot tell apart is a `RuntimeError` ("ambiguous timing variant"). `pypeline.py` and `pypeline_sim.py` import
 `PY_TO_LOGIC` lazily, only once their declaration gate finds a reachable nonzero
 `@pipeline_latency`, so plain native sim never loads the compiler. The section imports
 `AUTO_PIPELINE` and `AUTO` inside its functions, leaving `PY_TO_LOGIC`'s own module
@@ -6188,15 +6254,18 @@ VHDL basic identifiers are more restrictive than Python identifiers:
   `_inst`/`_inst_name` already passes a compiler-synthesized, already-legal tag
   (e.g. `UNARY_OP_...`, `mux_tag`), so this is a no-op for them.
 - **VHDL entity names / `FuncLogicLookupTable` keys** (`HW_FUNC_NAME(mod_prefix, name)`):
-  a single helper, defined next to `_sanitize_vhdl_name`, that sanitizes `name` and
-  applies the `<mod_prefix>_` convention. It is the sole source of truth for this
-  name — called identically from **seven** places that must all resolve to the same
+  a single helper, defined next to `_sanitize_vhdl_name` in `pypeline.py`
+  (`_hw_func_name`), that sanitizes `name` and applies the `<mod_prefix>_` convention.
+  It is the sole source of truth for this name — called identically from **eight**
+  places that must all resolve to the same
   string for a given `(mod_prefix, name)` pair, or `FuncLogicLookupTable` lookups
   silently diverge (the same failure class as the closure-callable-collision bug —
   see [Closure Factory Pattern](#closure-factory-pattern) — regression-tested by
   `two_factory_wrappers_test.py`): `FuncElaborator.__init__` (`self.func_name`),
   `_elab_call`'s module-qualified-call lookup, bare-name lookup, and module-prefixed
-  fallback lookup, `_top_level_func_key`, and `PARSE_FILE` Step 6 and Step 7. Never
+  fallback lookup, `_top_level_func_key`, `PARSE_FILE` Step 6 and Step 7, and
+  `pypeline._register_main`'s default MAIN name (`_module_prefix(fn.__module__)` is the
+  prefix discovery gives that module). Never
   re-derive the `<mod_prefix>_<name>` f-string locally — always call `HW_FUNC_NAME`.
   Separately, `_canonical_func_name` (factory-closure names, whose result overwrites
   `Logic.func_name` directly and is never routed through `HW_FUNC_NAME`) sanitizes
@@ -6287,7 +6356,7 @@ top.py  (single-file or multi-file entry point)
   ├─ exec_module()                      Python runtime: 'import file_a' executes sub-files,
   │                                     registers all @MAIN (top + sub-files), runs factories,
   │                                     records PART(...) → _part_registry,
-  │                                     records @MAIN(mhz) → _main_mhz_registry
+  │                                     records each MAIN's name and rate → _pypeline_main
   │
   ├─ _discover_structs_from_module()    Register struct field types from top file namespace
   │
@@ -6343,13 +6412,14 @@ top.py  (single-file or multi-file entry point)
   │                                     getattr lookup + FuncLogicLookupTable (sub-files pre-elaborated)
   │                   └─ bit_dup/rotl/rotr/bswap/bit_assign/array_uint/concat → BIT_MANIP submodules
   │
-  ├─ Lost-MAIN guard (Step 7.5)         every registered @MAIN was elaborated, else ElaborationError
+  ├─ Registered MAINs (Step 7.2)        every other @MAIN elaborated under its MAIN name;
+  │                                     duplicate names and lost MAINs are ElaborationErrors
   │
   ├─ _build_inst_lookup()               Recursively populate LogicInstLookupTable
   │
   ├─ Apply pypeline pragmas:
   │   ├─ parser_state.part ← pypeline._part_registry   (from PART(...))
-  │   └─ parser_state.main_mhz[hw_name] ← _main_mhz_registry.get(func_name)  (from @MAIN(mhz))
+  │   └─ parser_state.main_mhz[name] ← fn._pypeline_main.mhz  (from @MAIN(mhz) / MAIN(fn, mhz=))
   │
   ├─ Trim/collapse logic (MAIN trees and AUTO_FSM measurement roots)
   │   + dangling logic check
@@ -6361,6 +6431,7 @@ top.py  (single-file or multi-file entry point)
   │   Propagates known MHz to board-support MAINs sharing global wires (fixed-point loop)
   │
   ├─ _realize_global_fifos()            check each Fifo[T]'s ends, add its <key>_FIFO MAIN
+  │                                     (_add_late_mains)
   │
   └─ ParserState → throughput placement → VHDL backend
                   (SWEEP_DESIGN.md)      (VHDL_DESIGN.md)

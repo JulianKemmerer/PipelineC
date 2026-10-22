@@ -33,6 +33,16 @@ def get_tests() -> list:
             cmd=[INST_DIR / "global_fifo_path_unit_test.py"],
         )
     )
+    # @MAIN registration for MAINs made in code: MAIN's forms and name=, the
+    # default name, its errors, the duplicate-name message, native sim's name
+    # map for build results and the MAIN-named ELABORATE_LIVE_ROOTS root.
+    tests.append(
+        Test(
+            name="factory_main_api_unit_test",
+            category="unit",
+            cmd=[INST_DIR / "factory_main_api_unit_test.py"],
+        )
+    )
     # Wrapper suffixes can exceed the body-name budget; select the emitted name.
     tests.append(
         Test(

@@ -624,6 +624,27 @@ def get_tests() -> list:
             cmd=[INST_DIR / "multi_rate_sim_refusal_test.py"],
         )
     )
+    # @MAINs made in code under pypeline_sim.py: lanes from one factory keep
+    # their own registers, wire elements and FIFO model state; duplicate MAIN
+    # names stop the run; the multi-rate refusal names made MAINs; MAIN() in a
+    # sim hook is an error.
+    tests.append(
+        Test(
+            name="factory_main_sim_test",
+            category="native_sim",
+            cmd=[INST_DIR / "factory_main_sim_test.py"],
+        )
+    )
+    # Two factory-made lanes calling one @pipeline_latency helper from one
+    # source line, with build timing that differs per lane: each lane's call
+    # dispatches to its own stage graph (by its MAIN's root frame).
+    tests.append(
+        Test(
+            name="factory_main_pipeline_latency_test",
+            category="native_sim",
+            cmd=[INST_DIR / "factory_main_pipeline_latency_test.py"],
+        )
+    )
     return tests
 
 

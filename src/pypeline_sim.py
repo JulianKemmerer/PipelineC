@@ -170,16 +170,21 @@ def run_sim(
     # the same generator; never registered in _main_registry
     for mod, bare_name, ann in fifo_decls:
         mod_globals = vars(mod)
-        prefix = "" if mod.__name__ == "pypeline_design" else mod.__name__ + "_"
+        prefix = pypeline._module_prefix(mod.__name__)
         mains.append(
             pypeline._make_global_fifo_main(
-                f"{prefix.replace('.', '_')}{bare_name}_FIFO",
+                f"{prefix + '_' if prefix else ''}{bare_name}_FIFO",
                 bare_name,
                 ann,
                 mod_globals[bare_name],
                 mod_globals,
             )
         )
+    # Each MAIN's name is its root instance frame (_call_main), so two MAINs
+    # with one name would share state, as their hardware cannot
+    duplicate = pypeline._duplicate_main_names(mains)
+    if duplicate is not None:
+        sys.exit(f"ERROR: {duplicate}")
 
     # A @MAIN's arguments are top-level input ports with no driver in native sim:
     # they read as typed zeros, like an undriven Input[T] (see _call_main).
@@ -190,9 +195,10 @@ def run_sim(
         if arg_types:
             arg_names = ", ".join(inspect.signature(inspect.unwrap(fn)).parameters)
             print(
-                f"Native sim: @MAIN {fn.__name__}'s arguments ({arg_names}) are "
-                f"top-level input ports with no driver; they read as zero every "
-                f"cycle. Drive values through Input[T] wires and @sim_input."
+                f"Native sim: @MAIN {fn._pypeline_main.name}'s arguments "
+                f"({arg_names}) are top-level input ports with no driver; they "
+                f"read as zero every cycle. Drive values through Input[T] wires "
+                f"and @sim_input."
             )
 
     pipeline_models = set()
@@ -213,19 +219,9 @@ def run_sim(
     # Wire up write-side latency emulation for naturally-pipelined pure MAINs.
     pypeline._sim_pipelined_main_info.clear()
     if main_latencies:
-        # Only reachable from the pipelinec driver flow, where PY_TO_LOGIC is
-        # already imported -- pure native runs never pass main_latencies, so
-        # they stay compiler-free.
-        import PY_TO_LOGIC
-
-        hw_name_to_fn = {}
-        for fn in mains:
-            mod = getattr(fn, "__module__", None)
-            # The top design file is loaded as "pypeline_design" by both
-            # PARSE_FILE and import_design; sub-file MAINs get the module
-            # prefix (dots -> underscores) exactly like elaboration does.
-            prefix = None if mod in (None, "pypeline_design") else mod.replace(".", "_")
-            hw_name_to_fn[PY_TO_LOGIC.HW_FUNC_NAME(prefix, fn.__name__)] = fn
+        # Only reachable from the pipelinec driver flow: the build's MAIN
+        # names, which the design's re-import gives its MAINs again
+        hw_name_to_fn = _mains_by_name(mains)
         for hw_name, latency in main_latencies.items():
             if latency <= 0:
                 continue
@@ -261,7 +257,7 @@ def run_sim(
                 "collector": [],
                 # Region context (pypeline._sim_regions) entered by _call_main
                 "root": fn,
-                "name": fn.__qualname__,
+                "name": fn._pypeline_main.name,
             }
 
     # Activate simulation mode so @hw_func wrappers use sim bodies instead of
@@ -272,6 +268,8 @@ def run_sim(
     # @final(sim) hooks run however the run ends -- sim_finish(), --run N
     # reaching N, or an error, which stays the error that propagates.
     pending_exc = None
+    # The @MAINs are collected: MAIN() refuses from here to the end of the run
+    pypeline._sim_run_in_progress = True
     try:
         pypeline.RUN_INITIAL_HOOKS("sim")
         t0 = time.perf_counter()
@@ -318,7 +316,10 @@ def run_sim(
         # register writes that never reached its clock edge.
         pypeline._sim_converging = False
         pypeline._sim_reg_write_buffer = None
-        pypeline.RUN_FINAL_HOOKS("sim", pending_exc=pending_exc)
+        try:
+            pypeline.RUN_FINAL_HOOKS("sim", pending_exc=pending_exc)
+        finally:
+            pypeline._sim_run_in_progress = False
 
 
 def _refuse_multi_rate(mains) -> None:
@@ -327,9 +328,9 @@ def _refuse_multi_rate(mains) -> None:
     @MAINs name no rate and do not count."""
     by_rate = {}
     for fn in mains:
-        mhz = getattr(fn, "_pypeline_main_mhz", None)
-        if mhz is not None:
-            by_rate.setdefault(mhz, []).append(fn.__qualname__)
+        info = fn._pypeline_main
+        if info.mhz is not None:
+            by_rate.setdefault(info.mhz, []).append(info.name)
     if len(by_rate) > 1:
         rates = "; ".join(
             f"{mhz} MHz: {', '.join(names)}" for mhz, names in sorted(by_rate.items())
@@ -341,27 +342,34 @@ def _refuse_multi_rate(mains) -> None:
         )
 
 
+def _mains_by_name(mains) -> dict:
+    """MAIN name -> @MAIN wrapper: how build results keyed by the build's MAIN
+    names (main_latencies) find the re-imported design's MAINs."""
+    return {fn._pypeline_main.name: fn for fn in mains}
+
+
 def _call_main(main_fn, arg_types: tuple) -> None:
     # Fresh zeros on every call, so no call can see an argument object a previous
     # call (or cycle) was handed.
     args = [pypeline.sim_zero(t) for t in arg_types]
-    if getattr(main_fn, "_pypeline_global_fifo", None) is not None:
-        # A stateless function pushes no instance frame, so without its own the
-        # FIFO model inside would share state with every other caller of the
-        # same model at the same source line
-        pypeline._sim_inst_stack.append((main_fn.__qualname__, None))
-        try:
+    # A root instance frame per MAIN: every state below it (registers,
+    # @sim_model state, AUTO_PIPELINE delay lines, AUTO_FSM state) is this
+    # MAIN's own. Without it two MAINs made by one factory, which share every
+    # qualname and source line, would share all of it; so would two stateless
+    # MAINs calling one model, as a stateless function pushes no frame.
+    pypeline._sim_inst_stack.append(
+        (pypeline._SIM_MAIN_FRAME_PREFIX + main_fn._pypeline_main.name, None)
+    )
+    try:
+        region = pypeline._sim_pipelined_main_info.get(main_fn)
+        if region is None:
             pypeline.sim_call(main_fn, *args)
-        finally:
-            pypeline._sim_inst_stack.pop()
-        return
-    region = pypeline._sim_pipelined_main_info.get(main_fn)
-    if region is None:
-        pypeline.sim_call(main_fn, *args)
-    else:
-        # A pipelined pure MAIN: its global writes go to its collector, its own
-        # reads see its own writes (see pypeline._sim_region_for)
-        pypeline._sim_run_in_region(region, pypeline.sim_call, main_fn, *args)
+        else:
+            # A pipelined pure MAIN: its global writes go to its collector, its
+            # own reads see its own writes (see pypeline._sim_region_for)
+            pypeline._sim_run_in_region(region, pypeline.sim_call, main_fn, *args)
+    finally:
+        pypeline._sim_inst_stack.pop()
 
 
 def _run_clock_cycle(mains: list, main_arg_types: dict, cycle: int) -> None:

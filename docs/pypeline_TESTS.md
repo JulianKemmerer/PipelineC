@@ -468,6 +468,11 @@ isolated MCP seeding runs no synthesis and does not use the pass budget.
 Pinned AUTO_FSM units are neither harvested nor required to have a
 previous-pass counterpart.
 
+`sweep_failed_trim_design.py` (`known_issues`, `device_models`, about 75 seconds)
+meets timing, then trims to a failing trial whose path ends at an output port, and
+ends TIMING NOT MET instead of restoring the passing implementation
+([#381](https://github.com/JulianKemmerer/PipelineC/issues/381)).
+
 ## OpenXC7 `--pins` bitstream coverage
 
 `inst/openxc7_bitstream_test.py` (`synth_open_tools`) builds
@@ -914,6 +919,9 @@ cycle diff:
 The remaining global wire tests:
 - `global_wire_nested_split_test` runs in `synth_tests.py` (`--comb`) and native sim.
   It is not in the cycle diff; see the comment in `native_vs_vhdl_sim_tests.py`.
+  `top_level_reader_order_test.py` (`known_issues`) builds it with two
+  `PYTHONHASHSEED`s: its `top.vhd` orders the readers' connection blocks by set order
+  ([#380](https://github.com/JulianKemmerer/PipelineC/issues/380)).
 - `global_wire_errors_test` (`elab_introspect`) covers the ownership, direction,
   overlap and dynamic-index errors.
 
@@ -964,6 +972,20 @@ simulation's multi-rate refusal:
 | `multi_rate_sim_refusal_test` | `native_sim` | `pypeline_sim.py` and `pypelinec --sim --comb` exit non-zero on two rates and name both with their `@MAIN`s; one rate beside a bare `@MAIN` still simulates |
 | `self_check_global_fifo_test` | `native_vs_vhdl_sim` (`--comb`), `synth_device_models` (`--comb`) | a struct-typed FIFO between two `@MAIN`s with backpressure: native sim and GHDL match cycle by cycle, and sky130 synthesizes it |
 | `global_fifo_path_unit_test` | `unit` | the sweep's view of a FIFO MAIN: Vivado-style and sky130-flattened paths inside it go to it alone, a path out of it to the user `@MAIN`, unattributable paths to the user `@MAIN`s; `WHY_NOT_SLICEABLE`; the `TIMING NOT MET` line names `global FIFO rx [...]` |
+| `global_fifo_pipeline_latency_test` | `elab_introspect` | the FIFO MAIN is added after trimming (`_add_late_mains`), which re-checks only the new functions: a design with a `pipeline_latency` function and two collapsing `AUTO_PIPELINE` calls (stale tags) parses, and its stateful MAIN's self-timed submodules equal those without the FIFO |
+
+## Factory-made MAIN coverage
+
+`@MAIN`s made in code with `MAIN(fn, name=...)` ([guide](pypeline_guide.md#mains-made-in-code-mainfn-name)):
+
+| Test | Category | What it covers |
+|---|---|---|
+| `factory_main_api_unit_test` | `unit` | `MAIN`'s six forms and the record each leaves (`_pypeline_main`); `mhz` with the call form; `name=` checks; default names (top file, module prefix, `@hw_func(name=)`); one function registered twice; `MAIN()` during a simulation run; a non-function; the duplicate-name message; the name helpers `PY_TO_LOGIC` aliases; native sim's name map for build results; an `ELABORATE_LIVE_ROOTS` MAIN root keyed by its name |
+| `factory_main_elab_test` | `elab_introspect` | four lanes made in a loop (keys, rates, ports, source description, wire users); a bare made MAIN's rate through a wire; an imported module's factory MAIN; a pure-factory library's function registered by the design; a renamed top-level MAIN; a plain def passed to `MAIN()`, with and without `name=`; a factory closure's wire users under its key; re-parse names. Errors: two MAINs with one name, a MAIN named like a function, a MAIN whose module holds hardware but was imported in a function |
+| `factory_main_sim_test` | `native_sim` | under `pypeline_sim.py`: counter lanes from one factory keep their own registers, stateless lanes their own wire elements, two stateless MAINs their own `make_stream_fifo` model state; duplicate names stop the run; the multi-rate refusal names made MAINs; `MAIN()` in an `@initial(sim)` hook is an error |
+| `factory_main_pipeline_latency_test` | `native_sim` | two lanes reaching one `@pipeline_latency` helper from one source line, with build timing that differs per lane, each dispatch to their own stage graph |
+| `self_check_factory_main_test` | `native_vs_vhdl_sim` (`--comb`), `synth_device_models` (`--comb`) | counter lanes on one wire's elements, two FIFO lanes from one `make_stream_fifo`, and a factory closure writing a wire: native sim and GHDL match cycle by cycle, and sky130 synthesizes it |
+| `live_root_submodule_labels_known_issue` | `known_issues` | native sim after a build: a sub-module MAIN's call to a same-module function is labeled without the build's module prefix, so its pipeline placement is not found (`live_root_submodule_labels_test.py`, [#379](https://github.com/JulianKemmerer/PipelineC/issues/379)) |
 
 ## Augmented assignment coverage
 

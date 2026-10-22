@@ -2284,13 +2284,13 @@ both?" and "how should native simulation schedule several clock rates?") and
 
 ### What Pypeline has today
 
-From [pypeline_DESIGN.md](pypeline_DESIGN.md#main--mainmhz--three-form-decorator),
+From [pypeline_DESIGN.md](pypeline_DESIGN.md#main--mainfn--registering-mains),
 [PY_TO_LOGIC_DESIGN.md](PY_TO_LOGIC_DESIGN.md#pypeline-pragmas-part--main_mhz) and the
 code:
 
 | Feature | Pypeline today | C equivalent |
 |---|---|---|
-| One clock per top-level function | `@MAIN`, `@MAIN(100.0)`, `@MAIN(mhz=100.0)`; `_register_main` stores the MHz in `pypeline._main_mhz_registry` | `#pragma MAIN`, `MAIN_MHZ` |
+| One clock per top-level function | `@MAIN`, `@MAIN(100.0)`, `@MAIN(mhz=100.0)`, `MAIN(fn, mhz=100.0)`; `_register_main` stores the MHz in the MAIN's record, `wrapped._pypeline_main` | `#pragma MAIN`, `MAIN_MHZ` |
 | Synthesis-only target | none; `PARSE_FILE` writes the same value to `main_mhz` and `main_syn_mhz` | `MAIN_SYN_MHZ` |
 | Clock groups | none; `main_clk_group` is always `None` | `MAIN_MHZ_GROUP`, `MAIN_GROUP` |
 | Inference for bare `@MAIN` | `LOGIC.INFER_CLOCK_DOMAINS({}, {}, {}, parser_state)` after `_build_func_call_graph`; shared globals only, never through a global FIFO | the same function, plus crossings |
@@ -2542,7 +2542,7 @@ def consumer():
 What the front end would do, in terms of existing structures:
 
 1. The factory returns an object with two `@hw_func` halves and records the crossing in a
-   module-level registry (like `_main_mhz_registry`): name, element type, depth, the two
+   module-level registry (like `_main_registry`): name, element type, depth, the two
    functions.
 2. `PARSE_FILE` creates the `ParserState` entries the C front end creates: a global
    `<name>` of type `T[depth]` in `global_vars`, a `ClkCrossVarInfo` with

@@ -115,8 +115,10 @@ Two things still touch synthesis caches:
 In native simulation the simulator knows which MAIN it is executing, and a probe qualifies
 its name with it: `<label>/<name>`. `MAIN_LABELS` maps MAIN function names to short labels.
 For example, two direction-specific MAINs instantiating the same probed FSM become
-`encrypt/...` and `decrypt/...`. An unlisted MAIN uses its own name. In a plain `sim_call`
-loop there is no MAIN, and names stay bare.
+`encrypt/...` and `decrypt/...`. An unlisted MAIN uses its own name. A MAIN made with a
+name (`MAIN(fn, name="lane0")`, as each MAIN made from one factory function needs) goes by
+that name, both as its label and as its `MAIN_LABELS` key. In a plain `sim_call` loop there
+is no MAIN, and names stay bare.
 
 A name identifies one call site per MAIN. If the same probed function is called twice
 inside one MAIN, the two calls share a name and only one is counted. Give them distinct

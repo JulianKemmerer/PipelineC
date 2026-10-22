@@ -61,6 +61,10 @@ COMB_TEST_FILES = [
     ("self_check_fifo_test.py", INST_DIR, []),
     # A global FIFO, Fifo[T] of a struct, between two MAINs with backpressure
     ("self_check_global_fifo_test.py", INST_DIR, []),
+    # @MAINs made by factories: counter lanes on one wire's elements, two
+    # stateless FIFO lanes from one make_stream_fifo, and a closure writing a
+    # wire -- each lane's own state per MAIN in native sim
+    ("self_check_factory_main_test.py", INST_DIR, []),
     # make_stream_auto_pipeline at fixed core latencies 0 and 3: one word per
     # cycle in, results back to back exactly L+4 cycles after the first accept.
     ("self_check_stream_auto_pipeline_ii1_test.py", INST_DIR, []),

@@ -17,6 +17,7 @@ For getting started information see the [README](README.md).
 4. [Python vs Hardware Execution](#python-vs-hardware-execution)
 5. [Simulation](#simulation)
 6. [Top-Level Entry Points](#top-level-entry-points)
+    - [MAINs made in code: `MAIN(fn, name=...)`](#mains-made-in-code-mainfn-name)
 7. [Your First Hardware Function](#your-first-hardware-function)
 8. [Calling Functions](#calling-functions)
 9. [Registers: `Reg[T]`](#registers-regt)
@@ -521,6 +522,62 @@ its reports. Either way, a build that ends on an over-capacity netlist fails
 are reused only for matching HDL, constraints, tool and report recipe; an
 incomplete matching log requires explicit manual handling.
 
+### MAINs made in code: `MAIN(fn, name=...)`
+
+`MAIN` can also be called on a function. Code can then make `@MAIN`s: one per lane or
+port in a loop, one returned by a factory, or one whose source was generated.
+
+```python
+from pypeline import MAIN, Reg, Wire, hw_func, uint8_t
+
+counts: Wire[uint8_t[4]]
+
+def make_lane(i):
+    @hw_func
+    def lane():
+        n: Reg[uint8_t]
+        counts[i] = n
+        n += i + 1
+    return lane
+
+lanes = [MAIN(make_lane(i), name=f"lane{i}") for i in range(4)]
+```
+
+Each call makes one `@MAIN`: four entities here, `lane0` to `lane3`, each with its own
+counter. `MAIN(fn, name="rx", mhz=100.0)` also gives a rate. The decorator takes `name=`
+too: `@MAIN(name="top0")`, `@MAIN(100.0, name="top0")`.
+
+**Names.**
+- Without `name=`, a `@MAIN` is named after its function: `lane` above. In an imported
+  module the name gets the module's prefix (`io_lane`), as a `@MAIN` def's does. A
+  function with its own [`@hw_func(name=...)`](#naming-factory-produced-hardware-name)
+  keeps that name.
+- `name=` is used exactly as written, with no module prefix. It follows the same
+  identifier rules as `@hw_func(name=...)`.
+- The name starts the MAIN's port names: `lane0_<argument>` and `lane0_return_output`.
+- Two `@MAIN`s with one name are an error that names both and asks for `name=`. Names
+  that differ only in case count as one, as in VHDL. So lanes made in a loop each need a
+  `name=`. A `@MAIN` named like another function of the design is an error too.
+- A name must not change between runs of the design: the build runs it more than once,
+  and simulation after a build finds each `@MAIN` by its name.
+
+**Where.**
+- Call `MAIN()` in code that runs while the design is imported: at module level, in a
+  loop, or in a factory or library function the design calls.
+- Calling it from a hardware function or a simulation hook is an error, because by then
+  the design's `@MAIN`s have been collected.
+- Each `@MAIN` needs a function of its own. Passing one function to `MAIN()` twice is an
+  error: call the factory once per `@MAIN`.
+
+**Wires.** A made `@MAIN` uses global wires like any function. It can use the wires
+declared in its function's own module, and `module.w` for a module that module imports.
+So a factory in a library cannot reach the wires of the design that calls it. Write such
+a factory in the design's own module.
+
+**Simulation.** Native simulation runs every `@MAIN`, including made ones. Each keeps its
+own registers and [`@sim_model`](#sim_model--python-simulation-models-for-hardware-functions)
+state, even when two are made by one factory from one source line.
+
 ### FPGA target device
 
 Call `PART()` once at module level to tell the synthesiser which device to target:
@@ -902,10 +959,12 @@ Two rules:
   imported, through its binding. A conditional `from X import f` counts only if `f`
   (and every other name it imports) is still bound to `X`'s object, so don't rebind it
   later in the same file.
-- **A module that holds a `@MAIN` must be imported at module level.** If it is only
-  imported inside a function (`def setup(): import mac_shared`), Python still runs it,
-  and native simulation would run its `@MAIN`. The hardware build stops with an error
-  naming that `@MAIN`, rather than silently leaving it out.
+- **A module that holds a `@MAIN` and other hardware must be imported at module
+  level.** If it is only imported inside a function (`def setup(): import mac_shared`),
+  Python still runs it, and native simulation would run its `@MAIN`, but the hardware
+  never sees that module's wires and functions. The hardware build stops with an error
+  naming that `@MAIN`. A `@MAIN` made from a factory in a module with no hardware of its
+  own needs no discovery, so it builds wherever it was made.
 
 Call hardware functions from imported files using attribute syntax:
 
@@ -2043,8 +2102,11 @@ A name is used verbatim, so it must be a VHDL basic identifier:
 A bad name is an error, never silently changed.
 
 `name=` is for what factories produce. A top-level function's Python name already is
-its hardware name, so `@hw_func(name=...)` on one is an error, and `@MAIN` takes no
-name. The generated VHDL keeps the automatic description in each entity's
+its hardware name, so `@hw_func(name=...)` on one is an error. A `@MAIN`'s name is
+different: `@MAIN(name=...)` and `MAIN(fn, name=...)` name the MAIN itself, which is
+used exactly as written, with no `_s<digest>` (see
+[MAINs made in code](#mains-made-in-code-mainfn-name)). The generated VHDL keeps the
+automatic description in each entity's
 `-- Specialization:` comment, and `name_index.log` lists every name with the key it
 replaced (see [Generated files and reports](README.md#generated-files-and-reports)).
 
@@ -3151,7 +3213,7 @@ body_decrypt = AUTO_PIPELINE(poly1305_body, name="poly1305_body_decrypt")
 - **For the best sweep results, tag a wrapper.** Tagging a function imported from
   another module, as above, makes it the root of its latency region. The sweep then
   can't tell when a slow path runs through it, and it never mini-sweeps a region
-  root ([known issue](issues_inventory.md#37-not-yet-filed-auto_pipelinef-on-an-imported-function-sweeps-worse-than-a-wrapper)). A one-line local wrapper per
+  root ([known issue](issues_inventory.md#38-not-yet-filed-auto_pipelinef-on-an-imported-function-sweeps-worse-than-a-wrapper)). A one-line local wrapper per
   group keeps the function inside the region:
 
   ```python
@@ -6571,7 +6633,6 @@ tracks the row.
 | Source model | **Crossings written in Pypeline** | Not supported | A crossing cannot be written as a sender function on one clock plus a receiver on another; crossings are async wires and global FIFOs | — |
 | Source model | **Constraints on individual crossings** | Not supported | No `set_max_delay -datapath_only` or `set_bus_skew` on crossing paths; paths between clocks are untimed | — |
 | Source model | **Multi-clock constraints on every synthesis tool** | Not supported | Quartus ignores its clock groups when a design has three or more clocks, and Gowin, Efinity, PyRTL and DEVICE_MODELS stop on designs with more than one clock | — |
-| Source model | **`@MAIN`s made by factories** | Not supported | A factory cannot make one `@MAIN` per lane or port in a loop | — |
 | Source model | **Global instances of functions** | Not supported | A function cannot be placed at module level with its ports as global wires; write a wiring `@MAIN` that calls it | — |
 | Source model | **Global FIFOs made by library code** | Not supported | A `Fifo[T]` is a module-level declaration, so a factory cannot create one | — |
 | Source model | **Global FIFO chains with skid buffers** | Not supported | No `chain(skid, global_fifo(64), skid)` initializer; put a skid buffer inside the producer or consumer function | — |

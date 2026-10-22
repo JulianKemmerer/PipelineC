@@ -309,7 +309,6 @@ def test_decorator_stacking():
     import pypeline as p
 
     registered = list(p._main_registry)
-    rates = dict(p._main_mhz_registry)
     try:
         for decorators in (
             (MAIN, pipeline_latency(1), hw_func),
@@ -331,8 +330,6 @@ def test_decorator_stacking():
             assert stacked._pipeline_latency == 1
     finally:
         p._main_registry[:] = registered
-        p._main_mhz_registry.clear()
-        p._main_mhz_registry.update(rates)
 
 
 def test_tagged_sim_model():

@@ -36,7 +36,9 @@ During each cycle's final (converged) pass, the native simulator records the
 MAIN being executed, so a probe qualifies its name with that MAIN:
 `<label>/<name>`. `MAIN_LABELS` maps MAIN function names to shorter labels
 (e.g. two direction-specific MAINs instantiating the same probed FSM ->
-`encrypt/`, `decrypt/`); an unlisted MAIN uses its own name. Outside the
+`encrypt/`, `decrypt/`); an unlisted MAIN uses its own name. A MAIN given a
+name (`MAIN(fn, name="lane0")`, as factory-made MAINs from one function are)
+goes by that name instead, here and as its `MAIN_LABELS` key. Outside the
 native simulator (a plain `sim_call` loop) names are left bare.
 
 A tap name identifies ONE call site per MAIN: two calls of the same probed
@@ -72,7 +74,8 @@ from stream.stream_perf import (
 # The one registry per process. Never rebind; see ENABLEMENT above.
 REGISTRY = TapRegistry()
 
-# MAIN function name -> short label qualifying tap names. Never rebind.
+# MAIN function name (or given MAIN name) -> short label qualifying tap
+# names. Never rebind.
 MAIN_LABELS = {}
 
 
@@ -81,7 +84,8 @@ def _qualified(name):
     main = getattr(pypeline, "_sim_current_main", None)
     if main is None:
         return name
-    label = getattr(main, "__name__", "")
+    info = getattr(main, "_pypeline_main", None)
+    label = info.name if info is not None and info.named else main.__name__
     return (MAIN_LABELS.get(label, label) or "?") + "/" + name
 
 

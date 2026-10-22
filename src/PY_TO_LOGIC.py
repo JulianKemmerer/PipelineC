@@ -18,6 +18,7 @@ import textwrap
 import tokenize
 import types as _types
 import weakref
+from typing import NamedTuple
 
 import LOGIC
 import VHDL
@@ -1094,30 +1095,11 @@ def _bin_func_name(op_name, l_type, r_type, parser_state=None):
 # VHDL identifier safety
 # ─────────────────────────────────────────────
 
-# The set lives in pypeline.py, which validates user names= without the compiler.
+# The set and the two name functions below live in pypeline.py, which
+# validates user names= and names @MAINs without the compiler.
 _VHDL_RESERVED_WORDS = _pypeline_mod._VHDL_RESERVED_WORDS
-
-_CONSEC_UNDERSCORES_RE = re.compile(r"_{2,}")
-
-
-def _sanitize_vhdl_name(name: str) -> str:
-    """Mangle a Python identifier so it is a legal VHDL basic identifier.
-
-    Rules (applied in order):
-    1. Strip leading underscores; prepend 'v' if any were removed.
-    2. Strip trailing underscores.
-    3. Replace runs of 2+ consecutive underscores with a single '_'.
-    4. If the result is a VHDL reserved word (case-insensitive), append '_v'.
-    5. If empty after all stripping, return 'v'.
-    """
-    result = name.lstrip("_")
-    if len(result) < len(name):
-        result = "v_" + result if result else "v"
-    result = result.rstrip("_") or "v"
-    result = _CONSEC_UNDERSCORES_RE.sub("_", result)
-    if result.lower() in _VHDL_RESERVED_WORDS:
-        result = result + "_v"
-    return result
+_sanitize_vhdl_name = _pypeline_mod._sanitize_vhdl_name
+HW_FUNC_NAME = _pypeline_mod._hw_func_name
 
 
 def _sanitize_ref_tok(tok):
@@ -1127,32 +1109,6 @@ def _sanitize_ref_tok(tok):
     (struct_to_field_type_dict keys) -- applied consistently everywhere a field name
     is turned into a ref_toks token so lookups stay in sync with registration."""
     return _sanitize_vhdl_name(tok) if isinstance(tok, str) else tok
-
-
-def HW_FUNC_NAME(mod_prefix, name):
-    """Canonical FuncLogicLookupTable key / Logic.func_name for a hardware
-    function: module-prefixed for sub-file functions, VHDL-name-sanitized.
-    Single source of truth -- PARSE_FILE Step 6/7, FuncElaborator.__init__,
-    _elab_call's lookups, and _top_level_func_key must all resolve to the same
-    string for a given (mod_prefix, name), or FuncLogicLookupTable lookups
-    silently diverge (see the closure-callable-collision bug regression-tested
-    by two_factory_wrappers_test.py). Always call this; never re-derive the
-    f-string locally.
-
-    The prefix is dropped when `name` already starts with it (the common
-    one-module-one-entry-point layout, e.g. append_auth_tag.py's own
-    `append_auth_tag` function) -- otherwise every such name stutters
-    (`append_auth_tag_append_auth_tag`), and that name sits at the head of
-    every hierarchy path under it. Safe: a distinct (mod_prefix, name) pair
-    that collides after this elision is still caught by PARSE_FILE Step 6's
-    `_hw_name_lower_to_orig` guard, which raises naming both functions.
-    """
-    safe_name = _sanitize_vhdl_name(name)
-    if not mod_prefix:
-        return safe_name
-    if safe_name == mod_prefix or safe_name.startswith(mod_prefix + "_"):
-        return safe_name
-    return f"{mod_prefix}_{safe_name}"
 
 
 _HW_OP_TO_ARITH_OP = {
@@ -5705,7 +5661,7 @@ class FuncElaborator:
         mod_prefix = file_to_module_prefix.get(src_file)
         return HW_FUNC_NAME(mod_prefix, func_for_source.__name__)
 
-    def _elaborate_live_func(self, module_level_name, func):
+    def _elaborate_live_func(self, module_level_name, func, key=None):
         """Elaborate a live Python callable from module_globals.
         Handles closures returned by factory functions — extracts closure variables
         and merges them into the elaboration namespace so annotations like
@@ -5719,6 +5675,12 @@ class FuncElaborator:
         wrapper) and must not be used as a table key: two different top-level
         functions reached through two differently-wrapped factories would
         otherwise collide on that shared alias.
+
+        key: a forced table key instead -- a @MAIN's name (_elaborate_main).
+        Only the key choice changes: the function's description is still
+        recorded under it (its VHDL source comment and name-index row); the
+        user-name and full-name records, which describe a canonical name, are
+        not.
         """
         if (getattr(func, "_is_auto_comb_area_opt_pragma", False)
                 or getattr(func, "_is_auto_comb_delay_opt_pragma", False)):
@@ -5787,11 +5749,13 @@ class FuncElaborator:
         canonical = _canonical_func_name(
             func_for_source, closure_ns, self.module_globals
         )
-        key = (
-            canonical
-            if canonical is not None
-            else self._top_level_func_key(func_for_source)
-        )
+        forced_key = key is not None
+        if not forced_key:
+            key = (
+                canonical
+                if canonical is not None
+                else self._top_level_func_key(func_for_source)
+            )
         if canonical is None and getattr(
             func_for_source, "_pypeline_generated_origin", False
         ):
@@ -5805,7 +5769,7 @@ class FuncElaborator:
             self.parser_state.pypeline_name_descriptions.setdefault(key, set()).add(
                 info
             )
-            if info.user_name:
+            if info.user_name and not forced_key:
                 _record_user_name(
                     self.parser_state,
                     key,
@@ -5826,7 +5790,7 @@ class FuncElaborator:
             full_canonical = _canonical_func_name(
                 func_for_source, closure_ns, self.module_globals, collapse=False
             )
-            if full_canonical != canonical:
+            if full_canonical != canonical and not forced_key:
                 self.parser_state.pypeline_name_full[canonical] = full_canonical
 
         # Collision guard: two genuinely different closures landing on the same
@@ -5847,6 +5811,13 @@ class FuncElaborator:
         if prior_owner != owner_identity:
             prior_mod, prior_qual, prior_file, prior_line = prior_owner
             new_mod, new_qual, new_file, new_line = owner_identity
+            if key in self.parser_state.main_mhz:
+                raise ElaborationError(
+                    f"'{new_qual}' ({new_mod}, {new_file}:{new_line}) gets the "
+                    f"hardware name {key!r}, which already is the name of a "
+                    f"@MAIN ('{prior_qual}', {prior_file}:{prior_line}). Rename "
+                    f"one of them."
+                )
             raise ElaborationError(
                 f"Naming collision: '{prior_qual}' ({prior_mod}, "
                 f"{prior_file}:{prior_line}) and '{new_qual}' ({new_mod}, "
@@ -5958,6 +5929,9 @@ class FuncElaborator:
                 scope_globals={**func_own_globals, **closure_ns},
                 port_annotations=getattr(func_for_source, "__annotations__", {}),
             )
+            # The table key from the start, not the def name: global wires
+            # record their users (used_in_funcs) under it while elaborating
+            elab.logic.func_name = key
             logic = elab.elaborate()
         finally:
             _pypeline._pop_scoped_registrations(saved)
@@ -6540,7 +6514,7 @@ class FuncElaborator:
         var_info = self.parser_state.global_vars[name]
         c_type = var_info.type_name
         self.logic.read_only_global_wires[name] = var_info
-        var_info.used_in_funcs.add(self.func_name)
+        var_info.used_in_funcs.add(self.logic.func_name)
         _add_wire(self.logic, name, c_type)
         self.env[name] = (name, c_type)
 
@@ -6585,7 +6559,7 @@ class FuncElaborator:
         var_info = self.parser_state.global_vars[name]
         c_type = var_info.type_name
         self.logic.write_only_global_wires[name] = var_info
-        var_info.used_in_funcs.add(self.func_name)
+        var_info.used_in_funcs.add(self.logic.func_name)
         _add_wire(self.logic, name, c_type)
         self.env[name] = (name, c_type)
         ast_node = node or self.func_def
@@ -7070,6 +7044,139 @@ def _build_inst_lookup(parser_state, mains=None):
         _walk_instances(main_name, main_logic, parser_state)
 
 
+def _elaborate_main(parser_state, fn, name, owner):
+    """Elaborate the hw_func `fn` as the @MAIN entity `name`: its Logic is
+    keyed `name`, whatever key its function would otherwise get (a factory
+    closure's canonical name, a top-level def's own name). For every MAIN
+    PARSE_FILE Step 7 does not elaborate as a top-level def: Step 7.2's
+    registered MAINs, _add_late_mains and ELABORATE_LIVE_ROOTS.
+
+    `owner` names the MAIN in the error for a name some other function
+    already has, compared ignoring case as VHDL does."""
+    clash = [
+        f for f in parser_state.FuncLogicLookupTable if f.lower() == name.lower()
+    ]
+    if clash:
+        raise ElaborationError(
+            f"{owner} is named '{name}', which the design's function "
+            f"'{clash[0]}' already uses. Rename one of them."
+        )
+    source = inspect.unwrap(fn)
+    dummy = ast.parse(f"def {name}(): pass").body[0]
+    elab = FuncElaborator(
+        dummy, parser_state, inspect.getsourcefile(source), source.__globals__
+    )
+    logic = elab._elaborate_live_func(name, fn, key=name)
+    assert logic.func_name == name, (logic.func_name, name)
+    return logic
+
+
+def _elaborate_registered_mains(parser_state, elaborated_ids, files_to_elaborate):
+    """PARSE_FILE Step 7.2: elaborate, in registration order, each registered
+    @MAIN that Step 7 did not elaborate as a top-level def of a discovered
+    file -- one made by a factory or in a loop, a generated one, one renamed
+    with name=, or a plain def passed to MAIN() -- under its MAIN name
+    (_elaborate_main), and give it its rate. The registry is read now, not
+    at Step 3, so MAINs registered while global declarations are discovered
+    are included.
+
+    Two @MAINs with one name are an ElaborationError naming both. So is a
+    @MAIN whose own function is in a module that holds hardware content
+    (_module_has_explicit_pypeline_content) but that discovery did not follow
+    -- imported only inside a function body, say: native sim would run it,
+    but the hardware knows neither that module's wires nor its names. A pure
+    factory module needs no discovery; its closures are elaborated on demand
+    anyway."""
+    registered = list(_pypeline_mod._main_registry)
+    duplicate = _pypeline_mod._duplicate_main_names(registered)
+    if duplicate is not None:
+        raise ElaborationError(duplicate)
+    discovered = {fglobals.get("__name__") for _, _, fglobals, _ in files_to_elaborate}
+    for fn in registered:
+        if id(fn) in elaborated_ids:
+            continue
+        info = fn._pypeline_main
+        module = sys.modules.get(fn.__module__)
+        if fn.__module__ not in discovered and module is not None:
+            src = getattr(module, "__file__", None) or ""
+            tree = (
+                ast.parse(READ_SOURCE_TEXT(src))
+                if src.endswith(".py") and os.path.isfile(src)
+                else ast.Module(body=[], type_ignores=[])
+            )
+            if _module_has_explicit_pypeline_content(module, tree):
+                raise ElaborationError(
+                    f"@MAIN '{info.name}' ({info.origin}), the function "
+                    f"'{fn.__module__}.{fn.__qualname__}' "
+                    f"({inspect.getsourcefile(inspect.unwrap(fn))}), was "
+                    f"registered when the design ran (native sim would run it) "
+                    f"but its module was never discovered as hardware. Hardware "
+                    f"discovery follows module-level `import` / `from ... import` "
+                    f"statements, including ones inside module-level if/try "
+                    f"blocks -- not imports inside a function body. Import that "
+                    f"module at module level in a design file."
+                )
+        print(f"  elaborating func: {info.name}")
+        _elaborate_main(parser_state, fn, info.name, f"The @MAIN made at {info.origin}")
+        parser_state.main_mhz[info.name] = info.mhz
+        parser_state.main_syn_mhz[info.name] = info.mhz
+        parser_state.main_clk_group[info.name] = None
+
+
+class LateMain(NamedTuple):
+    """One MAIN the compiler adds after clock assignment (_add_late_mains)."""
+
+    fn: object  # its hw_func
+    name: str  # its MAIN name
+    clock: tuple  # (mhz, syn_mhz, clk_group) it runs on
+    reason: str  # its func_no_added_latency reason
+    owner: str  # what made it, for messages: "global FIFO rx [top.py:14]: its ..."
+
+
+def _add_late_mains(parser_state, late_mains):
+    """Add MAINs after clock assignment, each on the clock it is given -- the
+    compiler's entry point for MAINs that cannot exist earlier, such as a
+    global FIFO's (whose kind depends on its ends' clocks). Each is
+    elaborated under its name (_elaborate_main), gets its clock and its
+    func_no_added_latency reason, and takes no part in clock inference.
+
+    Then the functions added here get what PARSE_FILE gives the others, in
+    its order: the instance walk from the new MAINs, the AUTO_PIPELINE and
+    pipeline_latency checks (only of the new functions, before trimming:
+    trimming leaves stale AUTO_PIPELINE tags behind), trimming of the new
+    MAINs and new AUTO_FSM measurement roots, the dangling-logic check, the
+    @wires check and the call graph."""
+    import AUTO_FSM
+
+    table = parser_state.FuncLogicLookupTable
+    before = set(table)
+    new_mains = []
+    for late in late_mains:
+        _elaborate_main(parser_state, late.fn, late.name, late.owner)
+        mhz, syn_mhz, group = late.clock
+        parser_state.main_mhz[late.name] = mhz
+        parser_state.main_syn_mhz[late.name] = syn_mhz
+        parser_state.main_clk_group[late.name] = group
+        parser_state.func_no_added_latency[late.name] = late.reason
+        new_mains.append(late.name)
+    new_funcs = set(table) - before
+    _build_inst_lookup(parser_state, new_mains)
+    _validate_auto_pipeline_constraints(parser_state, new_funcs)
+    _validate_pipeline_latencies(parser_state, new_funcs)
+    if LOGIC.TRIM_COLLAPSE_LOGIC:
+        trim_roots = new_mains + sorted(
+            set(AUTO_FSM.AUTO_FSM_MEASURE_ENTITIES(parser_state)) & new_funcs
+        )
+        for root in trim_roots:
+            parser_state = LOGIC.TRIM_COLLAPSE_FUNC_DEFS_RECURSIVE(
+                table[root], parser_state
+            )
+    for fname in set(table) - before:
+        LOGIC.FIND_DANGLING_LOGIC(table[fname])
+    _validate_wires_funcs(parser_state)
+    _build_func_call_graph(parser_state)
+
+
 def _path_overlaps(path, prefix):
     """True if one of two field paths contains the other (() is the whole wire)."""
     n = min(len(path), len(prefix))
@@ -7092,14 +7199,12 @@ def _realize_global_fifos(parser_state):
     drives (wr.ready, rd.stream, a whole end or the whole wire); the two ends'
     MAINs on different clocks (clock-crossing FIFOs are not supported yet).
 
-    Then <key>_FIFO, from pypeline._make_global_fifo_main, is elaborated as a
-    live root (as ELABORATE_LIVE_ROOTS does), registered as a MAIN on the ends'
-    clock, walked into the instance tables, trimmed and added to the call
-    graph. It goes into func_no_added_latency ("global FIFO"), and so does
-    each user that both drives and reads one end ("global FIFO handshake"):
-    in a pipeline the end's reads would be sampled at the first stage and its
-    writes published at the last. An AUTO_PIPELINE call of such a user is an
-    error.
+    Then <key>_FIFO, from pypeline._make_global_fifo_main, is added on the
+    ends' clock by _add_late_mains, with func_no_added_latency reason
+    "global FIFO". Each user that both drives and reads one end gets reason
+    "global FIFO handshake": in a pipeline the end's reads would be sampled
+    at the first stage and its writes published at the last. An
+    AUTO_PIPELINE call of such a user is an error.
 
     Runs in PARSE_FILE after the call graph and clock inference
     (LOGIC.INFER_CLOCK_DOMAINS skips FIFO wires) and before the global-wire
@@ -7110,9 +7215,8 @@ def _realize_global_fifos(parser_state):
     if not fifos:
         return
     table = parser_state.FuncLogicLookupTable
-    checked_funcs = set(table)
     handshakes = {}  # user func -> (FIFO, end) it both drives and reads
-    new_mains = []
+    late_mains = []
 
     def clock_of(main):
         return parser_state.main_mhz.get(main), parser_state.main_clk_group.get(main)
@@ -7200,17 +7304,9 @@ def _realize_global_fifos(parser_state):
                 f"'{rd_main}'). Clock-crossing FIFOs are not supported yet: run "
                 f"both MAINs on one clock.{bare}"
             )
-        main_name = fifo.main_name
-        clash = [f for f in table if f.lower() == main_name.lower()]
-        if clash:
-            raise ElaborationError(
-                f"{fifo.describe()}: its FIFO MAIN is named '{main_name}', which "
-                f"the design's function '{clash[0]}' already uses. Rename that "
-                f"function or the FIFO."
-            )
         try:
             main_fn = _pypeline_mod._make_global_fifo_main(
-                main_name,
+                fifo.main_name,
                 name,
                 fifo.fifo_type,
                 fifo.init,
@@ -7219,19 +7315,16 @@ def _realize_global_fifos(parser_state):
             )
         except _pypeline_mod.GlobalFifoError as e:
             raise ElaborationError(f"{e} (declared at {fifo.loc})") from None
-        source = inspect.unwrap(main_fn)
-        dummy = ast.parse(f"def {main_name}(): pass").body[0]
-        elab = FuncElaborator(
-            dummy, parser_state, inspect.getsourcefile(source), source.__globals__
-        )
-        logic = elab._elaborate_live_func(main_name, main_fn)
-        assert logic.func_name == main_name, (logic.func_name, main_name)
         mhz, group = clock_of(wr_main)
-        parser_state.main_mhz[main_name] = mhz
-        parser_state.main_syn_mhz[main_name] = parser_state.main_syn_mhz.get(wr_main)
-        parser_state.main_clk_group[main_name] = group
-        parser_state.func_no_added_latency[main_name] = "global FIFO"
-        new_mains.append(main_name)
+        late_mains.append(
+            LateMain(
+                main_fn,
+                fifo.main_name,
+                (mhz, parser_state.main_syn_mhz.get(wr_main), group),
+                "global FIFO",
+                f"{fifo.describe()}: its FIFO MAIN",
+            )
+        )
     for user in handshakes:
         parser_state.func_no_added_latency.setdefault(user, "global FIFO handshake")
     for logic in table.values():
@@ -7248,18 +7341,10 @@ def _realize_global_fifos(parser_state):
                     f"make_stream_auto_pipeline and connect its stream ports to "
                     f"the end outside the pipeline."
                 )
-    _build_inst_lookup(parser_state, new_mains)
-    if LOGIC.TRIM_COLLAPSE_LOGIC:
-        for main_name in new_mains:
-            parser_state = LOGIC.TRIM_COLLAPSE_FUNC_DEFS_RECURSIVE(
-                table[main_name], parser_state
-            )
-    for fname in set(table) - checked_funcs:
-        LOGIC.FIND_DANGLING_LOGIC(table[fname])
-    _build_func_call_graph(parser_state)
+    _add_late_mains(parser_state, late_mains)
 
 
-def _validate_auto_pipeline_constraints(parser_state):
+def _validate_auto_pipeline_constraints(parser_state, funcs=None):
     """Reject AUTO_PIPELINE latency constraints (latency= / start_latency= /
     max_latency=, or C `#pragma AUTOPIPELINE N`) that can't mean anything
     well-defined, before any synthesis runs:
@@ -7270,9 +7355,12 @@ def _validate_auto_pipeline_constraints(parser_state):
         (state, raw HDL, ...) -- unless it is itself pipeline_latency(N), which
         _validate_pipeline_latencies checks for agreement.
     Deeper infeasibility (not enough legal register positions) is reported by
-    the sweep's region enforcement, which knows the real landscape."""
+    the sweep's region enforcement, which knows the real landscape.
+    funcs: check only the call sites in these functions (default: all)."""
     fixed_latency = getattr(parser_state, "func_fixed_latency", {})
-    for logic in parser_state.FuncLogicLookupTable.values():
+    for name, logic in parser_state.FuncLogicLookupTable.items():
+        if funcs is not None and name not in funcs:
+            continue
         for inst, constraint in logic.sub_inst_to_auto_pipeline_latency.items():
             if constraint is None or constraint.is_unconstrained():
                 continue
@@ -7315,10 +7403,20 @@ def _validate_auto_pipeline_constraints(parser_state):
                 )
 
 
-def _validate_pipeline_latencies(parser_state):
+def _validate_pipeline_latencies(parser_state, funcs=None):
+    """Check pipeline_latency(N) functions against AUTO_PIPELINE call sites
+    and nested AUTO_PIPELINE, then mark which submodules of stateful callers
+    are self-timed. funcs: only these functions (default: all), for
+    functions added after the others were trimmed (_add_late_mains)."""
     if not parser_state.func_fixed_latency:
         return
-    for logic in parser_state.FuncLogicLookupTable.values():
+
+    def checked(name):
+        return funcs is None or name in funcs
+
+    for name, logic in parser_state.FuncLogicLookupTable.items():
+        if not checked(name):
+            continue
         for inst, constraint in logic.sub_inst_to_auto_pipeline_latency.items():
             target = logic.submodule_instances[inst]
             fixed = parser_state.func_fixed_latency.get(target)
@@ -7333,6 +7431,8 @@ def _validate_pipeline_latencies(parser_state):
                     f"{target}'s pipeline_latency({fixed})"
                 )
     for name in parser_state.func_fixed_latency:
+        if not checked(name):
+            continue
         visited = set()
 
         def visit(entity):
@@ -7376,7 +7476,9 @@ def _validate_pipeline_latencies(parser_state):
         return contains_fixed[entity]
 
     if any(parser_state.func_fixed_latency.values()):
-        for logic in parser_state.FuncLogicLookupTable.values():
+        for name, logic in parser_state.FuncLogicLookupTable.items():
+            if not checked(name):
+                continue
             if not logic.CAN_HAVE_ADDED_LATENCY(parser_state):
                 logic.submodule_latencies_are_self_timed = {
                     sub
@@ -8136,11 +8238,17 @@ def _elaborate_live_roots(roots):
     SYN.DEL_ALL_CACHES()
     AUTO_PIPELINE.DEL_ZERO_ADDED_CLKS_TIMING_PARAMS_CACHE()
     dummy = ast.parse("def sim_root(): pass").body[0]
+    registered = {id(f) for f in _pypeline_mod._main_registry}
     for root in roots:
-        source = inspect.unwrap(root)
-        filename = os.path.abspath(inspect.getsourcefile(source))
-        elab = FuncElaborator(dummy, parser_state, filename, source.__globals__)
-        logic = elab._elaborate_live_func(root.__name__, root)
+        if id(root) in registered:
+            # A @MAIN: its build entity and timing are keyed by its MAIN name
+            name = root._pypeline_main.name
+            logic = _elaborate_main(parser_state, root, name, f"@MAIN '{name}'")
+        else:
+            source = inspect.unwrap(root)
+            filename = os.path.abspath(inspect.getsourcefile(source))
+            elab = FuncElaborator(dummy, parser_state, filename, source.__globals__)
+            logic = elab._elaborate_live_func(root.__name__, root)
         parser_state.main_mhz[logic.func_name] = None
         parser_state.main_syn_mhz[logic.func_name] = None
         parser_state.main_clk_group[logic.func_name] = None
@@ -8174,7 +8282,6 @@ def PARSE_FILE(py_file, run_syn_initial_hooks=False, resolved_part=None):
     import pypeline
 
     pypeline._main_registry.clear()  # reset in case of multiple PARSE_FILE calls
-    pypeline._main_mhz_registry.clear()
     pypeline._hook_registry.clear()
     pypeline._part_registry = None
     pypeline._syn_tool_registry = None
@@ -8278,6 +8385,10 @@ def PARSE_FILE(py_file, run_syn_initial_hooks=False, resolved_part=None):
     # outside the design's own source tree, where a generic name collision
     # like this becomes possible.
     main_func_ids = {id(f) for f in pypeline._main_registry}
+    # A plain def passed to MAIN() (`MAIN(foo, name="lane0")`) stays bound to
+    # its module name unwrapped. Step 5 leaves it to Step 7.2, which
+    # elaborates the registered wrapper, so it is not elaborated twice.
+    main_raw_ids = {id(inspect.unwrap(f)) for f in pypeline._main_registry}
 
     # ── Step 4: AST parse for hardware elaboration ──
     source = READ_SOURCE_TEXT(py_file)
@@ -8315,9 +8426,19 @@ def PARSE_FILE(py_file, run_syn_initial_hooks=False, resolved_part=None):
     all_func_defs = []  # (ast.FunctionDef, file_path, file_module_globals, module_prefix)
     for file_path, ftree, fglobals, mod_prefix in files_to_elaborate:
         for node in ftree.body:
-            if isinstance(node, ast.FunctionDef) and (
+            if not isinstance(node, ast.FunctionDef):
+                continue
+            _live = fglobals.get(node.name)
+            if id(_live) in main_func_ids:
+                # A @MAIN renamed with name= is elaborated under its name by
+                # Step 7.2 instead
+                if _live._pypeline_main.name != HW_FUNC_NAME(mod_prefix, node.name):
+                    continue
+            elif id(_live) in main_raw_ids:
+                continue
+            if (
                 _is_hardware_func(node, eval_ns=fglobals)
-                or id(fglobals.get(node.name)) in main_func_ids
+                or id(_live) in main_func_ids
             ):
                 # @sim_output/@sim_input functions must never be independently
                 # elaborated here, even when a return/arg type annotation makes
@@ -8402,34 +8523,20 @@ def PARSE_FILE(py_file, run_syn_initial_hooks=False, resolved_part=None):
         if getattr(fglobals.get(node.name), "_is_func_wires_pragma", False):
             parser_state.func_marked_wires.add(hw_name)
         if id(fglobals.get(node.name)) in main_func_ids:
-            mhz = pypeline._main_mhz_registry.get(node.name)
+            mhz = fglobals[node.name]._pypeline_main.mhz
             parser_state.main_mhz[hw_name] = mhz
             parser_state.main_syn_mhz[hw_name] = mhz
             parser_state.main_clk_group[hw_name] = None
 
-    # ── Step 7.5: every @MAIN the design registered must have been elaborated ──
-    # Running the design registered it, so native sim runs it; hardware only
-    # reaches a MAIN as a top-level def of a discovered file. A module that ran
-    # without being discovered (imported only inside a function, say) would
-    # otherwise drop its MAINs from the hardware without a word.
+    # ── Step 7.2: every other registered @MAIN, under its MAIN name ──
+    # Running the design registered it, so native sim runs it: one made by a
+    # factory or in a loop, a generated one, a renamed one, a plain def passed
+    # to MAIN(). Elaborating each from the registry means none can drop out of
+    # the hardware without a word.
     elaborated_ids = {
         id(fglobals.get(node.name)) for node, _, fglobals, _ in all_func_defs
     }
-    lost_mains = [f for f in pypeline._main_registry if id(f) not in elaborated_ids]
-    if lost_mains:
-        lost = ", ".join(
-            f"'{f.__module__}.{f.__qualname__}' "
-            f"({inspect.getsourcefile(inspect.unwrap(f))})"
-            for f in lost_mains
-        )
-        raise ElaborationError(
-            f"@MAIN {lost} was registered when the design ran (native sim would "
-            f"run it) but never elaborated as hardware. Hardware discovery follows "
-            f"module-level `import` / `from ... import` statements, including ones "
-            f"inside module-level if/try blocks -- not imports inside a function "
-            f"body -- and a @MAIN must be a top-level def of its module. Import "
-            f"that module at module level in a design file."
-        )
+    _elaborate_registered_mains(parser_state, elaborated_ids, files_to_elaborate)
 
     _build_inst_lookup(parser_state)
 
@@ -9120,10 +9227,26 @@ def PREPARE_PIPELINE_LATENCY_SIM(roots, build_timing=None):
                         cell[0] = saved
                 graph = _graphs[0]
                 if len(_graphs) > 1:
-                    loc = _pypeline_mod._sim_inst_stack[-1][1]
-                    locations = [frame[1] for frame in _pypeline_mod._sim_inst_stack]
+                    stack = _pypeline_mod._sim_inst_stack
+                    loc = stack[-1][1]
+                    # Under pypeline_sim the root frame names the running
+                    # MAIN: only graphs under it can be this call (lanes made
+                    # by one factory share every source location)
+                    candidates = _graphs
+                    root = stack[0][0] if stack else None
+                    prefix = _pypeline_mod._SIM_MAIN_FRAME_PREFIX
+                    if isinstance(root, str) and root.startswith(prefix):
+                        main = root[len(prefix) :]
+                        candidates = [
+                            g
+                            for g in _graphs
+                            if g.inst.split(LOGIC.SUBMODULE_MARKER)[0] == main
+                        ] or _graphs
+                    graph = candidates[0]
+                    # Root frames carry no location
+                    locations = [frame[1] for frame in stack if frame[1] is not None]
                     matches = []
-                    for candidate in _graphs:
+                    for candidate in candidates:
                         parent, _, sub = candidate.inst.rpartition(LOGIC.SUBMODULE_MARKER)
                         if parent:
                             meta = state.LogicInstLookupTable[
@@ -9141,7 +9264,7 @@ def PREPARE_PIPELINE_LATENCY_SIM(roots, build_timing=None):
                         graph = matches[0]
                     elif any(
                         g.timing_signature != graph.timing_signature
-                        for g in _graphs[1:]
+                        for g in candidates[1:]
                     ):
                         raise RuntimeError(
                             f"pipeline_latency: ambiguous timing variant for {_fn.__qualname__} at {loc}"

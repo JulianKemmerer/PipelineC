@@ -163,6 +163,27 @@ def get_tests() -> list:
             cmd=[INST_DIR / "global_fifo_elab_test.py"],
         )
     )
+    # A FIFO MAIN added after trimming (_add_late_mains) re-checks only the
+    # new functions: a design with stale AUTO_PIPELINE tags left by trimming
+    # and a pipeline_latency function parses, its self-timed set unchanged.
+    tests.append(
+        Test(
+            name="global_fifo_pipeline_latency_test",
+            category="elab_introspect",
+            cmd=[INST_DIR / "global_fifo_pipeline_latency_test.py"],
+        )
+    )
+    # @MAINs made in code: lanes from a loop (keys, rates, ports, wire users),
+    # an imported module's factory MAIN, a pure-factory library's function, a
+    # renamed top-level MAIN, plain defs passed to MAIN(), a closure's wire
+    # users, re-parse names, and the duplicate/clash/lost-module errors.
+    tests.append(
+        Test(
+            name="factory_main_elab_test",
+            category="elab_introspect",
+            cmd=[INST_DIR / "factory_main_elab_test.py"],
+        )
+    )
     # @wires must be literally just wires: registers or logic anywhere in its
     # hierarchy (a stateful testbench MAIN, an adder, a variable index, a
     # stateful callee, an auto-@wires @cast with logic, an untagged raw-VHDL

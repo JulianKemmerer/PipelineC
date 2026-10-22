@@ -227,8 +227,8 @@ The generated top-level module's ports all come from the source:
 | any `@MAIN(25.0)` | clock input `clk_25p0`, one per distinct rate |
 | `pll_clk: Input[uint1_t] = make_clock(25.0)` | clock input `pll_clk`, replacing the rate-derived name |
 | `my_input: Input[uint1_t]`, `my_output: Output[uint1_t]` | `my_input`, `my_output`, named exactly |
-| argument `x` of `@MAIN` function `my_main` | input `my_main_x` |
-| return value of `@MAIN` function `my_main` | output `my_main_return_output` |
+| argument `x` of `@MAIN` `my_main` (its function's name, or its `name=`) | input `my_main_x` |
+| return value of `@MAIN` `my_main` | output `my_main_return_output` |
 
 A `uint1_t` port is a VHDL `unsigned(0 downto 0)`, and struct ports use the record types
 in `c_structs_pkg`. Global [`Input[T]`/`Output[T]`](pypeline_guide.md#inputt--outputt--top-level-fpga-ports)

@@ -37,6 +37,7 @@ _MAX_MANGLE_NAME_LEN = 96
 
 import dataclasses as _dataclasses
 import inspect as _inspect
+import itertools as _itertools
 import json as _json
 import os as _os
 import re as _re
@@ -155,6 +156,70 @@ _VHDL_RESERVED_WORDS = frozenset(
         "xor",
     }
 )
+
+# Runs of underscores, which a VHDL basic identifier cannot contain
+_CONSEC_UNDERSCORES_RE = _re.compile(r"_{2,}")
+
+
+def _sanitize_vhdl_name(name: str) -> str:
+    """Mangle a Python identifier so it is a legal VHDL basic identifier.
+
+    Rules (applied in order):
+    1. Strip leading underscores; prepend 'v' if any were removed.
+    2. Strip trailing underscores.
+    3. Replace runs of 2+ consecutive underscores with a single '_'.
+    4. If the result is a VHDL reserved word (case-insensitive), append '_v'.
+    5. If empty after all stripping, return 'v'.
+    """
+    result = name.lstrip("_")
+    if len(result) < len(name):
+        result = "v_" + result if result else "v"
+    result = result.rstrip("_") or "v"
+    result = _CONSEC_UNDERSCORES_RE.sub("_", result)
+    if result.lower() in _VHDL_RESERVED_WORDS:
+        result = result + "_v"
+    return result
+
+
+def _hw_func_name(mod_prefix, name):
+    """Canonical FuncLogicLookupTable key / Logic.func_name for a hardware
+    function: module-prefixed for sub-file functions, VHDL-name-sanitized.
+    Single source of truth -- PARSE_FILE Step 6/7, FuncElaborator.__init__,
+    _elab_call's lookups, _top_level_func_key and a @MAIN's default name
+    (_register_main) must all resolve to the same string for a given
+    (mod_prefix, name), or FuncLogicLookupTable lookups silently diverge (see
+    the closure-callable-collision bug regression-tested by
+    two_factory_wrappers_test.py). Always call this; never re-derive the
+    f-string locally. It lives here, not in PY_TO_LOGIC (which calls it
+    HW_FUNC_NAME), so native simulation names MAINs without importing the
+    compiler.
+
+    The prefix is dropped when `name` already starts with it (the common
+    one-module-one-entry-point layout, e.g. append_auth_tag.py's own
+    `append_auth_tag` function) -- otherwise every such name stutters
+    (`append_auth_tag_append_auth_tag`), and that name sits at the head of
+    every hierarchy path under it. Safe: a distinct (mod_prefix, name) pair
+    that collides after this elision is still caught by PARSE_FILE Step 6's
+    `_hw_name_lower_to_orig` guard, which raises naming both functions.
+    """
+    safe_name = _sanitize_vhdl_name(name)
+    if not mod_prefix:
+        return safe_name
+    if safe_name == mod_prefix or safe_name.startswith(mod_prefix + "_"):
+        return safe_name
+    return f"{mod_prefix}_{safe_name}"
+
+
+def _module_prefix(module_name):
+    """The hardware name prefix of the module named `module_name`: none for
+    the top design file (imported as "pypeline_design") or a script run
+    directly ("__main__"), else the module's import name with dots as
+    underscores -- what PY_TO_LOGIC's import discovery gives the same
+    module."""
+    if not module_name or module_name in ("pypeline_design", "__main__"):
+        return None
+    return module_name.replace(".", "_")
+
 
 _NAME_BASE_LIMIT = 192
 _NAME_IDENTIFIER_LIMIT = 240
@@ -2103,8 +2168,7 @@ def _enum(cls, name, frame):
 # MAIN decorator and pragma registries
 # ─────────────────────────────────────────────
 
-_main_registry: list = []
-_main_mhz_registry: dict = {}  # func.__name__ → float mhz
+_main_registry: list = []  # each registered @MAIN's wrapper, in registration order
 _part_registry: "str | None" = None
 _syn_tool_registry: "str | None" = None
 
@@ -2165,41 +2229,121 @@ def SYN_TOOL(tool_name: str):
     _syn_tool_registry = tool_name
 
 
-def _register_main(func, mhz):
-    if mhz is not None:
-        _main_mhz_registry[func.__name__] = float(mhz)
+class _MainInfo(typing.NamedTuple):
+    """What MAIN() recorded about one @MAIN; its wrapper's _pypeline_main."""
+
+    name: str  # hardware name: its entity, its port prefix, its main_mhz key
+    named: bool  # given by name= or by the function's own @hw_func(name=)
+    mhz: "float | None"  # its rate, None for a bare @MAIN
+    origin: str  # where it was made, for messages: "top.py:23"
+
+
+def _frame_origin(frame):
+    """'file.py:line' of a frame, for messages."""
+    return f"{_os.path.basename(frame.f_code.co_filename)}:{frame.f_lineno}"
+
+
+def _register_main(func, mhz, name, origin):
+    """Register func as the @MAIN `name` at rate `mhz` (None: bare), made at
+    `origin`; returns its hw_func wrapper, which carries a _MainInfo as
+    _pypeline_main. Without a name the MAIN is named like its function:
+    its @hw_func(name=) if it has one, else its module-prefixed Python name
+    (_hw_func_name), as PY_TO_LOGIC names a top-level def. A given name is
+    used verbatim. Names must be deterministic: the build and native sim
+    re-execute the design and find each MAIN by its name."""
+    fn = _inspect.unwrap(func) if callable(func) else None
+    if fn is None or not hasattr(fn, "__code__"):
+        raise TypeError(f"MAIN({func!r}) at {origin}: a @MAIN must be a function")
+    if _sim_run_in_progress:
+        raise RuntimeError(
+            f"MAIN({fn.__qualname__}) at {origin} ran during a simulation run, "
+            f"after the design's @MAINs were collected. Make @MAINs while the "
+            f"design is imported: in module-level code, or in factories it calls."
+        )
+    if name is not None:
+        _check_user_name(name, "MAIN")
     wrapped = _sim_type_wrap(func)
-    # Native sim refuses designs whose MAINs name more than one rate; the
-    # registry above is keyed by bare name, so the rate rides on the MAIN too
-    wrapped._pypeline_main_mhz = None if mhz is None else float(mhz)
+    for other in _main_registry:
+        if other is wrapped:
+            raise TypeError(
+                f"MAIN({fn.__qualname__}) at {origin}: that function already is "
+                f"the @MAIN '{other._pypeline_main.name}' "
+                f"({other._pypeline_main.origin}). Each @MAIN needs its own "
+                f"function: call the factory once per @MAIN."
+            )
+    user_name = getattr(wrapped, "_pypeline_user_name", None)
+    named = name is not None or user_name is not None
+    if name is None:
+        name = user_name or _hw_func_name(
+            _module_prefix(wrapped.__module__), wrapped.__name__
+        )
+    wrapped._pypeline_main = _MainInfo(
+        name, named, None if mhz is None else float(mhz), origin
+    )
     _main_registry.append(wrapped)
     return wrapped
 
 
-def MAIN(func_or_mhz=None, *, mhz=None):
+def _duplicate_main_names(mains):
+    """The error message for the first two of `mains` (@MAIN wrappers) that
+    share a name, ignoring case as VHDL does; None when all names differ."""
+    seen = {}
+    for fn in mains:
+        info = fn._pypeline_main
+        prior = seen.setdefault(info.name.lower(), fn)
+        if prior is fn:
+            continue
+        first = prior._pypeline_main
+        names = (
+            f"named '{info.name}'"
+            if first.name == info.name
+            else f"named '{first.name}' and '{info.name}', one name in VHDL"
+        )
+        return (
+            f"Two @MAINs are {names}: '{prior.__qualname__}' ({first.origin}) "
+            f"and '{fn.__qualname__}' ({info.origin}). Give each its own name "
+            f"with MAIN(fn, name=...)."
+        )
+    return None
+
+
+def MAIN(func_or_mhz=None, *, mhz=None, name=None):
     """Marks a function as a top-level hardware process.
 
-    Supports three forms::
+    As a decorator::
 
         @MAIN                  # no clock constraint
         @MAIN(100.0)           # positional MHz
         @MAIN(mhz=100.0)       # keyword MHz
+        @MAIN(name="top0")     # a name of your choosing (also with a rate)
+
+    Or called on a function, for @MAINs made in code (one per lane in a
+    loop, a factory's function, generated source)::
+
+        lanes = [MAIN(make_lane(i), name=f"lane{i}") for i in range(4)]
+        MAIN(fn, mhz=100.0, name="rx")
+
+    A @MAIN is named after its function, module-prefixed in an imported
+    module, unless name= gives its name verbatim. Its ports are
+    <name>_<argument> and <name>_return_output. Two @MAINs with one name
+    are an error. Call MAIN() while the design is imported.
 
     Implies @hw_func: inputs/outputs are type-cast for simulation and
     the function can be passed to sim_call().
     """
     if callable(func_or_mhz):
-        # Used as bare @MAIN with no arguments
-        return _register_main(func_or_mhz, mhz=None)
-    else:
-        # Used as @MAIN(100.0) or @MAIN(mhz=100.0)
-        if func_or_mhz is not None:
-            mhz = float(func_or_mhz)
+        # Used as bare @MAIN, or called on a function
+        return _register_main(
+            func_or_mhz, mhz, name, _frame_origin(_sys._getframe(1))
+        )
+    # Used as @MAIN(100.0), @MAIN(mhz=100.0) or @MAIN(name=...)
+    if func_or_mhz is not None:
+        mhz = float(func_or_mhz)
 
-        def decorator(func):
-            return _register_main(func, mhz=mhz)
+    def decorator(func):
+        return _register_main(func, mhz, name, _frame_origin(_sys._getframe(1)))
 
-        return decorator
+    return decorator
 
 
 def sim_output(fn):
@@ -5882,7 +6026,11 @@ def _make_global_fifo_main(func_name, wire_name, fifo_type, init, module_globals
         )
 
     main = hw_func(global_fifo_main(wire_name, data_t, module))
-    main._pypeline_global_fifo = wire_name
+    # Named like a registered @MAIN, so native sim gives it its own root frame
+    # and checks its name against the others; never in _main_registry
+    main._pypeline_main = _MainInfo(
+        func_name, True, None, f"global FIFO {wire_name}"
+    )
     return main
 
 
@@ -7155,7 +7303,11 @@ import types as _types
 # loop_loc) entries while a source-loop iteration is executing.  This mirrors
 # PY_TO_LOGIC.py's per-unrolled-iteration hierarchy so stateful calls from one
 # physical source line get separate register banks in native simulation too.
+# pypeline_sim._call_main pushes a root entry (_SIM_MAIN_FRAME_PREFIX + MAIN
+# name, None) around each @MAIN, so no two MAINs share any state below it.
 _sim_inst_stack = []
+# First element of a MAIN's root entry, before its name
+_SIM_MAIN_FRAME_PREFIX = "MAIN:"
 
 # Register state keyed by instance path tuple.
 # _sim_reg_state[inst_path][reg_name] = current integer value (0 = reset default).
@@ -7202,10 +7354,14 @@ SIM_TRACE_LOCATIONS: bool = False
 # Global wire simulation state.
 _sim_wire_state: dict = {}  # wire name → current value (int or struct/array instance)
 _sim_wire_ctype: dict = {}  # wire name → inner ctype (for zero defaults / leaf casting)
-# claim_key (writer function's qualified name) → {wire name → set of concrete
-# written path tuples} -- runtime-recorded driven leaves, reset to zero at the
-# top of each of that function's invocations (see _sim_wire_reset_claims).
+# claim_key (writer function's qualified name plus a per-function serial) →
+# {wire name → set of concrete written path tuples} -- runtime-recorded driven
+# leaves, reset to zero at the top of each of that function's invocations
+# (see _sim_wire_reset_claims).
 _sim_wire_claims: dict = {}
+# Serial in each claim key: closures of one def (one MAIN per lane, say) share
+# a qualified name but write their own leaves
+_wire_claim_serial = _itertools.count()
 _sim_converging: bool = False  # True during delta-cycle convergence passes
 
 
@@ -7342,6 +7498,10 @@ def _sim_apply_ap_delayed_writes() -> None:
         if pending:
             _sim_apply_delayed_writes(pending[0])
 _sim_active: bool = False  # True only while pypeline_sim.py is driving a simulation run
+# True from a pypeline_sim run's @initial(sim) hooks to the end of its
+# @final(sim) hooks, when its @MAINs are already collected (MAIN() refuses).
+# Unlike _sim_active, it is reset when the run ends.
+_sim_run_in_progress: bool = False
 _sim_input_cache: dict = {}  # id(@sim_input wrapper) → cached result for the current cycle
 # True only while an expression is being evaluated as a constant: HDL
 # elaboration's PY_TO_LOGIC._try_eval_const, and native sim's decoration-time
@@ -9083,7 +9243,9 @@ def _build_reg_sim_func(fn):
     wire_leaf_ctypes_out: dict = {}
     _wire_rewriter_modified = False
     if global_wire_names or module_wire_attrs:
-        _wire_claim_key = f"{fn.__module__}.{fn.__qualname__}"
+        _wire_claim_key = (
+            f"{fn.__module__}.{fn.__qualname__}#{next(_wire_claim_serial)}"
+        )
         _wire_rewriter = _GlobalWireRewriter(
             global_wire_names,
             module_wire_attrs,

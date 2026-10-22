@@ -55,7 +55,7 @@ For the shared pypeline.py type system and `SimVal` foundations, see
 - [`Wire[T]` / `Input[T]` / `Output[T]` Global Wire Simulation](#wiret--inputt--outputt-global-wire-simulation)
   - [Global Wire State](#global-wire-state)
 - [`pypeline_sim.py` — Multi-MAIN Clock-Cycle Simulation](#pypeline_simpy--multi-main-clock-cycle-simulation)
-  - [Global FIFOs and the multi-rate refusal](#global-fifos-and-the-multi-rate-refusal)
+  - [The MAINs that run: global FIFOs, root frames, refusals](#the-mains-that-run-global-fifos-root-frames-refusals)
   - [Per Clock Cycle](#per-clock-cycle)
   - [Delta-Cycle Convergence Queue](#delta-cycle-convergence-queue)
   - [Register Commit Timing](#register-commit-timing)
@@ -1030,8 +1030,11 @@ cycle's value latched — the opposite of the zero default elaboration gives an 
 (see `PY_TO_LOGIC_DESIGN.md`'s Global Wires section).
 
 The reset is scoped by **runtime claim tracking**, not static analysis. Every rewritten write
-call carries the writing function's qualified name as `claim_key`
-(`f"{fn.__module__}.{fn.__qualname__}"`, baked in as an `ast.Constant` by
+call carries a key for the writing function as `claim_key`
+(`f"{fn.__module__}.{fn.__qualname__}#<serial>"`, one serial per decorated function from
+`_wire_claim_serial`, because closures of one def share a qualified name but write their
+own leaves: lanes made by one factory each drive their own element; baked in as an
+`ast.Constant` by
 `_GlobalWireRewriter`): `_sim_wire_write(name, value, claim_key)` records a whole-wire `()`
 claim, `_sim_wire_lens_write(name, path, value, claim_key)` records the **concrete** path
 written this call (field strs, indices normalized to ints) into the module-level
@@ -1091,10 +1094,11 @@ the body; the ordinary wrapper frames remain unchanged.
 as the dict key for register state.
 
 A stateless `@hw_func` pushes a frame only when a `@sim_model` is attached to it, for that
-model's own call. Its callers' frames are not on the stack, so two stateless MAINs calling
+model's own call. Its callers' frames are not on the stack, so two stateless callers of
 one model at the same source line get the same instance path. `pypeline_sim._call_main`
-gives each global FIFO MAIN a frame of its own for that reason
-([Global FIFOs](#global-fifos-and-the-multi-rate-refusal)).
+gives every MAIN a root frame of its own, so that never happens across MAINs
+([Root frames](#the-mains-that-run-global-fifos-root-frames-refusals)). Two stateless
+wrappers inside one MAIN still share their callee's state.
 
 ### Per-Instance Register State
 
@@ -1575,8 +1579,8 @@ CLI tool for running multi-MAIN designs. Normal usage goes through the `pypeline
 pypelinec my_design.py --sim --comb --run 1000
 ```
 
-Imports the design file (triggering all `@MAIN`/`@hw_func` decorations, populating
-`_main_registry`), discovers global wire names recursively from module `__annotations__`,
+Imports the design file (triggering all `@MAIN`/`@hw_func` decorations and `MAIN()` calls,
+populating `_main_registry`), discovers global wire names recursively from module `__annotations__`,
 and runs N simulated clock cycles, bracketed by the design's `@initial`/`@final(sim)`
 hooks (see [Start/end-of-run hooks](#initial--final--startend-of-run-hooks) below).
 
@@ -1587,12 +1591,18 @@ the `param()` declarations, then runs the same post-import `-D` checks as `PARSE
 and prints the parameter table once per process. In the `pypelinec --sim` flow the
 table is the one the build installed, so the simulation sees the build's values.
 
-### Global FIFOs and the multi-rate refusal
+### The MAINs that run: global FIFOs, root frames, refusals
 
-**Refusal.** After the import, `_refuse_multi_rate` groups the registered `@MAIN`s by the
-rate stamped on each (`_pypeline_main_mhz`, set by `pypeline._register_main`). When they
-name more than one rate, `run_sim` exits non-zero with a message naming each rate and its
-`@MAIN`s: stepping every MAIN once per cycle would run different clocks in lockstep
+**The MAINs.** `run_sim` runs every registered `@MAIN` (`_main_registry`): `@MAIN` defs and
+MAINs made in code with `MAIN(fn, name=...)`, each a wrapper carrying its `_MainInfo` as
+`_pypeline_main` ([`pypeline_DESIGN.md`](pypeline_DESIGN.md#main--mainfn--registering-mains)).
+From its `@initial(sim)` hooks to the end of its `@final(sim)` hooks it sets
+`pypeline._sim_run_in_progress`, and `MAIN()` refuses then: the MAINs are already collected.
+
+**Multi-rate refusal.** After the import, `_refuse_multi_rate` groups the registered
+`@MAIN`s by their rate (`_pypeline_main.mhz`). When they name more than one rate, `run_sim`
+exits non-zero with a message naming each rate and its `@MAIN`s by MAIN name: stepping
+every MAIN once per cycle would run different clocks in lockstep
 ([#354](https://github.com/JulianKemmerer/PipelineC/issues/354)). Bare `@MAIN`s name no rate
 and do not count. Both `pypeline_sim.py` and `pypelinec --sim` stop here. Phase 2 of the
 multi-clock work will count clock identities instead of rates.
@@ -1601,17 +1611,26 @@ multi-clock work will count clock identities instead of rates.
 wires: a FIFO is a compound wire, so its state is seeded like any other. For each one,
 `run_sim` builds the FIFO MAIN with the compiler's own generator,
 `pypeline._make_global_fifo_main`, named `<name>_FIFO` (module-prefixed outside the top
-file), and appends it to the cycle loop's MAIN list. It is never added to
-`_main_registry`. The FIFO MAIN is an ordinary `@hw_func`, so the wire rewriter, claim
-tracking and reader re-queueing apply to it unchanged. The library FIFO's class
-`@sim_model` (`_FifoFwftModel`) works on a deep copy of its committed state, so the
-convergence loop may call it repeatedly in a cycle.
+file, `pypeline._module_prefix`), and appends it to the cycle loop's MAIN list. It is never
+added to `_main_registry`, but it carries a `_MainInfo` of its own. The FIFO MAIN is an
+ordinary `@hw_func`, so the wire rewriter, claim tracking and reader re-queueing apply to it
+unchanged. The library FIFO's class `@sim_model` (`_FifoFwftModel`) works on a deep copy of
+its committed state, so the convergence loop may call it repeatedly in a cycle.
 
-`_call_main` pushes an instance frame `(<name>_FIFO, None)` around a FIFO MAIN. A stateless
-function pushes no frame of its own (see [Instance Path Stack](#instance-path-stack)), so
-without it the FIFO model inside would share state with every other stateless caller of the
-same model at the same source line, for example two FIFOs built from one
-`make_stream_fifo(T, n)`.
+**Duplicate-name refusal.** Then `pypeline._duplicate_main_names` runs over every MAIN,
+FIFO MAINs included: two with one name, ignoring case, stop the run with `ERROR:` and
+both names' origins, as they would share a root frame.
+
+**Root frames.** `_call_main` pushes an instance frame
+`(pypeline._SIM_MAIN_FRAME_PREFIX + <MAIN name>, None)` around every MAIN, on both its plain
+and its pipelined-region path. Every state below it is that MAIN's own: registers,
+`@sim_model` state, AUTO_PIPELINE delay lines, AUTO_FSM state and fixed-pipeline graph
+state. Without it, two MAINs made by one factory share every qualname and call-site line,
+and so would share all of it. Two stateless MAINs calling one model would too: a stateless
+function pushes no frame of its own (see [Instance Path Stack](#instance-path-stack)), as
+with two FIFOs built from one `make_stream_fifo(T, n)`. The fixed-pipeline dispatch reads
+the root frame to pick the running MAIN's graph
+([`PY_TO_LOGIC_DESIGN.md`](PY_TO_LOGIC_DESIGN.md#fixed-user-pipelines)).
 
 ### Per Clock Cycle
 
@@ -2053,10 +2072,10 @@ Key implementation points:
 
 A **pure** `@MAIN` (no `Reg[T]`/`Feedback[T]` — checked via the `wrapper._pypeline_has_state`
 flag set in `_sim_type_wrap`) that the sweep sliced to latency N > 0 gets *write-side* delay
-emulation. `run_sim` maps each final MAIN hw name back to its registry function via
-`PY_TO_LOGIC.HW_FUNC_NAME(prefix, fn.__name__)` (prefix `None` for the top file loaded as
-`"pypeline_design"`, else the sub-module name with dots→underscores — the same mangling
-elaboration uses) and fills:
+emulation. `run_sim` maps each final MAIN name back to its registry function by the
+MAIN's own name, `fn._pypeline_main.name` (`_mains_by_name`): the build and the
+re-imported design name each MAIN the same way, whether it is a `@MAIN` def or made in
+code. It fills:
 
 ```
 pypeline._sim_pipelined_main_info[fn] = {"latency": N, "queue": deque(), "collector": []}
@@ -2213,7 +2232,15 @@ slices, exact bit boundaries, I/O register flags and delays through `SIM` and
 `run_sim(pipeline_timing=...)`. Preparation binds these placements to fresh native
 callables after the normal design reimport. A function's instances can have
 different surrounding placements, so models use hardware instance paths rather
-than only function names. Prepared models are cached for the current group of
+than only function names. A function with several graphs picks the one for the
+current call: first those under the running MAIN, named by its root frame (MAINs
+made by one factory share every call-site location), then by call-site location.
+A MAIN root is elaborated under its MAIN name (`PY_TO_LOGIC._elaborate_main`), as in
+the build, so its placements are found. Inside a MAIN of an imported module, a call
+to a same-module function is labeled without the module prefix the build gives it,
+so that instance's placement is not found (known issue
+[#379](https://github.com/JulianKemmerer/PipelineC/issues/379),
+`live_root_submodule_labels_test.py`). Prepared models are cached for the current group of
 live roots. Switching standalone roots rebuilds dispatch for the new hierarchy,
 including shared helpers; each root's state remains in the ordinary simulation
 register store and is cleared by `sim_reset()`.

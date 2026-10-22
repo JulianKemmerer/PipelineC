@@ -169,7 +169,8 @@ def test_fifo_main_generator():
         assert f"{taken}_2" in src, (taken, src)
         assert f" {taken}(" not in src and f" {taken} =" not in src, (taken, src)
     assert "rx.wr.ready = " in src and "rx.rd.stream = " in src, src
-    assert main._pypeline_global_fifo == "rx"
+    # Named like a registered @MAIN, so native sim gives it a root frame
+    assert main._pypeline_main == ("rx_FIFO", True, None, "global FIFO rx")
     assert main.__module__ == "some_design"
     assert pypeline.is_hw_func(main)
     print("FIFO MAIN generator PASS")

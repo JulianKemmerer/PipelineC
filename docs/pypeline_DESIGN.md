@@ -98,7 +98,7 @@ one paragraph per change.
   - [`Fifo[T]` / `_FifoType` — global FIFOs](#fifot--_fifotype--global-fifos)
 - [`PART()` and `@MAIN` Pragmas](#part-and-main-pragmas)
   - [`PART(part_string)`](#partpart_string)
-  - [`@MAIN` / `@MAIN(mhz)` — Three-Form Decorator](#main--mainmhz--three-form-decorator)
+  - [`@MAIN` / `MAIN(fn)` — Registering MAINs](#main--mainfn--registering-mains)
   - [`make_clock(mhz)` — Naming a Clock (`CLK_MHZ` Equivalent)](#make_clockmhz--naming-a-clock-clk_mhz-equivalent)
   - [`AUTO_PIPELINE(func, latency=None, start_latency=None, max_latency=None)` — Forced Submodule Pipelining with `.latency`](#auto_pipelinefunc-latencynone-start_latencynone-max_latencynone--forced-submodule-pipelining-with-latency)
   - [`AUTO_COMB_AREA_OPT(func)` — Zero-Cycle Resource Sharing](#auto_comb_area_optfunc--zero-cycle-resource-sharing)
@@ -427,7 +427,9 @@ documentation.
   - the name must match `_USER_NAME_RE` (a VHDL basic identifier) and be at most 64
     characters;
   - it must not be a VHDL reserved word. `_VHDL_RESERVED_WORDS` lives here, and
-    PY_TO_LOGIC uses the same set for identifier mangling.
+    PY_TO_LOGIC uses the same set for identifier mangling. So do `_sanitize_vhdl_name`
+    and `_hw_func_name` (PY_TO_LOGIC's `HW_FUNC_NAME`), which name @MAINs without the
+    compiler.
   - it must not end in a suffix the compiler generates (`_USER_NAME_ROLE_SUFFIX_RE`).
 
   A bad name raises; it is never sanitized.
@@ -448,6 +450,10 @@ documentation.
   pre-registration (`HW_FUNC_NAME`), and its Python name already is its name.
   `@hw_func(name=)` on an already-wrapped function is an error too: give the name where
   the function is first decorated.
+- **MAIN names are not prefixes.** `@MAIN(name=)` and `MAIN(fn, name=)` take any
+  function, and the name is the MAIN's table key itself, with no `_s<digest>`: a MAIN
+  is one instance, and its name is protected from `EmissionNames` renaming (see
+  [Registering MAINs](#main--mainfn--registering-mains)).
 - **The capture rule.** `capture_factory_args` and `_exec_generated_func`'s frame
   capture skip a parameter named `name` whose value is `None`. A factory can forward an
   optional `name=` without renaming any product of an unnamed call. A real name is
@@ -998,8 +1004,10 @@ doesn't drive included); only the *top-level* wiring harvests just each writer's
 claimed regions.
 
 Native sim mirrors the per-writer zero default with **runtime claim tracking** rather
-than static analysis: every rewritten write call carries the writing function's
-qualified name (`claim_key`) and records the concrete path it wrote — static fields,
+than static analysis: every rewritten write call carries a key for the writing function
+(`claim_key`: its qualified name plus a serial per decorated function,
+`_wire_claim_serial`, as closures of one def — lanes made by one factory — share a
+qualified name) and records the concrete path it wrote — static fields,
 nested paths, unrolled-loop and dynamic indices all land as the exact elements touched
 — into `_sim_wire_claims`; a one-line prologue (`_sim_wire_reset_claims`) zeros
 exactly those claimed leaves at the top of each of that function's invocations.
@@ -1084,11 +1092,12 @@ ends unchanged.
   elaborator resolve it by that module. The injected names (the module and the two port
   halves) and the one local avoid every name of that module and `reserved`. The compiler
   passes the top design file's globals as `reserved`, since elaboration merges them in.
-  The result is marked `_pypeline_global_fifo` (the wire's name). It is never added to
-  `_main_registry`: `PY_TO_LOGIC._realize_global_fifos` and `pypeline_sim.run_sim` each add
-  it to their own MAIN lists
+  The result carries a `_MainInfo` named `<key>_FIFO` as `_pypeline_main`, so native sim
+  gives it a root frame and checks its name like a registered MAIN's. It is never added
+  to `_main_registry`: `PY_TO_LOGIC._realize_global_fifos` adds it with `_add_late_mains`,
+  and `pypeline_sim.run_sim` appends it to its own MAIN list
   ([`PY_TO_LOGIC_DESIGN.md`](PY_TO_LOGIC_DESIGN.md#global-fifos-fifot),
-  [`pypeline_sim_DESIGN.md`](pypeline_sim_DESIGN.md#global-fifos-and-the-multi-rate-refusal)).
+  [`pypeline_sim_DESIGN.md`](pypeline_sim_DESIGN.md#the-mains-that-run-global-fifos-root-frames-refusals)).
 
 ---
 
@@ -1106,44 +1115,50 @@ Sets the module-level `_part_registry` string. `PY_TO_LOGIC.PARSE_FILE` reads it
 executing the design module and writes it to `parser_state.part`. When `None`, the toolchain
 defaults to a software timing estimator.
 
-### `@MAIN` / `@MAIN(mhz)` — Three-Form Decorator
+### `@MAIN` / `MAIN(fn)` — Registering MAINs
 
 ```python
-@MAIN               # no clock constraint
-@MAIN(100.0)        # positional MHz
-@MAIN(mhz=25.0)     # keyword MHz
-def my_design(...): ...
+@MAIN                          # no clock constraint
+@MAIN(100.0)                   # positional MHz
+@MAIN(mhz=25.0)                # keyword MHz
+@MAIN(name="top0")             # a given name, with or without a rate
+MAIN(fn, name="lane0", mhz=…)  # called on a function: MAINs made in code
 ```
 
-The implementation dispatches on whether the first argument is callable (bare `@MAIN`) or
-numeric (`@MAIN(mhz)`):
+`MAIN` dispatches on whether its first argument is callable. Every form ends in
+`_register_main(func, mhz, name, origin)`, where `origin` is `"file.py:line"` of the
+`MAIN()` call or the decorator, from the caller's frame (`_frame_origin`).
+`_register_main`:
 
-```python
-def MAIN(func_or_mhz=None, *, mhz=None):
-    if callable(func_or_mhz):
-        return _register_main(func_or_mhz, mhz=None)
-    else:
-        if func_or_mhz is not None:
-            mhz = float(func_or_mhz)
-        def decorator(func):
-            return _register_main(func, mhz=mhz)
-        return decorator
+1. **Checks.** `func` must unwrap to a Python function. No simulation run may be in
+   progress: `_sim_run_in_progress`, set by `pypeline_sim.run_sim` from its
+   `@initial(sim)` hooks to the end of its `@final(sim)` hooks, after its MAINs are
+   collected. `_sim_active` cannot serve, as `run_sim` never resets it. A `name` must
+   pass `_check_user_name(name, "MAIN")`.
+2. **Wraps** with `_sim_type_wrap`, so `@MAIN` implies `@hw_func`; it is idempotent, so
+   `@MAIN` stacks with `@hw_func`, `@wires` and `pipeline_latency`.
+3. **Refuses a wrapper already registered** (identity in `_main_registry`): each MAIN
+   needs a function of its own, and the record lives on the wrapper.
+4. **Names it:** `name`, else the function's `@hw_func(name=)` (`_pypeline_user_name`),
+   else `_hw_func_name(_module_prefix(fn.__module__), fn.__name__)`. That is the name
+   PY_TO_LOGIC gives a top-level def of the same module: `_module_prefix` is None for the
+   top design file (`"pypeline_design"`) and a script (`"__main__"`), else the module's
+   name with dots as underscores, as import discovery prefixes it. Names come only from
+   source, so every re-execution of the design (pin-and-confirm passes, `--sim` after a
+   build) gives each MAIN the same name.
+5. **Records** `_MainInfo(name, named, mhz, origin)` on the wrapper as `_pypeline_main`
+   (`named`: given by `name=` or `@hw_func(name=)`), and appends the wrapper to
+   `_main_registry`.
 
-def _register_main(func, mhz):
-    if mhz is not None:
-        _main_mhz_registry[func.__name__] = float(mhz)
-    wrapped = _sim_type_wrap(func)   # implies @hw_func
-    _main_registry.append(wrapped)
-    return wrapped
-```
+`_duplicate_main_names(mains)` returns the message for the first two MAINs whose names
+are equal ignoring case, as VHDL compares them, naming both qualnames and origins; None
+when all differ. `PY_TO_LOGIC` raises it as an `ElaborationError`, and `pypeline_sim`
+exits with it.
 
-**`@MAIN` implies `@hw_func`:** `_register_main` calls `_sim_type_wrap` before registering,
-so every `@MAIN` function automatically gets simulation type wrapping. Users do not need both
-`@MAIN` and `@hw_func` on the same function.
-
-`_register_main` also stamps the rate on the wrapper as `_pypeline_main_mhz` (`None` for a
-bare `@MAIN`). `_main_mhz_registry` is keyed by bare name, so native sim's multi-rate
-refusal reads the stamp instead.
+Consumers of the record: PY_TO_LOGIC elaborates each MAIN under `.name` with rate
+`.mhz` (Steps 5/7/7.2 of PARSE_FILE, and `ELABORATE_LIVE_ROOTS`); `pypeline_sim` uses
+`.name` for root frames, its refusals and build results, and `.mhz` for the multi-rate
+refusal; `stream_perf_probe` labels a `named` MAIN's taps by `.name`.
 
 ### `make_clock(mhz)` — Naming a Clock (`CLK_MHZ` Equivalent)
 
@@ -1553,7 +1568,7 @@ def my_struct_to_bytes(x: my_struct_t) -> uint8_t[4]:
 Unlike `AUTO_PIPELINE(...)` (a callable tag for calls) or `MULTI_CYCLE[...]` (tags a `Reg[T]`
 declaration), `FUNC_WIRES` tags a *function definition* — the same shape as `@MAIN` and
 `@sim_output`. Implementation mirrors `_register_main`'s "implies `@hw_func`" pattern
-(see [`@MAIN` / `@MAIN(mhz)` — Three-Form Decorator](#main--mainmhz--three-form-decorator)
+(see [`@MAIN` / `MAIN(fn)` — Registering MAINs](#main--mainfn--registering-mains)
 above):
 
 ```python
@@ -1585,8 +1600,7 @@ flag). See
 
 | Name | Type | Content | Consumer |
 |---|---|---|---|
-| `_main_registry` | `list` | All `@MAIN`-wrapped functions, in decoration order | `pypeline_sim.py` — to discover MAINs for multi-MAIN sim |
-| `_main_mhz_registry` | `dict[str, float]` | `func.__name__` → MHz | `PY_TO_LOGIC.PARSE_FILE` — populates `parser_state.main_mhz` |
+| `_main_registry` | `list` | Every registered `@MAIN`'s wrapper (each with its `_MainInfo` as `_pypeline_main`), in registration order | `PY_TO_LOGIC.PARSE_FILE` (Steps 3, 5 and 7.2) and `ELABORATE_LIVE_ROOTS`; `pypeline_sim.run_sim`, which runs them |
 | `_global_fifo_type_cache` | `dict[type, (type, type)]` | `T` → the end and wire types of `Fifo[T]` | `_global_fifo_types` |
 | `_part_registry` | `str \| None` | FPGA part string | `PY_TO_LOGIC.PARSE_FILE` — populates `parser_state.part` |
 | `_design_param_decls` | `dict[str, _ParamDecl]` | `param()` declarations of the current design import (reset per import) | `DESIGN_PARAM_LIST_TEXT` (`--list_params`), the parameter banner, `DESIGN_PARAM_REPORT` (`source_provenance.json`) |
@@ -2471,7 +2485,7 @@ shared `Logic.vhdl_module_text` field (also used by the C frontend's `__vhdl__("
 | `make_int_t(n)` | Dynamically creates `intN_t` for arbitrary bit width `n` |
 | `NamedTuple` | Re-export of `typing.NamedTuple` |
 | `@struct` | Adds `__class_getitem__`, stamps canonical `_pypeline_ctype_name`, wraps scalar fields in sim |
-| `@MAIN` | Registers a function as a hardware entry point; implies `@hw_func`; appends to `_main_registry` |
+| `@MAIN` / `MAIN(fn, name=, mhz=)` | Registers a function as a hardware entry point, also one made in code; implies `@hw_func`; records its name and rate and appends to `_main_registry` |
 | `param(name, default, *, type, choices, help, env)` | Declares a build parameter and returns its value for this build: `-D NAME=VALUE`, else environment variable `env` (only when given and set), else `default` ([Design Parameters](#design-parameters-param--d)) |
 | `SET_DESIGN_PARAMS`, `PARSE_DESIGN_PARAM_DEFINES`, `CHECK_DESIGN_PARAM_USE`, `DESIGN_PARAM_REPORT`, `DESIGN_PARAM_LIST_TEXT`, `PRINT_DESIGN_PARAM_BANNER_ONCE` | Driver side of `param()`: install and parse the `-D` table, check how the design uses injected names after an import, and produce the `source_provenance.json` record, the `--list_params` text and the build banner |
 | `@sim_output` | Marks a function as simulation output-only; no-op during convergence passes; executes in final pass per cycle |
@@ -2527,7 +2541,7 @@ shared `Logic.vhdl_module_text` field (also used by the C frontend's `__vhdl__("
 | `sim_call(func, *args)` | Call a pypeline function in simulation mode with scoped operators active |
 | `sim_reset()` | Clear all simulated register state and global wire state; restores declared init values |
 | `sim_wire_reset()` | Clear only `_sim_wire_state`; leaves register state intact |
-| `_sim_inst_stack` | Module-level list: current simulation instance path; stateful `@hw_func`/`@MAIN` wrappers and transformed `for`/`while` iteration bodies push/pop frames |
+| `_sim_inst_stack` | Module-level list: current simulation instance path; `pypeline_sim._call_main` pushes a root frame (`_SIM_MAIN_FRAME_PREFIX` + MAIN name) per MAIN, and stateful `@hw_func` wrappers and transformed `for`/`while` iteration bodies push/pop frames below it |
 | `_sim_reg_state` | Module-level dict: `inst_path → {reg_name: value}`; persistent register values across `sim_call` |
 | `_sim_wire_state` | Module-level dict: `wire_name → int`; current global wire values (keyed by name, not instance) |
 | `_sim_wire_readers` | Module-level dict: `wire_name → set[MAIN fn]`; dependency graph for convergence queue |
@@ -2535,9 +2549,9 @@ shared `Logic.vhdl_module_text` field (also used by the C frontend's `__vhdl__("
 | `_sim_current_main` | Module-level variable; MAIN function currently executing; enables wire reader recording |
 | `_sim_reg_begin_buffer()` | Switch register writes to buffered mode (used by `pypeline_sim.py` per cycle) |
 | `_sim_reg_flush_buffer()` | Commit buffered register writes atomically — the simulated clock edge |
-| `_main_registry` | Module-level list of all `@MAIN`-decorated (wrapped) functions in decoration order |
+| `_main_registry` | Module-level list of all registered `@MAIN` wrappers in registration order |
+| `_sim_run_in_progress` | Module-level bool; `True` from a `pypeline_sim` run's `@initial(sim)` hooks to the end of its `@final(sim)` hooks; `MAIN()` refuses then |
 | `_hook_registry` / `_syn_hook_snapshot` | `@initial`/`@final` hooks of the current design import (cleared with `_main_registry`); the syn hooks the driver ran `@initial` from, reused for syn `@final` |
-| `_main_mhz_registry` | Module-level dict: `func.__name__` → MHz (read by `PY_TO_LOGIC.PARSE_FILE`) |
 | `_part_registry` | Module-level str or None: FPGA part string (read by `PY_TO_LOGIC.PARSE_FILE`) |
 | `SIM_STRICT_ARITH` | Bool flag (default `True`): apply hardware type-promotion and masking on arithmetic |
 | `SIM_RAW_INTS` | Bool flag (default `False`): bypass all `SimVal` wrapping for maximum speed |

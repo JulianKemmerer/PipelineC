@@ -71,6 +71,43 @@ def get_tests() -> list:
             expect_fail=True,
         )
     )
+    # Native sim after a build looks up the build's pipeline placements by
+    # instance name, but live elaboration labels a sub-module MAIN's call to a
+    # same-module function without the module prefix the build gives it
+    # (h[...] vs pl_sub_h[...]), so those placements are dropped. Issue #379.
+    tests.append(
+        Test(
+            name="live_root_submodule_labels_known_issue",
+            category="known_issues",
+            cmd=[INST_DIR / "live_root_submodule_labels_test.py"],
+            expect_fail=True,
+        )
+    )
+    # The top level's connection blocks for a wire's readers come out in set
+    # order (VHDL.WRITE_MULTIMAIN_TOP), so top.vhd changes with PYTHONHASHSEED.
+    # Issue #380.
+    tests.append(
+        Test(
+            name="top_level_reader_order_known_issue",
+            category="known_issues",
+            cmd=[INST_DIR / "top_level_reader_order_test.py"],
+            expect_fail=True,
+        )
+    )
+    # After the sweep meets timing, a failing trim trial whose path ends at an
+    # output port (blamed on MAINs nothing can pipeline) ends the build TIMING
+    # NOT MET instead of restoring the passing implementation. Issue #381.
+    # About 75 seconds on device_models.
+    tests.append(
+        Test(
+            name="sweep_failed_trim_known_issue",
+            category="known_issues",
+            cmd=[PYPELINEC, INST_DIR / "sweep_failed_trim_design.py"]
+            + SYN_TOOL_ARGS["device_models"],
+            needs_out_dir=True,
+            expect_fail=True,
+        )
+    )
     # A sim_print(..., debug=True) call the SAME cycle as sim_finish() races
     # GHDL's write-flush against std.env.finish and the print is silently
     # dropped from the VHDL/cocotb log entirely (present in native sim,
