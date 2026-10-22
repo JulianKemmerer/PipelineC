@@ -61,6 +61,14 @@ COMB_TEST_FILES = [
     ("self_check_fifo_test.py", INST_DIR, []),
     # A global FIFO, Fifo[T] of a struct, between two MAINs with backpressure
     ("self_check_global_fifo_test.py", INST_DIR, []),
+    # Global instances, Inst[f]: a combinational instance driven from two
+    # MAINs, two instances of one counter, a skid buffer instance with
+    # backpressure, an AUTO_PIPELINE(f, latency=2) instance and a make_ram
+    # instance (a pipeline_latency function inside an instance's MAIN)
+    ("self_check_global_inst_test.py", INST_DIR, []),
+    # One function writing fields of two compound wires of different struct
+    # types: each wire's zero-init constant has its own name
+    ("self_check_two_struct_wire_writes_test.py", INST_DIR, []),
     # @MAINs made by factories: counter lanes on one wire's elements, two
     # stateless FIFO lanes from one make_stream_fifo, and a closure writing a
     # wire -- each lane's own state per MAIN in native sim

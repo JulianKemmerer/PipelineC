@@ -974,6 +974,22 @@ simulation's multi-rate refusal:
 | `global_fifo_path_unit_test` | `unit` | the sweep's view of a FIFO MAIN: Vivado-style and sky130-flattened paths inside it go to it alone, a path out of it to the user `@MAIN`, unattributable paths to the user `@MAIN`s; `WHY_NOT_SLICEABLE`; the `TIMING NOT MET` line names `global FIFO rx [...]` |
 | `global_fifo_pipeline_latency_test` | `elab_introspect` | the FIFO MAIN is added after trimming (`_add_late_mains`), which re-checks only the new functions: a design with a `pipeline_latency` function and two collapsing `AUTO_PIPELINE` calls (stale tags) parses, and its stateful MAIN's self-timed submodules equal those without the FIFO |
 
+## Global instance coverage
+
+`Inst[f]` ([guide](pypeline_guide.md#instf--global-instances)), and the zero-init
+constants of a function writing two compound wires:
+
+| Test | Category | What it covers |
+|---|---|---|
+| `global_inst_api_unit_test` | `unit` | `Inst[f]`'s ports and wire type: plain arguments and `out` (scalar and struct), interface ports as one `wire_t` field, a port bundle with a plain field, a one-directional interface port, an `AUTO_PIPELINE` tag; one wire type per hardware and distinct names for two factory calls. Errors: `Inst[a, b]`, a non-hw_func, a `@MAIN`, no ports, an array of interface halves, an argument `out`, a field sharing an argument's name. The MAIN generator's source and its names avoiding the module's; an initializer; native sim's MAIN names; `MAIN()` checking a user's `name=` while `_register_main` takes an instance's long name verbatim |
+| `global_inst_elab_test` | `elab_introspect` | the `<key>_INST` MAIN: a bare MAIN that clock inference gives a user's rate, with bare users taking it through the instance; protected name; `"global instance"` in `func_no_added_latency`; its access records (`out` recorded as `out_v`); an unused instance stays bare; handshake users of a skid buffer instance; an imported module's instance; a constrained `AUTO_PIPELINE` call site inside an instance is validated. Errors: driving an output, users on two rates, an initializer, `Inst[f]` in a function, `AUTO_PIPELINE` of a handshake user, a function already named `adder_INST` |
+| `global_inst_sim_test` | `native_sim` | a combinational instance driven from two `@MAIN`s and read by two; two instances of one `Reg` counter keep their own state; a skid buffer instance under backpressure; `Inst[AUTO_PIPELINE(f, latency=2)]` delays by two; an imported module's instance (`global_inst_sim_sub_design.py`) |
+| `self_check_global_inst_test` | `native_vs_vhdl_sim` (`--comb`), `synth_device_models` (`--comb`) | those shapes plus a `make_ram` instance (a `pipeline_latency` function inside an instance's MAIN): native sim and GHDL match cycle by cycle, and sky130 synthesizes it |
+| `global_inst_path_unit_test` | `unit` | the sweep's view of instance MAINs: a path inside one goes to it alone; a path out of a stateful instance to the user `@MAIN`; a path into an `AUTO_PIPELINE` instance to both; paths without register names leave out only the stateful instance; `WHY_NOT_SLICEABLE`; the `TIMING NOT MET` line names `global instance cnt [...]` |
+| `self_check_two_struct_wire_writes_test` | `native_vs_vhdl_sim` (`--comb`) | one function writing fields of two compound `Wire[T]`s of different struct types: each wire's implicit zero-init constant has its own name, so the VHDL builds and matches native sim |
+
+The global FIFO tests above also cover the generic instance code on its FIFO kind.
+
 ## Factory-made MAIN coverage
 
 `@MAIN`s made in code with `MAIN(fn, name=...)` ([guide](pypeline_guide.md#mains-made-in-code-mainfn-name)):

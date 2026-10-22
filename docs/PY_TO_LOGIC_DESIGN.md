@@ -86,9 +86,10 @@ See [auto-pipelined RAM compilation](AUTO_PIPELINE_DESIGN.md#ram-compiler-sweep-
   - [Write side — `Output[T]`](#write-side--outputt)
   - [Constraints](#constraints-1)
   - [Implementation mapping](#implementation-mapping-1)
-- [Global FIFOs (`Fifo[T]`)](#global-fifos-fifot)
-  - [FIFO discovery](#fifo-discovery)
-  - [Realization: `_realize_global_fifos`](#realization-_realize_global_fifos)
+- [Global instances (`Inst[f]`, `Fifo[T]`)](#global-instances-instf-fifot)
+  - [Instance discovery](#instance-discovery)
+  - [Instance MAINs: Step 7.1](#instance-mains-step-71)
+  - [Checking users: `_check_global_insts`](#checking-users-_check_global_insts)
   - [Pipelines: `func_no_added_latency`](#pipelines-func_no_added_latency)
   - [Which parts are FIFO-specific](#which-parts-are-fifo-specific)
 - [Multi-File Import Support](#multi-file-import-support)
@@ -2569,8 +2570,8 @@ Each function also records where its source touches each global wire:
 
 A variable index records its constant prefix (`w.arr[i].x` → `("arr",)`). Unlike
 `global_wire_driven_paths`, these hold both directions with source lines.
-[Global FIFOs](#global-fifos-fifot) find each end's users from them; phase 2's crossing
-check will use the lines.
+[Global instances and FIFOs](#global-instances-instf-fifot) find their users from them;
+phase 2's crossing check will use the lines.
 
 ### Constraints
 
@@ -2698,84 +2699,119 @@ both use `__class_getitem__` to produce typed descriptors, mirroring `Wire` exac
 
 ---
 
-## Global FIFOs (`Fifo[T]`)
+## Global instances (`Inst[f]`, `Fifo[T]`)
 
-`rx: Fifo[T] = global_fifo(n)` ([guide](pypeline_guide.md#fifot--global-fifos)) is an
-ordinary compound global wire, `{wr: end, rd: end}`, plus a compiler-made MAIN that holds
-the FIFO hardware. `_FifoType` is a `_WireType`
-([`pypeline_DESIGN.md`](pypeline_DESIGN.md#fifot--_fifotype--global-fifos)), so discovery,
-elaboration, the multi-writer rules, readback and the VHDL top treat the wire like any other.
-Three functions write it: the producer drives `wr.stream`, the consumer drives `rd.ready`,
-and the FIFO MAIN drives `wr.ready` and `rd.stream`. Each reads the leaves the others drive
-through its `<name>_PYPELINE_READBACK` input.
+A global instance, `alu0: Inst[f]` ([guide](pypeline_guide.md#instf--global-instances)),
+and a global FIFO, `rx: Fifo[T] = global_fifo(n)`
+([guide](pypeline_guide.md#fifot--global-fifos)), are each an ordinary compound global
+wire plus a compiler-made MAIN that calls one module and binds the wire's paths to its
+ports. Both annotations are `_GlobalInstType`s, which are `_WireType`s
+([`pypeline_DESIGN.md`](pypeline_DESIGN.md#instf--_insttype--global-instances)), so
+discovery, elaboration, the multi-writer rules, readback and the VHDL top treat the wire
+like any other. Several functions write it: the users drive the inputs (a FIFO's
+producer `wr.stream`, its consumer `rd.ready`), and the MAIN drives the outputs (a FIFO's
+`wr.ready` and `rd.stream`). Each reads the leaves the others drive through its
+`<name>_PYPELINE_READBACK` input.
 
-### FIFO discovery
+| | `Inst[f]` | `Fifo[T]` |
+|---|---|---|
+| declaration in `ParserState.pypeline_global_insts` | `GlobalInstDecl` | `GlobalFifoDecl` |
+| its MAIN | `<key>_INST`, registered at PARSE_FILE Step 7.1 | `<key>_FIFO`, added by `_check_global_insts` after clock assignment |
+| the MAIN's clock | inferred: a bare MAIN that `INFER_CLOCK_DOMAINS` reaches through the wire | its ends' clock; inference skips the wire (`joins_clocks` False) |
+| the MAIN's `func_no_added_latency` reason | `"global instance"` | `"global FIFO"` |
+| a handshake user's reason | `"global instance handshake"` | `"global FIFO handshake"` |
+| users | the Wire rules, leaf by leaf | one function, with one instance, per end |
 
-`_discover_global_wires` registers a `_FifoType` declaration like a `Wire` (module-prefixed
-key) and adds a `GlobalFifoDecl` to `ParserState.pypeline_global_fifos`: key, Python name,
-annotation, initializer, `kind` (`global_fifo`, `global_sync_fifo` or `module`), `n`, the
-declaring module's globals, file and line, and `main_name` = `<key>_FIFO`.
-`describe()` gives the report name, `global FIFO rx [top.py:14]`. The initializer is
-required; a declaration without one, or with a value that is neither a `_GlobalFifoInit`
-nor callable, is an `ElaborationError`. The local-annotation ban covers `Fifo` too.
+### Instance discovery
 
-Clock inference must not join a FIFO's producer and consumer: phase 2 makes a FIFO async
-when its ends are on two clocks. `LOGIC.INFER_CLOCK_DOMAINS` skips the keys of
-`pypeline_global_fifos`, next to its `async_wires` skip
-([Clock Domain Inference](#clock-domain-inference-infer_clock_domains)).
+`_discover_global_wires` registers an `_InstType` or `_FifoType` declaration like a `Wire`
+(module-prefixed key) and adds its declaration to `ParserState.pypeline_global_insts`:
+key, Python name, annotation, initializer, the declaring module's globals, file and line,
+`main_name` (the key plus `ann.main_suffix`) and its MAIN's no-added-latency reason
+(`ann.kind_name`). A `GlobalFifoDecl` also holds `kind` (`global_fifo`,
+`global_sync_fifo` or `module`), `n` and `data_t`. `describe()` gives the report name,
+`global instance alu0 [top.py:5]` or `global FIFO rx [top.py:14]`, and
+`label(path, names)` a recorded path as the user writes it. An `Inst[f]` with an
+initializer is an `ElaborationError`, and so is a `Fifo[T]` without one (or with a value
+that is neither a `_GlobalFifoInit` nor callable). The local-annotation ban covers both,
+`Inst[f]` with its own message.
+
+Discovery only records declarations: `ELABORATE_LIVE_ROOTS` runs it too, and must not
+register MAINs.
 
 `_elab_name` resolves a module's own wire (step 3) before its module globals (step 4):
 a FIFO's name is also bound to its initializer at module level, and so is a
 `make_clock` wire's.
 
-### Realization: `_realize_global_fifos`
+### Instance MAINs: Step 7.1
+
+`_register_global_inst_mains`, right before Step 7.2, registers each `Inst` declaration's
+MAIN. It resolves `decl.hardware()` (`ann.hardware`; a `GlobalInstError` becomes an
+`ElaborationError` with the declaration's line), builds the MAIN with `decl.make_main`
+(`pypeline._make_global_inst_main`, passing `top_level_module_globals` as `reserved`),
+and calls `pypeline._register_main(main, None, "<key>_INST", decl.loc)`. It records
+`func_no_added_latency["<key>_INST"] = "global instance"`. Step 7.2 then elaborates it as
+a made MAIN with a bare rate, and the rest of PARSE_FILE treats it as a MAIN: the instance
+walk, the AUTO_PIPELINE and `pipeline_latency` checks (of a call site inside it too),
+trimming, the dangling check, the call graph, and clock inference, which joins it with its
+users through the wire. Step 7.2's checks report a name some function already has.
+
+### Checking users: `_check_global_insts`
 
 `PARSE_FILE` calls it right after `INFER_CLOCK_DOMAINS`, and so after trimming and
-`_build_func_call_graph`, before the global-wire rule checks. For each FIFO and each end
-`E`, the users are the functions whose access records
-([Access records](#access-records)) overlap `(E,)` (`_path_overlaps`: one path contains
-the other). Each of these is an `ElaborationError` naming the FIFO, the functions and
-their first access lines:
+`_build_func_call_graph`, before the global-wire rule checks. The users of a declaration
+are the functions, other than its own MAIN, whose access records
+([Access records](#access-records)) touch its wire. Paths are compared in the VHDL-safe
+tokens the records hold (`_sanitize_ref_tok`: a port `out` is recorded as `out_v`), and
+`_global_inst_py_names` maps them back for messages. `decl.check_users` raises an
+`ElaborationError` naming the declaration, the functions and their first access lines:
 
-- an end no function uses;
-- an end used by more than one function, or by a function with more than one instance;
-- a user that drives the half the FIFO drives (`wr.ready`, `rd.stream`), a whole end or the
-  whole wire;
-- the ends' MAINs (the first element of each user's instance path) on different
-  `(main_mhz, main_clk_group)`: "Clock-crossing FIFOs are not supported yet". A bare MAIN
-  gets a note that it does not take its rate through a FIFO.
+- `Inst`: a user write that overlaps a leaf the instance drives
+  (`_global_inst_driven_paths`: each interface port's returned half and each plain output
+  port), with a list of the inputs (`_global_inst_input_paths`); users whose MAINs (the
+  first element of each of their instance paths) and the instance's own MAIN are on more
+  than one `(main_mhz, main_clk_group)`.
+- `Fifo`, for each end `E`, whose users are those overlapping `(E,)` (`_path_overlaps`: one
+  path contains the other): no user; more than one user; a user with more than one
+  instance; a user driving the half the FIFO drives (`wr.ready`, `rd.stream`), a whole end
+  or the whole wire. Then the ends' MAINs on different clocks: "Clock-crossing FIFOs are
+  not supported yet", with a note when a bare MAIN did not take its rate through the FIFO.
+  This is where an async FIFO would branch off instead. It returns the write end's MAIN's
+  clock.
 
-Then it builds the FIFO MAIN with `pypeline._make_global_fifo_main`, passing
-`top_level_module_globals` as `reserved`. A port mismatch (`GlobalFifoError`) becomes an
-`ElaborationError` with the declaration's line. After the handshake checks below, every
-FIFO MAIN goes to `_add_late_mains`
+Each user that both drives and reads one interface port with both halves is a handshake
+user and gets the kind's reason in `func_no_added_latency`: in a pipeline the port's reads
+would be sampled at the first stage and its writes published at the last. An
+`AUTO_PIPELINE` call site whose target is a handshake user is an `ElaborationError` that
+points to `make_stream_auto_pipeline`.
+
+Then each FIFO's MAIN, built from the same `decl.hardware()`, goes to `_add_late_mains`
 ([MAINs added after clock assignment](#mains-added-after-clock-assignment-_add_late_mains))
-as a `LateMain` on the write end's MAIN's clock (`main_mhz`, `main_syn_mhz`,
-`main_clk_group`), with reason `"global FIFO"` and owner `"<describe()>: its FIFO MAIN"`.
-An existing function of the same name, compared case-insensitively, is an error there.
-Being in `main_mhz` makes its name protected in the emission registry. The global-wire
-rule loop then runs as usual: every writer of the FIFO wire has one instance, and the
-writers' regions are disjoint.
+as a `LateMain` on its ends' clock, with reason `"global FIFO"` and owner
+`"<describe()>: its FIFO MAIN"`. Being in `main_mhz` makes either kind's MAIN name
+protected in the emission registry. The global-wire rule loop then runs as usual: every
+writer of an instance's wire has one instance, and the writers' regions are disjoint.
 
 ### Pipelines: `func_no_added_latency`
 
 `ParserState.func_no_added_latency` (function → reason) is honored by
 `Logic.CAN_HAVE_ADDED_LATENCY` and mirrored in `SWEEP.WHY_NOT_SLICEABLE`
 ([`AUTO_PIPELINE_DESIGN.md`](AUTO_PIPELINE_DESIGN.md#functions-that-take-no-added-latency)).
-Realization adds every FIFO MAIN ("global FIFO") and every user that both drives and reads
-one end ("global FIFO handshake"): in a pipeline its reads would be sampled at the first
-stage and its writes published at the last. An `AUTO_PIPELINE` call site whose target is a
-handshake user is an `ElaborationError` that points to `make_stream_auto_pipeline`.
+It holds every instance and FIFO MAIN and every handshake user. An AUTO_PIPELINE call
+inside an instance's MAIN still gets its region's stages: the tag decouples the region
+from the MAIN (`AUTO_PIPELINE.ADDED_LATENCY_BLOCKER`). `ELABORATE_LIVE_ROOTS` gives a
+registered root marked `_pypeline_global_inst` the same reason, so native simulation's
+`pipeline_latency` model aligns nothing around a `pipeline_latency` function inside an
+instance (a `make_ram` instance, say), as the hardware does not.
 
 ### Which parts are FIFO-specific
 
-The FIFO MAIN is a compiler-made MAIN that calls one module and binds the wire's paths to
-its ports. Generating it, adding it (`_add_late_mains`, which any MAIN made after clock
-assignment uses), the instance-table walk, the sweep's path ownership and its report name
-are not specific to FIFOs. What is FIFO-specific: the
-`{wr, rd}` wire type and its mapping onto the module's port names
-(`_stream_module_ports`), one user per end, the halves a user must not drive, the skip in
-clock inference, and the handshake rule.
+Generating the MAIN (`_make_global_inst_main`), registering or adding it, the
+instance-table walk, the access-record checks, the handshake rule, the sweep's path
+ownership and the report name are shared by both kinds. What is FIFO-specific: the
+`{wr, rd}` wire type and the binding of the module's two stream ports onto it
+(`_stream_module_ports`), one user per end, building its MAIN only after clock assignment,
+and the skip in clock inference.
 
 ---
 
@@ -3038,7 +3074,11 @@ makes it protected in `EmissionNames`, so it is emitted verbatim.
 
 `ELABORATE_LIVE_ROOTS` has no lost-MAIN check: it elaborates the roots it is given. A
 root in `_main_registry` goes through `_elaborate_main` under its MAIN name, so native
-sim's pipeline models are keyed like the build's MAINs.
+sim's pipeline models are keyed like the build's MAINs; a root marked
+`_pypeline_global_inst` (a global instance's or FIFO's MAIN) also gets that kind as its
+`func_no_added_latency` reason. A generated root exec'd in a copy of a design module's
+globals (such a MAIN) is discovered from that module's own file, whose wires its body
+names; other generated roots are parsed from their own source.
 
 ### MAINs added after clock assignment: `_add_late_mains`
 
@@ -4819,9 +4859,10 @@ The logic lives in `LOGIC.INFER_CLOCK_DOMAINS(var_to_rw_main_funcs, var_to_read_
 - A second pass handles C-style clock-crossing variables (`_WRITE`/`_READ` pairs) via
   `var_to_rw_main_funcs`; these are empty for the Python path.
 - Repeats until no further propagation occurs (fixed-point loop).
-- Skips `async_wires` and the wires of `parser_state.pypeline_global_fifos`: a global
-  FIFO's ends keep their own clocks, and its FIFO MAIN takes theirs when it is realized
-  ([Global FIFOs](#global-fifos-fifot)).
+- Skips `async_wires` and the wires of `parser_state.pypeline_global_insts` whose
+  declaration has `joins_clocks` False (global FIFOs): a FIFO's ends keep their own clocks,
+  and its FIFO MAIN, added later, takes theirs. A global instance's wire is not skipped,
+  so inference passes through it ([Global instances](#global-instances-instf-fifot)).
 
 `INFER_CLOCK_DOMAINS` is a standalone function so it can be reused by both paths —
 `GET_CLK_CROSSING_INFO` (C path only) calls it too, rather than embedding its own copy of
@@ -6412,6 +6453,8 @@ top.py  (single-file or multi-file entry point)
   │                                     getattr lookup + FuncLogicLookupTable (sub-files pre-elaborated)
   │                   └─ bit_dup/rotl/rotr/bswap/bit_assign/array_uint/concat → BIT_MANIP submodules
   │
+  ├─ _register_global_inst_mains()      Step 7.1: register each Inst[f]'s <key>_INST MAIN
+  │
   ├─ Registered MAINs (Step 7.2)        every other @MAIN elaborated under its MAIN name;
   │                                     duplicate names and lost MAINs are ElaborationErrors
   │
@@ -6430,8 +6473,8 @@ top.py  (single-file or multi-file entry point)
   ├─ INFER_CLOCK_DOMAINS({}, {}, {}, parser_state)
   │   Propagates known MHz to board-support MAINs sharing global wires (fixed-point loop)
   │
-  ├─ _realize_global_fifos()            check each Fifo[T]'s ends, add its <key>_FIFO MAIN
-  │                                     (_add_late_mains)
+  ├─ _check_global_insts()              check each Inst[f]'s / Fifo[T]'s users, add each
+  │                                     FIFO's <key>_FIFO MAIN (_add_late_mains)
   │
   └─ ParserState → throughput placement → VHDL backend
                   (SWEEP_DESIGN.md)      (VHDL_DESIGN.md)

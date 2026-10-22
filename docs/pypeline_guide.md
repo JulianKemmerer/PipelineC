@@ -29,6 +29,7 @@ For getting started information see the [README](README.md).
 15. [Factory-Generated Types](#factory-generated-types)
 16. [Custom Operators](#custom-operators)
 17. [Global Signals](#global-signals)
+    - [`Inst[f]` — global instances](#instf--global-instances)
     - [`Fifo[T]` — global FIFOs](#fifot--global-fifos)
 
 **Part II — Temporal behavior**
@@ -2813,6 +2814,106 @@ In code without pipeline stages, such as a stateful `@MAIN` or a `--comb` build,
   `@MAIN`s and every `--comb` simulation apart from `AUTO_PIPELINE(..., latency=N)`
   call sites.
 
+### `Inst[f]` — global instances
+
+A global instance is one instance of a hardware function placed at module level. Its ports
+become a global wire, so any function in the design can drive its inputs and read its
+outputs. The compiler adds the `@MAIN` that holds the instance:
+
+```python
+from pypeline import *                    # Inst included
+
+@hw_func
+def alu(a: uint8_t, b: uint8_t) -> uint8_t:
+    return a + b
+
+alu0: Inst[alu]                           # one alu, shared by the design
+
+@MAIN
+def decoder():
+    alu0.a = 3                            # drive its inputs
+    alu0.b = 4
+
+@MAIN
+def writeback():
+    result = alu0.out                     # read its output, in the same cycle
+```
+
+This replaces declaring a wire per input and output and writing a wiring `@MAIN` that calls
+the function (PipelineC's `GLOBAL_FUNC_INST` macros).
+
+**Ports.** Each port of `f` is a field of the instance:
+
+| Port of `f` | Field | Driven by |
+|---|---|---|
+| argument `a` | `alu0.a` | your functions |
+| the return value | `alu0.out` | the instance |
+| an [interface port](#bidirectional-ports-interface) `x_if`: a `.fwd_t` or `.fb_t` argument plus the return field of the same name | `alu0.x_if`, one field holding both halves (`.stream` and `.ready` for a stream) | an input port: your functions drive the feedforward half and the instance the reverse half (`.ready`); an output port the other way round |
+| a plain field of a returned port bundle, such as an `idle` flag next to stream ports | `alu0.idle` | the instance |
+
+A stream module is an instance with its stream ports as fields:
+
+```python
+sb: Inst[make_skid_buffer(cmd_t)]
+
+@MAIN
+def producer():
+    sb.stream_in_if.stream.data = next_cmd()
+    sb.stream_in_if.stream.valid = 1
+    if sb.stream_in_if.ready:             # accepted
+        ...
+
+@MAIN
+def consumer():
+    sb.stream_out_if.ready = 1
+    if sb.stream_out_if.stream.valid:
+        run(sb.stream_out_if.stream.data)
+```
+
+The compiler adds one `@MAIN` per instance, `<name>_INST` (`alu0_INST` for `alu0`,
+prefixed with the module's name for an instance declared in an imported module).
+Generated VHDL shows it under that name, and timing reports call it
+`global instance alu0 [top.py:7]`.
+
+Rules:
+
+- `f` is a `@hw_func`, including one made by a factory or written in raw VHDL, or an
+  `AUTO_PIPELINE(f)` tag. A `@MAIN` cannot be an instance.
+- Its ports follow the [`Wire[T]` rules](#wiret--shared-combinational-signal) leaf by
+  leaf: several functions may drive different inputs, each function with exactly one
+  instance in the hierarchy; any number of functions may read; an input that no function
+  drives reads zero.
+- Driving a field the instance drives is an error that names the instance and its inputs.
+- Writes into an input use constant indices or whole values. An instance's wire always has
+  several writers (your functions and the instance), and a variable-index write is not
+  supported on a wire with more than one writer function
+  ([Splitting a compound wire](#splitting-a-compound-wire-across-multiple-writer-functions)).
+- `Inst[f]` takes no initializer and is declared at module level only.
+- An argument named `out` next to a plain return value is an error, as is a return field
+  that has an argument's name without being the other half of its interface port. So is a
+  function named `<name>_INST`, which would clash with the instance's `@MAIN`.
+- In the generated VHDL a field whose name is a VHDL reserved word gets a suffix, as struct
+  fields do: `alu0.out` is the record field `out_v`.
+
+**Clock.** An instance runs on the clock of the functions that use it. Clock inference
+passes through it as through a wire: a bare `@MAIN` that uses an instance takes the rate of
+another `@MAIN` that uses it. Users on two different clocks are an error. A
+[global FIFO](#fifot--global-fifos) is the exception: inference does not pass through it.
+
+**Latency.** An instance adds no registers of its own, so its outputs follow its inputs
+like a function call's: in the same cycle, or after `f`'s own registers. The sweep never
+pipelines an instance's `@MAIN`. To pipeline an instance, make its hardware an
+`AUTO_PIPELINE` tag, `alu0: Inst[AUTO_PIPELINE(alu)]` (or `AUTO_PIPELINE(alu, latency=2)`
+for a fixed latency): its inputs are then sampled and its outputs driven
+[aligned with the pipeline](#global-wires-in-pipelined-code). A function that both drives
+and reads one interface port of an instance, as a producer driving `.stream` and reading
+`.ready` does, never gets pipeline stages: its handshake would break. `AUTO_PIPELINE` of
+such a function is an error that points to
+[`make_stream_auto_pipeline`](#pipelined-stream-wrappers-make_stream_auto_pipeline).
+
+**Simulation.** Native simulation runs each instance as the same compiler-made `@MAIN`, with
+its own state: two instances of one stateful function keep separate registers.
+
 ### `Fifo[T]` — global FIFOs
 
 A global FIFO is a buffer between a producer function and a consumer function anywhere in
@@ -2874,10 +2975,12 @@ instead, written in Pypeline or in raw VHDL: for example `make_stream_fifo(T, 25
 the stream modules built on `make_stream_interface(T)` do. The compiler checks them and
 names the module if they don't match.
 
-The compiler adds one `@MAIN` per global FIFO, `<name>_FIFO` (`rx_FIFO` for `rx`, prefixed
-with the module's name for a FIFO declared in an imported module). It holds the FIFO
-hardware and runs on its ends' clock. Generated VHDL shows it under that name, and timing
-reports call it `global FIFO rx [top.py:14]`.
+A global FIFO is a [global instance](#instf--global-instances) of its hardware whose two
+stream ports are the ends `.wr` and `.rd`, with the stricter rules below. The compiler adds
+one `@MAIN` per global FIFO, `<name>_FIFO` (`rx_FIFO` for `rx`, prefixed with the module's
+name for a FIFO declared in an imported module). It holds the FIFO hardware and runs on its
+ends' clock. Generated VHDL shows it under that name, and timing reports call it
+`global FIFO rx [top.py:14]`.
 
 **Across clocks (COMING SOON).** Today both ends must be on one clock. The same
 `global_fifo(n)` will become an async FIFO when its two ends are used on different clocks,
@@ -6633,8 +6736,10 @@ tracks the row.
 | Source model | **Crossings written in Pypeline** | Not supported | A crossing cannot be written as a sender function on one clock plus a receiver on another; crossings are async wires and global FIFOs | — |
 | Source model | **Constraints on individual crossings** | Not supported | No `set_max_delay -datapath_only` or `set_bus_skew` on crossing paths; paths between clocks are untimed | — |
 | Source model | **Multi-clock constraints on every synthesis tool** | Not supported | Quartus ignores its clock groups when a design has three or more clocks, and Gowin, Efinity, PyRTL and DEVICE_MODELS stop on designs with more than one clock | — |
-| Source model | **Global instances of functions** | Not supported | A function cannot be placed at module level with its ports as global wires; write a wiring `@MAIN` that calls it | — |
-| Source model | **Global FIFOs made by library code** | Not supported | A `Fifo[T]` is a module-level declaration, so a factory cannot create one | — |
+| Source model | **Arrays of interface ports on a global instance** | Not supported | `Inst[f]` rejects an argument or return field that is an array of interface port halves, such as a fan-out port. Wrap `f` in a `@hw_func` with one port per element, or declare the wires and a wiring `@MAIN` | — |
+| Source model | **Other wrappers as a global instance's hardware** | Not supported | `Inst[f]` takes a `@hw_func` or an `AUTO_PIPELINE(f)` tag. For `AUTO_FSM(f)` or `MULTI_CYCLE[...]`, call it in a `@hw_func` and make that the instance | — |
+| Source model | **A global instance on a stated clock** | Not supported | An instance runs on the clock of the functions that use it ([`Inst[f]`](#instf--global-instances)) | — |
+| Source model | **Global FIFOs and instances made by library code** | Not supported | A `Fifo[T]` or `Inst[f]` is a module-level declaration, so a factory cannot create one | — |
 | Source model | **Global FIFO chains with skid buffers** | Not supported | No `chain(skid, global_fifo(64), skid)` initializer; put a skid buffer inside the producer or consumer function | — |
 | Source model | **Global FIFO sizes in Python** | Not supported | No `rx.depth` or `rx.capacity_beats` on a global FIFO for sizing credits and timeouts | — |
 | Source model | **Connecting two wires through a FIFO** | Not supported | No `CONNECT(a, b, global_fifo(64))` between two stream wires; declare a `Fifo[T]` | — |

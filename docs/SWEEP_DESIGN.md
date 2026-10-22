@@ -1201,22 +1201,31 @@ feature's module:
   latencies and calls `DO_SEEDED_CONFIRM_OR_SWEEP`: one confirmation synthesis of
   the seeded table, falling back to a full planned sweep only if it fails.
   `RECORD_CONFIRMATION_RESULTS` records it in `sweep_history.json`.
-- **Global FIFO MAINs.** Each Pypeline global FIFO is a compiler-made MAIN,
-  `<key>_FIFO`, on its ends' clock
-  ([PY_TO_LOGIC_DESIGN.md](PY_TO_LOGIC_DESIGN.md#global-fifos-fifot)). It takes no
-  added latency (`"global FIFO"` in `func_no_added_latency`), so it is planless.
-  `GET_MAIN_INSTS_FOR_PATH_REPORT` gives it only the paths shown to be inside it:
-  first, before any other attribution, a path whose start and end registers are
-  both named under its instance goes to it alone (`SYN.PATH_ENDS_IN_MAIN`, which
-  also reads sky130 STA's flattened `$flatten\rx_fifo_0clk_<hash>.\...` names).
-  Every other path leaves FIFO MAINs out: one with one end in a FIFO stays with
-  the user MAIN at its other end, and the "all MAINs" fallbacks (no register names,
-  sky130 cells with no hierarchy) cover the user MAINs only. So a path inside a
-  FIFO is reported once. `MAIN_DISPLAY_NAME` names the FIFO MAIN as
-  `global FIFO rx [top.py:14]` in the planless warning and in
-  `PRINT_TIMING_FAILURES`, whose `TIMING NOT MET` line fails the build. The user
-  MAIN of a path out of a FIFO is often a handshake user
-  (`"global FIFO handshake"`), which is planless too.
+- **Global instance and FIFO MAINs.** Each Pypeline global instance and global FIFO
+  is a compiler-made MAIN, `<key>_INST` or `<key>_FIFO`
+  ([PY_TO_LOGIC_DESIGN.md](PY_TO_LOGIC_DESIGN.md#global-instances-instf-fifot));
+  `GLOBAL_INST_MAINS` maps each MAIN name to its declaration. It takes no added
+  latency (`"global instance"` / `"global FIFO"` in `func_no_added_latency`), so
+  the MAIN itself is planless; an AUTO_PIPELINE call inside an instance
+  (`Inst[AUTO_PIPELINE(f)]`) is a region that still gets stages.
+  `GET_MAIN_INSTS_FOR_PATH_REPORT` gives an instance MAIN the paths shown to be
+  inside it alone: first, before any other attribution, a path whose start and end
+  registers are both named under its instance goes to it alone
+  (`SYN.PATH_ENDS_IN_MAIN`, which also reads sky130 STA's flattened
+  `$flatten\rx_fifo_0clk_<hash>.\...` names). Every other path leaves out the
+  instance MAINs in which nothing can take added latency
+  (`GLOBAL_INST_MAIN_CAN_TAKE_LATENCY` is false: no instance under the MAIN clears
+  `AUTO_PIPELINE.ADDED_LATENCY_BLOCKER`), such as every FIFO and every stateful
+  module: a path with one end in one stays with the user MAIN at its other end, and
+  the "all MAINs" fallbacks (no register names, sky130 cells with no hierarchy)
+  leave them out too. An instance MAIN with an AUTO_PIPELINE region stays on such
+  paths like any MAIN, so its region gets the feedback, scoped by
+  `PATH_MAIN_ROLES`. So a path inside an instance is reported once.
+  `MAIN_DISPLAY_NAME` names an instance MAIN by its declaration,
+  `global instance alu0 [top.py:5]` or `global FIFO rx [top.py:14]`, in the
+  planless warning and in `PRINT_TIMING_FAILURES`, whose `TIMING NOT MET` line fails
+  the build. The user MAIN of a path out of an instance is often a handshake user
+  (`"global FIFO handshake"`, `"global instance handshake"`), which is planless too.
 
 ## 5. Latency memory
 

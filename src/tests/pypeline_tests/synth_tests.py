@@ -151,6 +151,8 @@ SYNTH_TEST_FILES = [
     ("global_wire_nested_split_test.py", INST_DIR, ["--comb"], DM),
     # A global FIFO: its compiler-made FIFO MAIN and the three-writer FIFO wire
     ("self_check_global_fifo_test.py", INST_DIR, ["--comb"], DM),
+    # Global instances: their compiler-made <key>_INST MAINs and instance wires
+    ("self_check_global_inst_test.py", INST_DIR, ["--comb"], DM),
     # @MAINs made by factories: lane entities named by name=, a closure
     # writing a wire
     ("self_check_factory_main_test.py", INST_DIR, ["--comb"], DM),

@@ -436,8 +436,11 @@ PipelineC's `GLOBAL_*` macros are shorthand for a common pattern:
 2. Instantiate the function (possibly with buffering / handshake logic).
 3. Wire everything together inside a dedicated `@MAIN`.
 
-pypeline makes all three steps explicit. The subsections below show each macro and its
-pypeline equivalent.
+In pypeline one declaration does all three: a global instance, `name: Inst[f]`, whose ports
+are fields of one global wire, plus a compiler-made `@MAIN` named `name_INST`
+([pypeline_guide.md: `Inst[f]` — global instances](pypeline_guide.md#instf--global-instances)).
+The buffering and handshake logic goes in `f`, usually a library stream wrapper. The
+subsections below show each macro and its pypeline equivalent.
 
 ### 8a. GLOBAL_FUNC_INST — combinational, zero latency
 
@@ -447,14 +450,16 @@ pypeline equivalent.
 GLOBAL_FUNC_INST(my_inst, out_t, my_func, in_t)
 ```
 ```python
-# pypeline
-my_inst_in:  Wire[in_t]
-my_inst_out: Wire[out_t]
+# pypeline: my_func(x: in_t) -> out_t
+my_inst: Inst[my_func]
 
-@MAIN
-def my_inst_main():
-    my_inst_out = my_func(my_inst_in)
+# my_inst_in  -> my_inst.x    (each argument by its name)
+# my_inst_out -> my_inst.out  (the return value)
 ```
+
+The instance adds no registers, and the sweep never pipelines its `@MAIN`, so it stays
+combinational. A hand-written wiring `@MAIN` (`my_inst_out = my_func(my_inst_in)` between two
+`Wire[T]`s) would be a `@MAIN` the sweep may pipeline.
 
 ### 8b. GLOBAL_PIPELINE_INST — registered input + output (≥2 cycle latency)
 
@@ -464,17 +469,16 @@ GLOBAL_PIPELINE_INST(my_inst, out_t, my_func, in_t)
 ```
 ```python
 # pypeline
-my_inst_pipeline = make_auto_pipeline(my_func, has_input_reg=True, has_output_reg=True)
+my_inst: Inst[AUTO_PIPELINE(my_func)]
+# ...or a fixed depth: Inst[AUTO_PIPELINE(my_func, latency=2)]
 
-my_inst_in:  Wire[in_t]
-my_inst_out: Wire[out_t]
-
-@MAIN
-def my_inst_main():
-    my_inst_out = my_inst_pipeline(my_inst_in)
+# my_inst_in  -> my_inst.x
+# my_inst_out -> my_inst.out, the stages' depth later
 ```
 
-See [pypeline_guide.md: `AUTO_PIPELINE(...)`](pypeline_guide.md#auto_pipeline).
+The sweep chooses the stages, input and output registers included, instead of the macro's
+fixed input and output registers. See
+[pypeline_guide.md: `AUTO_PIPELINE(...)`](pypeline_guide.md#auto_pipeline).
 
 The wrapped function may be flat or hierarchical. Neither frontend requires users to
 split its source into helper functions sized like pipeline stages: elaboration exposes
@@ -499,25 +503,15 @@ GLOBAL_VALID_READY_PIPELINE_INST(name, out_t, func, in_t, MAX_IN_FLIGHT)
 from stream.stream_auto_pipeline import make_stream_auto_pipeline
 
 # No MAX_IN_FLIGHT: the FIFO is sized from the core's discovered latency.
-name_pipeline_func = make_stream_auto_pipeline(func)
+name: Inst[make_stream_auto_pipeline(func)]
 # ...or seed the throughput sweep with a known core depth (a starting guess,
 # not a fixed latency; latency= and max_latency= are also accepted):
-# name_pipeline_func, name_pipeline_t = make_stream_auto_pipeline(func, start_latency=4)
-in_intrf = name_pipeline_func.in_intrf
-out_intrf = name_pipeline_func.out_intrf
+# name: Inst[make_stream_auto_pipeline(func, start_latency=4)]
 
-name_in:        Wire[in_intrf.stream_t]    # driven by the upstream producer
-name_in_ready:  Wire[uint1_t]              # read by the upstream producer
-name_out:       Wire[out_intrf.stream_t]   # read by the downstream consumer
-name_out_ready: Wire[uint1_t]              # driven by the downstream consumer
-
-@MAIN
-def name_main():
-    result = name_pipeline_func(
-        in_intrf.fwd_t(stream=name_in), out_intrf.fb_t(ready=name_out_ready)
-    )
-    name_out      = result.stream_out_if.stream
-    name_in_ready = result.stream_in_if.ready
+# name_in        -> name.stream_in_if.stream    driven by the upstream producer
+# name_in_ready  -> name.stream_in_if.ready     read by the upstream producer
+# name_out       -> name.stream_out_if.stream   read by the downstream consumer
+# name_out_ready -> name.stream_out_if.ready    driven by the downstream consumer
 ```
 
 To accept a word every cycle, `MAX_IN_FLIGHT` must cover the time each word holds an
@@ -623,10 +617,10 @@ from stream.stream_multi_cycle import make_stream_multi_cycle, make_stream_auto_
 
 name_mcp_func = make_stream_multi_cycle(func, ncycles)
 # ...or let the Vivado sweep pick the cycle count (start at a known-good one):
-# name_mcp_func, name_mcp_t = make_stream_auto_multi_cycle(func, start_latency=ncycles)
+# name_mcp_func = make_stream_auto_multi_cycle(func, start_latency=ncycles)
 
-# Wire and @MAIN pattern identical to 8c above,
-# substituting name_mcp_func for name_pipeline_func.
+name: Inst[name_mcp_func]
+# The same ports as 8c: name.stream_in_if and name.stream_out_if
 ```
 
 See [pypeline_guide.md: Multi-Cycle Paths: `MULTI_CYCLE[...]`](pypeline_guide.md#multi-cycle-paths-multi_cycle).
@@ -643,10 +637,8 @@ of `AUTO_PIPELINE`/`MULTI_CYCLE[...]`.
 # pypeline
 from stream.stream_auto_fsm import make_stream_auto_fsm
 
-name_auto_fsm_func = make_stream_auto_fsm(func)
-
-# Wire and @MAIN pattern identical to 8c above,
-# substituting name_auto_fsm_func for name_pipeline_func.
+name: Inst[make_stream_auto_fsm(func)]
+# The same ports as 8c: name.stream_in_if and name.stream_out_if
 ```
 
 Unlike `AUTO_FSM(func)`'s own raw call site (which drops a result if the

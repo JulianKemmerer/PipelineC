@@ -153,7 +153,7 @@ def run_sim(
             pypeline.RESET_AUTO_MULTI_CYCLE_TRACKING()
             module = import_design(design_file)
 
-    wire_info, fifo_decls = _discover_wire_names(module)
+    wire_info, inst_decls = _discover_wire_names(module)
 
     # Reset and initialise all wire and register state.
     pypeline.sim_reset()
@@ -161,25 +161,27 @@ def run_sim(
         pypeline._sim_wire_state[name] = pypeline.sim_zero(inner_ctype)
     pypeline._sim_wire_readers.clear()
 
+    # Each global instance and FIFO runs as the MAIN the compiler makes for
+    # it, built by the same generator and registered like any made @MAIN.
+    # Native sim runs one clock, so a FIFO's is single-clock too.
+    for mod, bare_name, ann in inst_decls:
+        mod_globals = vars(mod)
+        hardware = ann.hardware(bare_name, mod_globals.get(bare_name))
+        main_name = pypeline._global_inst_main_name(mod.__name__, bare_name, ann)
+        pypeline._register_main(
+            pypeline._make_global_inst_main(
+                main_name, bare_name, ann, hardware, mod_globals
+            ),
+            None,
+            main_name,
+            f"{ann.kind_name} {bare_name}",
+        )
+
     mains = list(pypeline._main_registry)
     if not mains:
         print("No @MAIN functions found in design — nothing to simulate.")
         return
     _refuse_multi_rate(mains)
-    # Each global FIFO runs as the MAIN the compiler would add for it, built by
-    # the same generator; never registered in _main_registry
-    for mod, bare_name, ann in fifo_decls:
-        mod_globals = vars(mod)
-        prefix = pypeline._module_prefix(mod.__name__)
-        mains.append(
-            pypeline._make_global_fifo_main(
-                f"{prefix + '_' if prefix else ''}{bare_name}_FIFO",
-                bare_name,
-                ann,
-                mod_globals[bare_name],
-                mod_globals,
-            )
-        )
     # Each MAIN's name is its root instance frame (_call_main), so two MAINs
     # with one name would share state, as their hardware cannot
     duplicate = pypeline._duplicate_main_names(mains)
@@ -460,10 +462,10 @@ def _convergence_loop(mains: list, main_arg_types: dict, cycle: int) -> None:
 
 
 def _discover_wire_names(module) -> tuple:
-    """Return (wires, fifos): (qualified_name, inner_ctype) for all
-    Wire/Input/Output/Fifo in module and imported sub-modules,
-    recursively/transitively, and (module, name, Fifo annotation) for each
-    Fifo[T] declaration. Names are module-qualified ("<module>.<wire>",
+    """Return (wires, insts): (qualified_name, inner_ctype) for all
+    Wire/Input/Output/Inst/Fifo in module and imported sub-modules,
+    recursively/transitively, and (module, name, annotation) for each
+    Inst[f] / Fifo[T] declaration. Names are module-qualified ("<module>.<wire>",
     matching pypeline.py's _GlobalWireRewriter) so two unrelated modules
     declaring a same-named Wire[T] (e.g. both calling it "key") don't collide.
     """
@@ -472,7 +474,7 @@ def _discover_wire_names(module) -> tuple:
     seen_ids: set = set()
     result: list = []
     result_keys: set = set()
-    fifos: list = []
+    insts: list = []
 
     def _scan(mod):
         if id(mod) in seen_ids:
@@ -486,8 +488,8 @@ def _discover_wire_names(module) -> tuple:
                 if qualified not in result_keys:
                     result.append((qualified, pypeline._wire_ann_inner_ctype(ann)))
                     result_keys.add(qualified)
-                    if isinstance(ann, pypeline._FifoType):
-                        fifos.append((mod, name, ann))
+                    if isinstance(ann, pypeline._GlobalInstType):
+                        insts.append((mod, name, ann))
                 if ann.volatile:
                     pypeline._sim_wire_volatile.add(qualified)
         for attr in vars(mod).values():
@@ -495,7 +497,7 @@ def _discover_wire_names(module) -> tuple:
                 _scan(attr)
 
     _scan(module)
-    return result, fifos
+    return result, insts
 
 
 def _evict_design_modules():

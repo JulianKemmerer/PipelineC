@@ -131,7 +131,7 @@ def tx_reader():
         ("wr", "stream"),
         ("rd", "ready"),
     }
-    decl = state.pypeline_global_fifos["rx"]
+    decl = state.pypeline_global_insts["rx"]
     assert (decl.kind, decl.n, decl.line) == ("global_fifo", 4, 8), vars(decl)
     assert decl.describe() == "global FIFO rx [realization_test.py:8]"
     print("realization PASS")

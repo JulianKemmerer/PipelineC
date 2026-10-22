@@ -99,14 +99,14 @@ def test_initializers():
 
 def test_port_helper():
     ports = pypeline._stream_module_ports
-    in_port, out_port, in_fwd_t, out_fb_t = ports(make_stream_fifo(uint8_t, 4), uint8_t, "x")
-    assert (in_port, out_port) == ("in_stream_if", "out_stream_if")
-    assert in_fwd_t._pypeline_interface_role == "fwd"
-    assert out_fb_t._pypeline_interface_role == "fb"
-    assert ports(make_skid_buffer(uint8_t), uint8_t, "x")[:2] == (
+    in_port, out_port = ports(make_stream_fifo(uint8_t, 4), uint8_t, "x")
+    assert (in_port.name, out_port.name) == ("in_stream_if", "out_stream_if")
+    assert in_port.arg_t._pypeline_interface_role == "fwd"
+    assert out_port.arg_t._pypeline_interface_role == "fb"
+    assert [p.name for p in ports(make_skid_buffer(uint8_t), uint8_t, "x")] == [
         "stream_in_if",
         "stream_out_if",
-    )
+    ]
     what = "global FIFO 'rx'"
     err = pypeline.GlobalFifoError
     _raises(err, lambda: ports(make_stream_fifo(uint16_t, 4), uint8_t, what),
@@ -160,8 +160,13 @@ def test_fifo_main_generator():
         "fifo_hardware": 1,
         "fifo_in_t": 2,
     }
-    main = pypeline._make_global_fifo_main(
-        "rx_FIFO", "rx", ann, global_fifo(4), module_globals, reserved={"fifo_out_t"}
+    main = pypeline._make_global_inst_main(
+        "rx_FIFO",
+        "rx",
+        ann,
+        ann.hardware("rx", global_fifo(4)),
+        module_globals,
+        reserved={"fifo_out_t"},
     )
     src = inspect.getsource(inspect.unwrap(main))
     assert src.startswith("def rx_FIFO():"), src
@@ -169,8 +174,6 @@ def test_fifo_main_generator():
         assert f"{taken}_2" in src, (taken, src)
         assert f" {taken}(" not in src and f" {taken} =" not in src, (taken, src)
     assert "rx.wr.ready = " in src and "rx.rd.stream = " in src, src
-    # Named like a registered @MAIN, so native sim gives it a root frame
-    assert main._pypeline_main == ("rx_FIFO", True, None, "global FIFO rx")
     assert main.__module__ == "some_design"
     assert pypeline.is_hw_func(main)
     print("FIFO MAIN generator PASS")

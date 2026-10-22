@@ -55,7 +55,7 @@ For the shared pypeline.py type system and `SimVal` foundations, see
 - [`Wire[T]` / `Input[T]` / `Output[T]` Global Wire Simulation](#wiret--inputt--outputt-global-wire-simulation)
   - [Global Wire State](#global-wire-state)
 - [`pypeline_sim.py` — Multi-MAIN Clock-Cycle Simulation](#pypeline_simpy--multi-main-clock-cycle-simulation)
-  - [The MAINs that run: global FIFOs, root frames, refusals](#the-mains-that-run-global-fifos-root-frames-refusals)
+  - [The MAINs that run: global instances, root frames, refusals](#the-mains-that-run-global-instances-root-frames-refusals)
   - [Per Clock Cycle](#per-clock-cycle)
   - [Delta-Cycle Convergence Queue](#delta-cycle-convergence-queue)
   - [Register Commit Timing](#register-commit-timing)
@@ -1097,7 +1097,7 @@ A stateless `@hw_func` pushes a frame only when a `@sim_model` is attached to it
 model's own call. Its callers' frames are not on the stack, so two stateless callers of
 one model at the same source line get the same instance path. `pypeline_sim._call_main`
 gives every MAIN a root frame of its own, so that never happens across MAINs
-([Root frames](#the-mains-that-run-global-fifos-root-frames-refusals)). Two stateless
+([Root frames](#the-mains-that-run-global-instances-root-frames-refusals)). Two stateless
 wrappers inside one MAIN still share their callee's state.
 
 ### Per-Instance Register State
@@ -1591,11 +1591,12 @@ the `param()` declarations, then runs the same post-import `-D` checks as `PARSE
 and prints the parameter table once per process. In the `pypelinec --sim` flow the
 table is the one the build installed, so the simulation sees the build's values.
 
-### The MAINs that run: global FIFOs, root frames, refusals
+### The MAINs that run: global instances, root frames, refusals
 
-**The MAINs.** `run_sim` runs every registered `@MAIN` (`_main_registry`): `@MAIN` defs and
-MAINs made in code with `MAIN(fn, name=...)`, each a wrapper carrying its `_MainInfo` as
-`_pypeline_main` ([`pypeline_DESIGN.md`](pypeline_DESIGN.md#main--mainfn--registering-mains)).
+**The MAINs.** `run_sim` runs every registered `@MAIN` (`_main_registry`): `@MAIN` defs,
+MAINs made in code with `MAIN(fn, name=...)` and global instances' and FIFOs' MAINs, each a
+wrapper carrying its `_MainInfo` as `_pypeline_main`
+([`pypeline_DESIGN.md`](pypeline_DESIGN.md#main--mainfn--registering-mains)).
 From its `@initial(sim)` hooks to the end of its `@final(sim)` hooks it sets
 `pypeline._sim_run_in_progress`, and `MAIN()` refuses then: the MAINs are already collected.
 
@@ -1607,19 +1608,27 @@ every MAIN once per cycle would run different clocks in lockstep
 and do not count. Both `pypeline_sim.py` and `pypelinec --sim` stop here. Phase 2 of the
 multi-clock work will count clock identities instead of rates.
 
-**Global FIFOs.** `_discover_wire_names` returns the `Fifo[T]` declarations next to the
-wires: a FIFO is a compound wire, so its state is seeded like any other. For each one,
-`run_sim` builds the FIFO MAIN with the compiler's own generator,
-`pypeline._make_global_fifo_main`, named `<name>_FIFO` (module-prefixed outside the top
-file, `pypeline._module_prefix`), and appends it to the cycle loop's MAIN list. It is never
-added to `_main_registry`, but it carries a `_MainInfo` of its own. The FIFO MAIN is an
-ordinary `@hw_func`, so the wire rewriter, claim tracking and reader re-queueing apply to it
-unchanged. The library FIFO's class `@sim_model` (`_FifoFwftModel`) works on a deep copy of
-its committed state, so the convergence loop may call it repeatedly in a cycle.
+**Global instances and FIFOs.** `_discover_wire_names` returns the `Inst[f]` and
+`Fifo[T]` declarations (`_GlobalInstType`) next to the wires: each is a compound wire, so
+its state is seeded like any other. Before reading the registry, `run_sim` builds each
+one's MAIN with the compiler's own generator, `pypeline._make_global_inst_main`, from
+`ann.hardware(name, initializer)`, and registers it with `pypeline._register_main` under
+`pypeline._global_inst_main_name`: `<name>_INST` or `<name>_FIFO`, module-prefixed outside
+the top file, as the compiler names it. Its origin is `"global instance <name>"` or
+`"global FIFO <name>"`. Native sim runs one clock, so a FIFO's MAIN is always the
+single-clock one. The MAIN is an ordinary `@hw_func`, so the wire rewriter, claim tracking
+and reader re-queueing apply to it unchanged, and its root frame gives it its own state:
+two instances of one stateful function keep separate registers. The library FIFO's class
+`@sim_model` (`_FifoFwftModel`) works on a deep copy of its committed state, so the
+convergence loop may call it repeatedly in a cycle. An instance's MAIN takes no added
+latency, so when a `pipeline_latency` function is reachable from it (a `make_ram`
+instance), `PREPARE_PIPELINE_LATENCY_SIM` builds no alignment model for it: its body runs
+natively, as its hardware adds no registers around the function
+([`PY_TO_LOGIC_DESIGN.md`](PY_TO_LOGIC_DESIGN.md#pipelines-func_no_added_latency)).
 
 **Duplicate-name refusal.** Then `pypeline._duplicate_main_names` runs over every MAIN,
-FIFO MAINs included: two with one name, ignoring case, stop the run with `ERROR:` and
-both names' origins, as they would share a root frame.
+instance and FIFO MAINs included: two with one name, ignoring case, stop the run with
+`ERROR:` and both names' origins, as they would share a root frame.
 
 **Root frames.** `_call_main` pushes an instance frame
 `(pypeline._SIM_MAIN_FRAME_PREFIX + <MAIN name>, None)` around every MAIN, on both its plain

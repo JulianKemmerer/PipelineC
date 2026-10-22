@@ -29,6 +29,8 @@ from pypeline import (
     _WireType,
     _InputType,
     _OutputType,
+    _GlobalInstType,
+    _InstType,
     _FifoType,
     _GlobalFifoInit,
     _ClockMarker,
@@ -3398,8 +3400,13 @@ class FuncElaborator:
             if ann_val.multi_cycle_role is not None:
                 self._tag_multi_cycle_reg(var_name, ann_val.multi_cycle_role)
             return
+        if isinstance(ann_val, _InstType):
+            raise ElaborationError(
+                f"{ann_val} can only be used for a global declaration at module "
+                f"level, not inside function '{self.func_name}'"
+            )
         if isinstance(ann_val, (_WireType, _InputType, _OutputType)):
-            # _FifoType is a _WireType
+            # _FifoType is a _WireType too (Inst[f] has its own message above)
             raise ElaborationError(
                 f"Wire/Input/Output/Fifo[T] can only be used for global "
                 f"declarations, not inside function '{self.func_name}'"
@@ -6578,15 +6585,22 @@ class FuncElaborator:
             # exactly like any other scalar zero literal elaborated elsewhere.
             init_wire, _ = self._elab_python_value(0, ast_node)
         else:
-            init_wire = LOGIC.BUILD_CONST_WIRE(
-                LOGIC.COMPOUND_NULL,
-                LOGIC.ASTMeta(
-                    src_file=self.src_file,
-                    line=ast_node.lineno,
-                    col=ast_node.col_offset,
-                    end_col=getattr(ast_node, "end_col_offset", None),
-                    raw=ast_node,
-                ),
+            # Named for the wire too: the hoisted declarations all sit at the
+            # def line, and two compound wires of different types written by
+            # one function must not share (and retype) one constant
+            init_wire = (
+                LOGIC.BUILD_CONST_WIRE(
+                    LOGIC.COMPOUND_NULL,
+                    LOGIC.ASTMeta(
+                        src_file=self.src_file,
+                        line=ast_node.lineno,
+                        col=ast_node.col_offset,
+                        end_col=getattr(ast_node, "end_col_offset", None),
+                        raw=ast_node,
+                    ),
+                )
+                + "_"
+                + name
             )
             _add_wire(self.logic, init_wire, c_type)
         self._write_ref((name,), init_wire, c_type, ast_node, record_driven_path=False)
@@ -6717,37 +6731,214 @@ def _decl_loc_str(module_globals, node):
     return f"{os.path.basename(src)}:{node.lineno}"
 
 
-class GlobalFifoDecl:
-    """One Fifo[T] declaration (ParserState.pypeline_global_fifos[key]),
-    found by _discover_global_wires and realized by _realize_global_fifos."""
+class GlobalInstDecl:
+    """One global instance declaration, Inst[f] (this class) or Fifo[T]
+    (GlobalFifoDecl), in ParserState.pypeline_global_insts[key]. Found by
+    _discover_global_wires; an Inst's MAIN is registered by PARSE_FILE Step
+    7.1 (_register_global_inst_mains), and _check_global_insts checks the
+    functions using its wire."""
 
-    def __init__(self, key, bare_name, fifo_type, init, module_globals, node):
+    joins_clocks = True  # clock inference passes through its wire
+    # func_no_added_latency reason of a user that drives and reads one port
+    handshake_reason = "global instance handshake"
+    port_word = "port"  # what messages call one of its ports
+
+    def __init__(self, key, bare_name, ann, init, module_globals, node):
         self.key = key  # its global_vars key
         self.bare_name = bare_name  # the declared Python name
-        self.fifo_type = fifo_type  # the _FifoType annotation
-        self.data_t = fifo_type.data_t
-        self.init = init  # _GlobalFifoInit, or a stream module
-        # "global_fifo" / "global_sync_fifo", or "module" for a stream module
-        self.kind = init.kind if isinstance(init, _GlobalFifoInit) else "module"
-        self.n = init.n if isinstance(init, _GlobalFifoInit) else None
+        self.ann = ann  # its _GlobalInstType annotation
+        self.init = init  # its initializer's value (None for Inst[f])
         self.module_globals = module_globals  # of the declaring module
         self.src_file = module_globals.get("__file__")
         self.line = node.lineno
         self.loc = _decl_loc_str(module_globals, node)
-        # The FIFO MAIN, made by _realize_global_fifos
-        self.main_name = f"{key}_FIFO"
+        self.main_name = f"{key}{ann.main_suffix}"  # its MAIN: alu0_INST, rx_FIFO
+        self.no_added_latency_reason = ann.kind_name  # its MAIN's func_no_added_latency
 
     def describe(self):
-        """How messages and timing reports name it: global FIFO rx [top.py:14]."""
-        return f"global FIFO {self.bare_name} [{self.loc}]"
+        """How messages and timing reports name it: global instance alu0 [top.py:5]."""
+        return f"{self.ann.kind_name} {self.bare_name} [{self.loc}]"
+
+    def label(self, path, names=None):
+        """A wire path, as recorded in the access records, the way the user
+        writes it: alu0.x_if.ready, alu0.lanes[2]. `names` maps VHDL-safe
+        tokens back to their Python names (_global_inst_py_names)."""
+        text = self.bare_name
+        for tok in path:
+            if isinstance(tok, int):
+                text += f"[{tok}]"
+            else:
+                text += "." + (names or {}).get(tok, tok)
+        return text
+
+    def hardware(self):
+        """(module, ports, bindings) its MAIN is built from (ann.hardware); a
+        module whose ports do not fit is an ElaborationError naming the
+        declaration."""
+        try:
+            return self.ann.hardware(self.bare_name, self.init)
+        except _pypeline_mod.GlobalInstError as e:
+            raise ElaborationError(f"{e} (declared at {self.loc})") from None
+
+    def make_main(self, parser_state, hardware):
+        """Its MAIN's hw_func (pypeline._make_global_inst_main)."""
+        return _pypeline_mod._make_global_inst_main(
+            self.main_name,
+            self.bare_name,
+            self.ann,
+            hardware,
+            self.module_globals,
+            reserved=parser_state.top_level_module_globals,
+        )
+
+    def check_users(self, parser_state, users, hardware):
+        """Check the functions using its wire, `users` ({func: ({path: loc}
+        written, {path: loc} read)}): none drives a leaf the instance drives,
+        and all of them, with its MAIN, run on one clock. Returns None: the
+        MAIN was registered at Step 7.1 and clock inference gave it its
+        users' clock through the wire."""
+        _module, ports, bindings = hardware
+        driven = _global_inst_driven_paths(ports, bindings)
+        names = _global_inst_py_names(ports, bindings)
+        for user, (writes, _reads) in users.items():
+            for path, loc in sorted(writes.items(), key=str):
+                hit = next((d for d in driven if _path_overlaps(path, d)), None)
+                if hit is not None:
+                    inputs = ", ".join(
+                        f"'{self.label(p, names)}'"
+                        for p in _global_inst_input_paths(ports, bindings)
+                    )
+                    raise ElaborationError(
+                        f"{self.describe()}: '{user}' drives "
+                        f"'{self.label(path, names)}' ({_access_loc_str(loc)}), "
+                        f"but the instance drives '{self.label(hit, names)}'. "
+                        f"Functions drive its inputs ({inputs or 'it has none'}) "
+                        f"and read the rest."
+                    )
+        seen = {}  # clock -> (what, MAIN): the first user found on it
+        for user in users:
+            instances = parser_state.FuncToInstances.get(user, ())
+            for main in sorted({i.split(LOGIC.SUBMODULE_MARKER)[0] for i in instances}):
+                what = f"'{user}' ({_first_access_loc(users[user])})"
+                seen.setdefault(_main_clock(parser_state, main), (what, main))
+        seen.setdefault(
+            _main_clock(parser_state, self.main_name), ("its own MAIN", self.main_name)
+        )
+        if len(seen) > 1:
+            (clk_a, (what_a, main_a)), (clk_b, (what_b, main_b)) = list(
+                seen.items()
+            )[:2]
+            raise ElaborationError(
+                f"{self.describe()}: it is used on {_main_clock_str(clk_a)} "
+                f"({what_a}, in MAIN '{main_a}') and on {_main_clock_str(clk_b)} "
+                f"({what_b}, in MAIN '{main_b}'). A global instance runs on one "
+                f"clock: run the MAINs that use it on one clock."
+            )
+        return None
+
+
+class GlobalFifoDecl(GlobalInstDecl):
+    """One Fifo[T] declaration: a global instance of its FIFO hardware whose
+    ports are the ends wr and rd. Its MAIN waits for clock assignment:
+    _check_global_insts adds it on its ends' clock (_add_late_mains)."""
+
+    joins_clocks = False  # its ends keep their own clocks: no inference through it
+    handshake_reason = "global FIFO handshake"
+    port_word = "end"
+
+    def __init__(self, key, bare_name, ann, init, module_globals, node):
+        super().__init__(key, bare_name, ann, init, module_globals, node)
+        self.data_t = ann.data_t
+        # "global_fifo" / "global_sync_fifo", or "module" for a stream module
+        self.kind = init.kind if isinstance(init, _GlobalFifoInit) else "module"
+        self.n = init.n if isinstance(init, _GlobalFifoInit) else None
+
+    def check_users(self, parser_state, users, hardware):
+        """Each end has exactly one user, with one instance, that drives
+        only the half the FIFO does not; both ends' MAINs are on one clock
+        (clock-crossing FIFOs are not supported yet). Returns that clock,
+        (mhz, syn_mhz, clk_group) of the write end's MAIN."""
+        _module, ports, bindings = hardware
+        driven = _global_inst_driven_paths(ports, bindings)
+        name = self.bare_name
+        ends = {}
+        for end, fifo_half, user_half in (
+            ("wr", "ready", "stream"),
+            ("rd", "stream", "ready"),
+        ):
+            where = f"{self.describe()}: end '{name}.{end}'"
+            end_users = {}  # func -> ({path: loc} written, {path: loc} read)
+            for fname, records in users.items():
+                accesses = [
+                    {p: loc for p, loc in r.items() if _path_overlaps(p, (end,))}
+                    for r in records
+                ]
+                if any(accesses):
+                    end_users[fname] = accesses
+            if not end_users:
+                raise ElaborationError(
+                    f"{where} is not used by any function. A global FIFO "
+                    f"connects two functions: one drives '{name}.{end}.{user_half}' "
+                    f"and reads '{name}.{end}.{fifo_half}'."
+                )
+            if len(end_users) > 1:
+                listed = ", ".join(
+                    f"'{f}' ({_first_access_loc(a)})" for f, a in end_users.items()
+                )
+                raise ElaborationError(
+                    f"{where} is used by {len(end_users)} functions: {listed}. "
+                    f"Exactly one function uses each end of a global FIFO; fan "
+                    f"out through a broadcast module."
+                )
+            ((user, accesses),) = end_users.items()
+            loc = _first_access_loc(accesses)
+            instances = parser_state.FuncToInstances.get(user, set())
+            if len(instances) != 1:
+                raise ElaborationError(
+                    f"{where} is used by '{user}' ({loc}), which has "
+                    f"{len(instances)} instance(s) in the hierarchy (must be "
+                    f"exactly 1): {sorted(instances)}"
+                )
+            for path, write_loc in sorted(accesses[0].items(), key=str):
+                if any(_path_overlaps(path, d) for d in driven if d[0] == end):
+                    raise ElaborationError(
+                        f"{where}: '{user}' drives '{self.label(path)}' "
+                        f"({_access_loc_str(write_loc)}), but the FIFO drives "
+                        f"'{name}.{end}.{fifo_half}'. On this end a function "
+                        f"drives '{name}.{end}.{user_half}' and reads "
+                        f"'{name}.{end}.{fifo_half}'."
+                    )
+            main = next(iter(instances)).split(LOGIC.SUBMODULE_MARKER)[0]
+            ends[end] = (user, main, loc)
+        (wr_user, wr_main, wr_loc), (rd_user, rd_main, rd_loc) = ends["wr"], ends["rd"]
+        wr_clock = _main_clock(parser_state, wr_main)
+        rd_clock = _main_clock(parser_state, rd_main)
+        if wr_clock != rd_clock:
+            bare = (
+                " A bare @MAIN does not take its rate through a FIFO."
+                if None in (wr_clock[0], rd_clock[0])
+                else ""
+            )
+            raise ElaborationError(
+                f"{self.describe()}: its write end is used on "
+                f"{_main_clock_str(wr_clock)} ('{wr_user}' at {wr_loc}, in MAIN "
+                f"'{wr_main}') and its read end on {_main_clock_str(rd_clock)} "
+                f"('{rd_user}' at {rd_loc}, in MAIN '{rd_main}'). Clock-crossing "
+                f"FIFOs are not supported yet: run both MAINs on one clock.{bare}"
+            )
+        mhz, group = wr_clock
+        return (mhz, parser_state.main_syn_mhz.get(wr_main), group)
 
 
 def _discover_global_wires(tree, module_globals, parser_state, name_prefix=None):
     """Scan top-level AnnAssign nodes for Wire[T] annotations.
     Populates parser_state.global_vars with a VariableInfo per wire.
     Errors if a Wire[T] declaration has an initializer (other than make_clock).
-    A Fifo[T] is a compound wire that must have one, its hardware; it also
-    goes into parser_state.pypeline_global_fifos (see _realize_global_fifos).
+    An Inst[f] is a compound wire of f's ports, with no initializer, and a
+    Fifo[T] one that must have one, its hardware; each also goes into
+    parser_state.pypeline_global_insts (a GlobalInstDecl / GlobalFifoDecl).
+    Only declarations are recorded here: ELABORATE_LIVE_ROOTS runs this too,
+    and must not register MAINs (PARSE_FILE Step 7.1 registers Inst MAINs).
 
     name_prefix: if given, registers wires as "{name_prefix}_{bare_name}" to allow
     multiple imported design files to share the same parser_state without collisions.
@@ -6767,6 +6958,8 @@ def _discover_global_wires(tree, module_globals, parser_state, name_prefix=None)
             continue
         if isinstance(ann_val, _FifoType):
             kind = "Fifo"
+        elif isinstance(ann_val, _InstType):
+            kind = "Inst"
         elif isinstance(ann_val, _WireType):
             kind = "Wire"
         elif isinstance(ann_val, _InputType):
@@ -6791,6 +6984,12 @@ def _discover_global_wires(tree, module_globals, parser_state, name_prefix=None)
                     f"global_sync_fifo(n), or a single-clock stream module such "
                     f"as make_stream_fifo(T, n)"
                 )
+        elif kind == "Inst" and node.value is not None:
+            raise ElaborationError(
+                f"Global instance '{node.target.id}' "
+                f"({_decl_loc_str(module_globals, node)}) takes no initializer: "
+                f"write '{node.target.id}: {ann_val}'"
+            )
         elif node.value is not None:
             maybe_marker = module_globals.get(node.target.id)
             if isinstance(maybe_marker, _ClockMarker):
@@ -6891,8 +7090,12 @@ def _discover_global_wires(tree, module_globals, parser_state, name_prefix=None)
         elif kind == "Output":
             parser_state.output_wires.add(reg_name)
         elif kind == "Fifo":
-            parser_state.pypeline_global_fifos[reg_name] = GlobalFifoDecl(
+            parser_state.pypeline_global_insts[reg_name] = GlobalFifoDecl(
                 reg_name, node.target.id, ann_val, fifo_init, module_globals, node
+            )
+        elif kind == "Inst":
+            parser_state.pypeline_global_insts[reg_name] = GlobalInstDecl(
+                reg_name, node.target.id, ann_val, None, module_globals, node
             )
         if clock_marker is not None:
             if var_info.type_name != "uint1_t":
@@ -7188,158 +7391,178 @@ def _access_loc_str(loc):
     return f"{os.path.basename(src_file or '?')}:{line}"
 
 
-def _realize_global_fifos(parser_state):
-    """Check each Fifo[T]'s two ends, then build its FIFO MAIN.
+def _first_access_loc(accesses):
+    """'file.py:line' of the earliest of a function's accesses, given as
+    ({path: loc} written, {path: loc} read)."""
+    writes, reads = accesses
+    locs = {**reads, **writes}.values()
+    return _access_loc_str(min(locs, key=lambda l: (str(l[0]), l[1] or 0)))
 
-    The users of end E are the functions whose source accesses
-    (Logic.global_wire_read_paths / global_wire_write_locs) overlap (E,).
-    Each of these is an ElaborationError naming the FIFO, the functions and
-    their lines: an end no function uses; an end used by two functions, or by
-    a function with more than one instance; a user driving a half the FIFO
-    drives (wr.ready, rd.stream, a whole end or the whole wire); the two ends'
-    MAINs on different clocks (clock-crossing FIFOs are not supported yet).
 
-    Then <key>_FIFO, from pypeline._make_global_fifo_main, is added on the
-    ends' clock by _add_late_mains, with func_no_added_latency reason
-    "global FIFO". Each user that both drives and reads one end gets reason
-    "global FIFO handshake": in a pipeline the end's reads would be sampled
-    at the first stage and its writes published at the last. An
-    AUTO_PIPELINE call of such a user is an error.
+def _main_clock(parser_state, main):
+    """(main_mhz, main_clk_group) of a MAIN: the clock it runs on."""
+    return parser_state.main_mhz.get(main), parser_state.main_clk_group.get(main)
+
+
+def _main_clock_str(clock):
+    """A clock as the generated design names it: clk_100p0."""
+    return "clk_" + VHDL.CLK_MHZ_GROUP_TEXT(*clock)
+
+
+def _global_inst_paths(ports, bindings):
+    """(port, its wire path) for each of a global instance's ports, in the
+    VHDL-safe tokens the access records use (_sanitize_ref_tok)."""
+    return [
+        (p, tuple(_sanitize_ref_tok(t) for t in bindings.get(p.name, (p.name,))))
+        for p in ports
+    ]
+
+
+def _global_inst_py_names(ports, bindings):
+    """{VHDL-safe token: Python name} of a global instance's port names,
+    binding tokens and interface fields: the access records hold the safe
+    ones (a port 'out' is recorded 'out_v'), messages show the Python ones."""
+    names = {}
+    for p in ports:
+        toks = list(bindings.get(p.name, (p.name,)))
+        for t in (p.arg_t, p.ret_t):
+            if p.interface is not None and t is not None:
+                toks += list(t._fields)
+        names.update({_sanitize_ref_tok(t): t for t in toks})
+    return names
+
+
+def _global_inst_driven_paths(ports, bindings):
+    """The wire paths a global instance's MAIN drives: each interface port's
+    returned half, field by field, and each plain output port whole."""
+    driven = []
+    for p, path in _global_inst_paths(ports, bindings):
+        if p.ret_t is None:
+            continue
+        if p.interface is None:
+            driven.append(path)
+        else:
+            driven += [path + (_sanitize_ref_tok(f),) for f in p.ret_t._fields]
+    return driven
+
+
+def _global_inst_input_paths(ports, bindings):
+    """The wire paths functions drive into a global instance: each plain
+    input port whole, and each interface port's argument half, field by field."""
+    inputs = []
+    for p, path in _global_inst_paths(ports, bindings):
+        if p.arg_t is None:
+            continue
+        if p.interface is None:
+            inputs.append(path)
+        else:
+            inputs += [path + (_sanitize_ref_tok(f),) for f in p.arg_t._fields]
+    return inputs
+
+
+def _register_global_inst_mains(parser_state):
+    """PARSE_FILE Step 7.1: register each Inst[f] declaration's MAIN as a
+    made @MAIN named <key>_INST, made at the declaration's line, so Step 7.2
+    elaborates it like any other: a bare MAIN that clock inference reaches
+    through the wire it shares with its users. It takes no added latency
+    ("global instance"). A Fifo[T]'s MAIN waits for clock assignment, since
+    its ends decide its kind (_check_global_insts)."""
+    decls = parser_state.pypeline_global_insts
+    for key in sorted(decls):
+        decl = decls[key]
+        if isinstance(decl, GlobalFifoDecl):
+            continue
+        main_fn = decl.make_main(parser_state, decl.hardware())
+        _pypeline_mod._register_main(main_fn, None, decl.main_name, decl.loc)
+        parser_state.func_no_added_latency[decl.main_name] = (
+            decl.no_added_latency_reason
+        )
+
+
+def _check_global_insts(parser_state):
+    """Check the functions using each global instance's wire, then add each
+    global FIFO's MAIN.
+
+    The users of a declaration are the functions, other than its own MAIN,
+    whose source accesses (Logic.global_wire_read_paths /
+    global_wire_write_locs) touch its wire. decl.check_users checks them:
+    for an Inst[f], no user drives a leaf the instance drives and all run on
+    one clock; for a Fifo[T], the end rules of GlobalFifoDecl.check_users.
+    Each user that both drives and reads one interface port gets the kind's
+    handshake reason in func_no_added_latency: in a pipeline the port's
+    reads would be sampled at the first stage and its writes published at
+    the last. An AUTO_PIPELINE call of such a user is an error.
+
+    Then each FIFO's <key>_FIFO is added on its ends' clock by
+    _add_late_mains, with reason "global FIFO". (Ends on two clocks are an
+    error in check_users; the place where an async FIFO would be built.)
 
     Runs in PARSE_FILE after the call graph and clock inference
-    (LOGIC.INFER_CLOCK_DOMAINS skips FIFO wires) and before the global-wire
-    rule checks, which then hold for the FIFO wire like any other: each
-    writer has one instance, and the writers' regions are disjoint.
+    (LOGIC.INFER_CLOCK_DOMAINS skips the wires of declarations whose
+    joins_clocks is False) and before the global-wire rule checks, which
+    then hold for each instance wire like any other: each writer has one
+    instance, and the writers' regions are disjoint.
     """
-    fifos = parser_state.pypeline_global_fifos
-    if not fifos:
+    decls = parser_state.pypeline_global_insts
+    if not decls:
         return
     table = parser_state.FuncLogicLookupTable
-    handshakes = {}  # user func -> (FIFO, end) it both drives and reads
+    handshakes = {}  # user func -> (declaration, port label) it both drives and reads
     late_mains = []
-
-    def clock_of(main):
-        return parser_state.main_mhz.get(main), parser_state.main_clk_group.get(main)
-
-    def clock_str(main):
-        return "clk_" + VHDL.CLK_MHZ_GROUP_TEXT(*clock_of(main))
-
-    for key in sorted(fifos):
-        fifo = fifos[key]
-        name = fifo.bare_name
-        ends = {}
-        for end, fifo_half, user_half in (
-            ("wr", "ready", "stream"),
-            ("rd", "stream", "ready"),
-        ):
-            where = f"{fifo.describe()}: end '{name}.{end}'"
-            users = {}  # func -> ({path: loc} written, {path: loc} read)
-            for fname in sorted(table):
-                logic = table[fname]
-                accesses = [
-                    {
-                        p: loc
-                        for p, loc in records.get(key, {}).items()
-                        if _path_overlaps(p, (end,))
-                    }
-                    for records in (
-                        logic.global_wire_write_locs,
-                        logic.global_wire_read_paths,
-                    )
-                ]
-                if any(accesses):
-                    users[fname] = accesses
-
-            def first_loc(fname):
-                writes, reads = users[fname]
-                locs = {**reads, **writes}.values()
-                return _access_loc_str(min(locs, key=lambda l: (str(l[0]), l[1] or 0)))
-
-            if not users:
-                raise ElaborationError(
-                    f"{where} is not used by any function. A global FIFO "
-                    f"connects two functions: one drives '{name}.{end}.{user_half}' "
-                    f"and reads '{name}.{end}.{fifo_half}'."
+    for key in sorted(decls):
+        decl = decls[key]
+        users = {}  # func -> ({path: loc} written, {path: loc} read)
+        for fname in sorted(table):
+            if fname == decl.main_name:
+                continue
+            logic = table[fname]
+            accesses = [
+                dict(records.get(key, {}))
+                for records in (
+                    logic.global_wire_write_locs,
+                    logic.global_wire_read_paths,
                 )
-            if len(users) > 1:
-                listed = ", ".join(f"'{f}' ({first_loc(f)})" for f in users)
-                raise ElaborationError(
-                    f"{where} is used by {len(users)} functions: {listed}. "
-                    f"Exactly one function uses each end of a global FIFO; fan "
-                    f"out through a broadcast module."
+            ]
+            if any(accesses):
+                users[fname] = accesses
+        hardware = decl.hardware()
+        clock = decl.check_users(parser_state, users, hardware)
+        _module, ports, bindings = hardware
+        names = _global_inst_py_names(ports, bindings)
+        for p, path in _global_inst_paths(ports, bindings):
+            if p.interface is None or p.arg_t is None or p.ret_t is None:
+                continue
+            for user, (writes, reads) in users.items():
+                if any(_path_overlaps(w, path) for w in writes) and any(
+                    _path_overlaps(r, path) for r in reads
+                ):
+                    handshakes.setdefault(user, (decl, decl.label(path, names)))
+        if isinstance(decl, GlobalFifoDecl):
+            late_mains.append(
+                LateMain(
+                    decl.make_main(parser_state, hardware),
+                    decl.main_name,
+                    clock,
+                    decl.no_added_latency_reason,
+                    f"{decl.describe()}: its FIFO MAIN",
                 )
-            ((user, (writes, reads)),) = users.items()
-            instances = parser_state.FuncToInstances.get(user, set())
-            if len(instances) != 1:
-                raise ElaborationError(
-                    f"{where} is used by '{user}' ({first_loc(user)}), which has "
-                    f"{len(instances)} instance(s) in the hierarchy (must be "
-                    f"exactly 1): {sorted(instances)}"
-                )
-            for path, loc in sorted(writes.items(), key=str):
-                if _path_overlaps(path, (end, fifo_half)):
-                    driven = ".".join((name,) + path)
-                    raise ElaborationError(
-                        f"{where}: '{user}' drives '{driven}' "
-                        f"({_access_loc_str(loc)}), but the FIFO drives "
-                        f"'{name}.{end}.{fifo_half}'. On this end a function "
-                        f"drives '{name}.{end}.{user_half}' and reads "
-                        f"'{name}.{end}.{fifo_half}'."
-                    )
-            main = next(iter(instances)).split(LOGIC.SUBMODULE_MARKER)[0]
-            ends[end] = (user, main, first_loc(user))
-            if writes and reads:
-                handshakes.setdefault(user, (fifo, end))
-        (wr_user, wr_main, wr_loc), (rd_user, rd_main, rd_loc) = ends["wr"], ends["rd"]
-        if clock_of(wr_main) != clock_of(rd_main):
-            bare = (
-                " A bare @MAIN does not take its rate through a FIFO."
-                if None in (clock_of(wr_main)[0], clock_of(rd_main)[0])
-                else ""
             )
-            raise ElaborationError(
-                f"{fifo.describe()}: its write end is used on {clock_str(wr_main)} "
-                f"('{wr_user}' at {wr_loc}, in MAIN '{wr_main}') and its read end "
-                f"on {clock_str(rd_main)} ('{rd_user}' at {rd_loc}, in MAIN "
-                f"'{rd_main}'). Clock-crossing FIFOs are not supported yet: run "
-                f"both MAINs on one clock.{bare}"
-            )
-        try:
-            main_fn = _pypeline_mod._make_global_fifo_main(
-                fifo.main_name,
-                name,
-                fifo.fifo_type,
-                fifo.init,
-                fifo.module_globals,
-                reserved=parser_state.top_level_module_globals,
-            )
-        except _pypeline_mod.GlobalFifoError as e:
-            raise ElaborationError(f"{e} (declared at {fifo.loc})") from None
-        mhz, group = clock_of(wr_main)
-        late_mains.append(
-            LateMain(
-                main_fn,
-                fifo.main_name,
-                (mhz, parser_state.main_syn_mhz.get(wr_main), group),
-                "global FIFO",
-                f"{fifo.describe()}: its FIFO MAIN",
-            )
-        )
-    for user in handshakes:
-        parser_state.func_no_added_latency.setdefault(user, "global FIFO handshake")
+    for user, (decl, _label) in handshakes.items():
+        parser_state.func_no_added_latency.setdefault(user, decl.handshake_reason)
     for logic in table.values():
         for inst in logic.sub_inst_to_auto_pipeline_latency:
             target = logic.submodule_instances.get(inst)
             if target in handshakes:
-                fifo, end = handshakes[target]
+                decl, label = handshakes[target]
+                word = decl.port_word
                 raise ElaborationError(
                     f"AUTO_PIPELINE({target}) called in '{logic.func_name}': "
-                    f"'{target}' drives and reads end '{fifo.bare_name}.{end}' of "
-                    f"{fifo.describe()}. A pipeline would sample the end at its "
+                    f"'{target}' drives and reads {word} '{label}' of "
+                    f"{decl.describe()}. A pipeline would sample the {word} at its "
                     f"first stage and drive it at its last, breaking the "
                     f"handshake. Pipeline the data path inside "
                     f"make_stream_auto_pipeline and connect its stream ports to "
-                    f"the end outside the pipeline."
+                    f"the {word} outside the pipeline."
                 )
     _add_late_mains(parser_state, late_mains)
 
@@ -8211,12 +8434,20 @@ def _elaborate_live_roots(roots):
     for root in roots:
         source = inspect.unwrap(root)
         filename = os.path.abspath(inspect.getsourcefile(source))
+        namespace = source.__globals__
+        declaring = namespace.get("__file__") or ""
+        generated = getattr(source, "_pypeline_generated_origin", False)
+        if generated and declaring.endswith(".py") and os.path.isfile(declaring):
+            # Generated source exec'd in a copy of a design module's globals
+            # (a global instance's or FIFO's MAIN) names that module's wires:
+            # discover them in the module's own file
+            filename = os.path.abspath(declaring)
+            generated = False
         if filename in seen_files:
             continue
         seen_files.add(filename)
-        namespace = source.__globals__
         module = types.SimpleNamespace(**namespace)
-        if getattr(source, "_pypeline_generated_origin", False):
+        if generated:
             # Generated factories keep source in linecache, not on disk.
             # Their globals already contain the reachable type/callable graph.
             tree = ast.parse(textwrap.dedent(inspect.getsource(source)), filename)
@@ -8244,6 +8475,11 @@ def _elaborate_live_roots(roots):
             # A @MAIN: its build entity and timing are keyed by its MAIN name
             name = root._pypeline_main.name
             logic = _elaborate_main(parser_state, root, name, f"@MAIN '{name}'")
+            # A global instance's or FIFO's MAIN takes no added latency, as
+            # in a build, so no pipeline_latency model aligns around it
+            kind = getattr(root, "_pypeline_global_inst", None)
+            if kind is not None:
+                parser_state.func_no_added_latency[name] = kind
         else:
             source = inspect.unwrap(root)
             filename = os.path.abspath(inspect.getsourcefile(source))
@@ -8528,6 +8764,10 @@ def PARSE_FILE(py_file, run_syn_initial_hooks=False, resolved_part=None):
             parser_state.main_syn_mhz[hw_name] = mhz
             parser_state.main_clk_group[hw_name] = None
 
+    # ── Step 7.1: register each global instance's MAIN (Inst[f]) ──
+    # Here, not in _discover_global_wires, which ELABORATE_LIVE_ROOTS also runs
+    _register_global_inst_mains(parser_state)
+
     # ── Step 7.2: every other registered @MAIN, under its MAIN name ──
     # Running the design registered it, so native sim runs it: one made by a
     # factory or in a loop, a generated one, a renamed one, a plain def passed
@@ -8577,8 +8817,8 @@ def PARSE_FILE(py_file, run_syn_initial_hooks=False, resolved_part=None):
     # ── Propagate MHz across MAINs sharing global wires ──
     LOGIC.INFER_CLOCK_DOMAINS({}, {}, {}, parser_state)
 
-    # ── Global FIFOs: check the ends, add each FIFO's MAIN ──
-    _realize_global_fifos(parser_state)
+    # ── Global instances: check their users, add each FIFO's MAIN ──
+    _check_global_insts(parser_state)
 
     # ── Validate every make_clock()-tagged wire binds to some @MAIN's rate ──
     # Must run after INFER_CLOCK_DOMAINS above: that's what assigns a rate to a

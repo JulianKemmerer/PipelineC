@@ -95,6 +95,7 @@ one paragraph per change.
   - [Pipeline timing: aligned globals and `VOLATILE`](#pipeline-timing-aligned-globals-and-volatile)
   - [`Input[T]` / `_InputType`](#inputt--_inputtype)
   - [`Output[T]` / `_OutputType`](#outputt--_outputtype)
+  - [`Inst[f]` / `_InstType` — global instances](#instf--_insttype--global-instances)
   - [`Fifo[T]` / `_FifoType` — global FIFOs](#fifot--_fifotype--global-fifos)
 - [`PART()` and `@MAIN` Pragmas](#part-and-main-pragmas)
   - [`PART(part_string)`](#partpart_string)
@@ -1057,13 +1058,74 @@ Module-level annotation declaring a **top-level FPGA output port**.
 - Name appears verbatim as VHDL entity port (no module prefix)
 - Must be a legal VHDL identifier
 
+### `Inst[f]` / `_InstType` — global instances
+
+`alu0: Inst[f]` places one instance of the hardware `f` at module level
+([guide](pypeline_guide.md#instf--global-instances)). `_InstType` and `_FifoType` both
+subclass `_GlobalInstType(_WireType)`: an instance is an ordinary compound global wire
+everywhere wires are handled (native-sim rewriting and lens writes, elaboration,
+multi-writer regions, readback), plus the MAIN that holds the instance, built by
+`_make_global_inst_main`. A subclass supplies `kind_name` ("global instance" / "global
+FIFO"), `main_suffix` (`_INST` / `_FIFO`), `stem` (the generated MAIN's local names),
+`arg_alias(port)`, `hardware(wire_name, init)` and `exec_main(...)`.
+
+- **Subscript** (`_InstMeta`): `Inst[f]` builds `_InstType(f)` when the declaration
+  runs. `f` is a hw_func, or an AUTO_PIPELINE tag whose `.func` is one (`_hardware_func`
+  finds the function whose signature gives the ports). `GlobalInstError` (a `TypeError`)
+  for `Inst[a, b]`, a `@MAIN` (`_pypeline_main` set), anything else, and the port errors
+  below.
+- **Ports.** `_global_inst_ports(fn, fail)` returns `_InstPort` records (name, `arg_t`,
+  `ret_t`, `interface`, `is_input`, `whole_return`), arguments first in signature order,
+  then return fields. An argument is an input port. An interface half
+  (`_interface_half_of`) pairs with the return field of the same name holding the other
+  half; the port is an input when its argument is the `.fwd_t` half (with no argument,
+  when its field is `.fb_t`). A return value with at least one interface-half field is a
+  port bundle: each field is a port, a plain field an output port of its own. Any other
+  return value is the one output port `out`. `fail(why)` is called for an argument
+  without a type, an array of interface halves (not supported yet), a return field that
+  shares an argument's name without being its other half, an argument `out` next to a
+  plain return value, and no ports at all. `_InstPort.wire_t` is the port's field type:
+  `interface.wire_t` (both halves as plain fields) for an interface port, else its own
+  type.
+- **Wire type.** `_global_inst_types(hardware, ports)` builds `global_inst_t`, one field
+  per port, with `struct(typing.NamedTuple(...))`. Its C name comes from its field names
+  and types, so two hardware modules with the same ports share one type. It is cached
+  per hardware object, keyed by identity (an AUTO_PIPELINE tag need not be hashable).
+- **No initializer.** `_InstType.hardware(wire_name, init)` returns `(f, ports, {})`; a
+  non-None `init` is a `GlobalInstError`, so native sim rejects an initializer too.
+- **MAIN generator.** `_make_global_inst_main(func_name, wire_name, ann, hardware,
+  module_globals, reserved)` takes the `(module, ports, bindings)` that `ann.hardware`
+  gave (a binding maps a port to its wire path; ports without one sit at their own name)
+  and builds the flat hw_func `func_name` with `_exec_generated_func`, from a frame of
+  `ann.exec_main` whose arguments become its name info (folder
+  `pypeline_generated_insts`, so `dump_generated_sources` writes it). Its body makes one
+  keyword call of the module: a plain input port gets its whole path, an interface port
+  its argument half built field by field (`<alias>(f=W.p.f, ...)`). Then the returned
+  halves drive the wire: an interface port's field by field, a bundle's plain field and
+  the whole return value as wholes. With no output port the call is a bare statement. It
+  is exec'd in a copy of the declaring module's globals, so the body names the wire by
+  its bare name, and both the native-sim rewriter and the elaborator resolve it by that
+  module. The injected names (the module and each argument half's type) and the one
+  local avoid every name of that module and `reserved`; the compiler passes the top
+  design file's globals as `reserved`, since elaboration merges them in. The result is
+  marked `_pypeline_global_inst = ann.kind_name`, which `PY_TO_LOGIC`'s
+  `ELABORATE_LIVE_ROOTS` reads as its no-added-latency reason.
+- **MAIN name.** `_global_inst_main_name(module_name, bare_name, ann)`: the module
+  prefix, the VHDL-safe bare name and the kind's suffix, as `PY_TO_LOGIC`'s wire key plus
+  the suffix. Native sim names the MAINs it registers with it.
+- **Registration.** An `Inst`'s MAIN is a made `@MAIN` (`_register_main`, never
+  `MAIN()`, so its name skips the user-name check): `PY_TO_LOGIC`'s PARSE_FILE Step 7.1
+  and `pypeline_sim.run_sim` register it
+  ([`PY_TO_LOGIC_DESIGN.md`](PY_TO_LOGIC_DESIGN.md#global-instances-instf-fifot),
+  [`pypeline_sim_DESIGN.md`](pypeline_sim_DESIGN.md#the-mains-that-run-global-instances-root-frames-refusals)).
+
 ### `Fifo[T]` / `_FifoType` — global FIFOs
 
 `rx: Fifo[T] = hardware` declares a global FIFO
-([guide](pypeline_guide.md#fifot--global-fifos)). `_FifoType` subclasses `_WireType`, so
-a FIFO is an ordinary compound global wire everywhere wires are handled: native-sim
-rewriting and lens writes, elaboration, multi-writer regions and readback all carry its
-ends unchanged.
+([guide](pypeline_guide.md#fifot--global-fifos)): a global instance of its hardware
+(`_FifoType` is a `_GlobalInstType`, see
+[`Inst[f]`](#instf--_insttype--global-instances)) whose wire has a fixed type and whose
+two stream ports are bound to the ends `wr` and `rd`.
 
 - **The wire type.** `_global_fifo_types(T)` builds `{wr: end, rd: end}` with
   end = `{stream: make_stream_t(T), ready: uint1_t}`. The stream half is the library's
@@ -1077,27 +1139,21 @@ ends unchanged.
   `_GlobalFifoInit(kind, n)`; a non-int or non-positive `n` is an error. Both build
   `make_stream_fifo(T, 2**ceil(log2(max(n, 2))))` (`_global_fifo_hardware`). Any other
   initializer is the FIFO's module itself.
-- **Port helper.** `_stream_module_ports(module, T, what)` finds the module's one
-  valid/ready input port (a `.fwd_t` argument and a `.fb_t` return field of one name) and
-  one output port (the reverse) from its annotations, with `_interface_half_of`. Both must
-  carry `make_stream_t(T)` with a `uint1_t` ready; otherwise `GlobalFifoError` names the
-  module. Native sim and the compiler both use it.
-- **FIFO MAIN generator.** `_make_global_fifo_main(func_name, wire_name, fifo_type,
-  init, module_globals, reserved)` builds the flat hw_func `<key>_FIFO` with
-  `_exec_generated_func` (folder `pypeline_generated_fifos`, so
-  `dump_generated_sources` writes it). Its body makes one call of the module, with keyword
-  arguments for the two ports: it reads `wr.stream` and `rd.ready`, and drives
-  `wr.ready` and `rd.stream`. It is exec'd in a copy of the declaring module's globals, so
-  the body names the wire by its bare name and both the native-sim rewriter and the
-  elaborator resolve it by that module. The injected names (the module and the two port
-  halves) and the one local avoid every name of that module and `reserved`. The compiler
-  passes the top design file's globals as `reserved`, since elaboration merges them in.
-  The result carries a `_MainInfo` named `<key>_FIFO` as `_pypeline_main`, so native sim
-  gives it a root frame and checks its name like a registered MAIN's. It is never added
-  to `_main_registry`: `PY_TO_LOGIC._realize_global_fifos` adds it with `_add_late_mains`,
-  and `pypeline_sim.run_sim` appends it to its own MAIN list
-  ([`PY_TO_LOGIC_DESIGN.md`](PY_TO_LOGIC_DESIGN.md#global-fifos-fifot),
-  [`pypeline_sim_DESIGN.md`](pypeline_sim_DESIGN.md#the-mains-that-run-global-fifos-root-frames-refusals)).
+- **Port helper.** `_stream_module_ports(module, T, what)` returns the module's
+  `(input port, output port)` as `_InstPort` records: its ports
+  (`_global_inst_ports`) must be exactly one valid/ready input port and one output port,
+  each an interface port with both halves, carrying `make_stream_t(T)` with a `uint1_t`
+  ready. Otherwise `GlobalFifoError` (a `GlobalInstError`) names the module and why.
+- **FIFO MAIN.** `_FifoType.hardware(wire_name, init)` resolves the hardware
+  (`_global_fifo_hardware`), checks it with `_stream_module_ports`, and binds the input
+  port to `('wr',)` and the output port to `('rd',)`, in that order. The generic
+  `_make_global_inst_main` then builds `<key>_FIFO`: it reads `wr.stream` and `rd.ready`
+  and drives `wr.ready` and `rd.stream`. The FIFO keeps its own local names
+  (`fifo_hardware`, `fifo_in_t`, `fifo_out_t`, `fifo_ports`), folder
+  (`pypeline_generated_fifos`) and name-info frame (`global_fifo_main(fifo, data_t,
+  hardware)`). Native sim registers it like an instance's MAIN; the compiler adds it after
+  clock assignment with `_add_late_mains`, from `PY_TO_LOGIC._check_global_insts`
+  ([`PY_TO_LOGIC_DESIGN.md`](PY_TO_LOGIC_DESIGN.md#global-instances-instf-fifot)).
 
 ---
 
@@ -1133,8 +1189,10 @@ MAIN(fn, name="lane0", mhz=…)  # called on a function: MAINs made in code
 1. **Checks.** `func` must unwrap to a Python function. No simulation run may be in
    progress: `_sim_run_in_progress`, set by `pypeline_sim.run_sim` from its
    `@initial(sim)` hooks to the end of its `@final(sim)` hooks, after its MAINs are
-   collected. `_sim_active` cannot serve, as `run_sim` never resets it. A `name` must
-   pass `_check_user_name(name, "MAIN")`.
+   collected. `_sim_active` cannot serve, as `run_sim` never resets it. A user's `name`
+   has passed `_check_user_name(name, "MAIN")` in `MAIN()` already; `_register_main` uses
+   a name verbatim, since a global instance's `<key>_INST` may be longer than a user name
+   may be.
 2. **Wraps** with `_sim_type_wrap`, so `@MAIN` implies `@hw_func`; it is idempotent, so
    `@MAIN` stacks with `@hw_func`, `@wires` and `pipeline_latency`.
 3. **Refuses a wrapper already registered** (identity in `_main_registry`): each MAIN
@@ -2507,9 +2565,11 @@ shared `Logic.vhdl_module_text` field (also used by the C frontend's `__vhdl__("
 | `GlobalWireNameError` / `_local_name_bindings` / `_check_no_local_binds_wire_name` | Rejects, at decoration time, a local binding of a same-module wire name or wire-module alias; `_local_name_bindings` is the binding list shared with `PY_TO_LOGIC` |
 | `Input` / `_InputType` | Top-level input port; `Input[T]` at module level; any function may read, none may write |
 | `Output` / `_OutputType` | Top-level output port; `Output[T]` at module level; exactly one function/instance may write |
+| `Inst` / `_InstType` / `_GlobalInstType` | Global instance; `name: Inst[f]` at module level; its ports are fields of one global wire, and a compiler-made MAIN `name_INST` holds it ([`Inst[f]`](#instf--_insttype--global-instances)) |
+| `GlobalInstError` | `Inst[f]` of something that cannot be an instance (not a hw_func, a `@MAIN`, ports that do not map onto a wire) |
 | `Fifo` / `_FifoType` | Global FIFO; `name: Fifo[T] = hardware` at module level; one function uses each end `.wr` / `.rd` ([`Fifo[T]`](#fifot--_fifotype--global-fifos)) |
 | `global_fifo(n)` / `global_sync_fifo(n)` | `Fifo[T]` initializers asking for the library FIFO holding at least `n` words |
-| `GlobalFifoError` | A `Fifo[T]` initializer module without one stream input port and one output port of `T` |
+| `GlobalFifoError` | A `Fifo[T]` initializer module without one stream input port and one output port of `T` (a `GlobalInstError`) |
 | `register_operator(op, lhs, rhs, impl, scope=None)` | Binds a binary operator on an exact `(lhs, rhs)` type pair |
 | `register_left_operator(op, lhs, impl, scope=None)` | Binds a binary operator matching only on left operand type |
 | `register_unary_operator(op, operand, impl, scope=None)` | Binds a unary operator for a specific operand type |

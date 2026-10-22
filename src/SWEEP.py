@@ -2949,9 +2949,10 @@ def PRINT_PIPELINE_DEPTH_SUMMARY(parser_state, TimingParamsLookupTable):
 
 def PRINT_TIMING_FAILURES(parser_state, multimain_timing_params) -> bool:
     """Print one ERROR line per main that missed its timing goal, a global
-    FIFO's MAIN named as its FIFO (MAIN_DISPLAY_NAME). Returns True if any
-    failure was reported, so the caller can decide whether to fail the build --
-    results are still written for debugging either way."""
+    instance's or FIFO's MAIN named by its declaration (MAIN_DISPLAY_NAME).
+    Returns True if any failure was reported, so the caller can decide
+    whether to fail the build -- results are still written for debugging
+    either way."""
     timing_failures = getattr(multimain_timing_params, "sweep_timing_failures", None)
     if not timing_failures:
         return False
@@ -6096,17 +6097,24 @@ def GET_MAIN_INSTS_FOR_PATH_REPORT(path_report, parser_state, multimain_timing_p
     all_main_insts = list(parser_state.main_mhz.keys())
     if len(all_main_insts) == 1:
         return set(all_main_insts)
-    # A global FIFO's MAIN owns only the paths shown to be inside it: those
-    # go to it alone. Any other path, one with one end in a FIFO MAIN
-    # included, stays with the user MAINs.
-    fifo_mains = set(GLOBAL_FIFO_MAINS(parser_state))
+    # A global instance's MAIN owns the paths shown to be inside it: those go
+    # to it alone. A path with one end in an instance MAIN stays with the
+    # other MAINs only, unless something inside the instance can take added
+    # latency (GLOBAL_INST_MAIN_CAN_TAKE_LATENCY): a FIFO or a stateful module
+    # cannot change the path, the user MAINs can.
+    inst_mains = set(GLOBAL_INST_MAINS(parser_state))
+    fixed_mains = {
+        m
+        for m in inst_mains
+        if not GLOBAL_INST_MAIN_CAN_TAKE_LATENCY(m, parser_state)
+    }
     if path_report.start_reg_name is None or path_report.end_reg_name is None:
         print(
             "WARNING: No start/end reg name in timing report! "
             "Assuming all clock domains had critical paths..."
         )
-        return set(all_main_insts) - fifo_mains
-    for main_inst in sorted(fifo_mains):
+        return set(all_main_insts) - fixed_mains
+    for main_inst in sorted(inst_mains):
         if SYN.PATH_ENDS_IN_MAIN(
             path_report,
             main_inst,
@@ -6121,23 +6129,50 @@ def GET_MAIN_INSTS_FOR_PATH_REPORT(path_report, parser_state, multimain_timing_p
     # Those are real endpoints without MAIN attribution, not evidence that
     # the path is outside every MAIN. Keep its measured failure as feedback.
     if not main_insts and SYN.SYN_TOOL is DEVICE_MODELS:
-        return set(all_main_insts) - fifo_mains
-    return main_insts - fifo_mains or main_insts
+        return set(all_main_insts) - fixed_mains
+    return main_insts - fixed_mains or main_insts
 
 
-def GLOBAL_FIFO_MAINS(parser_state):
-    """{FIFO MAIN name: PY_TO_LOGIC.GlobalFifoDecl} of a design's global FIFOs."""
+def GLOBAL_INST_MAINS(parser_state):
+    """{MAIN name: PY_TO_LOGIC.GlobalInstDecl} of a design's global instances
+    and FIFOs (Inst[f], Fifo[T])."""
     return {
-        fifo.main_name: fifo
-        for fifo in getattr(parser_state, "pypeline_global_fifos", {}).values()
+        decl.main_name: decl
+        for decl in getattr(parser_state, "pypeline_global_insts", {}).values()
     }
 
 
+def GLOBAL_INST_MAIN_CAN_TAKE_LATENCY(main_inst, parser_state):
+    """True if something inside a global instance's MAIN, which itself takes
+    no added latency, can: an AUTO_PIPELINE call site whose instance
+    AUTO_PIPELINE.ADDED_LATENCY_BLOCKER clears, as in Inst[AUTO_PIPELINE(f)].
+    A FIFO or another stateful module has none."""
+    table = parser_state.LogicInstLookupTable
+    stack = [main_inst]
+    while stack:
+        inst = stack.pop()
+        logic = table.get(inst)
+        if logic is None:
+            continue
+        for leaf in logic.submodule_instances:
+            child = f"{inst}{LOGIC.SUBMODULE_MARKER}{leaf}"
+            if child not in table:
+                continue
+            if (
+                leaf in logic.sub_inst_to_auto_pipeline_latency
+                and AUTO_PIPELINE.ADDED_LATENCY_BLOCKER(child, parser_state) is None
+            ):
+                return True
+            stack.append(child)
+    return False
+
+
 def MAIN_DISPLAY_NAME(main_func_name, parser_state):
-    """How timing reports name a MAIN: a global FIFO's MAIN as its FIFO,
-    `global FIFO rx [top.py:14]`; any other MAIN by its function name."""
-    fifo = GLOBAL_FIFO_MAINS(parser_state).get(main_func_name)
-    return main_func_name if fifo is None else fifo.describe()
+    """How timing reports name a MAIN: a global instance's or FIFO's MAIN by
+    its declaration, `global FIFO rx [top.py:14]`; any other MAIN by its
+    function name."""
+    decl = GLOBAL_INST_MAINS(parser_state).get(main_func_name)
+    return main_func_name if decl is None else decl.describe()
 
 
 def PATH_MAIN_ROLES(path_report, parser_state, multimain_timing_params):

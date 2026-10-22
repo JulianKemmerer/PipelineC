@@ -2249,8 +2249,10 @@ def _register_main(func, mhz, name, origin):
     _pypeline_main. Without a name the MAIN is named like its function:
     its @hw_func(name=) if it has one, else its module-prefixed Python name
     (_hw_func_name), as PY_TO_LOGIC names a top-level def. A given name is
-    used verbatim. Names must be deterministic: the build and native sim
-    re-execute the design and find each MAIN by its name."""
+    used verbatim: MAIN() checks a user's name= first, and a global
+    instance's MAIN passes its wire's key plus a suffix, which may be longer
+    than a user name may be. Names must be deterministic: the build and
+    native sim re-execute the design and find each MAIN by its name."""
     fn = _inspect.unwrap(func) if callable(func) else None
     if fn is None or not hasattr(fn, "__code__"):
         raise TypeError(f"MAIN({func!r}) at {origin}: a @MAIN must be a function")
@@ -2260,8 +2262,6 @@ def _register_main(func, mhz, name, origin):
             f"after the design's @MAINs were collected. Make @MAINs while the "
             f"design is imported: in module-level code, or in factories it calls."
         )
-    if name is not None:
-        _check_user_name(name, "MAIN")
     wrapped = _sim_type_wrap(func)
     for other in _main_registry:
         if other is wrapped:
@@ -2331,6 +2331,8 @@ def MAIN(func_or_mhz=None, *, mhz=None, name=None):
     Implies @hw_func: inputs/outputs are type-cast for simulation and
     the function can be passed to sim_call().
     """
+    if name is not None:
+        _check_user_name(name, "MAIN")
     if callable(func_or_mhz):
         # Used as bare @MAIN, or called on a function
         return _register_main(
@@ -5781,15 +5783,247 @@ class Output(metaclass=_OutputMeta):
     pass
 
 
-# Fifo[T] — global FIFOs, with global_fifo(n) / global_sync_fifo(n)
-# ──────────────────────────────────────────────────────────────────
+# Inst[f] / Fifo[T] — global instances and global FIFOs
+# ──────────────────────────────────────────────────────
 
 
-class GlobalFifoError(Exception):
+class GlobalInstError(TypeError):
+    """A global instance whose hardware cannot be placed at module level:
+    Inst[f] of something that is not a hardware function, or whose ports do
+    not map onto a wire (an array of interface port halves, a name clash).
+    Raised by native sim and the compiler alike, when the declaration runs."""
+
+
+class GlobalFifoError(GlobalInstError):
     """A Fifo[T] declaration whose hardware cannot be a global FIFO of T: a
     module initializer without exactly one valid/ready input port and one
     output port of T. Raised by native sim and the compiler alike (the
     compiler reports it as an ElaborationError naming the declaration)."""
+
+
+class _InstPort(typing.NamedTuple):
+    """One port of a global instance's hardware (_global_inst_ports)."""
+
+    name: str  # its argument / return field name; "out" for a whole return value
+    arg_t: object  # its argument's type, None when it has no argument
+    ret_t: object  # its return field's type (or the whole return value's), or None
+    interface: object  # its @interface for an interface port, None for a plain one
+    is_input: bool  # a plain argument, or an interface port whose argument is .fwd_t
+    whole_return: bool  # it is the whole return value (not a field of a port bundle)
+
+    @property
+    def wire_t(self):
+        """Its field type in the instance's wire: an interface port's flat
+        interface.wire_t (both halves as plain fields), else its own type."""
+        if self.interface is not None:
+            return self.interface.wire_t
+        return self.arg_t if self.arg_t is not None else self.ret_t
+
+
+def _hardware_func(hardware):
+    """The function whose signature gives `hardware`'s ports: an
+    AUTO_PIPELINE tag's function, else `hardware` itself, unwrapped. None
+    when that is not a Python function."""
+    if getattr(hardware, "_is_auto_pipeline_pragma", False):
+        hardware = hardware.func
+    fn = _inspect.unwrap(hardware) if callable(hardware) else None
+    return fn if hasattr(fn, "__code__") else None
+
+
+def _global_inst_ports(fn, fail):
+    """The ports of the hardware function `fn` (unwrapped), as _InstPort
+    records, arguments first in signature order, then return fields:
+
+    - an argument is an input port named like it;
+    - an interface port pairs its .fwd_t or .fb_t argument with the return
+      field of the same name holding the other half; it is an input when its
+      argument is the .fwd_t half (with no argument, when its field is .fb_t);
+    - a return value with at least one interface-half field (a port bundle,
+      like a stream module's) gives each field as a port, a plain field an
+      output port of its own;
+    - any other return value is the one output port "out".
+
+    Calls fail(why), which raises, for an argument without a type, an array
+    of interface port halves (not supported yet), a return field sharing an
+    argument's name without being its other half, an argument named "out"
+    next to a plain return value, and a function with no ports."""
+    ann = getattr(fn, "__annotations__", {})
+    ports = {}
+    for p in _inspect.signature(fn).parameters:
+        t = ann.get(p)
+        if t is None:
+            fail(f"argument {p!r} has no type annotation")
+        intrf, role, is_array = _interface_half_of(t)
+        if is_array:
+            fail(
+                f"argument {p!r} is an array of interface port halves; arrays "
+                f"of interface ports are not supported yet"
+            )
+        ports[p] = _InstPort(p, t, None, intrf, role != "fb", False)
+    ret_t = ann.get("return")
+    fields = getattr(ret_t, "_fields", ()) if ret_t is not None else ()
+    ret_anns = getattr(ret_t, "__annotations__", {})
+    halves = {f: _interface_half_of(ret_anns.get(f)) for f in fields}
+    if any(role is not None for _intrf, role, _is_array in halves.values()):
+        for f, (intrf, role, is_array) in halves.items():
+            if is_array:
+                fail(
+                    f"return field {f!r} is an array of interface port halves; "
+                    f"arrays of interface ports are not supported yet"
+                )
+            prior = ports.get(f)
+            if prior is None:
+                ports[f] = _InstPort(f, None, ret_anns[f], intrf, role == "fb", False)
+            elif (
+                role is None
+                or prior.interface is not intrf
+                or role != ("fb" if prior.is_input else "fwd")
+            ):
+                fail(
+                    f"return field {f!r} and argument {f!r} share a name but "
+                    f"are not the two halves of one interface port"
+                )
+            else:
+                ports[f] = prior._replace(ret_t=ret_anns[f])
+    elif ret_t is not None:
+        if "out" in ports:
+            fail(
+                "argument 'out' has the name of the output port 'out', the "
+                "return value; rename the argument"
+            )
+        ports["out"] = _InstPort("out", None, ret_t, None, False, True)
+    if not ports:
+        fail("it has no ports: no arguments and no return value")
+    return list(ports.values())
+
+
+# id(hardware) -> (hardware, wire struct of Inst[hardware]), built once per hardware
+_global_inst_type_cache: dict = {}
+
+
+def _global_inst_types(hardware, ports):
+    """The wire struct of Inst[hardware]: one field per port (`ports`, from
+    _global_inst_ports), named like it, of its _InstPort.wire_t. Built once
+    per hardware object (keyed by identity: an AUTO_PIPELINE tag need not be
+    hashable)."""
+    cached = _global_inst_type_cache.get(id(hardware))
+    if cached is not None and cached[0] is hardware:
+        return cached[1]
+    wire_t = struct(
+        typing.NamedTuple("global_inst_t", [(p.name, p.wire_t) for p in ports])
+    )
+    _global_inst_type_cache[id(hardware)] = (hardware, wire_t)
+    return wire_t
+
+
+class _GlobalInstType(_WireType):
+    """Base of Inst[f] and Fifo[T]: a global wire holding the ports of one
+    instance of a hardware module, plus the MAIN that holds the instance
+    (_make_global_inst_main). Being a _WireType, the wire takes every
+    global-wire path unchanged (native-sim rewriting and lens writes,
+    elaboration, multi-writer regions, readback). A subclass says how its
+    MAIN is named and how the wire's paths meet the module's ports."""
+
+    kind_name = None  # how messages name a declaration: "global instance"
+    main_suffix = None  # the MAIN's name is the wire's key plus this
+    stem = None  # the generated MAIN's local names start with this
+
+    def hardware(self, wire_name, init):
+        """(module, ports, bindings) of the declaration `wire_name` with
+        initializer `init`: the module its MAIN calls, its _InstPort list in
+        the order the MAIN passes them, and {port name: wire path} for each
+        port whose path is not (its name,)."""
+        raise NotImplementedError
+
+    def arg_alias(self, port):
+        """Base name of the MAIN's local holding `port`'s argument type."""
+        return f"{self.stem}_{port.name}_t"
+
+    def exec_main(self, func_name, src, ns, wire_name, module):
+        """The MAIN's function, exec'd by _exec_generated_func from a frame
+        whose arguments describe it (they become its name info)."""
+        raise NotImplementedError
+
+
+class _InstType(_GlobalInstType):
+    """Produced by Inst[f]: one instance of hardware f, placed at module
+    level. The wire has one field per port of f (_global_inst_ports), and the
+    compiler adds the MAIN <key>_INST calling f with the wire's inputs and
+    driving its outputs."""
+
+    kind_name = "global instance"
+    main_suffix = "_INST"
+    stem = "inst"
+
+    def __init__(self, hardware):
+        fn = _hardware_func(hardware)
+        tag = getattr(hardware, "_is_auto_pipeline_pragma", False)
+        self.name = (
+            f"AUTO_PIPELINE({fn.__name__})" if tag and fn is not None
+            else getattr(fn, "__name__", None) or repr(hardware)
+        )
+
+        def fail(why):
+            raise GlobalInstError(f"Inst[{self.name}]: {why}")
+
+        if getattr(hardware, "_pypeline_main", None) is not None:
+            fail(
+                f"it is a @MAIN, which already is one instance of itself. "
+                f"Inst[f] takes a @hw_func."
+            )
+        if fn is None or not is_hw_func(hardware.func if tag else hardware):
+            fail("f must be a @hw_func, or an AUTO_PIPELINE(f) tag of one")
+        self.module = hardware
+        self.ports = _global_inst_ports(fn, fail)
+        super().__init__(_global_inst_types(hardware, self.ports))
+
+    def __str__(self):
+        return f"Inst[{self.name}]"
+
+    def hardware(self, wire_name, init):
+        if init is not None:
+            raise GlobalInstError(
+                f"global instance '{wire_name}': {self} takes no initializer; "
+                f"write '{wire_name}: {self}'"
+            )
+        return self.module, self.ports, {}
+
+    def exec_main(self, func_name, src, ns, wire_name, module):
+        def global_inst_main(inst, hardware):
+            # The frame _exec_generated_func describes: name, hardware
+            return _exec_generated_func(
+                func_name, src, ns, folder="pypeline_generated_insts"
+            )
+
+        return global_inst_main(wire_name, module)
+
+
+class _InstMeta(type):
+    def __getitem__(cls, item):
+        if isinstance(item, tuple):
+            names = ", ".join(getattr(i, "__name__", None) or repr(i) for i in item)
+            raise GlobalInstError(
+                f"Inst[...] takes one hardware function, Inst[f]; got Inst[{names}]"
+            )
+        return _InstType(item)
+
+
+class Inst(metaclass=_InstMeta):
+    """Marks a module-level variable as a global instance of a hardware
+    function: its ports become one global wire any function can use.
+
+    Usage at module level only, with no initializer:
+        alu0: Inst[alu]               # or Inst[AUTO_PIPELINE(alu)]
+
+    alu0.a is the input port for argument a, alu0.out the return value (a
+    port bundle's fields are ports of their own), and an interface port is
+    one field with both halves, alu0.x_if.stream / alu0.x_if.ready.
+    Functions drive the inputs and read the outputs; the compiler adds the
+    @MAIN alu0_INST holding the instance. Inst[f] inside a function body is
+    an ElaborationError. See pypeline_guide.md "Inst[f] — global instances".
+    """
+
+    pass
 
 
 # data type -> (end type, wire type) of Fifo[data type], built once per type
@@ -5823,12 +6057,15 @@ def _global_fifo_types(data_t):
     return types
 
 
-class _FifoType(_WireType):
-    """Produced by Fifo[T]. A global FIFO travels as an ordinary compound
-    global wire of _global_fifo_types(T)'s wire type, so every global-wire
-    path (native-sim rewriting and lens writes, elaboration, multi-writer
-    regions, readback) carries its two ends unchanged. The FIFO hardware
-    between the ends is a compiler-made MAIN (_make_global_fifo_main)."""
+class _FifoType(_GlobalInstType):
+    """Produced by Fifo[T]: a global instance of the FIFO hardware (its
+    initializer) whose two stream ports are the wire's ends, wr and rd.
+    Unlike Inst[f], the wire's type is fixed by T, _global_fifo_types(T),
+    and the compiler adds its MAIN <key>_FIFO only after clock assignment."""
+
+    kind_name = "global FIFO"
+    main_suffix = "_FIFO"
+    stem = "fifo"
 
     def __init__(self, data_t):
         super().__init__(_global_fifo_types(data_t)[1])
@@ -5836,6 +6073,26 @@ class _FifoType(_WireType):
 
     def __str__(self):
         return f"Fifo[{_ctype_str(self.data_t)}]"
+
+    def hardware(self, wire_name, init):
+        module = _global_fifo_hardware(self.data_t, init)
+        in_port, out_port = _stream_module_ports(
+            module, self.data_t, f"global FIFO '{wire_name}'"
+        )
+        bindings = {in_port.name: ("wr",), out_port.name: ("rd",)}
+        return module, [in_port, out_port], bindings
+
+    def arg_alias(self, port):
+        return "fifo_in_t" if port.is_input else "fifo_out_t"
+
+    def exec_main(self, func_name, src, ns, wire_name, module):
+        def global_fifo_main(fifo, data_t, hardware):
+            # The frame _exec_generated_func describes: name, data type, hardware
+            return _exec_generated_func(
+                func_name, src, ns, folder="pypeline_generated_fifos"
+            )
+
+        return global_fifo_main(wire_name, self.data_t, module)
 
 
 class _FifoMeta(type):
@@ -5919,14 +6176,12 @@ def _global_fifo_hardware(data_t, init):
 
 
 def _stream_module_ports(module, data_t, what):
-    """(input port name, output port name, input port's fwd_t, output port's
-    fb_t) of a stream module used as `what`'s hardware: exactly one valid/ready
-    input port and one output port, each a stream of make_stream_t(data_t)
-    with a uint1_t ready. Found from the module's annotations
-    (_interface_half_of): an input port is a .fwd_t argument plus a .fb_t
-    return field of the same name, an output port the reverse. Raises
-    GlobalFifoError naming the module otherwise."""
-    fn = _inspect.unwrap(module) if callable(module) else None
+    """(input port, output port), as _InstPort records, of a stream module
+    used as `what`'s hardware: its ports (_global_inst_ports) are exactly
+    one valid/ready input port and one output port, each an interface port
+    with both halves, a stream of make_stream_t(data_t) with a uint1_t ready.
+    Raises GlobalFifoError naming the module otherwise."""
+    fn = _hardware_func(module)
     desc = getattr(fn, "__qualname__", None) or repr(module)
 
     def fail(why):
@@ -5937,48 +6192,58 @@ def _stream_module_ports(module, data_t, what):
             f"or make_skid_buffer({_ctype_str(data_t)})): {why}"
         )
 
-    if fn is None or not hasattr(fn, "__code__"):
+    if fn is None:
         fail("it is not a hardware function")
-    ann = getattr(fn, "__annotations__", {})
-    roles = {}  # port name -> (arg role, return field role)
-    for p in _inspect.signature(fn).parameters:
-        _iface, role, is_array = _interface_half_of(ann.get(p))
-        if role is None or is_array:
-            fail(f"argument {p!r} is not one half of a stream port")
-        roles[p] = [role, None]
-    ret_t = ann.get("return")
-    ret_anns = getattr(ret_t, "__annotations__", {}) if ret_t is not None else {}
-    for f in getattr(ret_t, "_fields", ()):
-        _iface, role, is_array = _interface_half_of(ret_anns.get(f))
-        if f not in roles or role is None or is_array:
-            fail(f"return field {f!r} is not the other half of an argument's port")
-        roles[f][1] = role
-    in_ports = [p for p, r in roles.items() if r == ["fwd", "fb"]]
-    out_ports = [p for p, r in roles.items() if r == ["fb", "fwd"]]
-    if len(in_ports) != 1 or len(out_ports) != 1 or len(roles) != 2:
-        fail(f"its ports are {sorted(roles)}")
+    ports = _global_inst_ports(fn, fail)
+    for p in ports:
+        if p.interface is None and p.arg_t is not None:
+            fail(f"argument {p.name!r} is not one half of a stream port")
+        if p.interface is None or p.arg_t is None:
+            fail(f"return field {p.name!r} is not the other half of an argument's port")
+    in_ports = [p for p in ports if p.is_input and p.ret_t is not None]
+    out_ports = [p for p in ports if not p.is_input and p.ret_t is not None]
+    if len(in_ports) != 1 or len(out_ports) != 1 or len(ports) != 2:
+        fail(f"its ports are {sorted(p.name for p in ports)}")
     in_port, out_port = in_ports[0], out_ports[0]
     stream_t = _global_fifo_types(data_t)[0].__annotations__["stream"]
     for port, fwd_t, fb_t in (
-        (in_port, ann[in_port], ret_anns[in_port]),
-        (out_port, ret_anns[out_port], ann[out_port]),
+        (in_port, in_port.arg_t, in_port.ret_t),
+        (out_port, out_port.ret_t, out_port.arg_t),
     ):
         fwd_fields = getattr(fwd_t, "__annotations__", {})
         fb_fields = getattr(fb_t, "__annotations__", {})
         if list(fwd_fields) != ["stream"] or _ctype_str(
             fwd_fields["stream"]
         ) != _ctype_str(stream_t):
-            fail(f"port {port!r} does not carry make_stream_t({_ctype_str(data_t)})")
+            fail(
+                f"port {port.name!r} does not carry make_stream_t({_ctype_str(data_t)})"
+            )
         if list(fb_fields) != ["ready"] or _ctype_str(fb_fields["ready"]) != "uint1_t":
-            fail(f"port {port!r} has no uint1_t ready")
-    return in_port, out_port, ann[in_port], ann[out_port]
+            fail(f"port {port.name!r} has no uint1_t ready")
+    return in_port, out_port
 
 
-def _make_global_fifo_main(func_name, wire_name, fifo_type, init, module_globals, reserved=()):
-    """The FIFO MAIN of one Fifo[T] declaration: a flat generated hw_func
-    `func_name` making one call of the FIFO hardware. It reads wr.stream and
-    rd.ready and drives wr.ready and rd.stream, so the wire's ends meet the
-    module's ports. Native sim and the compiler both build it here, so native
+def _global_inst_main_name(module_name, bare_name, ann):
+    """The MAIN name of the global instance or FIFO `bare_name` (annotation
+    `ann`) declared in module `module_name`: its wire's key, module-prefixed
+    and VHDL-safe as PY_TO_LOGIC._discover_global_wires makes it, plus the
+    kind's suffix (rx_FIFO, alu0_INST)."""
+    prefix = _module_prefix(module_name)
+    key = _sanitize_vhdl_name(bare_name)
+    return f"{prefix + '_' if prefix else ''}{key}{ann.main_suffix}"
+
+
+def _make_global_inst_main(
+    func_name, wire_name, ann, hardware, module_globals, reserved=()
+):
+    """The MAIN of one global instance or FIFO declaration `wire_name`
+    (annotation `ann`, a _GlobalInstType): a flat generated hw_func
+    `func_name` making one call of the module in `hardware`, the (module,
+    ports, bindings) that ann.hardware gave. Each argument comes from the
+    wire: a plain input port's whole path, an interface port's argument half
+    built field by field. The module's return value drives the wire: an
+    interface port's returned half field by field, a plain output port's
+    whole path. Native sim and the compiler both build it here, so native
     sim stays compiler-free.
 
     It is exec'd in a copy of the declaring module's globals, so its body
@@ -5987,11 +6252,7 @@ def _make_global_fifo_main(func_name, wire_name, fifo_type, init, module_globals
     injected names and the one local avoid every name of that module and
     `reserved` (the compiler passes the top design file's globals, which
     elaboration merges in)."""
-    data_t = fifo_type.data_t
-    module = _global_fifo_hardware(data_t, init)
-    in_port, out_port, in_fwd_t, out_fb_t = _stream_module_ports(
-        module, data_t, f"global FIFO '{wire_name}'"
-    )
+    module, ports, bindings = hardware
     taken = set(module_globals) | set(module_globals.get("__annotations__", {}))
     taken |= set(reserved)
 
@@ -6003,34 +6264,51 @@ def _make_global_fifo_main(func_name, wire_name, fifo_type, init, module_globals
         taken.add(name)
         return name
 
-    hw, in_t, out_t, io = (
-        free(n) for n in ("fifo_hardware", "fifo_in_t", "fifo_out_t", "fifo_ports")
-    )
-    w = wire_name
+    hw = free(f"{ann.stem}_hardware")
+    aliases = {
+        p.name: free(ann.arg_alias(p))
+        for p in ports
+        if p.interface is not None and p.arg_t is not None
+    }
+    io = free(f"{ann.stem}_ports")
+
+    def path(port):
+        return ".".join((wire_name,) + bindings.get(port.name, (port.name,)))
+
+    args = []
+    for p in ports:
+        if p.arg_t is None:
+            continue
+        if p.interface is None:
+            args.append(f"{p.name}={path(p)}")
+        else:
+            fields = ", ".join(f"{f}={path(p)}.{f}" for f in p.arg_t._fields)
+            args.append(f"{p.name}={aliases[p.name]}({fields})")
+    drives = []
+    for p in ports:
+        if p.ret_t is None:
+            continue
+        if p.whole_return:
+            drives.append(f"{path(p)} = {io}")
+        elif p.interface is None:
+            drives.append(f"{path(p)} = {io}.{p.name}")
+        else:
+            drives += [f"{path(p)}.{f} = {io}.{p.name}.{f}" for f in p.ret_t._fields]
     src = (
         f"def {func_name}():\n"
-        f"    {io} = {hw}(\n"
-        f"        {in_port}={in_t}(stream={w}.wr.stream),\n"
-        f"        {out_port}={out_t}(ready={w}.rd.ready),\n"
-        f"    )\n"
-        f"    {w}.wr.ready = {io}.{in_port}.ready\n"
-        f"    {w}.rd.stream = {io}.{out_port}.stream\n"
+        f"    {f'{io} = ' if drives else ''}{hw}(\n"
+        + "".join(f"        {a},\n" for a in args)
+        + "    )\n"
+        + "".join(f"    {d}\n" for d in drives)
     )
     ns = dict(module_globals)
-    ns.update({hw: module, in_t: in_fwd_t, out_t: out_fb_t})
-
-    def global_fifo_main(fifo, data_t, hardware):
-        # The frame _exec_generated_func describes: name, data type, hardware
-        return _exec_generated_func(
-            func_name, src, ns, folder="pypeline_generated_fifos"
-        )
-
-    main = hw_func(global_fifo_main(wire_name, data_t, module))
-    # Named like a registered @MAIN, so native sim gives it its own root frame
-    # and checks its name against the others; never in _main_registry
-    main._pypeline_main = _MainInfo(
-        func_name, True, None, f"global FIFO {wire_name}"
-    )
+    ns[hw] = module
+    ns.update({aliases[p.name]: p.arg_t for p in ports if p.name in aliases})
+    main = hw_func(ann.exec_main(func_name, src, ns, wire_name, module))
+    # Its kind, which is also why it takes no added latency: the compiler's
+    # reason for it, and ELABORATE_LIVE_ROOTS's when native sim models
+    # pipeline_latency functions (no alignment around one inside it)
+    main._pypeline_global_inst = ann.kind_name
     return main
 
 
@@ -6499,14 +6777,15 @@ def _exec_generated_func(
 # convention used by _exec_generated_func (default folder
 # "pypeline_generated_bytes", or "pypeline_generated_casts" -- the
 # lazily-built @cast functions in include/pypeline/stream/stream.py -- or
-# "pypeline_generated_fifos", the global FIFO MAINs of _make_global_fifo_main,
-# via its folder= override) and AUTO._exec_generated ("pypeline_auto_fsm_gen");
-# see dump_generated_sources.
+# "pypeline_generated_fifos" / "pypeline_generated_insts", the global FIFO and
+# global instance MAINs of _make_global_inst_main, via its folder= override)
+# and AUTO._exec_generated ("pypeline_auto_fsm_gen"); see dump_generated_sources.
 _GENERATED_SOURCE_DIR_MARKERS = (
     "pypeline_generated_bytes",
     "pypeline_generated_casts",
     "pypeline_auto_fsm_gen",
     "pypeline_generated_fifos",
+    "pypeline_generated_insts",
 )
 
 

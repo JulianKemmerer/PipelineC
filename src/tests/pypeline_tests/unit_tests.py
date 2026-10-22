@@ -33,6 +33,26 @@ def get_tests() -> list:
             cmd=[INST_DIR / "global_fifo_path_unit_test.py"],
         )
     )
+    # Global instance API: Inst[f], the ports and wire type it derives from f,
+    # its errors, the MAIN generator's source and names, and MAIN() checking
+    # a user's name= where an instance's own MAIN name is not checked.
+    tests.append(
+        Test(
+            name="global_inst_api_unit_test",
+            category="unit",
+            cmd=[INST_DIR / "global_inst_api_unit_test.py"],
+        )
+    )
+    # The sweep's view of instance MAINs: paths inside one go to it alone; a
+    # path leaving a stateful instance goes to the user MAIN, one into an
+    # AUTO_PIPELINE instance to both; WHY_NOT_SLICEABLE; the TIMING NOT MET name.
+    tests.append(
+        Test(
+            name="global_inst_path_unit_test",
+            category="unit",
+            cmd=[INST_DIR / "global_inst_path_unit_test.py"],
+        )
+    )
     # @MAIN registration for MAINs made in code: MAIN's forms and name=, the
     # default name, its errors, the duplicate-name message, native sim's name
     # map for build results and the MAIN-named ELABORATE_LIVE_ROOTS root.

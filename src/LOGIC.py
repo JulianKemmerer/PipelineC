@@ -469,8 +469,8 @@ class Logic:
         # that path}, e.g. {("wr", "ready"): ("top.py", 14)}. A variable-index
         # access records its constant prefix. Unlike global_wire_driven_paths
         # these are the source's own accesses, read or written, never the
-        # implicit zero-init first write. Pypeline frontend only (global FIFO
-        # end checks, PY_TO_LOGIC._realize_global_fifos); empty for C.
+        # implicit zero-init first write. Pypeline frontend only (the users of
+        # a global instance or FIFO, PY_TO_LOGIC._check_global_insts); empty for C.
         self.global_wire_read_paths = {}
         self.global_wire_write_locs = {}
         self.uses_nonvolatile_state_regs = False
@@ -3350,7 +3350,8 @@ class ParserState:
         self.func_marked_wires = set()
         self.func_fixed_latency = {}
         # func name -> why it can take no compiler-added latency, beyond the
-        # Logic-level reasons in CAN_HAVE_ADDED_LATENCY (Pypeline global FIFOs:
+        # Logic-level reasons in CAN_HAVE_ADDED_LATENCY (Pypeline global
+        # instances and FIFOs: "global instance", "global instance handshake",
         # "global FIFO", "global FIFO handshake")
         self.func_no_added_latency = {}
         self.auto_pipeline_rams = {}
@@ -3363,9 +3364,10 @@ class ParserState:
         self.syn_tool_name = None
         self.inst_array_dict = dict()
         self.async_wires = set()
-        # Pypeline Fifo[T] declarations: global wire name -> PY_TO_LOGIC
-        # GlobalFifoDecl (kind, depth, data type, declaring module and line)
-        self.pypeline_global_fifos = {}
+        # Pypeline Inst[f] / Fifo[T] declarations: global wire name ->
+        # PY_TO_LOGIC GlobalInstDecl / GlobalFifoDecl (its MAIN, declaring
+        # module and line, and whether clock inference passes through it)
+        self.pypeline_global_insts = {}
         self.input_wires = set()
         self.output_wires = set()
         self.clk_mhz = {}
@@ -3490,7 +3492,7 @@ class ParserState:
         rv.io_pairs = set(self.io_pairs)
         rv.inst_array_dict = dict(self.inst_array_dict)
         rv.async_wires = set(self.async_wires)
-        rv.pypeline_global_fifos = dict(self.pypeline_global_fifos)
+        rv.pypeline_global_insts = dict(self.pypeline_global_insts)
         rv.input_wires = set(self.input_wires)
         rv.output_wires = set(self.output_wires)
         rv.clk_mhz = dict(self.clk_mhz)
@@ -3574,9 +3576,13 @@ def INFER_CLOCK_DOMAINS(
             # Cannot do inferring for async wires
             if global_var in parser_state.async_wires:
                 continue
-            # Nor across a Pypeline global FIFO: its ends' functions keep their
-            # own clocks, and the FIFO MAIN takes theirs when it is realized
-            if global_var in getattr(parser_state, "pypeline_global_fifos", ()):
+            # Nor across a Pypeline global instance whose kind stops it (a
+            # global FIFO: its ends' functions keep their own clocks, and the
+            # FIFO MAIN, added later, takes theirs)
+            inst_decl = getattr(parser_state, "pypeline_global_insts", {}).get(
+                global_var
+            )
+            if inst_decl is not None and not inst_decl.joins_clocks:
                 continue
             # Read+write mains for func
             rw_mains = set()

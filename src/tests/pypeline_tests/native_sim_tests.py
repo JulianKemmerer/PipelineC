@@ -615,6 +615,24 @@ def get_tests() -> list:
             ],
         )
     )
+    # Global instances, Inst[f]: a combinational instance with two drivers
+    # and two readers, two instances of one stateful function, a skid buffer
+    # instance under backpressure, an AUTO_PIPELINE(f, latency=2) instance and
+    # an imported module's instance.
+    tests.append(
+        Test(
+            name="global_inst_sim_test",
+            category="native_sim",
+            cmd=[
+                PYPELINEC,
+                INST_DIR / "global_inst_sim_test.py",
+                "--sim",
+                "--comb",
+                "--run",
+                "all",
+            ],
+        )
+    )
     # Native sim refuses @MAINs that name more than one rate (#354), through
     # pypeline_sim.py and pypelinec --sim --comb; a bare MAIN still simulates.
     tests.append(

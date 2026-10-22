@@ -319,11 +319,13 @@ except below a direct `AUTO_PIPELINE` call. `SWEEP.WHY_NOT_SLICEABLE` reports th
 stored reason, so landscapes and blame messages name it. The reasons are hard floors,
 not in `SOFT_FLOOR_REASONS`.
 
-Pypeline global FIFOs fill it
+Pypeline global instances and FIFOs fill it
 ([PY_TO_LOGIC_DESIGN.md](PY_TO_LOGIC_DESIGN.md#pipelines-func_no_added_latency)):
 
 | Reason | Function | Why |
 |---|---|---|
+| `"global instance"` | each instance MAIN `<key>_INST` | an instance adds no registers: its users see its outputs as a call's; an AUTO_PIPELINE call inside it still gets its region's stages |
+| `"global instance handshake"` | a user that both drives and reads one interface port of an instance | the port's reads would be sampled at its first stage and its writes published at its last |
 | `"global FIFO"` | each FIFO MAIN `<key>_FIFO` | its users see the FIFO's handshake in the same cycle |
 | `"global FIFO handshake"` | a user that both drives and reads one FIFO end | its end reads would be sampled at its first stage and its writes published at its last |
 

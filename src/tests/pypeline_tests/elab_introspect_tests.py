@@ -173,6 +173,17 @@ def get_tests() -> list:
             cmd=[INST_DIR / "global_fifo_pipeline_latency_test.py"],
         )
     )
+    # Global instances, Inst[f]: the <key>_INST MAIN (clock inferred through
+    # the wire, protected name, no added latency, handshake users), an
+    # imported module's instance, an AUTO_PIPELINE call site inside one, and
+    # the output/clock/initializer/local/AUTO_PIPELINE/name errors.
+    tests.append(
+        Test(
+            name="global_inst_elab_test",
+            category="elab_introspect",
+            cmd=[INST_DIR / "global_inst_elab_test.py"],
+        )
+    )
     # @MAINs made in code: lanes from a loop (keys, rates, ports, wire users),
     # an imported module's factory MAIN, a pure-factory library's function, a
     # renamed top-level MAIN, plain defs passed to MAIN(), a closure's wire
