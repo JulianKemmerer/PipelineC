@@ -4,7 +4,7 @@ This lists every open [PipelineC issue][issues], most serious first, for contrib
 
 Feature ideas and design questions live in [Discussions][discussions]. Before starting on code, read [`CONTRIBUTING.md`](../CONTRIBUTING.md): changes usually start with a discussion.
 
-- **Baseline:** commit `5d2a9ca62616932aa401c8a3b07973afbb357ce5`. Every `file:line` reference points into that commit. The entries for [#369][i369], [#370][i370], [#371][i371], [#372][i372], [#379][i379], [#380][i380] and [#381][i381] cite code newer than that commit, so they name functions instead, as do the entries not yet filed.
+- **Baseline:** commit `5d2a9ca62616932aa401c8a3b07973afbb357ce5`. Every `file:line` reference points into that commit. The entries for [#369][i369], [#370][i370], [#371][i371], [#372][i372], [#379][i379], [#380][i380], [#381][i381] and [#382][i382] to [#387][i387] cite code newer than that commit, so they name functions instead.
 - **Verified** means reproduced on that commit, in some cases by simulating the generated VHDL in GHDL. Unverified entries come from reading the code or from the issue thread.
 
 ## Before you start
@@ -63,7 +63,7 @@ Issues #353 and later include their reproducers in the issue itself.
 
 - `python3 src/tests/pypeline_tests/run_all.py` runs the Python suites. It accepts `-j N` and `--category …`.
 - `src/tests/c_tests/test_builds.sh "--comb --no_synth"` builds the C examples.
-- `python3 src/tests/pypeline_tests/known_issues_tests.py` runs expect-fail reproducers of known bugs, including those for [#361][i361], [#369][i369], [#370][i370], [#371][i371], [#372][i372], [#376][i376] and [#378][i378], and for every entry not yet filed except rank 38. A fixed bug shows up as XPASS.
+- `python3 src/tests/pypeline_tests/known_issues_tests.py` runs expect-fail reproducers of known bugs, including those for [#361][i361], [#369][i369], [#370][i370], [#371][i371], [#372][i372], [#376][i376], [#378][i378] and [#382][i382] to [#387][i387]. A fixed bug shows up as XPASS.
 
 ## Ranking
 
@@ -93,7 +93,7 @@ Within each group, bugs that affect both front ends come first, problems in the 
 | 13 | [#354][i354] | Python | Native simulation runs `@MAIN`s with different clock rates in lockstep (now refused; recommend closing) | Yes |
 | 14 | [#355][i355] | Python | `@sim_input` ignores its arguments within a cycle | Yes |
 | 15 | [#379][i379] | Python | Native simulation after a build drops pipeline placements inside a `@MAIN` of an imported module | Yes, in process |
-| 16 | Not yet filed | Python | Native simulation gives two instances one state when only a stateless caller tells them apart | Yes, GHDL |
+| 16 | [#382][i382] | Python | Native simulation gives two instances one state when only a stateless caller tells them apart | Yes, GHDL |
 | 17 | [#356][i356] | Both | String literals containing `_` produce invalid VHDL | Yes, GHDL |
 | 18 | [#357][i357] | Both | A `char` register with an integer initial value: invalid VHDL in C, rejected in Python | Yes, GHDL |
 | 19 | [#371][i371] | Both | `@pipeline_latency`/`FUNC_LATENCY` on a wire-only body produces invalid VHDL | Yes, GHDL |
@@ -107,10 +107,10 @@ Within each group, bugs that affect both front ends come first, problems in the 
 | 27 | [#358][i358] | Python | `@enum` members named like VHDL reserved words produce invalid VHDL | Yes, GHDL |
 | 28 | [#359][i359] | Python | An array of a different length is accepted and produces invalid VHDL | Yes, GHDL |
 | 29 | [#378][i378] | Python | Library factories build the wrong array shape when the element type is an array | Yes |
-| 30 | Not yet filed | Python | A `@struct` whose name starts with `signed` is converted as a VHDL `signed`, giving invalid VHDL | Yes, GHDL |
-| 31 | Not yet filed | Python | A global wire read back by its writer, in a design with no shared wire, gives invalid VHDL | Yes, GHDL |
-| 32 | Not yet filed | Python | `scope=` operator registrations are ignored on top-level functions and leak through shared callees | Yes, in process |
-| 33 | Not yet filed | Python | Omitting an `@hw_func` argument that has a default crashes the build | Yes |
+| 30 | [#383][i383] | Python | A `@struct` whose name starts with `signed` is converted as a VHDL `signed`, giving invalid VHDL | Yes, GHDL |
+| 31 | [#384][i384] | Python | A global wire read back by its writer, in a design with no shared wire, gives invalid VHDL | Yes, GHDL |
+| 32 | [#385][i385] | Python | `scope=` operator registrations are ignored on top-level functions and leak through shared callees | Yes, in process |
+| 33 | [#386][i386] | Python | Omitting an `@hw_func` argument that has a default crashes the build | Yes |
 | 34 | [#362][i362] | Python | Unsupported constructs crash with internal errors | Yes |
 | 35 | [#361][i361] | Python | `sim_print` on the `sim_finish()` cycle is missing from VHDL simulation output | Yes, GHDL |
 | 36 | [#286][i286] | C | The tool does not run on macOS | No, from the thread |
@@ -120,7 +120,7 @@ Within each group, bugs that affect both front ends come first, problems in the 
 | 40 | [#365][i365] | Both | `--coarse --sweep` may crash on narrow leaves | Not reproduced |
 | 41 | [#372][i372] | Python | `AUTO_PIPELINE(latency=N)` adds N cuts when `@pipeline_latency` calls already supply N cycles | Yes |
 | 42 | [#366][i366] | Python | AUTO_FSM deeply opened schedules may fail to elaborate | No, needs a long AUTO_FSM search |
-| 43 | Not yet filed | Python | `AUTO_PIPELINE(f)` on an imported function sweeps worse than tagging a local wrapper | Yes, in process |
+| 43 | [#387][i387] | Python | `AUTO_PIPELINE(f)` on an imported function sweeps worse than tagging a local wrapper | Yes, in process |
 | 44 | [#380][i380] | Both | The top level's global-wire connections come out in a hash-dependent order, so `top.vhd` changes between builds | Yes |
 | 45 | [#381][i381] | Both | After the sweep meets timing, a failed trim trial is kept and the build ends TIMING NOT MET | Yes |
 
@@ -424,7 +424,7 @@ Within each group, bugs that affect both front ends come first, problems in the 
 - **Reproduce:** `src/tests/pypeline_tests/inst/live_root_submodule_labels_test.py` (registered in `known_issues_tests.py`) prints the native-simulation instance names the build does not have.
 - **Workaround:** define a `@MAIN` that reaches a `@pipeline_latency` function in the top design file.
 
-### 16. Not yet filed: native simulation gives two instances one state when only a stateless caller tells them apart
+### 16. [#382][i382]: native simulation gives two instances one state when only a stateless caller tells them apart
 
 - **Front ends:** Python, native simulation only. The generated hardware is correct.
 - **What happens:** native simulation keys a stateful function's state (its `Reg`/`Feedback` values, or a `@sim_model`'s) by its instance path. A stateless `@hw_func` adds nothing to that path, so two calls that differ only above a stateless function share one state, with no warning. Two shapes, both compared against GHDL:
@@ -565,7 +565,7 @@ Within each group, bugs that affect both front ends come first, problems in the 
 - **Reproduce:** `python3 src/tests/pypeline_tests/known_issues_tests.py -k library_factory_array_elem` (XFAIL while the bug is present; needs GHDL). The design is `src/tests/pypeline_tests/inst/library_factory_array_elem_design.py`. Changing `make_shift_into_top` and `make_kept_data_bus_t` to `make_array_t` makes it pass in GHDL.
 - **Workaround:** wrap the array in an `@struct` and pass the struct as the element type.
 
-### 30. Not yet filed: a `@struct` whose name starts with `signed` is converted as a VHDL `signed`
+### 30. [#383][i383]: a `@struct` whose name starts with `signed` is converted as a VHDL `signed`
 
 - **Front ends:** Python. C struct names reach the same code, but C was not checked.
 - **What happens:** VHDL emission picks a type's conversion to and from `std_logic_vector` by the start of its VHDL type name. A record type whose name starts with `signed` (Pypeline names it `signed_payload_t_from_<module>_…`) takes the `signed(...)` branch instead of the record's own conversion function. Native simulation is correct; GHDL rejects the generated package with `can't match type conversion with type record type "signed_payload_t_from_…"`. In the reproducer, the conversion comes from a FIFO serializing its record. From the code, names starting with `unsigned` or `std_logic_vector` take the same wrong branches.
@@ -573,7 +573,7 @@ Within each group, bugs that affect both front ends come first, problems in the 
 - **Reproduce:** `python3 src/tests/pypeline_tests/known_issues_tests.py -t struct_signed_prefix_known_issue` (XFAIL while the bug is present; needs GHDL). The design is `src/tests/pypeline_tests/inst/struct_signed_prefix_design.py`.
 - **Workaround:** start struct names with something other than `signed`, `unsigned` or `std_logic_vector`. The NCO's sideband record is named `amplitudes_t` for this reason.
 
-### 31. Not yet filed: a global wire read back by its writer, in a design with no shared wire, gives invalid VHDL
+### 31. [#384][i384]: a global wire read back by its writer, in a design with no shared wire, gives invalid VHDL
 
 - **Front ends:** Python. C has no readback wires.
 - **What happens:** a function that writes a global wire and also reads it gets a `<wire>_PYPELINE_READBACK` field in its `global_to_module` record. When no global wire in the design is shared (each is used by one function only, and none is an `Input`, `Output` or clock) and there are no clock crossings, `global_wires_pkg.pkg.vhd` is not written. `top.vhd` still declares `signal global_to_module : global_to_module_t;`, and the MAIN still has a `global_to_module` port of the package's type. The build exits 0; GHDL rejects `top.vhd` with `signal "global_to_module" does not designate a record`. A second wire shared by two functions makes the package appear, with the readback field, and the VHDL is valid.
@@ -581,7 +581,7 @@ Within each group, bugs that affect both front ends come first, problems in the 
 - **Reproduce:** `python3 src/tests/pypeline_tests/known_issues_tests.py -t global_wire_unshared_readback_known_issue` (XFAIL while the bug is present; needs GHDL). The design is `src/tests/pypeline_tests/inst/global_wire_unshared_readback_design.py`.
 - **Workaround:** in the writing function, read the value it writes (a local) instead of the wire. A wire that is written and never read back builds valid VHDL.
 
-### 32. Not yet filed: `scope=` operator registrations are ignored on top-level functions and leak through shared callees
+### 32. [#385][i385]: `scope=` operator registrations are ignored on top-level functions and leak through shared callees
 
 - **Front ends:** Python.
 - **What happens:** `register_operator(..., scope=f)`, and the `scope=` of the library's `register_*` helpers (`register_soft_ops(scope=my_func)` in the guide), are meant to apply a registration only while `f` is elaborated. Native simulation applies it to `f` and everything `f` calls. Hardware elaboration differs in two ways:
@@ -593,7 +593,7 @@ Within each group, bugs that affect both front ends come first, problems in the 
 - **Reproduce:** `python3 src/tests/pypeline_tests/known_issues_tests.py -t scoped_operator_registration_known_issue` (XFAIL while the bug is present; a few seconds, in process). The designs are `src/tests/pypeline_tests/inst/scoped_operator_top_level_design.py` and `scoped_operator_shared_callee_design.py`.
 - **Workaround:** register globally, without `scope=`, and pin the exceptions back to the built-in operator with exact-type `INFERRED` registrations, as `operator_scope_test.py` does.
 
-### 33. Not yet filed: omitting an `@hw_func` argument that has a default crashes the build
+### 33. [#386][i386]: omitting an `@hw_func` argument that has a default crashes the build
 
 - **Front ends:** Python.
 - **What happens:** Python fills in a default argument, so for `def with_default(data: uint8_t, rst: uint1_t = 0)` the call `with_default(data)` runs in native simulation with `rst = 0`. Hardware elaboration leaves the omitted input unconnected, and the build stops in trimming with the internal error `KeyError: 'with_default[…]____rst'` (`LOGIC.TRIM_COLLAPSE_FUNC_DEFS_RECURSIVE`). Passing the argument builds.
@@ -694,7 +694,7 @@ Within each group, bugs that affect both front ends come first, problems in the 
 - **Where to look:** AUTO_FSM's source generation for opened operations in `src/AUTO_FSM.py`; `docs/AUTO_FSM_DESIGN.md` §6.
 - **Reproduce:** not re-run here; it needs a long AUTO_FSM search.
 
-### 43. Not yet filed: `AUTO_PIPELINE(f)` on an imported function sweeps worse than a wrapper
+### 43. [#387][i387]: `AUTO_PIPELINE(f)` on an imported function sweeps worse than a wrapper
 
 - **Front ends:** Python.
 - **What happens:** the call's instance is labeled with the bare Python name (`square`), while the callee's function name is module-prefixed (`imported_math_square`). The sweep attributes a critical path by finding function names inside its register names, so a path through the region root matches nothing and the sweep replans the whole MAIN blindly. Separately, the sweep never mini-sweeps a region root, only functions inside a region. Seen on WireGuard: tagging `poly1305_body` directly built the bodies 6 and 12 deep and overflowed the device's DSPs, where tagging a one-line wrapper built 8 and 8.
@@ -758,6 +758,12 @@ Within each group, bugs that affect both front ends come first, problems in the 
 [i379]: https://github.com/JulianKemmerer/PipelineC/issues/379
 [i380]: https://github.com/JulianKemmerer/PipelineC/issues/380
 [i381]: https://github.com/JulianKemmerer/PipelineC/issues/381
+[i382]: https://github.com/JulianKemmerer/PipelineC/issues/382
+[i383]: https://github.com/JulianKemmerer/PipelineC/issues/383
+[i384]: https://github.com/JulianKemmerer/PipelineC/issues/384
+[i385]: https://github.com/JulianKemmerer/PipelineC/issues/385
+[i386]: https://github.com/JulianKemmerer/PipelineC/issues/386
+[i387]: https://github.com/JulianKemmerer/PipelineC/issues/387
 [d323]: https://github.com/JulianKemmerer/PipelineC/discussions/323
 [d326]: https://github.com/JulianKemmerer/PipelineC/discussions/326
 [d342]: https://github.com/JulianKemmerer/PipelineC/discussions/342

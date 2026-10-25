@@ -928,7 +928,8 @@ The remaining global wire tests:
 - `global_wire_unshared_readback_known_issue` (`known_issues`, needs GHDL) is the
   cycle diff of `global_wire_unshared_readback_design.py`: a readback in a design
   with no shared wire, where `global_wires_pkg` is not written but `top.vhd` uses
-  its types, so GHDL rejects the VHDL.
+  its types, so GHDL rejects the VHDL
+  ([#384](https://github.com/JulianKemmerer/PipelineC/issues/384)).
 
 **Pipeline timing.** See the guide's
 [Global wires in pipelined code](pypeline_guide.md#global-wires-in-pipelined-code).
@@ -1025,7 +1026,7 @@ The global FIFO tests above also cover the generic instance code on its FIFO kin
 | `factory_main_sim_test` | `native_sim` | under `pypeline_sim.py`: counter lanes from one factory keep their own registers, stateless lanes their own wire elements, two stateless MAINs their own `make_stream_fifo` model state; duplicate names stop the run; the multi-rate refusal names made MAINs; `MAIN()` in an `@initial(sim)` hook is an error |
 | `factory_main_pipeline_latency_test` | `native_sim` | two lanes reaching one `@pipeline_latency` helper from one source line, with build timing that differs per lane, each dispatch to their own stage graph |
 | `self_check_factory_main_test` | `native_vs_vhdl_sim` (`--comb`), `synth_device_models` (`--comb`) | counter lanes on one wire's elements, two FIFO lanes from one `make_stream_fifo`, and a factory closure writing a wire: native sim and GHDL match cycle by cycle, and sky130 synthesizes it |
-| `stateless_caller_sim_state_known_issue` | `known_issues` | the case root frames do not cover: inside one `@MAIN`, a stateless wrapper called twice and two `make_stream_fifo` FIFOs each share one native-sim state (`stateless_caller_sim_state_design.py`, cycle diff, needs GHDL) |
+| `stateless_caller_sim_state_known_issue` | `known_issues` | the case root frames do not cover: inside one `@MAIN`, a stateless wrapper called twice and two `make_stream_fifo` FIFOs each share one native-sim state (`stateless_caller_sim_state_design.py`, cycle diff, needs GHDL, [#382](https://github.com/JulianKemmerer/PipelineC/issues/382)) |
 | `live_root_submodule_labels_known_issue` | `known_issues` | native sim after a build: a sub-module MAIN's call to a same-module function is labeled without the build's module prefix, so its pipeline placement is not found (`live_root_submodule_labels_test.py`, [#379](https://github.com/JulianKemmerer/PipelineC/issues/379)) |
 
 ## Augmented assignment coverage

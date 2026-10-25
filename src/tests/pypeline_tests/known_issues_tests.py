@@ -64,6 +64,7 @@ def get_tests() -> list:
     # AUTO_PIPELINE(imported_f): the instance label is the bare name, the
     # func_name module-prefixed, so path attribution misses the region root
     # and the sweep replans blindly (WireGuard without its body wrappers).
+    # Issue #387.
     tests.append(
         Test(
             name="imported_auto_pipeline_attribution_known_issue",
@@ -153,6 +154,7 @@ def get_tests() -> list:
     )
     # Python supplies a @hw_func default, but HDL calls leave an omitted input
     # undriven. DSP reset inputs are explicit until this is supported.
+    # Issue #386.
     tests.append(
         Test(
             name="hw_func_default_arg_known_issue",
@@ -164,6 +166,7 @@ def get_tests() -> list:
     )
     # Nested record names starting with signed_ take the scalar conversion
     # branch in VHDL emission. NCO sideband records avoid this prefix.
+    # Issue #383.
     tests.append(
         Test(
             name="struct_signed_prefix_known_issue",
@@ -243,7 +246,7 @@ def get_tests() -> list:
     # Native sim gives two instances of a stateful callee one state when only
     # a stateless caller separates them: a stateless wrapper called twice, or
     # two make_stream_fifo FIFOs called from one MAIN. pypeline_sim_debug.py
-    # reports MISMATCH.
+    # reports MISMATCH. Issue #382.
     tests.append(
         Test(
             name="stateless_caller_sim_state_known_issue",
@@ -257,7 +260,7 @@ def get_tests() -> list:
     )
     # A global wire read back by its writer, with no shared wire in the
     # design: global_wires_pkg is not written but top.vhd and the MAIN's ports
-    # use its types, so GHDL rejects the VHDL.
+    # use its types, so GHDL rejects the VHDL. Issue #384.
     tests.append(
         Test(
             name="global_wire_unshared_readback_known_issue",
@@ -271,7 +274,7 @@ def get_tests() -> list:
     )
     # scope= registrations: ignored on a plain top-level @hw_func (PARSE_FILE
     # Step 7), and a callee shared by a scoped and an unscoped caller is one
-    # entity built under whichever came first.
+    # entity built under whichever came first. Issue #385.
     tests.append(
         Test(
             name="scoped_operator_registration_known_issue",
