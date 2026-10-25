@@ -335,6 +335,24 @@ generated hash is intentionally not a stable
 API; testbenches should discover types from `c_structs_pkg` or bind through a
 small wrapper with scalar ports.
 
+The writer checks that a shared global's functions run on one clock ("Cannot have
+multiple clock domains for shared global"), except for async wires and the wires in
+`parser_state.wire_clocks_checked`: the Pypeline front end has already checked those
+leaf by leaf, and a split wire's leaves, or a global FIFO's two ends, may be on different
+clocks ([PY_TO_LOGIC_DESIGN.md](PY_TO_LOGIC_DESIGN.md#the-crossing-check-_check_clock_crossings)).
+
+Clock crossings are written by `WRITE_CLK_CROSS_ENTITIES` into `clk_cross_entities.vhd`
+([pipelinec_multiple_clock_domains.md](pipelinec_multiple_clock_domains.md#clk_cross_entitiesvhd)).
+Two helpers serve both front ends:
+
+- `CLK_CROSS_USES_XPM(var, parser_state)` picks an async FIFO's hardware:
+  `xpm_fifo_async` on Vivado unless the crossing's `ClkCrossVarInfo.async_impl` is
+  `"builtin"`, and the built-in `pipelinec_async_fifo_fwft` otherwise, including when no
+  tool is chosen. The Pypeline crossing report reads it too.
+- `CLK_CROSS_RETURN_VHDL_TYPE(func_logic, default_type, parser_state)` is the type of a
+  FIFO's `wr_return_output` / `rd_return_output` port: its crossing function's return
+  type, or C's `<var>_write_t` / `<var>_read_t` text when that side is never called.
+
 PipelineC does not synthesize an output-ready port where the source interface
 has none. Verification for such an interface can cover continuous-valid
 traffic, input bubbles, ordering, latency, and flush, but must not claim

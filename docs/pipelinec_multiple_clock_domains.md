@@ -1468,6 +1468,11 @@ per `IO_PAIR` and a `clk_cross_<var>` entity per other crossing. The ports:
 | Kind | Ports |
 |---|---|
 | FIFO | `in_clk`, `in_clk_en`, `write_data` (`T[W]`), `write_enable`, `wr_return_output` (`<v>_write_t`), `out_clk`, `out_clk_en`, `read_enable`, `rd_return_output` (`<v>_read_t`) |
+
+The FIFO's two `*_return_output` types are those of its crossing functions' return values
+(`VHDL.CLK_CROSS_RETURN_VHDL_TYPE`). For C they are `<v>_write_t` and `<v>_read_t`; a
+Pypeline async global FIFO's are its stubs' return structs. A read side that is never
+called keeps the `<v>_read_t` text.
 | ratio, same-clock and `ASYNC_WIRE` | `in_clk`, `in_clk_en`, `in_data` (`T_array_<W>_t`), `out_clk`, `rd_return_output` (`T_array_<R>_t`) |
 
 The architectures are those of sections 5, 6 and 7. For the built-in async FIFO:
@@ -1830,17 +1835,15 @@ From the code.
 
 - `C_TO_LOGIC.GEN_CLOCK_CROSS_HEADERS`: a FIFO variable with more than one dimension
   prints `Only single dim in flow control crossing!`.
-- `VHDL.WRITE_CLK_CROSS_ENTITIES` calls `SYN.PART_SET_TOOL(parser_state.part)` without
-  `allow_fail` when a crossing has two clock names and no tool is chosen yet. With no
-  part and no PyRTL, `PART_SET_TOOL` prints `Need to set FPGA part somewhere in the code
-  to continue with synthesis tool support!` and exits with status 0.
+- *Fixed.* `VHDL.WRITE_CLK_CROSS_ENTITIES` called `SYN.PART_SET_TOOL(parser_state.part)`
+  without `allow_fail` when a crossing had two clock names and no tool was chosen yet. With
+  no part and no PyRTL, `PART_SET_TOOL` printed `Need to set FPGA part somewhere in the
+  code to continue with synthesis tool support!` and exited with status 0. The FIFO choice
+  is now `VHDL.CLK_CROSS_USES_XPM`, which picks the built-in FIFO when no tool is known.
 
-**Fix idea.** Exit with a nonzero status in both places (or raise). For the second, the
-FIFO choice should not need a tool at all: pick the built-in FIFO when no tool is known,
-which is what happens anyway when PyRTL is installed.
+**Fix idea.** Exit with a nonzero status in the first (or raise).
 
-**Test.** Build a two-clock FIFO design without a part in an environment without PyRTL;
-expect a nonzero status or a built-in FIFO.
+**Test.** `async_fifo_path_unit_test.py` checks the built-in choice with no tool.
 
 ### Quartus clock groups run together
 
@@ -2153,13 +2156,14 @@ shared-global check does.
 
 From the code.
 
-**What happens.** `SIM.GET_SIM_GEN_INFO` builds user clock names without the group, so a
-`CLK_MHZ_GROUP` clock that is a top-level input is not removed and renamed. Its
-frequencies are `GET_TARGET_MHZ` values, so with a synthesis-only tool the testbench
-period comes from `MAIN_SYN_MHZ` instead of the real clock.
+**What happens.** *Partly fixed.* `SIM.GET_SIM_GEN_INFO` built user clock names without
+the group, so a `CLK_MHZ_GROUP` clock that is a top-level input was not removed and
+renamed; it now builds them with `VHDL.CLK_MHZ_GROUP_TEXT(clk_mhz,
+parser_state.clk_group.get(user_clk_name))`. Its frequencies are still `GET_TARGET_MHZ`
+values, so with a synthesis-only tool the testbench period comes from `MAIN_SYN_MHZ`
+instead of the real clock.
 
-**Fix idea.** Build the name with `VHDL.CLK_MHZ_GROUP_TEXT(clk_mhz,
-parser_state.clk_group.get(user_clk_name))`, and take frequencies from `main_mhz`.
+**Fix idea.** Take frequencies from `main_mhz`.
 
 **Test.** An in-process test of `GET_SIM_GEN_INFO` on a design with a grouped input clock
 and a `MAIN_SYN_MHZ`.
@@ -2274,7 +2278,8 @@ covers the rest.
 
 ## 16. Ideas for multiple clock domains in Pypeline
 
-This section is a set of proposals, not a description of existing behavior. It uses the
+This section is a set of proposals, not a description of existing behavior, apart from
+[What Pypeline has today](#what-pypeline-has-today). It uses the
 C front end's design (sections 1 to 14) and its problems ([section 15](#15-known-problems-and-fix-ideas))
 to suggest how the Python front end could support more than one clock. The open questions
 come from [#342](https://github.com/JulianKemmerer/PipelineC/discussions/342) ("an
@@ -2290,24 +2295,29 @@ code:
 
 | Feature | Pypeline today | C equivalent |
 |---|---|---|
-| One clock per top-level function | `@MAIN`, `@MAIN(100.0)`, `@MAIN(mhz=100.0)`, `MAIN(fn, mhz=100.0)`; `_register_main` stores the MHz in the MAIN's record, `wrapped._pypeline_main` | `#pragma MAIN`, `MAIN_MHZ` |
-| Synthesis-only target | none; `PARSE_FILE` writes the same value to `main_mhz` and `main_syn_mhz` | `MAIN_SYN_MHZ` |
-| Clock groups | none; `main_clk_group` is always `None` | `MAIN_MHZ_GROUP`, `MAIN_GROUP` |
-| Inference for bare `@MAIN` | `LOGIC.INFER_CLOCK_DOMAINS({}, {}, {}, parser_state)` after `_build_func_call_graph`; shared globals only, a global instance's wire included, never through a global FIFO | the same function, plus crossings |
-| Named or generated clock | `make_clock(mhz)` as the initializer of an `Input[uint1_t]` or `Wire[uint1_t]`, written to `parser_state.clk_mhz`. Its rate must equal some `@MAIN`'s rate; two tagged wires at one rate are rejected | `CLK_MHZ`, `CLK_MHZ_GROUP` |
-| Same-clock wires between MAINs | `Wire[T]`, `Input[T]`, `Output[T]`, with multi-writer splitting and pipeline alignment (`VOLATILE` turns alignment off) | shared globals |
-| Crossing between clocks | none. A global used on two clocks fails in the VHDL writer with `Cannot have multiple clock domains for shared global ...` | crossings, FIFOs, `ASYNC_WIRE` |
-| Native simulation | one loop, every `@MAIN` once per cycle; a design whose `@MAIN`s name more than one rate is refused with the rates and their `@MAIN`s ([#354](https://github.com/JulianKemmerer/PipelineC/issues/354)) | none |
+| One clock per top-level function | `@MAIN`, `@MAIN(100.0)`, `@MAIN(mhz=100.0)`, `@MAIN(clk)`, `@MAIN(clock=clk)`, `MAIN(fn, clock=clk, name=...)`; `_register_main` stores the clock in the MAIN's record, `wrapped._pypeline_main.clock` | `#pragma MAIN`, `MAIN_MHZ` |
+| Clocks | `make_clock(mhz, name=None, syn_mhz=None)` returns a clock value, identified by rate and name | `MAIN_MHZ`, `CLK_MHZ` |
+| Synthesis-only target | `make_clock(..., syn_mhz=)`, written to `main_syn_mhz` | `MAIN_SYN_MHZ` |
+| Clock groups | a clock's `name`, written to `main_clk_group` and `clk_group`; the port is `clk_<rate>_<name>` | `MAIN_MHZ_GROUP`, `MAIN_GROUP` |
+| Inference for bare `@MAIN` | `PY_TO_LOGIC._assign_clocks`: a search from MAINs with clocks and stated-clock pins through plain wires and global instances, never through async wires or global FIFOs; a bare MAIN reached by two clocks is an error, an unreached one gets the default clock | `LOGIC.INFER_CLOCK_DOMAINS`, plus crossings |
+| Named or generated clock | a clock bound to an `Input[uint1_t]` pin or a `Wire[uint1_t]`, written to `parser_state.clk_mhz` and `clk_group`; it must be some `@MAIN`'s clock, with one pin or wire per clock | `CLK_MHZ`, `CLK_MHZ_GROUP` |
+| Same-clock wires between MAINs | `Wire[T]`, `Input[T]`, `Output[T]`, with multi-writer splitting and pipeline alignment (`VOLATILE` turns alignment off); each leaf is checked against its writer's clock (`_check_clock_crossings`) | shared globals |
+| Crossing between clocks | `Wire[T, ASYNC]` (and async pins) with no added logic; a leaf read on another clock without one is an error naming both ends | `ASYNC_WIRE` |
+| Native simulation | one loop, every `@MAIN` once per cycle; a design whose `@MAIN`s name more than one clock is refused with the clocks and their `@MAIN`s ([#354](https://github.com/JulianKemmerer/PipelineC/issues/354)) | none |
 | VHDL simulation | the same cocotb template: one clock only | the same |
 | Single-clock FIFO | `make_fifo` / `make_stream_fifo` over `pipelinec_fifo_fwft`, with a `@sim_model` | `FIFO_FWFT` |
 | Global instance | `name: Inst[f]`: `f`'s ports as one global wire, and a compiler-made MAIN `<key>_INST` holding `f`, on the clock its users' MAINs infer through the wire ([guide](pypeline_guide.md#instf--global-instances)) | `GLOBAL_FUNC_INST`, `GLOBAL_PIPELINE_INST*`, `GLOBAL_VALID_READY_*_INST` |
-| Single-clock global FIFO | `name: Fifo[T] = global_fifo(n)` (or `global_sync_fifo(n)`, or a stream module) with `.wr` / `.rd` ends: a global instance of the FIFO hardware, whose MAIN `<key>_FIFO` is added on its ends' clock; ends on two clocks are an error ([guide](pypeline_guide.md#fifot--global-fifos)) | same-clock `GLOBAL_FIFO`, `GLOBAL_STREAM_FIFO` |
+| Global FIFO | `name: Fifo[T] = global_fifo(n)` (or `global_sync_fifo(n)`, `global_async_fifo(n)`, or a stream module) with `.wr` / `.rd` ends. On one clock, a global instance of the FIFO hardware, whose MAIN `<key>_FIFO` is added on its ends' clock. On two clocks, a `clk_cross_<key>_FIFO` crossing like `GLOBAL_STREAM_FIFO`'s, with two wiring MAINs `<key>_FIFO_wr` and `<key>_FIFO_rd`; `impl="builtin"` picks the built-in FIFO on Vivado ([guide](pypeline_guide.md#clock-crossing-fifos)) | `GLOBAL_FIFO`, `GLOBAL_STREAM_FIFO` |
+| Crossing report | `clock_crossings.log` and `.json`: every async wire leaf and global FIFO, with clocks, kind, hardware and depth | none |
 
-Everything below the front end is shared, so the back end already handles several clocks
-for Pypeline designs: clock ports, user clocks, constraints and the sweep's per-MAIN
-goals work as described in sections 11 and 12. What is missing is a way to say how data
-crosses, a way to name two clocks of one rate, and a simulation that runs clocks at their
-own rates.
+Everything below the front end is shared, so the back end handles several clocks for
+Pypeline designs as it does for C: clock ports, user clocks, constraints, crossing entities
+and the sweep's per-MAIN goals work as described in sections 11 and 12. The proposals
+below were written before Pypeline had a way to say how data crosses or to name two clocks
+of one rate; the syntax built from them is in
+[pypeline_multiple_clock_domains.md](pypeline_multiple_clock_domains.md) and the guide's
+[Part IV](pypeline_guide.md#part-iv--multiple-clock-domains). A simulation that runs clocks
+at their own rates is still missing.
 
 Two restrictions of the Pypeline language shape the proposals:
 
@@ -2547,8 +2557,8 @@ What the front end would do, in terms of existing structures:
    functions.
 2. `PARSE_FILE` creates the `ParserState` entries the C front end creates: a global
    `<name>` of type `T[depth]` in `global_vars`, a `ClkCrossVarInfo` with
-   `flow_control=True`, sizes `(1, 1)` and the write and read MAINs (from the call graph
-   `_build_func_call_graph` already builds), and `is_clock_crossing` on both functions.
+   `flow_control=True`, sizes `(1, 1)` and the write and read MAINs (the MAINs above the two
+   functions), and `is_clock_crossing` on both functions.
 3. The back end then writes `clk_cross_<name>`, picks XPM or the built-in FIFO, routes the
    record fields and adds the file to the file list, unchanged. The one coupling to
    remove first is `LOGIC.CLK_CROSS_FUNC_TO_VAR_NAME`: either name the halves

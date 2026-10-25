@@ -61,6 +61,9 @@ COMB_TEST_FILES = [
     ("self_check_fifo_test.py", INST_DIR, []),
     # A global FIFO, Fifo[T] of a struct, between two MAINs with backpressure
     ("self_check_global_fifo_test.py", INST_DIR, []),
+    # A named clock on a pin (SYS_CLK carries clk_50p0_sys): the cocotb
+    # testbench drives the pin as its one clock
+    ("self_check_named_clock_pin_test.py", INST_DIR, []),
     # Global instances, Inst[f]: a combinational instance driven from two
     # MAINs, two instances of one counter, a skid buffer instance with
     # backpressure, an AUTO_PIPELINE(f, latency=2) instance and a make_ram

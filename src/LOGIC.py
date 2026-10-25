@@ -3368,6 +3368,20 @@ class ParserState:
         # PY_TO_LOGIC GlobalInstDecl / GlobalFifoDecl (its MAIN, declaring
         # module and line, and whether clock inference passes through it)
         self.pypeline_global_insts = {}
+        # Pypeline global wires: name -> PY_TO_LOGIC WireDecl (its annotation,
+        # with its ASYNC and clock markers, and where it was declared)
+        self.pypeline_wire_decls = {}
+        # Pypeline clock identity (mhz, name) -> the Python name of a clock
+        # made by make_clock with it, for messages and the crossing report
+        self.pypeline_clock_names = {}
+        # Pypeline clock identity (mhz, name) -> the syn_mhz its make_clock gave
+        self.pypeline_clock_syn_mhz = {}
+        # Pypeline crossing report rows (PY_TO_LOGIC.CrossingRow): ASYNC wire
+        # leaves read on other clocks, and every global FIFO
+        self.pypeline_clock_crossings = []
+        # Global wires whose clock rules the front end checked leaf by leaf
+        # (Pypeline): VHDL.WRITE_MULTIMAIN_TOP skips its whole-wire check for them
+        self.wire_clocks_checked = set()
         self.input_wires = set()
         self.output_wires = set()
         self.clk_mhz = {}
@@ -3493,6 +3507,11 @@ class ParserState:
         rv.inst_array_dict = dict(self.inst_array_dict)
         rv.async_wires = set(self.async_wires)
         rv.pypeline_global_insts = dict(self.pypeline_global_insts)
+        rv.pypeline_wire_decls = dict(self.pypeline_wire_decls)
+        rv.pypeline_clock_names = dict(self.pypeline_clock_names)
+        rv.pypeline_clock_syn_mhz = dict(self.pypeline_clock_syn_mhz)
+        rv.pypeline_clock_crossings = list(self.pypeline_clock_crossings)
+        rv.wire_clocks_checked = set(self.wire_clocks_checked)
         rv.input_wires = set(self.input_wires)
         rv.output_wires = set(self.output_wires)
         rv.clk_mhz = dict(self.clk_mhz)
@@ -3552,6 +3571,10 @@ class ClkCrossVarInfo:
         self.write_read_sizes = (None, None)
         self.flow_control = False
         self.is_part_of_arb_handshake = False
+        # Hardware of an async FIFO: None picks by synthesis tool (xpm_fifo_async
+        # on Vivado), "builtin" is pipelinec_async_fifo_fwft on every tool
+        # (Pypeline global_fifo(n, impl=); see VHDL.CLK_CROSS_USES_XPM)
+        self.async_impl = None
 
 
 def INFER_CLOCK_DOMAINS(
@@ -3559,8 +3582,8 @@ def INFER_CLOCK_DOMAINS(
 ):
     """Propagate known MHz/group values to MAINs sharing globals or clock-crossing vars.
 
-    Pass empty dicts for all three var_to_* arguments when called from the Python path
-    (no C-style clock-crossing variables exist there).
+    C front end only (C_TO_LOGIC.GET_CLK_CROSSING_INFO); Pypeline assigns clocks
+    with PY_TO_LOGIC._assign_clocks.
     Returns var_to_rw_mhz_groups dict (needed by GET_CLK_CROSSING_INFO for object construction).
     """
 
@@ -3575,14 +3598,6 @@ def INFER_CLOCK_DOMAINS(
                 continue
             # Cannot do inferring for async wires
             if global_var in parser_state.async_wires:
-                continue
-            # Nor across a Pypeline global instance whose kind stops it (a
-            # global FIFO: its ends' functions keep their own clocks, and the
-            # FIFO MAIN, added later, takes theirs)
-            inst_decl = getattr(parser_state, "pypeline_global_insts", {}).get(
-                global_var
-            )
-            if inst_decl is not None and not inst_decl.joins_clocks:
                 continue
             # Read+write mains for func
             rw_mains = set()

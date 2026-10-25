@@ -224,8 +224,9 @@ The generated top-level module's ports all come from the source:
 
 | Source | Top-level VHDL port |
 |---|---|
-| any `@MAIN(25.0)` | clock input `clk_25p0`, one per distinct rate |
-| `pll_clk: Input[uint1_t] = make_clock(25.0)` | clock input `pll_clk`, replacing the rate-derived name |
+| any `@MAIN(25.0)` | clock input `clk_25p0`, one per distinct clock |
+| `@MAIN(rx_clk)` with `rx_clk = make_clock(25.0, name="eth_rx")` | clock input `clk_25p0_eth_rx` |
+| `pll_clk: Input[uint1_t] = make_clock(25.0)` | clock input `pll_clk`, replacing the clock's own name |
 | `my_input: Input[uint1_t]`, `my_output: Output[uint1_t]` | `my_input`, `my_output`, named exactly |
 | argument `x` of `@MAIN` `my_main` (its function's name, or its `name=`) | input `my_main_x` |
 | return value of `@MAIN` `my_main` | output `my_main_return_output` |
@@ -237,7 +238,9 @@ constraints, and [`make_clock`](pypeline_guide.md#naming-a-clock-with-make_clock
 clock port a fixed name, as in the
 [pico-ice example](#pico-ice-example). The board modules in
 [include/pypeline/board](../include/pypeline/board) declare ports like these for supported
-boards. In native simulation, drive `Input[T]` ports from
+boards; [board/arty/clocks.py](../include/pypeline/board/arty/clocks.py) binds the Arty's
+100 MHz clock to `CLK100MHZ`. Designs on more than one clock are described in the guide's
+[Part IV — Multiple clock domains](pypeline_guide.md#part-iv--multiple-clock-domains). In native simulation, drive `Input[T]` ports from
 [`@sim_input`](pypeline_guide.md#sim_input--driving-simulation-inputs) functions, as
 [fsm.py](../examples/pypeline/fsm.py) does.
 
@@ -1285,6 +1288,9 @@ Consume the explicit manifests and indexes instead of globbing generated directo
   keep as a `--latency_hints` file. `latency_memory.json` holds the verified results
   (depths, counts, mini-sweep locks, MAIN implementations) later builds reuse; deleting
   it is always safe.
+- `clock_crossings.log` (and `clock_crossings.json` for scripts) lists every async wire
+  leaf and global FIFO of a Pypeline design, with its clocks, kind, hardware, depth and
+  source line ([The crossing report](pypeline_guide.md#the-crossing-report)).
 - `host/pypeline_host_types.py` is a standalone standard-library-only Python module for
   types registered by byte serialization or `host_export(...)`. Copy it beside host
   software; exported structs are namedtuples with `zero()`, `_replace`, `to_bytes`,

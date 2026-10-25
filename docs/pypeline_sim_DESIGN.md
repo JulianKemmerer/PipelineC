@@ -1600,13 +1600,16 @@ wrapper carrying its `_MainInfo` as `_pypeline_main`
 From its `@initial(sim)` hooks to the end of its `@final(sim)` hooks it sets
 `pypeline._sim_run_in_progress`, and `MAIN()` refuses then: the MAINs are already collected.
 
-**Multi-rate refusal.** After the import, `_refuse_multi_rate` groups the registered
-`@MAIN`s by their rate (`_pypeline_main.mhz`). When they name more than one rate, `run_sim`
-exits non-zero with a message naming each rate and its `@MAIN`s by MAIN name: stepping
-every MAIN once per cycle would run different clocks in lockstep
-([#354](https://github.com/JulianKemmerer/PipelineC/issues/354)). Bare `@MAIN`s name no rate
-and do not count. Both `pypeline_sim.py` and `pypelinec --sim` stop here. Phase 2 of the
-multi-clock work will count clock identities instead of rates.
+**Multi-clock refusal.** After the import, `_refuse_multi_clock` groups the registered
+`@MAIN`s by the identity of their clock (`_pypeline_main.clock.identity`: rate, then name).
+When they name more than one clock, `run_sim` exits non-zero with a message naming each
+clock's port name and its `@MAIN`s by MAIN name: stepping every MAIN once per cycle would
+run different clocks in lockstep
+([#354](https://github.com/JulianKemmerer/PipelineC/issues/354)). Two named clocks of one
+rate are two clocks. Bare `@MAIN`s, global instances' and FIFOs' MAINs among them, name no
+clock and do not count, so an async global FIFO, whose ends are on two clocks, never
+reaches native simulation. Both `pypeline_sim.py` and `pypelinec --sim` stop here.
+Clock markers and `ASYNC` mean nothing here beyond `ASYNC`'s `volatile`.
 
 **Global instances and FIFOs.** `_discover_wire_names` returns the `Inst[f]` and
 `Fifo[T]` declarations (`_GlobalInstType`) next to the wires: each is a compound wire, so
@@ -2587,11 +2590,11 @@ Two traps when writing a design that will be diffed against real VHDL:
   site otherwise — see `is_hw_func(func)` above.
 - **Global variables** — only `Wire[T]`/`Input[T]`/`Output[T]` annotations are valid as
   shared cross-function globals. No other form of module-level mutable state is supported.
-- **One clock rate (known bug, [#354](https://github.com/JulianKemmerer/PipelineC/issues/354))** — every `@MAIN` runs once per simulated cycle whatever its
-  `@MAIN(mhz)` rate, with no warning. Hardware gives `@MAIN`s at different rates their own
-  clocks, so a multi-rate design simulates incorrectly: a 50 MHz counter advances in step
-  with a 100 MHz one. The cocotb testbench generator refuses multi-clock designs instead
-  ("Only single clock designs supported").
+- **One clock ([#354](https://github.com/JulianKemmerer/PipelineC/issues/354))** — every
+  `@MAIN` runs once per simulated cycle, so a design whose `@MAIN`s name more than one
+  clock is refused (`_refuse_multi_clock`, above) rather than simulated in lockstep. The
+  cocotb testbench generator refuses multi-clock designs too ("Only single clock designs
+  supported").
 - **Bit-accurate arithmetic** — `SIM_STRICT_ARITH=True` + `_TypedAnnAssignRewriter` together
   make simulation hardware-accurate for functions decorated with `@hw_func` or `@MAIN`. Inner
   functions must carry `@hw_func` to opt in. See Bit-Accurate Arithmetic section for ctype-chain

@@ -24,6 +24,7 @@ import build_report_tests
 import elab_introspect_tests
 import elab_tests
 import known_issues_tests
+import multi_clock_tests
 import native_sim_tests
 import native_vs_vhdl_sim_tests
 import synth_tests
@@ -44,6 +45,7 @@ DEFAULT_CATEGORY_MODULES = dict(
         "elab": elab_tests,
         "elab_introspect": elab_introspect_tests,
         "unit": unit_tests,
+        "multi_clock": multi_clock_tests,
     },
     **{f"synth_{tool}": synth_tests for tool in SYN_TOOLS},
     **{f"build_report_{tool}": build_report_tests for tool in SYN_TOOLS},
@@ -70,6 +72,8 @@ ALL_CATEGORY_MODULES = dict(DEFAULT_CATEGORY_MODULES, known_issues=known_issues_
 _DEFAULT_CATEGORY_ORDER = [
     "synth_vivado",
     "build_report_vivado",
+    # Vivado, nextpnr and GHDL builds of multi-clock designs (multi_clock_tests.py)
+    "multi_clock",
     # Vendor backends that place-and-route for every leaf characterization
     # (SYN.TOOL_DOES_PNR) -- slowest per uncached leaf, so they start first.
     "synth_quartus",

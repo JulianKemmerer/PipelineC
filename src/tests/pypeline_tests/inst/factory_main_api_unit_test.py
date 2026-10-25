@@ -98,12 +98,13 @@ def test_decorator_forms():
             f._pypeline_main[:3]
             for f in (bare, positional, keyword, named, rated_named)
         }
+        clk = pypeline.make_clock
         assert got == {
             ("bare", False, None),
-            ("positional", False, 100.0),
-            ("keyword", False, 50.0),
+            ("positional", False, clk(100.0)),
+            ("keyword", False, clk(50.0)),
             ("named0", True, None),
-            ("named1", True, 25.0),
+            ("named1", True, clk(25.0)),
         }, got
         assert pypeline._main_registry[-5:] == [
             bare,
@@ -129,8 +130,24 @@ def test_call_form_registers_a_factory_function():
 def test_call_form_keeps_mhz():
     with _registry():
         lane = MAIN(make_lane(0), name="fast", mhz=125.0)
-        assert lane._pypeline_main.mhz == 125.0, lane._pypeline_main
+        clock = lane._pypeline_main.clock
+        assert clock.identity == (125.0, None), lane._pypeline_main
+        assert clock == pypeline.make_clock(125.0)
     print("test_call_form_keeps_mhz PASS")
+
+
+def test_call_form_takes_a_clock():
+    with _registry():
+        eth = pypeline.make_clock(25.0, name="eth_rx")
+        lane = MAIN(make_lane(0), name="rx", clock=eth)
+        assert lane._pypeline_main.clock is eth, lane._pypeline_main
+        _expect(
+            TypeError,
+            lambda: MAIN(make_lane(1), name="tx", clock=eth, mhz=25.0),
+            "names its clock twice",
+        )
+        _expect(TypeError, lambda: MAIN(make_lane(2), clock=25.0), "clock= takes a clock")
+    print("test_call_form_takes_a_clock PASS")
 
 
 def test_name_must_be_a_vhdl_identifier():
@@ -264,6 +281,7 @@ if __name__ == "__main__":
     test_decorator_forms()
     test_call_form_registers_a_factory_function()
     test_call_form_keeps_mhz()
+    test_call_form_takes_a_clock()
     test_name_must_be_a_vhdl_identifier()
     test_default_name_is_the_function_name()
     test_default_name_has_the_module_prefix()

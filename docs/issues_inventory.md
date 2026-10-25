@@ -401,7 +401,7 @@ Within each group, bugs that affect both front ends come first, problems in the 
 - **Where to look:** `_run_clock_cycle` (`src/pypeline_sim.py:270`). Moving data between clock domains is a separate feature request, [Discussion #342][d342].
 - **Reproduce:** in the issue.
 - **Workaround:** none for simulation. The generated hardware is not affected.
-- **Fixed by refusal:** native simulation (`pypeline_sim.py` and `pypelinec --sim`) now stops with a non-zero exit when the `@MAIN`s name more than one rate, naming each rate and its `@MAIN`s (`pypeline_sim._refuse_multi_rate`; test `multi_rate_sim_refusal_test.py`). Bare `@MAIN`s name no rate and do not count. Recommend closing the issue: simulating several clocks is new work, which stays in [Discussion #342][d342].
+- **Fixed by refusal:** native simulation (`pypeline_sim.py` and `pypelinec --sim`) now stops with a non-zero exit when the `@MAIN`s name more than one clock, two rates or two named clocks of one rate, naming each clock and its `@MAIN`s (`pypeline_sim._refuse_multi_clock`; test `multi_rate_sim_refusal_test.py`). Bare `@MAIN`s name no clock and do not count. Recommend closing the issue: simulating several clocks is new work, which stays in [Discussion #342][d342].
 
 ### 14. [#355][i355]: `@sim_input` ignores its arguments within a cycle
 

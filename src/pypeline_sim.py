@@ -181,7 +181,7 @@ def run_sim(
     if not mains:
         print("No @MAIN functions found in design — nothing to simulate.")
         return
-    _refuse_multi_rate(mains)
+    _refuse_multi_clock(mains)
     # Each MAIN's name is its root instance frame (_call_main), so two MAINs
     # with one name would share state, as their hardware cannot
     duplicate = pypeline._duplicate_main_names(mains)
@@ -324,23 +324,28 @@ def run_sim(
             pypeline._sim_run_in_progress = False
 
 
-def _refuse_multi_rate(mains) -> None:
-    """Stop when the @MAINs name more than one rate: each cycle steps every
-    MAIN once, so different clocks would run in lockstep (issue #354). Bare
-    @MAINs name no rate and do not count."""
-    by_rate = {}
+def _refuse_multi_clock(mains) -> None:
+    """Stop when the @MAINs name more than one clock: each cycle steps every
+    MAIN once, so different clocks would run in lockstep (issue #354). Clocks
+    are told apart as everywhere: by rate, then by name, so two named clocks
+    of one rate are two clocks. Bare @MAINs (a global instance's or FIFO's
+    MAIN among them) name no clock and do not count."""
+    by_clock = {}
     for fn in mains:
         info = fn._pypeline_main
-        if info.mhz is not None:
-            by_rate.setdefault(info.mhz, []).append(info.name)
-    if len(by_rate) > 1:
-        rates = "; ".join(
-            f"{mhz} MHz: {', '.join(names)}" for mhz, names in sorted(by_rate.items())
+        if info.clock is not None:
+            by_clock.setdefault(info.clock.identity, (info.clock, []))[1].append(
+                info.name
+            )
+    if len(by_clock) > 1:
+        clocks = "; ".join(
+            f"{clock.port_name}: {', '.join(names)}"
+            for _ident, (clock, names) in sorted(by_clock.items(), key=str)
         )
         sys.exit(
             f"ERROR: native simulation runs one clock, but this design's @MAINs "
-            f"name {len(by_rate)} rates ({rates}). Simulate one clock domain at a "
-            f"time, or the generated VHDL."
+            f"name {len(by_clock)} clocks ({clocks}). Simulate one clock domain "
+            f"at a time; simulating several clocks is not supported yet."
         )
 
 

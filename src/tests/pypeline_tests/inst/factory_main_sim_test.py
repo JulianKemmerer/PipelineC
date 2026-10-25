@@ -212,7 +212,7 @@ def test_two_mains_with_one_name_stop_native_sim(tmpdir):
 def test_multi_rate_refusal_names_made_mains(tmpdir):
     code, out = _sim(tmpdir, "two_rates.py", TWO_RATES)
     assert code != 0, out
-    for token in ("2 rates", "50.0 MHz: slow", "100.0 MHz: fast"):
+    for token in ("2 clocks", "clk_50p0: slow", "clk_100p0: fast"):
         assert token in out, (token, out)
     print("test_multi_rate_refusal_names_made_mains PASS")
 

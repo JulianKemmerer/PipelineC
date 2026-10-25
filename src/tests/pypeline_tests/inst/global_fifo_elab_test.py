@@ -9,7 +9,8 @@ that both drives and reads one end; the access records hold each user's
 first read and write lines; a FIFO in an imported module gets a prefixed
 MAIN. Errors: an unused end, two users of one end, a user with two
 instances, driving wr.ready or rd.stream, a missing initializer, a module
-whose ports do not carry T, ends on two rates, Fifo[T] inside a function,
+whose ports do not carry T, a global_sync_fifo's ends on two clocks, Fifo[T]
+inside a function,
 AUTO_PIPELINE of a handshake user, and a function already named <key>_FIFO.
 """
 
@@ -248,27 +249,29 @@ def test_module_port_mismatch():
     )
 
 
-def test_ends_on_two_rates():
+def test_sync_fifo_ends_on_two_clocks():
+    # global_sync_fifo states one clock; global_fifo across two clocks is an
+    # async FIFO (async_fifo_elab_test.py)
     src = (
-        "\nrx: Fifo[uint8_t] = global_fifo(4)\n"
+        "\nrx: Fifo[uint8_t] = global_sync_fifo(4)\n"
         + _PRODUCER
         + _CONSUMER.replace("@MAIN(100.0)", "@MAIN(50.0)")
     )
     _expect_error(
         src,
-        "two_rates_test.py",
-        ["clk_100p0", "clk_50p0", "'producer'", "'consumer'", "not supported yet"],
+        "two_clocks_test.py",
+        ["clk_100p0", "clk_50p0", "'producer'", "'consumer'", "global_sync_fifo"],
     )
     # Clock inference does not follow a FIFO: a bare consumer stays clk_None
     src = (
-        "\nrx: Fifo[uint8_t] = global_fifo(4)\n"
+        "\nrx: Fifo[uint8_t] = global_sync_fifo(4)\n"
         + _PRODUCER
         + _CONSUMER.replace("@MAIN(100.0)", "@MAIN")
     )
     _expect_error(
         src,
         "bare_end_test.py",
-        ["clk_100p0", "clk_None", "does not take its rate through a FIFO"],
+        ["clk_100p0", "clk_None", "does not take its clock through a FIFO"],
     )
 
 
@@ -337,7 +340,7 @@ if __name__ == "__main__":
     test_driving_rd_stream()
     test_missing_initializer()
     test_module_port_mismatch()
-    test_ends_on_two_rates()
+    test_sync_fifo_ends_on_two_clocks()
     test_fifo_inside_function()
     test_auto_pipeline_of_handshake_user()
     test_fifo_main_name_collision()

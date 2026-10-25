@@ -163,6 +163,29 @@ def get_tests() -> list:
             cmd=[INST_DIR / "global_fifo_elab_test.py"],
         )
     )
+    # Async global FIFOs: the crossing (ClkCrossVarInfo, T[depth] var, tagged
+    # stubs), its two side MAINs on the two clocks, impl="builtin", the kind
+    # errors (async on one clock, a module across clocks, a "_READ" name),
+    # and the crossing report's rows and files.
+    tests.append(
+        Test(
+            name="async_fifo_elab_test",
+            category="elab_introspect",
+            cmd=[INST_DIR / "async_fifo_elab_test.py"],
+        )
+    )
+    # Clock assignment and the clock-crossing check: named clocks and
+    # syn_mhz, inference through wires, helpers, stated pins and global
+    # instances, the default clock's warning, the two-clock and crossing
+    # error texts, per-leaf splits, ASYNC rows and warnings, stated clocks,
+    # pins on two clocks, notes printed once, the Arty board clock.
+    tests.append(
+        Test(
+            name="clock_domains_elab_test",
+            category="elab_introspect",
+            cmd=[INST_DIR / "clock_domains_elab_test.py"],
+        )
+    )
     # A FIFO MAIN added after trimming (_add_late_mains) re-checks only the
     # new functions: a design with stale AUTO_PIPELINE tags left by trimming
     # and a pipeline_latency function parses, its self-timed set unchanged.
@@ -289,12 +312,13 @@ def get_tests() -> list:
             cmd=[INST_DIR / "soft_mult_karatsuba_leaves_test.py"],
         )
     )
-    # Checks parser_state.clk_mhz / SYN.GET_ALL_USER_CLOCKS directly for
-    # make_clock(), plus the *type* of ElaborationError each invalid use
-    # raises (non-uint1_t wire, tagging an Output, two clocks at the same
-    # rate, a rate matching no @MAIN) -- none of which is visible to a bare
-    # "does it elaborate" check the way user_clock_test.py (in elab_tests.py)
-    # only proves the happy path builds.
+    # Checks parser_state.clk_mhz / SYN.GET_ALL_USER_CLOCKS directly for a
+    # clock bound to a pin (pll_clk: Input[uint1_t] = make_clock(85.0)), plus
+    # the *type* of ElaborationError each invalid binding raises (a
+    # non-uint1_t wire, an Output, two pins bound to one clock, a clock no
+    # @MAIN runs on) -- none of which is visible to a bare "does it
+    # elaborate" check the way user_clock_test.py (in elab_tests.py) only
+    # proves the happy path builds.
     tests.append(
         Test(
             name="clock_mhz_pragma_test",

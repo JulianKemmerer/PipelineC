@@ -2,7 +2,7 @@
 
 `src/tests/pypeline_tests/` exercises the Pypeline compiler end to end against real
 `.py` design files in `inst/`. There is no test-discovery mechanism -- every test is a
-hand-written entry in one of eight category modules, run together via `run_all.py`.
+hand-written entry in one of nine category modules, run together via `run_all.py`.
 Two of those modules, `synth_tests.py` and `build_report_tests.py`, each feed one
 category per synthesis tool -- one pair for every backend `pypelinec` can select
 (see [Choosing a synthesis tool](#choosing-a-synthesis-tool)).
@@ -25,6 +25,7 @@ category per synthesis tool -- one pair for every backend `pypelinec` can select
 | `unit` | Pure compiler-helper tests against hand-built fixtures -- no design build | in-process `assert`s |
 | `synth_<tool>` | Full elaboration + auto-pipelining + synthesis (no `--no_synth`), with the tool the category names (`synth_tests.py`). One per backend: `device_models`, `vivado`, `pyrtl`, `quartus`, `open_tools`, `diamond`, `efinity`, `gowin`, `cc_tools` | exit code, plus the tool check |
 | `build_report_<tool>` | Wrapper scripts that run `pypelinec` themselves and assert on its build log or generated artifacts (mapped cell counts, `TIMING NOT MET` text, `sweep_history.json`), with the tool the category names (`build_report_tests.py`). Wrappers that run no synthesis at all live in `build_report_device_models` | in-process `assert`s over subprocess output, plus the tool check |
+| `multi_clock` | Wrapper scripts that build designs on more than one clock and check the crossing report, the top level, the constraints and timing results, or the design's behavior in GHDL (`multi_clock_tests.py`). Each test names its synthesis tool in `Test.syn_tool` (open_tools, Vivado, or none), since sky130 and PyRTL cannot time several clocks | in-process `assert`s over subprocess output, plus the tool check against `Test.syn_tool` |
 | `known_issues` | Reproducers for known, unfixed compiler bugs. **Excluded from `run_all.py`'s default set** -- run explicitly with `--category known_issues`. Every entry has `expect_fail=True`: a passing run means the bug is still present (XFAIL); a clean run means it got fixed without the test being updated (XPASS, reported as a *failure* -- promote the test out of this category) | inverted exit code (or, where exit code doesn't capture the issue, an explicit log-content assertion -- see that entry's own docstring) |
 
 Every backend gets both categories even when it has nothing tool-specific to
@@ -962,17 +963,36 @@ The remaining global wire tests:
 ## Global FIFO coverage
 
 `Fifo[T]` on one clock ([guide](pypeline_guide.md#fifot--global-fifos)) and native
-simulation's multi-rate refusal:
+simulation's multi-clock refusal; FIFOs across clocks are under
+[Multi-clock coverage](#multi-clock-coverage):
 
 | Test | Category | What it covers |
 |---|---|---|
 | `global_fifo_api_unit_test` | `unit` | `Fifo[T]`'s wire type and its errors (extra arguments, an interface or port half, a non-hardware `T`); `global_fifo`/`global_sync_fifo` argument errors and the depth each `n` builds; the stream-module port helper's errors; the FIFO MAIN generator avoiding the module's names |
-| `global_fifo_elab_test` | `elab_introspect` | realization: the FIFO MAIN's clock, protected name and `func_no_added_latency` entry, the handshake users, the access records and their lines, a FIFO in an imported module. Errors: an unused end, two users of one end, a user with two instances, driving `wr.ready` or `rd.stream`, a missing initializer, a module whose ports don't carry `T`, ends on two rates, a bare end beside a rate, `Fifo[T]` in a function, `AUTO_PIPELINE` of a handshake user, a function already named `rx_FIFO` |
+| `global_fifo_elab_test` | `elab_introspect` | realization: the FIFO MAIN's clock, protected name and `func_no_added_latency` entry, the handshake users, the access records and their lines, a FIFO in an imported module. Errors: an unused end, two users of one end, a user with two instances, driving `wr.ready` or `rd.stream`, a missing initializer, a module whose ports don't carry `T`, `global_sync_fifo` ends on two clocks (with the bare-MAIN hint), `Fifo[T]` in a function, `AUTO_PIPELINE` of a handshake user, a function already named `rx_FIFO` |
 | `global_fifo_sim_test` | `native_sim` | order and backpressure through `global_fifo`, `global_sync_fifo`, `make_stream_fifo` and `make_skid_buffer` initializers, and a FIFO declared in an imported module (`global_fifo_sim_sub_design.py`). Two of its FIFOs build the same `make_stream_fifo(uint8_t, 4)`, which checks that FIFO MAINs keep separate model state |
-| `multi_rate_sim_refusal_test` | `native_sim` | `pypeline_sim.py` and `pypelinec --sim --comb` exit non-zero on two rates and name both with their `@MAIN`s; one rate beside a bare `@MAIN` still simulates |
+| `multi_rate_sim_refusal_test` | `native_sim` | `pypeline_sim.py` and `pypelinec --sim --comb` exit non-zero on two rates and on two named clocks of one rate, naming the clocks with their `@MAIN`s; one rate beside a bare `@MAIN` still simulates |
 | `self_check_global_fifo_test` | `native_vs_vhdl_sim` (`--comb`), `synth_device_models` (`--comb`) | a struct-typed FIFO between two `@MAIN`s with backpressure: native sim and GHDL match cycle by cycle, and sky130 synthesizes it |
 | `global_fifo_path_unit_test` | `unit` | the sweep's view of a FIFO MAIN: Vivado-style and sky130-flattened paths inside it go to it alone, a path out of it to the user `@MAIN`, unattributable paths to the user `@MAIN`s; `WHY_NOT_SLICEABLE`; the `TIMING NOT MET` line names `global FIFO rx [...]` |
 | `global_fifo_pipeline_latency_test` | `elab_introspect` | the FIFO MAIN is added after trimming (`_add_late_mains`), which re-checks only the new functions: a design with a `pipeline_latency` function and two collapsing `AUTO_PIPELINE` calls (stale tags) parses, and its stateful MAIN's self-timed submodules equal those without the FIFO |
+
+## Multi-clock coverage
+
+Clocks, async wires and global FIFOs across clocks
+([guide Part IV](pypeline_guide.md#part-iv--multiple-clock-domains)):
+
+| Test | Category | What it covers |
+|---|---|---|
+| `clock_api_unit_test` | `unit` | `make_clock`: identity and hashing, port names agreeing with `VHDL.CLK_MHZ_GROUP_TEXT`, argument errors, `syn_mhz` and case conflicts; `MAIN`'s clock forms and naming a clock twice; wire marker combinations, and markers on `Inst`/`Fifo` refused; `global_async_fifo` and `impl=` errors |
+| `clock_domains_elab_test` | `elab_introspect` | named clocks of one rate and `syn_mhz` in the parser state; clock assignment through a wire, a helper, a stated pin and an `Inst[f]`; a bare MAIN on two clocks (both paths) and an instance used on two; the default clock with its warning; notes printed once; the crossing error text; a legal per-leaf split; `ASYNC` rows and the never-crossed warning; stated clocks on writers and pin readers; a pin read on two clocks; the Arty `clk100` binding of `CLK100MHZ` |
+| `clock_mhz_pragma_test` | `elab_introspect` | clock bindings: `clk_mhz`/`clk_group` filled, two named clocks of one rate on two pins, a non-`uint1_t` or `Output` binding, two pins for one clock, a bound clock no `@MAIN` runs on |
+| `async_fifo_elab_test` | `elab_introspect` | async realization: the `ClkCrossVarInfo`, the stubs' tags, the side MAINs and their clocks, `main_names`, the depth and `impl="builtin"`; `global_sync_fifo` across clocks, `global_async_fifo` on one clock and a module initializer across clocks rejected; crossing report rows |
+| `async_fifo_path_unit_test` | `unit` | the sweep's view of an async FIFO: paths inside its `clk_cross` instance go to the side MAIN of their clock, a path with one end on a net to the FIFO, a path out of it to the consumer; `GLOBAL_INST_MAINS`, `WHY_NOT_SLICEABLE` and `TIMING NOT MET` for the side MAINs; `VHDL.CLK_CROSS_USES_XPM` on Vivado, other tools and no tool |
+| `multi_clock_ghdl_test` | `multi_clock` (no synthesis) | the guide's Part IV design (`multi_clock_design.py`), `--comb --no_synth`: the crossing report, the top's clock ports and pin, and a two-clock GHDL testbench in which bytes cross the built-in async FIFO in order and the synchronized flag rises |
+| `multi_clock_open_tools_test` | `multi_clock` (open_tools) | `multi_clock_synth_design.py` on ECP5: `--comb` with a PASS line per clock; `multi_clock_design.py --comb`, whose pin clock nextpnr reports by the pin's name, still with a PASS line under `clk_125p0_eth_rx`; a sweep at `CRUNCH_MHZ=80` that cuts `crunch` and not the side MAINs; `multi_clock_fifo_timing_design.py`, whose read clock misses 900 MHz inside the FIFO, ending `TIMING NOT MET: global FIFO mon [...]` |
+| `multi_clock_vivado_test` | `multi_clock` (Vivado) | the same design on the Arty's xc7a35ti: `xpm_fifo_async` at depth 16, the built-in FIFO with `FIFO_IMPL=builtin`, every clock and the asynchronous clock groups in `clocks.xdc`, a PASS line per clock |
+| `self_check_named_clock_pin_test` | `native_vs_vhdl_sim` (`--comb`) | two `@MAIN`s and a global FIFO on a named clock bound to the pin `SYS_CLK`: the cocotb testbench clocks the pin, its one clock, and native sim and GHDL match |
+| `clock_domain_inference_test` | `elab` | a bare MAIN reading a wire that a helper one call deep under another MAIN writes takes that MAIN's clock |
 
 ## Global instance coverage
 

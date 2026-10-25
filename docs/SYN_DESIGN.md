@@ -137,6 +137,15 @@ nextpnr-xilinx makes no package PADs for them. A `--pins` build then implements
 the board-facing `top` that `WRITE_FINAL_FILES` wrote, once, with the XDC, and
 converts its FASM with Project X-Ray.
 
+nextpnr does not always report a clock by the name `clocks.py` constrained.
+nextpnr-xilinx times the net past the clock buffer, and nextpnr-ecp5 merges a clock
+bound to a pin (`clk_125p0_eth_rx <= ETH_RX_CLK(0)`) into the pin's net and reports it
+by the pin's name. `OPEN_TOOLS.ParsedTimingReport` keys such a report under the
+constrained clock when exactly one constrained clock matches it: the one a "derived ...
+MHz for net" line names, or the one clock nextpnr does not report whose goal equals the
+reported clock's target, to 0.1%. Otherwise the report keeps nextpnr's name, and a
+`--comb` build prints that clock's line without PASS or FAIL.
+
 `--yosys_json` (`OPEN_TOOLS.YOSYS_JSON_ONLY`) turns synthesis into netlist
 export only. `TOOL_DOES_PNR()` says whether a tool's timing is
 post-place-and-route (Vivado/Gowin with PnR enabled, Quartus, open tools,
@@ -286,6 +295,16 @@ instance table. A name that continues into unknown hierarchy gets no owner.
 Names in other tools' formats match no MAIN, an empty result. The sweep
 uses this to tell a MAIN that owns a path from one it only crosses
 ([`SWEEP_DESIGN.md` §3](SWEEP_DESIGN.md#3-the-refinement-loop)).
+
+Three helpers place a path inside one instance, in any case and through a flattening
+tool's `$flatten\` prefix (`_PATH_HIERARCHY` normalizes a name for both):
+`PATH_ENDS_IN_MAIN` (both ends inside a MAIN's entity, for global instance and FIFO
+MAINs), `PATH_ENDS_IN_INSTANCE(path_report, label)` (both ends inside the top-level
+instance `label`, such as an async global FIFO's `clk_cross` instance `rx_FIFO`) and
+`NAME_IN_INSTANCE(name, label)` (one end). A name is inside `label` only when a hierarchy
+separator follows it, so the MAIN `rx_FIFO_wr` is not inside the crossing `rx_FIFO`. The
+sweep uses them in `GET_MAIN_INSTS_FOR_PATH_REPORT`
+([`SWEEP_DESIGN.md` §4](SWEEP_DESIGN.md#4-feature-specific-feedback-in-the-loop)).
 
 
 ## 5. Scoped synthesis and delay estimates

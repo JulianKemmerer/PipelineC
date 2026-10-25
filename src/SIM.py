@@ -250,7 +250,9 @@ def GET_SIM_GEN_INFO(parser_state, multimain_timing_params=None):
     )
     # Which ones are not from the user internal
     for user_clk_name, clk_mhz in parser_state.clk_mhz.items():
-        clk_name = "clk_" + VHDL.CLK_MHZ_GROUP_TEXT(clk_mhz, None)
+        clk_name = "clk_" + VHDL.CLK_MHZ_GROUP_TEXT(
+            clk_mhz, parser_state.clk_group.get(user_clk_name)
+        )
         # Remove assumed internally produced user clocks from dict
         clock_name_to_mhz.pop(clk_name, None)
         # If clock is external input save with new user name

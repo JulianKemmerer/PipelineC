@@ -145,7 +145,9 @@ They share two `SIM.py` helpers:
 - `GET_SIM_GEN_INFO(parser_state, multimain_timing_params)` returns a `SimGenInfo`: the
   external clocks and their MHz (`SYN.GET_CLK_TO_MHZ_AND_CONSTRAINTS_PATH`, with
   internally generated user clocks removed and external input clocks kept under their user
-  names), the `*_DEBUG` input and output ports, and each MAIN's latency. Backends turn this
+  names; a user clock's generated name includes its group, `clk_25p0_eth_rx`, as
+  `VHDL.CLK_MHZ_GROUP_TEXT` builds it), the `*_DEBUG` input and output ports, and each
+  MAIN's latency. Backends turn this
   into the clock and debug-port names of their generated testbench or header.
 - `GET_SIM_FILES(latency)` walks the output directory for every `.vhd` file. EDAPlay and
   ModelSim use it; cocotb and the yosys-based backends use `vhdl_files.txt` or the final

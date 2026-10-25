@@ -494,6 +494,27 @@ class ParsedTimingReport:
             ]
             if len(sources) == 1:
                 clock_aliases[net] = sources[0]
+        # nextpnr-ecp5 merges a constrained clock net that only renames a
+        # top-level input (a clock bound to a pin: clk_125p0_eth_rx <=
+        # ETH_RX_CLK(0)) into the input's net, and reports the clock by the
+        # input's name:
+        #   Info: constraining clock net 'clk_125p0_eth_rx' to 125.00 MHz
+        #   Info: Max frequency for clock 'ETH_RX_CLK': 239.35 MHz (PASS at 125.00 MHz)
+        # Report it under the constrained name, if exactly one constrained
+        # clock that nextpnr does not report has its target frequency (to
+        # 0.1%: nextpnr rounds the period, an 85 MHz goal reads 85.01 MHz).
+        unreported = [n for n in constrained_mhz if n not in clock_to_act_tar_mhz]
+        for clk_name, (_actual_mhz, target_mhz) in clock_to_act_tar_mhz.items():
+            if clk_name in constrained_mhz or clk_name in clock_aliases:
+                continue
+            sources = [
+                name
+                for name in unreported
+                if abs(constrained_mhz[name] - target_mhz)
+                <= 0.001 * constrained_mhz[name] + 0.005
+            ]
+            if len(sources) == 1:
+                clock_aliases[clk_name] = sources[0]
 
         self.path_reports = {}
         reported_net = {}  # path_reports key -> the clock net nextpnr named

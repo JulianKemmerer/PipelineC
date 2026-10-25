@@ -33,6 +33,26 @@ def get_tests() -> list:
             cmd=[INST_DIR / "global_fifo_path_unit_test.py"],
         )
     )
+    # The clock API: make_clock identity and port names (agreeing with the
+    # back end's), clock conflicts, MAIN's clock forms, the ASYNC/VOLATILE/
+    # clock markers, global_async_fifo and impl=.
+    tests.append(
+        Test(
+            name="clock_api_unit_test",
+            category="unit",
+            cmd=[INST_DIR / "clock_api_unit_test.py"],
+        )
+    )
+    # The sweep's and back end's view of an async FIFO: paths inside its
+    # clk_cross instance go to the side MAIN of their clock; side MAINs, not
+    # the crossing, are its MAINs; CLK_CROSS_USES_XPM per tool and impl=.
+    tests.append(
+        Test(
+            name="async_fifo_path_unit_test",
+            category="unit",
+            cmd=[INST_DIR / "async_fifo_path_unit_test.py"],
+        )
+    )
     # Global instance API: Inst[f], the ports and wire type it derives from f,
     # its errors, the MAIN generator's source and names, and MAIN() checking
     # a user's name= where an instance's own MAIN name is not checked.

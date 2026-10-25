@@ -135,27 +135,40 @@ parser_state.FuncToInstances            # func_name -> {inst_keys}
 parser_state.struct_to_field_type_dict  # struct_name -> {field: c_type_str}
 parser_state.enum_info_dict             # enum_ctype_name -> LOGIC.EnumInfo (member map + int_c_type)
 parser_state.global_vars                # name -> LOGIC.VariableInfo
-parser_state.func_name_to_calls         # func_name -> {called func names}
-parser_state.func_names_to_called_from  # func_name -> {calling func names}
+parser_state.func_name_to_calls         # func_name -> {called func names} (C front end)
+parser_state.func_names_to_called_from  # func_name -> {calling func names} (C front end)
 parser_state.part                       # FPGA part string or None
 parser_state.main_mhz                   # main_name -> float MHz or None
+parser_state.main_clk_group             # main_name -> clock group (a Pypeline clock's name) or None
 parser_state.func_fixed_latency         # func_name -> fixed latency (@pipeline_latency / FUNC_LATENCY)
 parser_state.func_no_added_latency      # func_name -> reason it takes no compiler-added latency
 parser_state.pypeline_global_insts      # global instance/FIFO wire -> PY_TO_LOGIC.GlobalInstDecl
 parser_state.clk_cross_var_info         # var name -> LOGIC.ClkCrossVarInfo
+parser_state.pypeline_wire_decls        # global wire key -> PY_TO_LOGIC.WireDecl
+parser_state.pypeline_clock_names       # clock (mhz, name) -> its Python name
+parser_state.pypeline_clock_syn_mhz     # clock (mhz, name) -> its syn_mhz
+parser_state.pypeline_clock_crossings   # the crossing report's PY_TO_LOGIC.CrossingRows
+parser_state.wire_clocks_checked        # wires whose clocks PY_TO_LOGIC checked leaf by leaf
 ```
 
 `FuncLogicLookupTable` holds one `Logic()` per unique function definition.
 `LogicInstLookupTable` holds one entry per call-site instance.
 
-`func_no_added_latency` and `pypeline_global_insts` are filled only by the Python front
-end, for global instances and FIFOs, but shared code reads them:
-`Logic.CAN_HAVE_ADDED_LATENCY` refuses the functions in `func_no_added_latency`
-([AUTO_PIPELINE_DESIGN.md](AUTO_PIPELINE_DESIGN.md#functions-that-take-no-added-latency)),
-and `INFER_CLOCK_DOMAINS` skips the wires in `pypeline_global_insts` whose declaration has
-`joins_clocks` False (global FIFOs). Both read them with
-`getattr`, since a C parser state pickled by an older compiler
-(`C_TO_LOGIC.GET_PARSER_STATE_CACHE`) lacks them. Both are copied in `DEEPCOPY`.
+`func_no_added_latency`, `pypeline_global_insts` and the clock fields after them are
+filled only by the Python front end, but shared code reads some of them:
+
+- `Logic.CAN_HAVE_ADDED_LATENCY` refuses the functions in `func_no_added_latency`
+  ([AUTO_PIPELINE_DESIGN.md](AUTO_PIPELINE_DESIGN.md#functions-that-take-no-added-latency));
+- the sweep reads `pypeline_global_insts` to give paths inside a global instance or FIFO
+  to its MAIN ([SWEEP_DESIGN.md](SWEEP_DESIGN.md));
+- `VHDL.WRITE_MULTIMAIN_TOP` skips its whole-wire clock check for the wires in
+  `wire_clocks_checked`.
+
+They are read with `getattr`, since a C parser state pickled by an older compiler
+(`C_TO_LOGIC.GET_PARSER_STATE_CACHE`) lacks them, and all are copied in `DEEPCOPY`.
+`ClkCrossVarInfo.async_impl` is an async FIFO's hardware choice: `None` picks by
+synthesis tool, `"builtin"` is the built-in async FIFO everywhere (Pypeline's
+`global_fifo(n, impl=)`, read by `VHDL.CLK_CROSS_USES_XPM`).
 
 `path_delay_funcs`, `path_delay_measure_funcs` and `path_delay_frontier_funcs`
 are declared as `None` until unrooted `SYN.ADD_PATH_DELAY_TO_LOOKUP` fills the
@@ -172,8 +185,9 @@ The Python front end adds its own `pypeline_*` attributes in
 `PY_TO_LOGIC._new_parser_state`.
 
 The other classes stored in a `ParserState` are `VariableInfo` (a global or state register),
-`EnumInfo`, `ClkCrossVarInfo` and `ArbHandshakeInfo`. Only the C front end fills the last
-two, but VHDL and SYN read them for every design.
+`EnumInfo`, `ClkCrossVarInfo` and `ArbHandshakeInfo`. Only the C front end fills
+`ArbHandshakeInfo`; `ClkCrossVarInfo` also comes from a Pypeline async global FIFO. VHDL
+and SYN read both for every design.
 
 ## 4. Source locations: `ASTMeta`
 
@@ -232,10 +246,10 @@ came from.
   MAIN instantiates yet; a function without instances has no global instance names to
   rename.
 - **Clock domains.** `INFER_CLOCK_DOMAINS` and `RECURSIVE_FIND_MAIN_FUNCS` assign globals
-  and MAINs to clock groups. The C front end calls it from its clock-crossing pass; the
-  Python front end calls it with empty crossing maps after building its call graph. It
-  joins no MAINs through async wires or Pypeline global FIFOs; it does join them
-  through a Pypeline global instance's wire.
+  and MAINs to clock groups. Only the C front end calls them, from its clock-crossing
+  pass; it joins no MAINs through async wires. The Python front end assigns clocks with
+  `PY_TO_LOGIC._assign_clocks`
+  ([PY_TO_LOGIC_DESIGN.md](PY_TO_LOGIC_DESIGN.md#clock-assignment-_assign_clocks)).
 - **Clock enables.** `LOGIC_NEEDS_CLOCK_ENABLE(logic, parser_state)` decides whether a
   function gets a `CLOCK_ENABLE` port.
 - **Global wires.** `GLOBAL_VAR_IS_SHARED` (a top-level IO or clock wire, or a global

@@ -4172,6 +4172,12 @@ def WRITE_0_ADDED_CLKS_INIT_FILES(parser_state):
     VHDL.WRITE_C_DEFINED_VHDL_STRUCTS_PACKAGE(parser_state)
     print("Writing global wire definitions as parsed from C code...", flush=True)
     VHDL.WRITE_GLOBAL_WIRES_VHDL_PACKAGE(parser_state)
+    # A Pypeline build lists its clock crossings; the tool, set above, picks
+    # an async FIFO's hardware
+    if getattr(parser_state, "pypeline_emission_names", None) is not None:
+        import PY_TO_LOGIC
+
+        PY_TO_LOGIC.WRITE_CLOCK_CROSSING_REPORT(parser_state, output_directory)
 
     # Copy pipelinec vhdl directory to output so users can export output directory alone
     copy_tree(f"{REPO_ABS_DIR()}/src/vhdl", SYN.SYN_OUTPUT_DIRECTORY + "/built_in")

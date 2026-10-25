@@ -1202,9 +1202,10 @@ feature's module:
   the seeded table, falling back to a full planned sweep only if it fails.
   `RECORD_CONFIRMATION_RESULTS` records it in `sweep_history.json`.
 - **Global instance and FIFO MAINs.** Each Pypeline global instance and global FIFO
-  is a compiler-made MAIN, `<key>_INST` or `<key>_FIFO`
+  is a compiler-made MAIN, `<key>_INST` or `<key>_FIFO`, and an async global FIFO two,
+  `<key>_FIFO_wr` and `<key>_FIFO_rd`
   ([PY_TO_LOGIC_DESIGN.md](PY_TO_LOGIC_DESIGN.md#global-instances-instf-fifot));
-  `GLOBAL_INST_MAINS` maps each MAIN name to its declaration. It takes no added
+  `GLOBAL_INST_MAINS` maps each MAIN name in `decl.main_names` to its declaration. It takes no added
   latency (`"global instance"` / `"global FIFO"` in `func_no_added_latency`), so
   the MAIN itself is planless; an AUTO_PIPELINE call inside an instance
   (`Inst[AUTO_PIPELINE(f)]`) is a region that still gets stages.
@@ -1221,6 +1222,17 @@ feature's module:
   leave them out too. An instance MAIN with an AUTO_PIPELINE region stays on such
   paths like any MAIN, so its region gets the feedback, scoped by
   `PATH_MAIN_ROLES`. So a path inside an instance is reported once.
+- **Async global FIFOs.** An async FIFO's hardware is the `clk_cross` instance labeled
+  `<key>_FIFO` in the top level (`decl.crossing`), not one of its MAINs.
+  `GET_MAIN_INSTS_FOR_PATH_REPORT` checks it before the instance MAINs: a path with both
+  ends inside it (`SYN.PATH_ENDS_IN_INSTANCE`) goes to `ASYNC_FIFO_SIDES_FOR_PATH`, the
+  side MAIN whose clock is the path's group, or both sides without a path group. After
+  the other attribution, a path that no MAIN claimed but that has one end inside the
+  instance (`SYN.NAME_IN_INSTANCE`) goes there too: nextpnr can name the other end by a
+  top-level net such as `global_to_module[101]`. The side MAINs are fixed (nothing in
+  them takes latency), so the path fails as `global FIFO rx [top.py:14]` and is never
+  dismissed by `SYN.GET_MAIN_INSTS_FROM_PATH_REPORT`'s "likely only limited by built in
+  FIFO implementations" fallback, which stays for C crossings.
   `MAIN_DISPLAY_NAME` names an instance MAIN by its declaration,
   `global instance alu0 [top.py:5]` or `global FIFO rx [top.py:14]`, in the
   planless warning and in `PRINT_TIMING_FAILURES`, whose `TIMING NOT MET` line fails
@@ -1382,6 +1394,8 @@ wrappers that assert on build output in `build_report_tests.py`:
 | `sweep_fsm_auto_pipeline_test.py` | Reg-FSM main + AUTO_PIPELINE region (via `_auto_pipeline_with_io_regs`): cut subtree is the tagged child, FSM latency stays 0 |
 | `sweep_stateful_boundary_test.py` | comb→stateful→comb: cuts stop at the stateful boundary |
 | `sweep_floor_detect_test.py` (build_report_device_models, sky130, 100 MHz; its unregistered `--syn_tool pyrtl` mode uses 50 MHz) | unreachable goal: floor predicted & blamed up front, sweep stops within 6 syn runs with `plateau` (sky130, prediction off) / `empirical_floor` (PyRTL, prediction matches) in `sweep_history.json`, results written, then `TIMING NOT MET` + non-zero exit |
+| `async_fifo_path_unit_test.py` (unit) | a parsed async FIFO design with fake path reports: a path inside `clk_cross_rx_FIFO` goes to the side MAIN of its path group (both without one), a path with one end in the instance and the other on a net to the FIFO, a side→consumer path to the consumer; `GLOBAL_INST_MAINS` over the side MAINs; `VHDL.CLK_CROSS_USES_XPM` |
+| `multi_clock_open_tools_test.py` (multi_clock, ECP5) | a sweep of a two-clock design cuts the user MAIN and not the FIFO side MAINs; an async FIFO missing its read clock's goal inside the FIFO ends `TIMING NOT MET: global FIFO mon [...]` |
 | `global_fifo_path_unit_test.py` (unit) | a parsed global FIFO design with fake path reports: Vivado-style and sky130-flattened paths inside the FIFO go to its MAIN alone, a FIFO→consumer path to the consumer, unattributable paths to the user MAINs; `WHY_NOT_SLICEABLE` reasons; the `TIMING NOT MET` line names `global FIFO rx [...]` |
 | `sweep_unpipelinable_test.py` | stateful MAIN with a goal but nothing cuttable: told plainly that auto-pipelining cannot help (planning time + failing full-design report; no standalone as-written job), one full syn run, `TIMING NOT MET` + non-zero exit, and `sweep_history.json` `final` agrees (not met, same MHz, a failure reason) |
 | `sweep_planless_test.py` | stateful MAIN with a met goal but nothing cuttable: no standalone as-written synthesis, one full syn run, exit 0, `sweep_history.json` `final` is a met `as_written` record with null `standalone_mhz` |

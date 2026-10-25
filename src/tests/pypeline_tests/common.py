@@ -157,6 +157,7 @@ DEFAULT_CATEGORY_TIMEOUT_S = dict(
         "elab_introspect": 7200,
         "unit": 7200,
         "known_issues": 7200,
+        "multi_clock": 7200,
     },
     **{category: 7200 for category in SYN_TOOL_CATEGORIES},
 )
@@ -194,6 +195,10 @@ class Test:
     # file is registered several times, e.g. the per-SYN_TOOL sweep matrix
     # giving each backend its own clock goal.
     env: dict = dataclasses.field(default_factory=dict)
+    # The synthesis tool a test in a category without one (multi_clock) must
+    # use: the tool check (_check_syn_tool) holds it to that tool, as a
+    # build_report_<tool> category does. None: no synthesis run at all.
+    syn_tool: str = None
 
 
 @dataclasses.dataclass
@@ -342,15 +347,18 @@ def run_test(test: Test, tmp_root: Path) -> TestResult:
 
 
 def _check_syn_tool(test: Test, out_log: Path):
-    """Keep a synth_*/build_report_* test on its category's synthesis tool.
+    """Keep a synth_*/build_report_* test on its category's synthesis tool,
+    and a multi_clock test on its own Test.syn_tool (none: no synthesis).
 
     Any synthesis run ("Running: .../<tool>_....log") of a different tool fails the
     test (a design silently drifting back onto slow Vivado/PyRTL). synth_*
     tests run pypelinec directly, so they must also show at least one run of
-    the expected tool; build_report_* wrappers may not echo their child
-    builds' output, so only the wrong-tool half applies to them. Returns an
-    error string, or None."""
-    tool = category_syn_tool(test.category)
+    the expected tool; build_report_* and multi_clock wrappers may not echo
+    their child builds' output, so only the wrong-tool half applies to them.
+    Returns an error string, or None."""
+    tool = category_syn_tool(test.category) or test.syn_tool
+    if tool is None and test.category == "multi_clock":
+        tool = ""  # synthesizes nothing: any synthesis run is the wrong tool
     if tool is None:
         return None
     try:
@@ -362,9 +370,10 @@ def _check_syn_tool(test: Test, out_log: Path):
     used.update(name.lower() for name in _RUNNING_SCRIPT_TOOL_RE.findall(text))
     wrong = sorted(used - {expected})
     if wrong:
+        should = f"synthesize with {expected}" if expected else "run no synthesis"
         return (
-            f"category {test.category} must synthesize with {expected}, "
-            f"but the log shows {', '.join(wrong)}"
+            f"{test.category} test {test.name} must {should}, but the log shows "
+            f"{', '.join(wrong)}"
         )
     if test.category.startswith("synth_") and expected not in used:
         return (

@@ -54,7 +54,7 @@ Memory banks are never treated as zero-cycle combinational operators.
 | `TimingParams`, `MultiMainTimingParams` | the pipeline representation: each instance's leaf slices (`_slices`) and IO-register flags, its total latency, and the timing hash that names its VHDL entity; one lookup table per build (plus per-key AUTO_MULTI_CYCLE overrides) |
 | `GET_PIPELINE_MAP`, `PipelineMap` | assigns every wire and submodule of a hierarchical function to a stage from data dependencies and child latencies (§2, §3) |
 | `GET_ZERO_ADDED_CLKS_*`, `WRITE_ALL_ZERO_CLK_VHDL`, `WRITE_ALL_NON_ZERO_CLK_VHDL_FILES` | the zero-added-latency table every build starts from, and writing the VHDL for a table |
-| `WRITE_0_ADDED_CLKS_INIT_FILES` | the first output after either front end parses: the zero-added-latency VHDL for every function, the struct/enum and global-wire packages, the float/integer instance reports (`SYN.py`), and a copy of `src/vhdl` as `built_in/` |
+| `WRITE_0_ADDED_CLKS_INIT_FILES` | the first output after either front end parses: the zero-added-latency VHDL for every function, the struct/enum and global-wire packages, the float/integer instance reports (`SYN.py`), a copy of `src/vhdl` as `built_in/`, and for Pypeline the crossing report (`PY_TO_LOGIC.WRITE_CLOCK_CROSSING_REPORT`) |
 | `SLICE_DOWN_HIERARCHY_WRITE_VHDL_PACKAGES`, `ADD_SLICES_DOWN_HIERARCHY_...`, `BUILD_AND_WRITE_COARSE_SLICED_TIMING_PARAMS`, `GET_BEST_GUESS_IDEAL_SLICES` | fractional (coarse/compatibility) slicing down the hierarchy |
 | `PiplineHDLParams`, `GLOBAL_WIRE_TIMING`, `ALIGNED_GLOBAL_READS`, `ALIGNED_GLOBAL_WRITES` | each wire's register lifetime and the aligned global wires carried in the IO registers, from which `VHDL.py` renders the pipelined architecture (§3) |
 | `DO_PIPELINED_BUILD`, `DO_SWEEP_AND_AUTO_PIPELINE`, `DO_AUTO_PIPELINE_LATENCY_PASSES`, `HARVEST_AUTO_PIPELINE_LATENCIES`, `SEED_TIMING_PARAMS_FROM_PREVIOUS` | the build entry point and the `.latency` pin-and-confirm loop (§4, §5) |
@@ -411,7 +411,7 @@ therefore decided per entity, inside that entity's own pipeline, by
 | Timing | Set by | Read | Write |
 |---|---|---|---|
 | `"aligned"` | Pypeline `Wire`/`Input`/`Output` | sampled at stage 0 with the arguments | published at the last stage with the return value |
-| `"volatile"` | Pypeline `Wire[T, VOLATILE]` etc. | each consumer reads the live wire at its own stage | driven when its final value is ready |
+| `"volatile"` | Pypeline `Wire[T, VOLATILE]` and `Wire[T, ASYNC]` etc. | each consumer reads the live wire at its own stage | driven when its final value is ready |
 | `"legacy"` | C frontend (default) | sampled at the network's earliest use; skipped for C `volatile` globals | driven when ready |
 
 How `PiplineHDLParams` implements it:

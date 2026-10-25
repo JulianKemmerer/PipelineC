@@ -1,11 +1,14 @@
 # pyright: reportInvalidTypeForm=none
-"""In-process regression test for make_clock() (pypeline's CLK_MHZ equivalent).
+"""In-process regression test for clocks bound to pins (pll_clk:
+Input[uint1_t] = make_clock(85.0), pypeline's CLK_MHZ equivalent).
 
 Exit-code-only elaboration (as in NO_SYNTH_TEST_FILES's user_clock_test.py)
-can't distinguish "clk_mhz populated correctly" from "make_clock() silently a
+can't distinguish "clk_mhz populated correctly" from "the binding silently a
 no-op" -- both elaborate successfully. So this asserts directly against
-parser_state.clk_mhz / SYN.GET_ALL_USER_CLOCKS for the success path, and that
-each invalid use raises ElaborationError.
+parser_state.clk_mhz / clk_group / SYN.GET_ALL_USER_CLOCKS for the success
+paths (an unnamed clock, two named clocks of one rate), and that each invalid
+binding raises an ElaborationError naming the problem: a non-uint1_t wire, an
+Output, two pins bound to one clock, a clock no @MAIN runs on.
 """
 
 import os
@@ -74,6 +77,23 @@ def solution(x: uint1_t) -> uint1_t:
     return ~x
 """
 
+TWO_NAMED_SRC = """
+from pypeline import MAIN, Input, uint1_t, make_clock
+
+rx_clk = make_clock(25.0, name="eth_rx")
+tx_clk = make_clock(25.0, name="eth_tx")
+RX_CLK: Input[uint1_t] = rx_clk
+TX_CLK: Input[uint1_t] = tx_clk
+
+@MAIN(rx_clk)
+def rx(x: uint1_t) -> uint1_t:
+    return ~x
+
+@MAIN(tx_clk)
+def tx(x: uint1_t) -> uint1_t:
+    return x
+"""
+
 BAD_RATE_MISMATCH_SRC = """
 from pypeline import MAIN, Input, uint1_t, make_clock
 
@@ -92,42 +112,49 @@ def test_clk_mhz_populated_on_success():
     print("test_clk_mhz_populated_on_success PASS")
 
 
-def test_non_uint1_t_rejected():
+def test_two_named_clocks_of_one_rate():
+    parser_state = _parse_source(TWO_NAMED_SRC)
+    assert parser_state.clk_mhz == {"RX_CLK": 25.0, "TX_CLK": 25.0}, parser_state.clk_mhz
+    assert parser_state.clk_group == {"RX_CLK": "eth_rx", "TX_CLK": "eth_tx"}
+    assert SYN.GET_ALL_USER_CLOCKS(parser_state) == {"clk_25p0_eth_rx", "clk_25p0_eth_tx"}
+    print("test_two_named_clocks_of_one_rate PASS")
+
+
+def _expect_error(src, *tokens):
     try:
-        _parse_source(BAD_TYPE_SRC)
-        assert False, "expected ElaborationError for non-uint1_t make_clock() wire"
-    except ElaborationError:
-        print("test_non_uint1_t_rejected PASS")
+        _parse_source(src)
+    except ElaborationError as e:
+        for token in tokens:
+            assert token in str(e), (token, str(e))
+        return str(e)
+    raise AssertionError(f"expected an ElaborationError mentioning {tokens}")
+
+
+def test_non_uint1_t_rejected():
+    _expect_error(BAD_TYPE_SRC, "'pll_clk'", "must be uint1_t")
+    print("test_non_uint1_t_rejected PASS")
 
 
 def test_output_rejected():
-    try:
-        _parse_source(BAD_OUTPUT_SRC)
-        assert False, "expected ElaborationError for make_clock() on an Output"
-    except ElaborationError:
-        print("test_output_rejected PASS")
+    _expect_error(BAD_OUTPUT_SRC, "Output 'clk_out'", "exactly one driver")
+    print("test_output_rejected PASS")
 
 
-def test_duplicate_rate_rejected():
-    try:
-        _parse_source(BAD_DUP_RATE_SRC)
-        assert False, "expected ElaborationError for two clocks at the same rate"
-    except ElaborationError:
-        print("test_duplicate_rate_rejected PASS")
+def test_two_pins_for_one_clock_rejected():
+    _expect_error(BAD_DUP_RATE_SRC, "clk_b", "clk_85p0", "a clock has one pin", "name=")
+    print("test_two_pins_for_one_clock_rejected PASS")
 
 
-def test_rate_mismatch_rejected():
-    try:
-        _parse_source(BAD_RATE_MISMATCH_SRC)
-        assert False, "expected ElaborationError for a clock rate matching no @MAIN"
-    except ElaborationError:
-        print("test_rate_mismatch_rejected PASS")
+def test_clock_of_no_main_rejected():
+    _expect_error(BAD_RATE_MISMATCH_SRC, "'pll_clk'", "clk_85p0", "not the clock of any @MAIN")
+    print("test_clock_of_no_main_rejected PASS")
 
 
 if __name__ == "__main__":
     test_clk_mhz_populated_on_success()
+    test_two_named_clocks_of_one_rate()
     test_non_uint1_t_rejected()
     test_output_rejected()
-    test_duplicate_rate_rejected()
-    test_rate_mismatch_rejected()
+    test_two_pins_for_one_clock_rejected()
+    test_clock_of_no_main_rejected()
     print("All clock_mhz_pragma tests passed.")

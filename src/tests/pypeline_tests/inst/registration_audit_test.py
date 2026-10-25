@@ -2,8 +2,9 @@
 """Meta-test: every `*_test.py` file in inst/ must be registered as a Test in
 at least one category module (native_sim_tests.py, native_vs_vhdl_sim_tests.py,
 elab_tests.py, elab_introspect_tests.py, unit_tests.py, synth_tests.py,
-build_report_tests.py, known_issues_tests.py). A `*_test.py` file registered
-nowhere is dead: nothing runs it, and it silently rots.
+build_report_tests.py, known_issues_tests.py, multi_clock_tests.py). A
+`*_test.py` file registered nowhere is dead: nothing runs it, and it
+silently rots.
 
 Naming convention this enforces: `*_test.py` is a registered test file;
 `*_design.py` is a fixture another test builds (never registered directly).
@@ -42,6 +43,7 @@ CATEGORY_MODULES = [
     "synth_tests.py",
     "build_report_tests.py",
     "known_issues_tests.py",
+    "multi_clock_tests.py",
 ]
 
 EXEMPT_FILENAMES = {

@@ -1466,7 +1466,11 @@ begin
             )
             rw_clk_name = CLK_EXT_STR(rw_main_func, parser_state)
             rw_clk_names.add(rw_clk_name)
-            if len(rw_clk_names) > 1 and var_name not in parser_state.async_wires:
+            if (
+                len(rw_clk_names) > 1
+                and var_name not in parser_state.async_wires
+                and var_name not in getattr(parser_state, "wire_clocks_checked", ())
+            ):
                 raise Exception(
                     f"Cannot have multiple clock domains for shared global {var_name}! {rw_clk_names} {rw_func_insts}"
                 )
@@ -2297,6 +2301,30 @@ def GET_ENTITY_PROCESS_STAGES_TEXT(
     return package_file_text
 
 
+def CLK_CROSS_USES_XPM(var_name, parser_state):
+    """True if the async FIFO of crossing `var_name` is Xilinx's
+    xpm_fifo_async: on Vivado, unless its ClkCrossVarInfo.async_impl is
+    "builtin" (Pypeline global_fifo(n, impl="builtin")). Every other case,
+    including no synthesis tool at all, builds the built-in
+    pipelinec_async_fifo_fwft. Also read by the Pypeline crossing report."""
+    info = parser_state.clk_cross_var_info.get(var_name)
+    if info is not None and getattr(info, "async_impl", None) == "builtin":
+        return False
+    return SYN.SYN_TOOL is VIVADO
+
+
+def CLK_CROSS_RETURN_VHDL_TYPE(func_logic, default_type, parser_state):
+    """The VHDL type of a crossing function's return value, which is also
+    its clk_cross entity's wr_/rd_return_output port: the function's own
+    return type, or `default_type` (C's <var>_write_t / <var>_read_t) when
+    the function is absent (a read side never called)."""
+    if func_logic is None or LOGIC.RETURN_WIRE_NAME not in func_logic.wire_to_c_type:
+        return default_type
+    return C_TYPE_STR_TO_VHDL_TYPE_STR(
+        func_logic.wire_to_c_type[LOGIC.RETURN_WIRE_NAME], parser_state
+    )
+
+
 def WRITE_CLK_CROSS_ENTITIES(parser_state, multimain_timing_params):
     if (
         len(parser_state.clk_cross_var_info) <= 0
@@ -2752,9 +2780,10 @@ end arch;
             clk_ext_strs.add(clk_ext_str_i)
         if len(clk_ext_strs) > 1:
             flow_control_is_async = True
-            # Need to know syn tool for what type of CDC to render
-            if SYN.SYN_TOOL is None:
-                SYN.PART_SET_TOOL(parser_state.part)
+        # xpm_fifo_async or the built-in async FIFO (CLK_CROSS_USES_XPM)
+        uses_xpm = flow_control and flow_control_is_async and CLK_CROSS_USES_XPM(
+            var_name, parser_state
+        )
         write_size, read_size = parser_state.clk_cross_var_info[
             var_name
         ].write_read_sizes
@@ -2804,7 +2833,7 @@ end arch;
                 print("More than 1 dim for async flow control!?", var_name)
                 sys.exit(-1)
             depth = dims[0]
-            if flow_control_is_async and SYN.SYN_TOOL is VIVADO and depth < 16:
+            if uses_xpm and depth < 16:
                 depth = 16
                 print(
                     "WARNING:",
@@ -2840,7 +2869,7 @@ use ieee.numeric_std.all;
 use work.c_structs_pkg.all; -- User types
 """
 
-        if flow_control and flow_control_is_async and SYN.SYN_TOOL is VIVADO:
+        if uses_xpm:
             text += """
 library xpm;
 use xpm.vcomponents.all;
@@ -2867,8 +2896,8 @@ use xpm.vcomponents.all;
                 + """;
       write_enable : in unsigned(0 downto 0);
       wr_return_output: out """
-                + var_name
-                + """_write_t;
+                + CLK_CROSS_RETURN_VHDL_TYPE(write_func_logic, var_name + "_write_t", parser_state)
+                + """;
 """
             )
         else:
@@ -2893,8 +2922,8 @@ use xpm.vcomponents.all;
                 """
       read_enable: in unsigned(0 downto 0);
       rd_return_output : out """
-                + var_name
-                + """_read_t
+                + CLK_CROSS_RETURN_VHDL_TYPE(read_func_logic, var_name + "_read_t", parser_state)
+                + """
 """
             )
         else:
@@ -3032,7 +3061,7 @@ use xpm.vcomponents.all;
                 + from_slv_toks[1]
                 + """;"""
             )
-        if flow_control and flow_control_is_async and SYN.SYN_TOOL is VIVADO:
+        if uses_xpm:
             text += """
 wr_power_on_reset <= '0' when rising_edge(in_clk);
 fifo_wr_en <= write_enable(0) and in_clk_en(0) and not wr_rst_busy and not wr_power_on_reset;

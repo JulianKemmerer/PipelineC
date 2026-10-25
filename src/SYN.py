@@ -1181,15 +1181,47 @@ def PATH_ENDS_IN_MAIN(path_report, main_inst, parser_state, TimingParamsLookupTa
         parser_state,
     ).lower()
 
-    def hierarchy(name):
-        name = name.lower()
-        if name.startswith("$flatten"):
-            name = name[len("$flatten") :]
-        return name.lstrip("\\")
+    return _PATH_HIERARCHY(path_report.start_reg_name).startswith(
+        entity
+    ) and _PATH_HIERARCHY(path_report.end_reg_name).startswith(entity)
 
-    return hierarchy(path_report.start_reg_name).startswith(entity) and hierarchy(
-        path_report.end_reg_name
-    ).startswith(entity)
+
+def _PATH_HIERARCHY(name):
+    """A timing report's cell name, lower case, without a flattening tool's
+    `$flatten\\` prefix: what PATH_ENDS_IN_MAIN and PATH_ENDS_IN_INSTANCE
+    compare names against."""
+    name = name.lower()
+    if name.startswith("$flatten"):
+        name = name[len("$flatten") :]
+    return name.lstrip("\\")
+
+
+def PATH_ENDS_IN_INSTANCE(path_report, label):
+    """True if a path's start and end registers are both inside the
+    top-level instance `label` (a clk_cross entity's instance, labeled with
+    its crossing's name): each name is the label followed by a hierarchy
+    separator, in any case and through a flattening prefix, as
+    PATH_ENDS_IN_MAIN reads them. A longer name that only starts with the
+    label (the MAIN rx_FIFO_wr beside the crossing rx_FIFO) is not inside it."""
+    if path_report.start_reg_name is None or path_report.end_reg_name is None:
+        return False
+    return NAME_IN_INSTANCE(path_report.start_reg_name, label) and NAME_IN_INSTANCE(
+        path_report.end_reg_name, label
+    )
+
+
+def NAME_IN_INSTANCE(name, label):
+    """True if a timing report's cell name is inside the top-level instance
+    `label` (PATH_ENDS_IN_INSTANCE's test for one end)."""
+    if name is None:
+        return False
+    name = _PATH_HIERARCHY(name)
+    label = label.lower()
+    return (
+        name.startswith(label)
+        and len(name) > len(label)
+        and not (name[len(label)].isalnum() or name[len(label)] == "_")
+    )
 
 
 def GET_MAIN_INSTS_FROM_PATH_REPORT(path_report, parser_state, TimingParamsLookupTable):

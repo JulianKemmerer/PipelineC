@@ -6114,6 +6114,11 @@ def GET_MAIN_INSTS_FOR_PATH_REPORT(path_report, parser_state, multimain_timing_p
             "Assuming all clock domains had critical paths..."
         )
         return set(all_main_insts) - fixed_mains
+    # An async global FIFO's paths inside its clk_cross instance go to its
+    # side MAIN on the path's clock (both without a path group)
+    for decl in ASYNC_FIFO_DECLS(parser_state):
+        if SYN.PATH_ENDS_IN_INSTANCE(path_report, decl.crossing):
+            return ASYNC_FIFO_SIDES_FOR_PATH(decl, path_report, parser_state)
     for main_inst in sorted(inst_mains):
         if SYN.PATH_ENDS_IN_MAIN(
             path_report,
@@ -6130,15 +6135,48 @@ def GET_MAIN_INSTS_FOR_PATH_REPORT(path_report, parser_state, multimain_timing_p
     # the path is outside every MAIN. Keep its measured failure as feedback.
     if not main_insts and SYN.SYN_TOOL is DEVICE_MODELS:
         return set(all_main_insts) - fixed_mains
+    # One end inside an async FIFO's clk_cross instance, the other in no
+    # MAIN (nextpnr can name an end by a top-level net, global_to_module[..]):
+    # the FIFO's path, not one to drop
+    if not main_insts:
+        for decl in ASYNC_FIFO_DECLS(parser_state):
+            if SYN.NAME_IN_INSTANCE(
+                path_report.start_reg_name, decl.crossing
+            ) or SYN.NAME_IN_INSTANCE(path_report.end_reg_name, decl.crossing):
+                return ASYNC_FIFO_SIDES_FOR_PATH(decl, path_report, parser_state)
     return main_insts - fixed_mains or main_insts
+
+
+def ASYNC_FIFO_DECLS(parser_state):
+    """The design's async global FIFOs: PY_TO_LOGIC.GlobalFifoDecls with a
+    clock crossing (decl.crossing, its clk_cross instance's label)."""
+    return [
+        decl
+        for decl in getattr(parser_state, "pypeline_global_insts", {}).values()
+        if decl.crossing is not None
+    ]
+
+
+def ASYNC_FIFO_SIDES_FOR_PATH(decl, path_report, parser_state):
+    """The side MAINs of the async FIFO `decl` a path inside it belongs to:
+    the one on the path's clock (its path group), or both without one."""
+    group = (getattr(path_report, "path_group", None) or "").lower()
+    sides = {
+        m
+        for m in decl.main_names
+        if ("clk_" + VHDL.CLK_EXT_STR(m, parser_state)).lower() == group
+    }
+    return sides or set(decl.main_names)
 
 
 def GLOBAL_INST_MAINS(parser_state):
     """{MAIN name: PY_TO_LOGIC.GlobalInstDecl} of a design's global instances
-    and FIFOs (Inst[f], Fifo[T])."""
+    and FIFOs (Inst[f], Fifo[T]): each MAIN holding a declaration's hardware
+    (decl.main_names: an async FIFO's two side MAINs, never its crossing)."""
     return {
-        decl.main_name: decl
+        name: decl
         for decl in getattr(parser_state, "pypeline_global_insts", {}).values()
+        for name in decl.main_names
     }
 
 

@@ -93,6 +93,7 @@ one paragraph per change.
   - [`Feedback[T]` / `_FeedbackType`](#feedbackt--_feedbacktype)
   - [`Wire[T]` / `_WireType`](#wiret--_wiretype)
   - [Pipeline timing: aligned globals and `VOLATILE`](#pipeline-timing-aligned-globals-and-volatile)
+  - [Wire markers: `VOLATILE`, `ASYNC` and clocks](#wire-markers-volatile-async-and-clocks)
   - [`Input[T]` / `_InputType`](#inputt--_inputtype)
   - [`Output[T]` / `_OutputType`](#outputt--_outputtype)
   - [`Inst[f]` / `_InstType` — global instances](#instf--_insttype--global-instances)
@@ -100,7 +101,7 @@ one paragraph per change.
 - [`PART()` and `@MAIN` Pragmas](#part-and-main-pragmas)
   - [`PART(part_string)`](#partpart_string)
   - [`@MAIN` / `MAIN(fn)` — Registering MAINs](#main--mainfn--registering-mains)
-  - [`make_clock(mhz)` — Naming a Clock (`CLK_MHZ` Equivalent)](#make_clockmhz--naming-a-clock-clk_mhz-equivalent)
+  - [`make_clock(mhz, name=, syn_mhz=)` — Clocks](#make_clockmhz-name-syn_mhz--clocks)
   - [`AUTO_PIPELINE(func, latency=None, start_latency=None, max_latency=None)` — Forced Submodule Pipelining with `.latency`](#auto_pipelinefunc-latencynone-start_latencynone-max_latencynone--forced-submodule-pipelining-with-latency)
   - [`AUTO_COMB_AREA_OPT(func)` — Zero-Cycle Resource Sharing](#auto_comb_area_optfunc--zero-cycle-resource-sharing)
   - [`AUTO_FSM(func)` — Resource-Shared State Machines with `.latency`](#auto_fsmfunc--resource-shared-state-machines-with-latency)
@@ -1020,9 +1021,8 @@ already-committed leaves within the same simulated cycle's convergence loop, sin
 
 ### Pipeline timing: aligned globals and `VOLATILE`
 
-`Wire[T, VOLATILE]` (also `Input`/`Output`) passes a second subscript to the metaclass.
-`_wire_ann_args` splits it into the inner ctype and `volatile=True`, which `_WireType`,
-`_InputType` and `_OutputType` store. Any other second argument is a `TypeError`.
+`Wire[T, VOLATILE]` (also `Input`/`Output`) passes a marker after the type to the
+metaclass; [Wire markers](#wire-markers-volatile-async-and-clocks) lists them all.
 `VOLATILE` is the `_VolatileMarker` singleton.
 
 A function with pipeline stages treats every global it touches like an extra argument
@@ -1042,6 +1042,29 @@ and refuses the rest with `SimPipelineModelError`. See
 [`pypeline_sim_DESIGN.md`](pypeline_sim_DESIGN.md#pipelined-native-sim-non---comb-pipelinec---sim)
 (`_sim_regions`, `_sim_region_for`). `_build_reg_sim_func` and
 `pypeline_sim._discover_wire_names` record `VOLATILE` sim keys in `_sim_wire_volatile`.
+
+### Wire markers: `VOLATILE`, `ASYNC` and clocks
+
+`_wire_ann_args(kind, item)` splits a `Wire`/`Input`/`Output[...]` subscript into
+`(inner ctype, volatile, is_async, clock)`, which `_WireType`, `_InputType` and
+`_OutputType` store as `volatile`, `is_async` and `clock`. After the type come markers in
+any order:
+
+- `VOLATILE` (`_VolatileMarker`): not aligned in pipelined functions.
+- `ASYNC` (`_AsyncMarker`): an async wire, readable by functions on other clocks than its
+  writer's ([guide](pypeline_guide.md#async-wires-wiret-async)). `volatile` is set too,
+  since an async wire is not aligned either.
+- a clock from `make_clock`: the clock the wire's functions must be on (a stated clock).
+
+These are `TypeError`s: a marker given twice or anything else after the type, `ASYNC`
+with a clock ("use one of them"), and `ASYNC` with `VOLATILE` ("ASYNC already behaves as
+VOLATILE"). `_wire_ann_str(kind, ann)` prints an annotation with its markers, as messages
+show it: `Wire[uint8_t, ASYNC]`, `Input[uint1_t, clk_25p0_eth_rx]`. `Inst[f]` and
+`Fifo[T]` take no marker: their metaclasses reject any second subscript.
+
+The markers mean nothing to native simulation, which runs one clock, apart from
+`volatile`. The compiler reads them in `_discover_global_wires`
+([`PY_TO_LOGIC_DESIGN.md`](PY_TO_LOGIC_DESIGN.md#clock-domains)).
 
 ### `Input[T]` / `_InputType`
 
@@ -1135,10 +1158,14 @@ two stream ports are bound to the ends `wr` and `rd`.
   `_make_auto_fsm_stream_t`). `_global_fifo_type_cache` keeps one pair of types per `T`.
 - **Subscript errors** (`_FifoMeta`): `Fifo[T, ...]`; `T` an interface or a port half
   (the message says the FIFO supplies valid and ready itself); `T` not a hardware type.
-- **Initializers.** `global_fifo(n)` and `global_sync_fifo(n)` return a
-  `_GlobalFifoInit(kind, n)`; a non-int or non-positive `n` is an error. Both build
-  `make_stream_fifo(T, 2**ceil(log2(max(n, 2))))` (`_global_fifo_hardware`). Any other
-  initializer is the FIFO's module itself.
+- **Initializers.** `global_fifo(n, impl=None)`, `global_sync_fifo(n)` and
+  `global_async_fifo(n, impl=None)` return a `_GlobalFifoInit(kind, n, impl)`; `kind` is
+  the function's name, which says which clocks the ends may be on. A non-int or
+  non-positive `n` is an error, and so is an `impl` outside `_GLOBAL_FIFO_IMPLS`
+  (`None`: by synthesis tool; `"builtin"`: the built-in async FIFO on every tool). On one
+  clock all three build `make_stream_fifo(T, 2**ceil(log2(max(n, 2))))`
+  (`_global_fifo_hardware`), which is also every FIFO's native-sim model. Any other
+  initializer is the FIFO's module itself, which works on one clock only.
 - **Port helper.** `_stream_module_ports(module, T, what)` returns the module's
   `(input port, output port)` as `_InstPort` records: its ports
   (`_global_inst_ports`) must be exactly one valid/ready input port and one output port,
@@ -1154,6 +1181,25 @@ two stream ports are bound to the ends `wr` and `rd`.
   hardware)`). Native sim registers it like an instance's MAIN; the compiler adds it after
   clock assignment with `_add_late_mains`, from `PY_TO_LOGIC._check_global_insts`
   ([`PY_TO_LOGIC_DESIGN.md`](PY_TO_LOGIC_DESIGN.md#global-instances-instf-fifot)).
+- **Async parts.** When the ends are on two clocks the compiler builds no FIFO MAIN.
+  `_make_global_fifo_async_parts(crossing, wire_name, ann, module_globals, reserved)`
+  returns a `_GlobalFifoAsyncParts(write_stub, read_stub, wr_main, rd_main)`, the shape of
+  PipelineC's `GLOBAL_STREAM_FIFO`, named after the crossing `<key>_FIFO`:
+  - `<crossing>_WRITE_1(write_data: T[1], write_enable: uint1_t)` and
+    `<crossing>_READ_1(read_enable: uint1_t)` are stubs returning an unassigned
+    `{ready}` and `{data: T[1], valid}` (`_global_fifo_async_types`, cached per `T` in
+    `_global_fifo_async_type_cache`). Their names, argument names and field names are the
+    back end's crossing convention; the compiler tags them as the crossing, and the back
+    end connects their calls to `clk_cross_<crossing>`.
+  - `<crossing>_wr` copies `wr.stream` into the write stub's call and drives `wr.ready`
+    from its result; `<crossing>_rd` calls the read stub with `rd.ready` and drives
+    `rd.stream`. Both carry `_pypeline_global_inst`, like a FIFO MAIN.
+
+  The injected type names and locals come from `_free_name_picker(module_globals,
+  reserved)`, which `_make_global_inst_main` uses too, and every source goes through
+  `_FifoType.exec_async_part`, whose frame `global_async_fifo_part(fifo, data_t, part)`
+  is the name info (folder `pypeline_generated_fifos`). Only the compiler calls this:
+  native simulation refuses two clocks before it would need them.
 
 ---
 
@@ -1174,16 +1220,24 @@ defaults to a software timing estimator.
 ### `@MAIN` / `MAIN(fn)` — Registering MAINs
 
 ```python
-@MAIN                          # no clock constraint
-@MAIN(100.0)                   # positional MHz
+@MAIN                          # no clock: inferred, or the default clock
+@MAIN(100.0)                   # positional MHz: the unnamed clock of that rate
 @MAIN(mhz=25.0)                # keyword MHz
-@MAIN(name="top0")             # a given name, with or without a rate
+@MAIN(eth_clk)                 # a clock from make_clock(...)
+@MAIN(clock=eth_clk)           # keyword clock
+@MAIN(name="top0")             # a given name, with or without a clock
 MAIN(fn, name="lane0", mhz=…)  # called on a function: MAINs made in code
+MAIN(fn, clock=eth_clk, name="rx")
 ```
 
-`MAIN` dispatches on whether its first argument is callable. Every form ends in
-`_register_main(func, mhz, name, origin)`, where `origin` is `"file.py:line"` of the
-`MAIN()` call or the decorator, from the caller's frame (`_frame_origin`).
+`MAIN` dispatches on whether its first argument is callable. `_main_clock_arg(positional,
+mhz, clock, origin)` turns the clock arguments into one `_Clock` or None: at most one of a
+positional rate or clock, `mhz=` and `clock=` (two are a `TypeError`, "names its clock
+twice"), and a rate becomes `_Clock(rate, origin=origin)`, the unnamed clock of that rate.
+A positional value that is not a number, a clock or a function is a `TypeError`, as is a
+`clock=` that is not a clock. Every form ends in `_register_main(func, clock, name,
+origin)`, where `origin` is `"file.py:line"` of the `MAIN()` call or the decorator, from
+the caller's frame (`_frame_origin`).
 `_register_main`:
 
 1. **Checks.** `func` must unwrap to a Python function. No simulation run may be in
@@ -1204,7 +1258,7 @@ MAIN(fn, name="lane0", mhz=…)  # called on a function: MAINs made in code
    name with dots as underscores, as import discovery prefixes it. Names come only from
    source, so every re-execution of the design (pin-and-confirm passes, `--sim` after a
    build) gives each MAIN the same name.
-5. **Records** `_MainInfo(name, named, mhz, origin)` on the wrapper as `_pypeline_main`
+5. **Records** `_MainInfo(name, named, clock, origin)` on the wrapper as `_pypeline_main`
    (`named`: given by `name=` or `@hw_func(name=)`), and appends the wrapper to
    `_main_registry`.
 
@@ -1213,34 +1267,42 @@ are equal ignoring case, as VHDL compares them, naming both qualnames and origin
 when all differ. `PY_TO_LOGIC` raises it as an `ElaborationError`, and `pypeline_sim`
 exits with it.
 
-Consumers of the record: PY_TO_LOGIC elaborates each MAIN under `.name` with rate
-`.mhz` (Steps 5/7/7.2 of PARSE_FILE, and `ELABORATE_LIVE_ROOTS`); `pypeline_sim` uses
-`.name` for root frames, its refusals and build results, and `.mhz` for the multi-rate
-refusal; `stream_perf_probe` labels a `named` MAIN's taps by `.name`.
+Consumers of the record: PY_TO_LOGIC elaborates each MAIN under `.name` on clock
+`.clock` (Steps 5/7/7.2 of PARSE_FILE, and `ELABORATE_LIVE_ROOTS`); `pypeline_sim` uses
+`.name` for root frames, its refusals and build results, and `.clock` for the
+multi-clock refusal; `stream_perf_probe` labels a `named` MAIN's taps by `.name`.
 
-### `make_clock(mhz)` — Naming a Clock (`CLK_MHZ` Equivalent)
+### `make_clock(mhz, name=, syn_mhz=)` — Clocks
 
-```python
-class _ClockMarker:
-    def __init__(self, mhz):
-        self.mhz = float(mhz)
+`make_clock(mhz, name=None, syn_mhz=None)` returns a `_Clock` with `mhz`, `name`,
+`syn_mhz` and `origin` (`"file.py:line"` of the call), the Python equivalent of
+PipelineC's `MAIN_MHZ` groups, `MAIN_SYN_MHZ` and `CLK_MHZ`
+([guide](pypeline_guide.md#declaring-a-clock-make_clock)):
 
-def make_clock(mhz):
-    mhz = float(mhz)
-    if mhz <= 0:
-        raise ValueError(...)
-    return _ClockMarker(mhz)
-```
+- **Identity.** `identity` is `(mhz, name)`, and `__eq__`/`__hash__` follow it: every
+  unnamed clock of one rate is one clock, so `@MAIN(85.0)` and `make_clock(85.0)` agree.
+  `syn_mhz` is not part of it. The default clock, `(None, None)`, has no object.
+- **Port name.** `port_name` is `"clk_" + _clock_text(mhz, name)`: `clk_125p0_eth_rx`.
+  `_clock_text` mirrors `VHDL.CLK_MHZ_GROUP_TEXT`, since `pypeline.py` may not import the
+  compiler; `clock_api_unit_test.py` compares the two.
+- **Checks.** `mhz` and `syn_mhz` are positive numbers, and `name` matches
+  `_CLOCK_NAME_RE` (letters and digits, single underscores between them), since it
+  becomes part of a VHDL identifier. `_clock_conflict(clocks)` gives the message for a
+  design's first conflict: one clock with two `syn_mhz` values, or two names of one rate
+  that differ only in case. The compiler raises it.
 
-Used as a global `Wire[uint1_t]`/`Input[uint1_t]` declaration's initializer —
-`pll_clk: Input[uint1_t] = make_clock(85.0)` — to tag that wire as the clock for the `@MAIN`
-running at 85.0 MHz, instead of the default tool-named `clk_85p0` top port. Unlike `PART`/
-`@MAIN`, this carries no module-level registry: `PY_TO_LOGIC._discover_global_wires` reads the
-marker straight off the live module namespace for the one `AnnAssign` node it's attached to
-(see [`PY_TO_LOGIC_DESIGN.md`](PY_TO_LOGIC_DESIGN.md#make_clockmhz--python-equivalent-of-clk_mhz)
-for the elaboration-side detail). `_ClockMarker` carries no meaning at Python runtime — native
-sim never reads a global wire's bound value, only its `Wire`/`Input`/`Output` annotation type,
-so binding the module global to a marker object is otherwise inert.
+A clock is used by `@MAIN(clk)` / `MAIN(fn, clock=clk)`, as a [wire
+marker](#wire-markers-volatile-async-and-clocks), and as the initializer of a global
+`Input[uint1_t]` or `Wire[uint1_t]`, which binds the clock to that pin or wire:
+`pll_clk: Input[uint1_t] = make_clock(85.0)` brings `@MAIN(85.0)`'s clock in on the port
+`pll_clk`. There is no registry: `PY_TO_LOGIC._discover_global_wires` reads bindings off
+the live module namespace, and the clocks' Python names from its other globals
+([`PY_TO_LOGIC_DESIGN.md`](PY_TO_LOGIC_DESIGN.md#clock-domains)). Native sim never reads
+a global wire's bound value, only its annotation, so a binding is inert there.
+
+Board modules name their clocks the same way:
+[`include/pypeline/board/arty/clocks.py`](../include/pypeline/board/arty/clocks.py) binds
+`clk100 = make_clock(100.0)` to the pin `CLK100MHZ`.
 
 ### `AUTO_PIPELINE(func, latency=None, start_latency=None, max_latency=None)` — Forced Submodule Pipelining with `.latency`
 
@@ -1660,6 +1722,7 @@ flag). See
 |---|---|---|---|
 | `_main_registry` | `list` | Every registered `@MAIN`'s wrapper (each with its `_MainInfo` as `_pypeline_main`), in registration order | `PY_TO_LOGIC.PARSE_FILE` (Steps 3, 5 and 7.2) and `ELABORATE_LIVE_ROOTS`; `pypeline_sim.run_sim`, which runs them |
 | `_global_fifo_type_cache` | `dict[type, (type, type)]` | `T` → the end and wire types of `Fifo[T]` | `_global_fifo_types` |
+| `_global_fifo_async_type_cache` | `dict[type, (type, type, type)]` | `T` → the word, write-result and read-result types of an async `Fifo[T]`'s crossing stubs | `_global_fifo_async_types` |
 | `_part_registry` | `str \| None` | FPGA part string | `PY_TO_LOGIC.PARSE_FILE` — populates `parser_state.part` |
 | `_design_param_decls` | `dict[str, _ParamDecl]` | `param()` declarations of the current design import (reset per import) | `DESIGN_PARAM_LIST_TEXT` (`--list_params`), the parameter banner, `DESIGN_PARAM_REPORT` (`source_provenance.json`) |
 | `_design_param_values` | `dict[str, (value, source)]` | Each design parameter's value and its source (`-D`, `env:VAR`, `default`), resolved once per process | every later `param()` call: re-elaboration passes and simulation imports |
@@ -2543,7 +2606,8 @@ shared `Logic.vhdl_module_text` field (also used by the C frontend's `__vhdl__("
 | `make_int_t(n)` | Dynamically creates `intN_t` for arbitrary bit width `n` |
 | `NamedTuple` | Re-export of `typing.NamedTuple` |
 | `@struct` | Adds `__class_getitem__`, stamps canonical `_pypeline_ctype_name`, wraps scalar fields in sim |
-| `@MAIN` / `MAIN(fn, name=, mhz=)` | Registers a function as a hardware entry point, also one made in code; implies `@hw_func`; records its name and rate and appends to `_main_registry` |
+| `@MAIN` / `MAIN(fn, name=, mhz=, clock=)` | Registers a function as a hardware entry point, also one made in code; implies `@hw_func`; records its name and clock and appends to `_main_registry` |
+| `make_clock(mhz, name=, syn_mhz=)` / `_Clock` | A clock, identified by rate and name; for `@MAIN(clk)`, wire markers and pin/wire bindings ([`make_clock`](#make_clockmhz-name-syn_mhz--clocks)) |
 | `param(name, default, *, type, choices, help, env)` | Declares a build parameter and returns its value for this build: `-D NAME=VALUE`, else environment variable `env` (only when given and set), else `default` ([Design Parameters](#design-parameters-param--d)) |
 | `SET_DESIGN_PARAMS`, `PARSE_DESIGN_PARAM_DEFINES`, `CHECK_DESIGN_PARAM_USE`, `DESIGN_PARAM_REPORT`, `DESIGN_PARAM_LIST_TEXT`, `PRINT_DESIGN_PARAM_BANNER_ONCE` | Driver side of `param()`: install and parse the `-D` table, check how the design uses injected names after an import, and produce the `source_provenance.json` record, the `--list_params` text and the build banner |
 | `@sim_output` | Marks a function as simulation output-only; no-op during convergence passes; executes in final pass per cycle |
@@ -2562,13 +2626,14 @@ shared `Logic.vhdl_module_text` field (also used by the C frontend's `__vhdl__("
 | `Reg` / `_RegType` | Register descriptor; `Reg[T]` declares a stateful register; optional init value (`Reg[T] = val`); optional `Reg[T, tag]` multi-cycle role |
 | `Feedback` / `_FeedbackType` | Feedback wire descriptor; `Feedback[T]` declares a combinatorial feedback wire (no flip-flop) |
 | `Wire` / `_WireType` | Global wire descriptor; `Wire[T]` at module level declares a shared combinatorial wire (one writer) |
+| `VOLATILE`, `ASYNC` | Wire markers: not aligned in pipelined functions; readable on other clocks ([Wire markers](#wire-markers-volatile-async-and-clocks)) |
 | `GlobalWireNameError` / `_local_name_bindings` / `_check_no_local_binds_wire_name` | Rejects, at decoration time, a local binding of a same-module wire name or wire-module alias; `_local_name_bindings` is the binding list shared with `PY_TO_LOGIC` |
 | `Input` / `_InputType` | Top-level input port; `Input[T]` at module level; any function may read, none may write |
 | `Output` / `_OutputType` | Top-level output port; `Output[T]` at module level; exactly one function/instance may write |
 | `Inst` / `_InstType` / `_GlobalInstType` | Global instance; `name: Inst[f]` at module level; its ports are fields of one global wire, and a compiler-made MAIN `name_INST` holds it ([`Inst[f]`](#instf--_insttype--global-instances)) |
 | `GlobalInstError` | `Inst[f]` of something that cannot be an instance (not a hw_func, a `@MAIN`, ports that do not map onto a wire) |
 | `Fifo` / `_FifoType` | Global FIFO; `name: Fifo[T] = hardware` at module level; one function uses each end `.wr` / `.rd` ([`Fifo[T]`](#fifot--_fifotype--global-fifos)) |
-| `global_fifo(n)` / `global_sync_fifo(n)` | `Fifo[T]` initializers asking for the library FIFO holding at least `n` words |
+| `global_fifo(n, impl=)` / `global_sync_fifo(n)` / `global_async_fifo(n, impl=)` | `Fifo[T]` initializers asking for a FIFO holding at least `n` words: the library FIFO on one clock, an async FIFO across two |
 | `GlobalFifoError` | A `Fifo[T]` initializer module without one stream input port and one output port of `T` (a `GlobalInstError`) |
 | `register_operator(op, lhs, rhs, impl, scope=None)` | Binds a binary operator on an exact `(lhs, rhs)` type pair |
 | `register_left_operator(op, lhs, impl, scope=None)` | Binds a binary operator matching only on left operand type |

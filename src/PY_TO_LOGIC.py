@@ -33,7 +33,7 @@ from pypeline import (
     _InstType,
     _FifoType,
     _GlobalFifoInit,
-    _ClockMarker,
+    _Clock,
     BIT_MANIP_FUNC_NAMES as _BIT_MANIP_FUNC_NAMES,
     _INT_CTYPE_RE,
     _ctype_is_int,
@@ -6731,6 +6731,15 @@ def _decl_loc_str(module_globals, node):
     return f"{os.path.basename(src)}:{node.lineno}"
 
 
+class WireDecl(NamedTuple):
+    """One Pypeline global wire declaration, in ParserState.pypeline_wire_decls."""
+
+    ann: object  # its Wire/Input/Output/Inst/Fifo annotation, with its markers
+    bare_name: str  # the declared Python name
+    loc: str  # where it is declared: "top.py:12"
+    binding: object = None  # the _Clock it carries (pin: Input[uint1_t] = clk)
+
+
 class GlobalInstDecl:
     """One global instance declaration, Inst[f] (this class) or Fifo[T]
     (GlobalFifoDecl), in ParserState.pypeline_global_insts[key]. Found by
@@ -6753,6 +6762,11 @@ class GlobalInstDecl:
         self.line = node.lineno
         self.loc = _decl_loc_str(module_globals, node)
         self.main_name = f"{key}{ann.main_suffix}"  # its MAIN: alu0_INST, rx_FIFO
+        # The MAINs holding its hardware: [main_name], or an async FIFO's two
+        # side MAINs (GlobalFifoDecl.realize)
+        self.main_names = [self.main_name]
+        # An async FIFO's clock crossing (main_name, then no MAIN), else None
+        self.crossing = None
         self.no_added_latency_reason = ann.kind_name  # its MAIN's func_no_added_latency
 
     def describe(self):
@@ -6829,12 +6843,19 @@ class GlobalInstDecl:
                 seen.items()
             )[:2]
             raise ElaborationError(
-                f"{self.describe()}: it is used on {_main_clock_str(clk_a)} "
-                f"({what_a}, in MAIN '{main_a}') and on {_main_clock_str(clk_b)} "
-                f"({what_b}, in MAIN '{main_b}'). A global instance runs on one "
-                f"clock: run the MAINs that use it on one clock."
+                f"{self.describe()}: it is used on {_clock_str(parser_state, clk_a)} "
+                f"({what_a}, in MAIN '{main_a}') and on "
+                f"{_clock_str(parser_state, clk_b)} ({what_b}, in MAIN '{main_b}'). "
+                f"A global instance runs on one clock: run the MAINs that use it "
+                f"on one clock, or cross between clocks with an async wire or a "
+                f"global FIFO."
             )
         return None
+
+    def realize(self, parser_state, hardware, ends):
+        """The LateMains holding its hardware, added after clock assignment:
+        none, an Inst[f]'s MAIN being registered at Step 7.1."""
+        return []
 
 
 class GlobalFifoDecl(GlobalInstDecl):
@@ -6855,9 +6876,9 @@ class GlobalFifoDecl(GlobalInstDecl):
 
     def check_users(self, parser_state, users, hardware):
         """Each end has exactly one user, with one instance, that drives
-        only the half the FIFO does not; both ends' MAINs are on one clock
-        (clock-crossing FIFOs are not supported yet). Returns that clock,
-        (mhz, syn_mhz, clk_group) of the write end's MAIN."""
+        only the half the FIFO does not. Returns {end: (user, MAIN, 'file:line')}
+        for "wr" and "rd"; realize() picks the FIFO's kind from the two MAINs'
+        clocks."""
         _module, ports, bindings = hardware
         driven = _global_inst_driven_paths(ports, bindings)
         name = self.bare_name
@@ -6910,24 +6931,135 @@ class GlobalFifoDecl(GlobalInstDecl):
                     )
             main = next(iter(instances)).split(LOGIC.SUBMODULE_MARKER)[0]
             ends[end] = (user, main, loc)
+        return ends
+
+    def realize(self, parser_state, hardware, ends):
+        """The LateMains of this FIFO, after clock assignment, from its ends'
+        clocks (`ends` from check_users) and its initializer's kind:
+
+        - one clock: the FIFO MAIN <key>_FIFO calling its hardware, unless
+          global_async_fifo said the ends cross clocks;
+        - two clocks: an async FIFO (_realize_async) for global_fifo and
+          global_async_fifo; an error for global_sync_fifo and for a module
+          initializer, which holds one clock."""
         (wr_user, wr_main, wr_loc), (rd_user, rd_main, rd_loc) = ends["wr"], ends["rd"]
         wr_clock = _main_clock(parser_state, wr_main)
         rd_clock = _main_clock(parser_state, rd_main)
-        if wr_clock != rd_clock:
-            bare = (
-                " A bare @MAIN does not take its rate through a FIFO."
-                if None in (wr_clock[0], rd_clock[0])
-                else ""
-            )
+        where = (
+            f"its write end is used on {_clock_str(parser_state, wr_clock)} "
+            f"('{wr_user}' at {wr_loc}, in MAIN '{wr_main}') and its read end on "
+            f"{_clock_str(parser_state, rd_clock)} ('{rd_user}' at {rd_loc}, in "
+            f"MAIN '{rd_main}')"
+        )
+        if wr_clock == rd_clock:
+            if self.kind == "global_async_fifo":
+                raise ElaborationError(
+                    f"{self.describe()}: global_async_fifo says its ends are on two "
+                    f"clocks, but both are on {_clock_str(parser_state, wr_clock)} "
+                    f"('{wr_user}' at {wr_loc} and '{rd_user}' at {rd_loc}). Use "
+                    f"global_fifo(n) or global_sync_fifo(n), or move one end's MAIN "
+                    f"to its other clock."
+                )
+            return [
+                LateMain(
+                    self.make_main(parser_state, hardware),
+                    self.main_name,
+                    wr_clock,
+                    self.no_added_latency_reason,
+                    f"{self.describe()}: its FIFO MAIN",
+                )
+            ]
+        bare = (
+            " A bare @MAIN does not take its clock through a FIFO: give it one "
+            "with @MAIN(clk)."
+            if None in (wr_clock[0], rd_clock[0])
+            else ""
+        )
+        if self.kind == "global_sync_fifo":
             raise ElaborationError(
-                f"{self.describe()}: its write end is used on "
-                f"{_main_clock_str(wr_clock)} ('{wr_user}' at {wr_loc}, in MAIN "
-                f"'{wr_main}') and its read end on {_main_clock_str(rd_clock)} "
-                f"('{rd_user}' at {rd_loc}, in MAIN '{rd_main}'). Clock-crossing "
-                f"FIFOs are not supported yet: run both MAINs on one clock.{bare}"
+                f"{self.describe()}: global_sync_fifo says its ends stay on one "
+                f"clock, but {where}. Use global_fifo(n) or global_async_fifo(n) "
+                f"for a FIFO between clocks, or run both MAINs on one clock.{bare}"
             )
-        mhz, group = wr_clock
-        return (mhz, parser_state.main_syn_mhz.get(wr_main), group)
+        if self.kind == "module":
+            raise ElaborationError(
+                f"{self.describe()}: {where}, but its hardware is a single-clock "
+                f"module, which cannot cross clocks. Use global_fifo(n) or "
+                f"global_async_fifo(n) for a FIFO between clocks.{bare}"
+            )
+        return self._realize_async(parser_state, wr_clock, rd_clock)
+
+    def _realize_async(self, parser_state, wr_clock, rd_clock):
+        """Build this FIFO as a clock crossing the back end implements, as
+        PipelineC's GLOBAL_STREAM_FIFO: register the crossing <key>_FIFO
+        (a ClkCrossVarInfo, and a global var T[depth] giving the back end its
+        data type and depth), elaborate its two crossing stubs, tagged before
+        any call of them is elaborated (each call site's CLOCK_ENABLE port
+        depends on it), and return the side MAINs <key>_FIFO_wr and
+        <key>_FIFO_rd, on the write and read clocks, which call them."""
+        crossing = self.main_name
+        for marker in ("_READ", "_WRITE"):
+            if marker in crossing:
+                raise ElaborationError(
+                    f"{self.describe()}: an async FIFO's name may not contain "
+                    f"'{marker}' (its clock crossing, '{crossing}', is found by "
+                    f"its functions' names, <name>_WRITE_1 and <name>_READ_1). "
+                    f"Rename it."
+                )
+        parts = _pypeline_mod._make_global_fifo_async_parts(
+            crossing,
+            self.bare_name,
+            self.ann,
+            self.module_globals,
+            reserved=parser_state.top_level_module_globals,
+        )
+        wr_main, rd_main = f"{crossing}_wr", f"{crossing}_rd"
+        w_stub, r_stub = f"{crossing}_WRITE_1", f"{crossing}_READ_1"
+        info = LOGIC.ClkCrossVarInfo()
+        info.flow_control = True
+        info.write_read_funcs = (w_stub, r_stub)
+        info.write_read_main_funcs = ({wr_main}, {rd_main})
+        info.write_read_sizes = (1, 1)
+        info.async_impl = self.init.impl
+        parser_state.clk_cross_var_info[crossing] = info
+        var_info = LOGIC.VariableInfo()
+        var_info.name = crossing
+        var_info.type_name = (
+            f"{_inner_ctype_to_str(self.data_t, parser_state)}[{self.async_depth}]"
+        )
+        parser_state.global_vars[crossing] = var_info
+        for stub, name in ((parts.write_stub, w_stub), (parts.read_stub, r_stub)):
+            logic = _elaborate_main(
+                parser_state, stub, name, f"{self.describe()}: its crossing function"
+            )
+            logic.is_clock_crossing = True
+            # Never sliced or synthesized alone: the clk_cross entity is its hardware
+            logic.uses_nonvolatile_state_regs = True
+        self.crossing = crossing
+        self.main_names = [wr_main, rd_main]
+        return [
+            LateMain(
+                parts.wr_main,
+                wr_main,
+                wr_clock,
+                self.no_added_latency_reason,
+                f"{self.describe()}: its write end's MAIN",
+            ),
+            LateMain(
+                parts.rd_main,
+                rd_main,
+                rd_clock,
+                self.no_added_latency_reason,
+                f"{self.describe()}: its read end's MAIN",
+            ),
+        ]
+
+    @property
+    def async_depth(self):
+        """Words the async FIFO's memory holds: n rounded up to a power of
+        two, at least 4, the built-in async FIFO's minimum (the back end
+        raises it to 16 for xpm_fifo_async)."""
+        return 1 << (max(self.n, 4) - 1).bit_length()
 
 
 def _discover_global_wires(tree, module_globals, parser_state, name_prefix=None):
@@ -6968,7 +7100,7 @@ def _discover_global_wires(tree, module_globals, parser_state, name_prefix=None)
             kind = "Output"
         else:
             continue
-        clock_marker = None
+        clock_binding = None
         fifo_init = None
         if kind == "Fifo":
             # A Fifo[T]'s initializer is its hardware, never optional
@@ -6991,15 +7123,22 @@ def _discover_global_wires(tree, module_globals, parser_state, name_prefix=None)
                 f"write '{node.target.id}: {ann_val}'"
             )
         elif node.value is not None:
-            maybe_marker = module_globals.get(node.target.id)
-            if isinstance(maybe_marker, _ClockMarker):
-                clock_marker = maybe_marker
+            maybe_clock = module_globals.get(node.target.id)
+            if isinstance(maybe_clock, _Clock):
+                clock_binding = maybe_clock
                 if kind == "Output":
                     raise ElaborationError(
-                        f"Global Output '{node.target.id}' cannot be tagged with "
-                        f"make_clock() -- a clock net must have exactly one driver, "
+                        f"Global Output '{node.target.id}' cannot be bound to a "
+                        f"clock -- a clock net must have exactly one driver, "
                         f"which an Output (a top-level design output, driven from "
                         f"inside the design) does not model. Use Wire or Input."
+                    )
+                if ann_val.is_async or ann_val.clock is not None:
+                    raise ElaborationError(
+                        f"Global {kind} '{node.target.id}' "
+                        f"({_decl_loc_str(module_globals, node)}) carries the clock "
+                        f"{clock_binding.port_name}: it takes no ASYNC or clock "
+                        f"marker"
                     )
             else:
                 raise ElaborationError(
@@ -7079,6 +7218,13 @@ def _discover_global_wires(tree, module_globals, parser_state, name_prefix=None)
         parser_state.pypeline_global_wire_names[reg_name] = (
             f"{module_globals['__name__']}.{node.target.id}"
         )
+        parser_state.pypeline_wire_decls[reg_name] = WireDecl(
+            ann_val, node.target.id, _decl_loc_str(module_globals, node)
+        )
+        if getattr(ann_val, "is_async", False):
+            # Readable on other clocks: no clock inference through it, and the
+            # VHDL writer's shared-global clock check skips it
+            parser_state.async_wires.add(reg_name)
         # (declaring module, name) -> key: a bare name only means this wire inside
         # the module that declares it (see FuncElaborator._resolve_global_wire).
         # Both spellings, since _parse_ref_toks hands resolvers the VHDL-safe one.
@@ -7097,24 +7243,38 @@ def _discover_global_wires(tree, module_globals, parser_state, name_prefix=None)
             parser_state.pypeline_global_insts[reg_name] = GlobalInstDecl(
                 reg_name, node.target.id, ann_val, None, module_globals, node
             )
-        if clock_marker is not None:
+        if clock_binding is not None:
             if var_info.type_name != "uint1_t":
                 raise ElaborationError(
-                    f"Global {kind} '{bare_name}' tagged with make_clock() must be "
-                    f"uint1_t, got {var_info.type_name}"
+                    f"Global {kind} '{bare_name}' bound to the clock "
+                    f"{clock_binding.port_name} must be uint1_t, got "
+                    f"{var_info.type_name}"
                 )
             dupes = [
-                w for w, m in parser_state.clk_mhz.items() if m == clock_marker.mhz
+                w
+                for w, m in parser_state.clk_mhz.items()
+                if (m, parser_state.clk_group.get(w)) == clock_binding.identity
             ]
             if dupes:
                 raise ElaborationError(
-                    f"Global {kind} '{bare_name}' and {dupes} are both tagged as "
-                    f"clocks at {clock_marker.mhz} MHz -- two clocks at the same "
-                    f"rate would collide on the same generated clk_<rate> net. "
-                    f"Clock groups (distinguishing same-rate clocks) are not yet "
-                    f"supported in pypeline."
+                    f"Global {kind} '{bare_name}' and {dupes} are both bound to "
+                    f"the clock {clock_binding.port_name}: a clock has one pin or "
+                    f"wire. Two clocks of one rate need names: "
+                    f"make_clock({clock_binding.mhz}, name=...)."
                 )
-            parser_state.clk_mhz[reg_name] = clock_marker.mhz
+            parser_state.clk_mhz[reg_name] = clock_binding.mhz
+            if clock_binding.name is not None:
+                parser_state.clk_group[reg_name] = clock_binding.name
+            parser_state.pypeline_wire_decls[reg_name] = parser_state.pypeline_wire_decls[
+                reg_name
+            ]._replace(binding=clock_binding)
+    # The Python names of the clocks this module makes or imports, for messages
+    # and the crossing report: the first name found for each clock (a pin or
+    # wire bound to a clock is named after the pin, not the clock)
+    declared = module_globals.get("__annotations__", {})
+    for name, value in module_globals.items():
+        if isinstance(value, _Clock) and not name.startswith("_") and name not in declared:
+            parser_state.pypeline_clock_names.setdefault(value.identity, name)
 
 
 # ─────────────────────────────────────────────
@@ -7252,7 +7412,9 @@ def _elaborate_main(parser_state, fn, name, owner):
     keyed `name`, whatever key its function would otherwise get (a factory
     closure's canonical name, a top-level def's own name). For every MAIN
     PARSE_FILE Step 7 does not elaborate as a top-level def: Step 7.2's
-    registered MAINs, _add_late_mains and ELABORATE_LIVE_ROOTS.
+    registered MAINs, _add_late_mains and ELABORATE_LIVE_ROOTS. An async
+    global FIFO's crossing functions are elaborated here too, under the
+    names the back end looks them up by (GlobalFifoDecl._realize_async).
 
     `owner` names the MAIN in the error for a name some other function
     already has, compared ignoring case as VHDL does."""
@@ -7321,9 +7483,7 @@ def _elaborate_registered_mains(parser_state, elaborated_ids, files_to_elaborate
                 )
         print(f"  elaborating func: {info.name}")
         _elaborate_main(parser_state, fn, info.name, f"The @MAIN made at {info.origin}")
-        parser_state.main_mhz[info.name] = info.mhz
-        parser_state.main_syn_mhz[info.name] = info.mhz
-        parser_state.main_clk_group[info.name] = None
+        _set_main_clock(parser_state, info.name, _clock_identity(info.clock))
 
 
 class LateMain(NamedTuple):
@@ -7331,7 +7491,7 @@ class LateMain(NamedTuple):
 
     fn: object  # its hw_func
     name: str  # its MAIN name
-    clock: tuple  # (mhz, syn_mhz, clk_group) it runs on
+    clock: tuple  # the identity (mhz, name) of the clock it runs on
     reason: str  # its func_no_added_latency reason
     owner: str  # what made it, for messages: "global FIFO rx [top.py:14]: its ..."
 
@@ -7347,8 +7507,8 @@ def _add_late_mains(parser_state, late_mains):
     its order: the instance walk from the new MAINs, the AUTO_PIPELINE and
     pipeline_latency checks (only of the new functions, before trimming:
     trimming leaves stale AUTO_PIPELINE tags behind), trimming of the new
-    MAINs and new AUTO_FSM measurement roots, the dangling-logic check, the
-    @wires check and the call graph."""
+    MAINs and new AUTO_FSM measurement roots, the dangling-logic check and
+    the @wires check."""
     import AUTO_FSM
 
     table = parser_state.FuncLogicLookupTable
@@ -7356,10 +7516,7 @@ def _add_late_mains(parser_state, late_mains):
     new_mains = []
     for late in late_mains:
         _elaborate_main(parser_state, late.fn, late.name, late.owner)
-        mhz, syn_mhz, group = late.clock
-        parser_state.main_mhz[late.name] = mhz
-        parser_state.main_syn_mhz[late.name] = syn_mhz
-        parser_state.main_clk_group[late.name] = group
+        _set_main_clock(parser_state, late.name, late.clock)
         parser_state.func_no_added_latency[late.name] = late.reason
         new_mains.append(late.name)
     new_funcs = set(table) - before
@@ -7377,7 +7534,6 @@ def _add_late_mains(parser_state, late_mains):
     for fname in set(table) - before:
         LOGIC.FIND_DANGLING_LOGIC(table[fname])
     _validate_wires_funcs(parser_state)
-    _build_func_call_graph(parser_state)
 
 
 def _path_overlaps(path, prefix):
@@ -7400,13 +7556,35 @@ def _first_access_loc(accesses):
 
 
 def _main_clock(parser_state, main):
-    """(main_mhz, main_clk_group) of a MAIN: the clock it runs on."""
+    """(main_mhz, main_clk_group) of a MAIN: the identity of the clock it
+    runs on, (None, None) for the default clock."""
     return parser_state.main_mhz.get(main), parser_state.main_clk_group.get(main)
 
 
-def _main_clock_str(clock):
-    """A clock as the generated design names it: clk_100p0."""
-    return "clk_" + VHDL.CLK_MHZ_GROUP_TEXT(*clock)
+def _clock_identity(clock):
+    """(mhz, name) of a _Clock; (None, None), the default clock, for None."""
+    return (None, None) if clock is None else clock.identity
+
+
+def _set_main_clock(parser_state, main, identity):
+    """Put the MAIN `main` on the clock `identity` ((mhz, name); (None, None)
+    is the default clock): main_mhz is its rate, main_clk_group its name,
+    main_syn_mhz its syn_mhz (pypeline_clock_syn_mhz, filled by
+    _assign_clocks), else its rate."""
+    mhz, name = identity
+    parser_state.main_mhz[main] = mhz
+    parser_state.main_clk_group[main] = name
+    syn_mhz = parser_state.pypeline_clock_syn_mhz.get(identity)
+    parser_state.main_syn_mhz[main] = mhz if syn_mhz is None else syn_mhz
+
+
+def _clock_str(parser_state, identity):
+    """A clock as messages name it: its Python name where it has one, with
+    its name in the generated design, eth_clk (clk_125p0_eth_rx); else just
+    that, clk_100p0, clk_None."""
+    port = "clk_" + VHDL.CLK_MHZ_GROUP_TEXT(*identity)
+    name = parser_state.pypeline_clock_names.get(tuple(identity))
+    return f"{name} ({port})" if name else port
 
 
 def _global_inst_paths(ports, bindings):
@@ -7493,13 +7671,14 @@ def _check_global_insts(parser_state):
     reads would be sampled at the first stage and its writes published at
     the last. An AUTO_PIPELINE call of such a user is an error.
 
-    Then each FIFO's <key>_FIFO is added on its ends' clock by
-    _add_late_mains, with reason "global FIFO". (Ends on two clocks are an
-    error in check_users; the place where an async FIFO would be built.)
+    Then each FIFO's MAINs are added by _add_late_mains, with reason "global
+    FIFO" (GlobalFifoDecl.realize): <key>_FIFO on its ends' clock, or, for
+    ends on two clocks, the async FIFO's side MAINs <key>_FIFO_wr and
+    <key>_FIFO_rd.
 
-    Runs in PARSE_FILE after the call graph and clock inference
-    (LOGIC.INFER_CLOCK_DOMAINS skips the wires of declarations whose
-    joins_clocks is False) and before the global-wire rule checks, which
+    Runs in PARSE_FILE after trimming and clock assignment
+    (_assign_clocks, which does not pass through the wires of declarations
+    whose joins_clocks is False) and before the global-wire rule checks, which
     then hold for each instance wire like any other: each writer has one
     instance, and the writers' regions are disjoint.
     """
@@ -7526,7 +7705,7 @@ def _check_global_insts(parser_state):
             if any(accesses):
                 users[fname] = accesses
         hardware = decl.hardware()
-        clock = decl.check_users(parser_state, users, hardware)
+        ends = decl.check_users(parser_state, users, hardware)
         _module, ports, bindings = hardware
         names = _global_inst_py_names(ports, bindings)
         for p, path in _global_inst_paths(ports, bindings):
@@ -7537,16 +7716,7 @@ def _check_global_insts(parser_state):
                     _path_overlaps(r, path) for r in reads
                 ):
                     handshakes.setdefault(user, (decl, decl.label(path, names)))
-        if isinstance(decl, GlobalFifoDecl):
-            late_mains.append(
-                LateMain(
-                    decl.make_main(parser_state, hardware),
-                    decl.main_name,
-                    clock,
-                    decl.no_added_latency_reason,
-                    f"{decl.describe()}: its FIFO MAIN",
-                )
-            )
+        late_mains += decl.realize(parser_state, hardware, ends)
     for user, (decl, _label) in handshakes.items():
         parser_state.func_no_added_latency.setdefault(user, decl.handshake_reason)
     for logic in table.values():
@@ -7565,6 +7735,498 @@ def _check_global_insts(parser_state):
                     f"the {word} outside the pipeline."
                 )
     _add_late_mains(parser_state, late_mains)
+
+
+# Clock notes and warnings already printed this session: PARSE_FILE runs
+# several times per build, and each prints them once
+_clock_messages_printed = set()
+
+
+def _print_clock_message_once(text):
+    if text not in _clock_messages_printed:
+        _clock_messages_printed.add(text)
+        print(text, flush=True)
+
+
+def _func_mains(parser_state):
+    """func name -> the MAINs (sorted) whose hierarchy holds an instance of it."""
+    return {
+        func: sorted({inst.split(LOGIC.SUBMODULE_MARKER)[0] for inst in insts})
+        for func, insts in parser_state.FuncToInstances.items()
+    }
+
+
+def _wire_access_loc(parser_state, func, wire):
+    """'file.py:line' of `func`'s first access of the global wire `wire`."""
+    logic = parser_state.FuncLogicLookupTable.get(func)
+    if logic is None:
+        return "?"
+    writes = logic.global_wire_write_locs.get(wire, {})
+    reads = logic.global_wire_read_paths.get(wire, {})
+    if not writes and not reads:
+        return "?"
+    return _first_access_loc((writes, reads))
+
+
+def _wire_label(parser_state, wire, path=()):
+    """A global wire path the way the user writes it: status.eth_up, lanes[2]."""
+    decl = parser_state.pypeline_wire_decls.get(wire)
+    text = decl.bare_name if decl is not None else wire
+    for tok in path:
+        text += f"[{tok}]" if isinstance(tok, int) else f".{tok}"
+    return text
+
+
+def _type_str(t):
+    """A hardware type the way the user writes it: status_t, uint8_t."""
+    return getattr(t, "__name__", None) or str(t)
+
+
+def _assign_clocks(parser_state):
+    """Give every MAIN its clock (main_mhz, main_clk_group, main_syn_mhz).
+
+    A MAIN that names its clock (@MAIN(clk), @MAIN(mhz)) keeps it. A bare
+    MAIN -- a global instance's MAIN among them -- takes the clock of the
+    functions it shares plain global wires with: a breadth-first search from
+    every MAIN with a clock and every wire or pin with a stated clock
+    (Wire[T, clk], Input[T, clk]), through the users of each plain wire,
+    writers and readers of any leaf alike, into bare MAINs only. ASYNC wires
+    and global FIFOs (joins_clocks False) join nothing. A bare user MAIN
+    reached by two clocks is an ElaborationError naming both paths; a global
+    instance's MAIN reached by two takes one, and GlobalInstDecl.check_users
+    then reports its users' clocks. A bare MAIN nothing reaches runs on the
+    default clock, with a warning when it shares ASYNC wires or global FIFOs
+    with functions on other clocks. One note per bare user MAIN says which
+    clock it got and why.
+
+    Before that, the design's clocks are checked for agreement
+    (pypeline._clock_conflict) and each clock's syn_mhz is recorded in
+    pypeline_clock_syn_mhz. Replaces LOGIC.INFER_CLOCK_DOMAINS for Pypeline:
+    a function's MAINs come from FuncToInstances, so a wire used one call
+    deep reaches the MAIN above it. Runs after trimming and before
+    _check_global_insts."""
+    wire_decls = parser_state.pypeline_wire_decls
+    clocks = [
+        fn._pypeline_main.clock
+        for fn in _pypeline_mod._main_registry
+        if fn._pypeline_main.clock is not None
+    ]
+    for decl in wire_decls.values():
+        clocks += [c for c in (decl.ann.clock, decl.binding) if c is not None]
+    conflict = _pypeline_mod._clock_conflict(clocks)
+    if conflict is not None:
+        raise ElaborationError(conflict)
+    for clk in clocks:
+        if clk.syn_mhz is not None:
+            parser_state.pypeline_clock_syn_mhz.setdefault(clk.identity, clk.syn_mhz)
+
+    explicit = {
+        main: _main_clock(parser_state, main)
+        for main in parser_state.main_mhz
+        if parser_state.main_mhz[main] is not None
+    }
+    inst_mains = {
+        decl.main_name
+        for decl in parser_state.pypeline_global_insts.values()
+        if decl.joins_clocks
+    }
+    func_mains = _func_mains(parser_state)
+
+    def joins(wire):
+        decl = parser_state.pypeline_global_insts.get(wire)
+        return (
+            wire in wire_decls
+            and wire not in parser_state.async_wires
+            and (decl is None or decl.joins_clocks)
+        )
+
+    wire_users = {}  # plain wire -> [(MAIN, function using it under that MAIN)]
+    main_wires = {}  # MAIN -> [(plain wire, function using it)]
+    for wire in sorted(parser_state.global_vars):
+        if not joins(wire):
+            continue
+        users = [
+            (main, func)
+            for func in sorted(parser_state.global_vars[wire].used_in_funcs)
+            for main in func_mains.get(func, ())
+        ]
+        wire_users[wire] = users
+        for main, func in users:
+            main_wires.setdefault(main, []).append((wire, func))
+
+    sources = {}  # clock identity -> [node]; a node is ("main", name) or ("wire", key)
+    for main, ident in explicit.items():
+        sources.setdefault(ident, []).append(("main", main))
+    for wire in wire_users:
+        stated = wire_decls[wire].ann.clock
+        if stated is not None:
+            sources.setdefault(stated.identity, []).append(("wire", wire))
+
+    def path_text(parent, node):
+        """(the chain from a clock's source to `node`, as messages show it,
+        the wires on it, the source node)."""
+        steps = []
+        while parent[node] is not None:
+            prev, func = parent[node]
+            steps.append((prev, node, func))
+            node = prev
+        steps.reverse()
+        source = node
+        if node[0] == "main":
+            text = f"@MAIN '{node[1]}'"
+        else:
+            text = f"wire '{_wire_label(parser_state, node[1])}' (declared on that clock)"
+        for prev, nxt, func in steps:
+            if nxt[0] == "wire":
+                text += (
+                    f" -> wire '{_wire_label(parser_state, nxt[1])}' (used by "
+                    f"{func}() at {_wire_access_loc(parser_state, func, nxt[1])})"
+                )
+            else:
+                text += (
+                    f" -> @MAIN '{nxt[1]}' ({func}() uses it at "
+                    f"{_wire_access_loc(parser_state, func, prev[1])})"
+                )
+        wires = [n[1] for _p, n, _f in steps if n[0] == "wire"]
+        return text, wires, source
+
+    reached = {}  # bare MAIN -> {clock identity: path text}
+    for ident in sorted(sources, key=str):
+        parent = {node: None for node in sources[ident]}
+        queue = list(sources[ident])
+        while queue:
+            node = queue.pop(0)
+            kind, name = node
+            if kind == "main":
+                nexts = [(("wire", w), f) for w, f in main_wires.get(name, ())]
+            else:
+                stated = wire_decls[name].ann.clock
+                if stated is not None and stated.identity != ident:
+                    continue
+                nexts = [(("main", m), f) for m, f in wire_users.get(name, ())]
+            for nxt, func in nexts:
+                if nxt in parent or (nxt[0] == "main" and nxt[1] in explicit):
+                    continue
+                parent[nxt] = (node, func)
+                queue.append(nxt)
+        for node in parent:
+            if node[0] == "main" and node[1] not in explicit:
+                reached.setdefault(node[1], {})[ident] = path_text(parent, node)
+
+    unreached = []
+    for main in sorted(parser_state.main_mhz):
+        if main in explicit:
+            _set_main_clock(parser_state, main, explicit[main])
+            continue
+        found = sorted(reached.get(main, {}).items(), key=str)
+        if len(found) > 1 and main not in inst_mains:
+            (c1, (p1, w1, s1)), (c2, (p2, w2, s2)) = found[:2]
+            # Through a global instance's wire: the instance is what spans
+            # two clocks, as GlobalInstDecl.check_users words it
+            for wire in w1 + w2:
+                decl = parser_state.pypeline_global_insts.get(wire)
+                if decl is not None and decl.joins_clocks:
+                    raise ElaborationError(
+                        f"{decl.describe()}: it is used on "
+                        f"{_clock_str(parser_state, c1)} (from {p1}) and on "
+                        f"{_clock_str(parser_state, c2)} (from {p2}). A global "
+                        f"instance runs on one clock: run the MAINs that use it "
+                        f"on one clock, or cross between clocks with an async "
+                        f"wire or a global FIFO."
+                    )
+            raise ElaborationError(
+                f"@MAIN '{main}' names no clock, and plain global wires connect "
+                f"it to two clocks:\n"
+                f"  {_clock_str(parser_state, c1)}: {p1}\n"
+                f"  {_clock_str(parser_state, c2)}: {p2}\n"
+                f"Give it its clock with @MAIN(clk), or make one of those wires "
+                f"a crossing between clocks: an async wire, Wire[T, ASYNC], or a "
+                f"global FIFO, Fifo[T]."
+            )
+        if found:
+            ident, (path, _wires, _source) = found[0]
+            _set_main_clock(parser_state, main, ident)
+            if main not in inst_mains and main not in parser_state.func_marked_wires:
+                _print_clock_message_once(
+                    f"Clock of bare @MAIN '{main}': {_clock_str(parser_state, ident)}, "
+                    f"from {path}"
+                )
+        else:
+            _set_main_clock(parser_state, main, (None, None))
+            if main not in inst_mains:
+                unreached.append(main)
+
+    # A bare MAIN left on the default clock that shares crossings with clocks
+    for main in unreached:
+        others = set()
+        for wire, var_info in sorted(parser_state.global_vars.items()):
+            if wire not in wire_decls or joins(wire):
+                continue
+            users = {m for f in var_info.used_in_funcs for m in func_mains.get(f, ())}
+            if main in users:
+                others |= {
+                    _main_clock(parser_state, m) for m in users - {main}
+                } - {(None, None)}
+        if others:
+            _print_clock_message_once(
+                f"WARNING: bare @MAIN '{main}' runs on the default clock clk_None, "
+                f"and it shares async wires or global FIFOs with functions on "
+                f"{', '.join(_clock_str(parser_state, c) for c in sorted(others, key=str))}. "
+                f"Give it a clock with @MAIN(clk) if it was meant to run on one of them."
+            )
+
+
+class CrossingRow(NamedTuple):
+    """One row of the crossing report (ParserState.pypeline_clock_crossings)."""
+
+    name: str  # what crosses, as the user writes it: link_up, status.eth_up, rx
+    kind: str  # "ASYNC wire", "ASYNC pin", or a FIFO's initializer kind
+    write_clock: object  # the writer's clock identity; None for a pin
+    read_clock: object  # the clock identity it is read on
+    source: str  # where it is declared: "top.py:12"
+    fifo: object = None  # a FIFO row's GlobalFifoDecl
+
+
+def _check_clock_crossings(parser_state):
+    """Check, leaf by leaf, that no global wire crosses clocks except through
+    a crossing, and list the crossings (ParserState.pypeline_clock_crossings).
+
+    For each leaf a function writes, every instance of every function reading
+    an overlapping path (the access records) must run on the writer's clock,
+    unless the wire is an async wire, whose cross-clock reads become rows.
+    A pin's readers must share one clock, or be on its stated clock
+    (Input[T, clk]); an ASYNC pin may be read on any clock. A wire with a
+    stated clock (Wire[T, clk]) must be written on it. An ASYNC Wire or
+    Output that no function reads on another clock gets a warning. Each
+    global FIFO gets a row. Every wire checked goes into
+    wire_clocks_checked, so VHDL.WRITE_MULTIMAIN_TOP skips its whole-wire
+    clock check for it (a split wire's leaves may be on different clocks).
+
+    Runs after _check_global_insts, so every MAIN has its clock."""
+    table = parser_state.FuncLogicLookupTable
+    func_mains = _func_mains(parser_state)
+    rows = {}  # (name, write clock, read clock) -> CrossingRow
+
+    def clock_of(main):
+        return _main_clock(parser_state, main)
+
+    def readers(wire):
+        """[(func, path, loc, MAIN)] of every read instance of `wire`."""
+        out = []
+        for func in sorted(table):
+            for path, loc in sorted(
+                table[func].global_wire_read_paths.get(wire, {}).items(), key=str
+            ):
+                for main in func_mains.get(func, ()):
+                    out.append((func, path, loc, main))
+        return out
+
+    for wire in sorted(parser_state.pypeline_wire_decls):
+        decl = parser_state.pypeline_wire_decls[wire]
+        ann = decl.ann
+        kind_name = (
+            "Input"
+            if wire in parser_state.input_wires
+            else "Output"
+            if wire in parser_state.output_wires
+            else "Wire"
+        )
+        if wire in parser_state.input_wires:
+            seen = {}  # clock -> first (func, loc)
+            for func, _path, loc, main in readers(wire):
+                clk = clock_of(main)
+                if ann.is_async:
+                    key = (decl.bare_name, None, clk)
+                    rows.setdefault(
+                        key, CrossingRow(decl.bare_name, "ASYNC pin", None, clk, decl.loc)
+                    )
+                elif ann.clock is not None and clk != ann.clock.identity:
+                    raise ElaborationError(
+                        f"Pin '{decl.bare_name}' ({decl.loc}) is declared on "
+                        f"{_clock_str(parser_state, ann.clock.identity)}, but "
+                        f"{func}() reads it on {_clock_str(parser_state, clk)} at "
+                        f"{_access_loc_str(loc)}. Read it on its clock, or declare "
+                        f"it Input[T, ASYNC] and synchronize it in the reader."
+                    )
+                seen.setdefault(clk, (func, loc))
+            if not ann.is_async and ann.clock is None and len(seen) > 1:
+                (c1, (f1, l1)), (c2, (f2, l2)) = sorted(seen.items(), key=str)[:2]
+                raise ElaborationError(
+                    f"Pin '{decl.bare_name}' ({decl.loc}) is read on two clocks: "
+                    f"{_clock_str(parser_state, c1)} by {f1}() at "
+                    f"{_access_loc_str(l1)}, and {_clock_str(parser_state, c2)} by "
+                    f"{f2}() at {_access_loc_str(l2)}. A pin is synchronous to "
+                    f"one clock: name it with Input[T, clk], or declare it "
+                    f"Input[T, ASYNC] and synchronize it in each reader."
+                )
+            parser_state.wire_clocks_checked.add(wire)
+            continue
+        crossed = False
+        reads = readers(wire)
+        for writer in sorted(table):
+            logic = table[writer]
+            if wire not in logic.write_only_global_wires:
+                continue
+            mains = func_mains.get(writer, [])
+            if len(mains) != 1 or len(parser_state.FuncToInstances[writer]) != 1:
+                continue  # the global-wire rules report a writer with several instances
+            wclk = clock_of(mains[0])
+            locs = logic.global_wire_write_locs.get(wire, {})
+            paths = set(logic.global_wire_driven_paths.get(wire, set()))
+            if wire in logic.global_wire_dynamic_index_writes or not paths:
+                paths |= set(locs) or {()}
+            wloc = _first_access_loc((locs, {})) if locs else "?"
+            if ann.clock is not None and wclk != ann.clock.identity:
+                raise ElaborationError(
+                    f"{kind_name} '{decl.bare_name}' ({decl.loc}) is declared on "
+                    f"{_clock_str(parser_state, ann.clock.identity)}, but "
+                    f"{writer}() writes it on {_clock_str(parser_state, wclk)} at "
+                    f"{wloc}."
+                )
+            for dpath in sorted(paths, key=str):
+                for func, rpath, rloc, main in reads:
+                    if not _path_overlaps(dpath, rpath):
+                        continue
+                    rclk = clock_of(main)
+                    if rclk == wclk:
+                        continue
+                    leaf = dpath if len(dpath) >= len(rpath) else rpath
+                    label = _wire_label(parser_state, wire, leaf)
+                    if ann.is_async:
+                        crossed = True
+                        rows.setdefault(
+                            (label, wclk, rclk),
+                            CrossingRow(label, "ASYNC wire", wclk, rclk, decl.loc),
+                        )
+                        continue
+                    wl = locs.get(dpath)
+                    raise ElaborationError(
+                        f"wire '{label}' crosses clocks without a crossing.\n"
+                        f"  driven on clock {_clock_str(parser_state, wclk)} by "
+                        f"{writer}() at {_access_loc_str(wl) if wl else wloc}\n"
+                        f"  read on clock {_clock_str(parser_state, rclk)} by "
+                        f"{func}() at {_access_loc_str(rloc)}\n"
+                        f"Declare it an async wire, and synchronize it in the reader:\n"
+                        f"  {decl.bare_name}: {kind_name}[{_type_str(ann.inner_ctype)}, ASYNC]\n"
+                        f"or move the values through a global FIFO:\n"
+                        f"  {decl.bare_name}_q: Fifo[{_type_str(ann.inner_ctype)}] = "
+                        f"global_fifo(4)"
+                    )
+        if ann.is_async and not crossed:
+            _print_clock_message_once(
+                f"WARNING: async wire '{decl.bare_name}' ({decl.loc}) is never read "
+                f"on a clock other than its writer's: ASYNC changes nothing there, "
+                f"and its paths stay timed."
+            )
+        parser_state.wire_clocks_checked.add(wire)
+
+    for key in sorted(parser_state.pypeline_global_insts):
+        decl = parser_state.pypeline_global_insts[key]
+        if not isinstance(decl, GlobalFifoDecl):
+            continue
+        wclk = clock_of(decl.main_names[0])
+        rclk = clock_of(decl.main_names[-1])
+        rows[(decl.bare_name, wclk, rclk)] = CrossingRow(
+            decl.bare_name, decl.kind, wclk, rclk, decl.loc, decl
+        )
+    def order(row):
+        src, _, line = row.source.rpartition(":")
+        return (src, int(line) if line.isdigit() else 0, row.name, str(row.read_clock))
+
+    parser_state.pypeline_clock_crossings = sorted(rows.values(), key=order)
+
+
+def _check_clock_bindings(parser_state):
+    """A clock bound to a pin or wire (pin: Input[uint1_t] = clk) must be the
+    clock of some MAIN: that is what tells the back end which clock the net
+    carries."""
+    main_clocks = {_main_clock(parser_state, m) for m in parser_state.main_mhz}
+    for wire in sorted(parser_state.clk_mhz):
+        ident = (parser_state.clk_mhz[wire], parser_state.clk_group.get(wire))
+        if ident not in main_clocks:
+            decl = parser_state.pypeline_wire_decls.get(wire)
+            where = f" ({decl.loc})" if decl is not None else ""
+            present = ", ".join(
+                sorted(_clock_str(parser_state, c) for c in main_clocks)
+            )
+            raise ElaborationError(
+                f"Global wire '{_wire_label(parser_state, wire)}'{where} carries the "
+                f"clock {_clock_str(parser_state, ident)}, which is not the clock of "
+                f"any @MAIN (their clocks: {present}). Run a @MAIN on it with "
+                f"@MAIN(clk), or bind the clock a @MAIN uses."
+            )
+
+
+def _crossing_hardware(parser_state, row):
+    """(hardware, depth used) of a crossing report row."""
+    decl = row.fifo
+    if decl is None:
+        return "none", None
+    if decl.crossing is not None:
+        if VHDL.CLK_CROSS_USES_XPM(decl.crossing, parser_state):
+            return "xpm_fifo_async", max(decl.async_depth, 16)
+        return "built-in async", decl.async_depth
+    if decl.kind == "module":
+        fn = _pypeline_mod._hardware_func(decl.init)
+        qual = getattr(fn, "__qualname__", None) or repr(decl.init)
+        return qual.split(".<locals>.")[0], None
+    return "make_stream_fifo", 1 << (max(decl.n, 2) - 1).bit_length()
+
+
+def WRITE_CLOCK_CROSSING_REPORT(parser_state, out_dir):
+    """Write clock_crossings.log (a table) and clock_crossings.json to
+    out_dir: every ASYNC wire leaf read on another clock, and every global
+    FIFO, with its clocks, kind, hardware, depth used and source line. Clocks
+    go by their Python names where they have one. Called for Pypeline builds
+    by AUTO_PIPELINE.WRITE_0_ADDED_CLKS_INIT_FILES, once part and tool are
+    known (the async FIFO's hardware depends on the tool)."""
+
+    def clock_name(ident):
+        if ident is None:
+            return "pin"
+        return parser_state.pypeline_clock_names.get(tuple(ident)) or (
+            "clk_" + VHDL.CLK_MHZ_GROUP_TEXT(*ident)
+        )
+
+    def port_name(ident):
+        return None if ident is None else "clk_" + VHDL.CLK_MHZ_GROUP_TEXT(*ident)
+
+    records = []
+    for row in parser_state.pypeline_clock_crossings:
+        hardware, depth = _crossing_hardware(parser_state, row)
+        clocks = (
+            clock_name(row.read_clock)
+            if row.write_clock == row.read_clock
+            else f"{clock_name(row.write_clock)} -> {clock_name(row.read_clock)}"
+        )
+        records.append(
+            {
+                "crossing": row.name,
+                "clocks": clocks,
+                "write_clock": port_name(row.write_clock),
+                "read_clock": port_name(row.read_clock),
+                "kind": row.kind,
+                "hardware": hardware,
+                "depth": depth,
+                "source": row.source,
+            }
+        )
+    header = ("crossing", "clocks", "kind", "hardware", "depth", "source")
+    lines = [header] + [
+        tuple("" if r[h] is None else str(r[h]) for h in header) for r in records
+    ]
+    widths = [max(len(line[i]) for line in lines) for i in range(len(header))]
+    text = "".join(
+        "  ".join(cell.ljust(w) for cell, w in zip(line, widths)).rstrip() + "\n"
+        for line in lines
+    )
+    if not records:
+        text += "(no clock crossings and no global FIFOs)\n"
+    with open(os.path.join(out_dir, "clock_crossings.log"), "w") as f:
+        f.write(text)
+    with open(os.path.join(out_dir, "clock_crossings.json"), "w") as f:
+        json.dump(records, f, indent=1)
+        f.write("\n")
 
 
 def _validate_auto_pipeline_constraints(parser_state, funcs=None):
@@ -7831,32 +8493,6 @@ def _validate_wires_funcs(parser_state):
                 "@wires and the function is timed like any other (a @cast with "
                 "real logic puts @hw_func under @cast)."
             )
-
-
-def _build_func_call_graph(parser_state):
-    """Populate func_name_to_calls / func_names_to_called_from (by function name,
-    not per-call-site instance path) from each function's already-elaborated
-    submodule_instances, so LOGIC.INFER_CLOCK_DOMAINS's RECURSIVE_FIND_MAIN_FUNCS
-    call-graph walk can trace a global Wire[T] access up through helper/factory
-    functions to whichever MAIN(s) transitively call them -- not just wires touched
-    directly in a MAIN's own top-level body. Mirrors what
-    C_TO_LOGIC.GET_FUNC_NAME_TO_FROM_FUNC_CALLS_LOOKUPS does for the C frontend, but
-    built directly from submodule_instances instead of re-deriving it from a C AST.
-
-    Call this after trimming (TRIM_COLLAPSE_FUNC_DEFS_RECURSIVE) so the graph
-    reflects final submodule instances, not ones later removed as dead logic.
-    """
-    for func_name, logic in parser_state.FuncLogicLookupTable.items():
-        called_func_names = set(logic.submodule_instances.values())
-        if not called_func_names:
-            continue
-        parser_state.func_name_to_calls.setdefault(func_name, set()).update(
-            called_func_names
-        )
-        for called_func_name in called_func_names:
-            parser_state.func_names_to_called_from.setdefault(
-                called_func_name, set()
-            ).add(func_name)
 
 
 # ─────────────────────────────────────────────
@@ -8489,7 +9125,6 @@ def _elaborate_live_roots(roots):
         parser_state.main_syn_mhz[logic.func_name] = None
         parser_state.main_clk_group[logic.func_name] = None
     _build_inst_lookup(parser_state)
-    _build_func_call_graph(parser_state)
     _validate_auto_pipeline_constraints(parser_state)
     _validate_pipeline_latencies(parser_state)
     return parser_state
@@ -8759,10 +9394,11 @@ def PARSE_FILE(py_file, run_syn_initial_hooks=False, resolved_part=None):
         if getattr(fglobals.get(node.name), "_is_func_wires_pragma", False):
             parser_state.func_marked_wires.add(hw_name)
         if id(fglobals.get(node.name)) in main_func_ids:
-            mhz = fglobals[node.name]._pypeline_main.mhz
-            parser_state.main_mhz[hw_name] = mhz
-            parser_state.main_syn_mhz[hw_name] = mhz
-            parser_state.main_clk_group[hw_name] = None
+            _set_main_clock(
+                parser_state,
+                hw_name,
+                _clock_identity(fglobals[node.name]._pypeline_main.clock),
+            )
 
     # ── Step 7.1: register each global instance's MAIN (Inst[f]) ──
     # Here, not in _discover_global_wires, which ELABORATE_LIVE_ROOTS also runs
@@ -8810,36 +9446,23 @@ def PARSE_FILE(py_file, run_syn_initial_hooks=False, resolved_part=None):
     # @wires promises zero delay; check it against the trimmed logic
     _validate_wires_funcs(parser_state)
 
-    # ── Build function-name call graph so RECURSIVE_FIND_MAIN_FUNCS can trace a
-    # global var's use up through helper/factory functions to its owning MAIN(s) ──
-    _build_func_call_graph(parser_state)
+    # ── Give every MAIN its clock: named, inferred through plain wires, or the
+    # default clock (_assign_clocks) ──
+    _assign_clocks(parser_state)
 
-    # ── Propagate MHz across MAINs sharing global wires ──
-    LOGIC.INFER_CLOCK_DOMAINS({}, {}, {}, parser_state)
-
-    # ── Global instances: check their users, add each FIFO's MAIN ──
+    # ── Global instances: check their users, add each FIFO's MAINs ──
     _check_global_insts(parser_state)
 
-    # ── Validate every make_clock()-tagged wire binds to some @MAIN's rate ──
-    # Must run after INFER_CLOCK_DOMAINS above: that's what assigns a rate to a
-    # bare @MAIN that only inherits one through a shared global wire, so a clock
-    # whose only consumer is such a MAIN can't be checked before it runs.
-    if parser_state.clk_mhz:
-        main_rates = set(parser_state.main_mhz.values())
-        for clk_wire_name, clk_mhz in parser_state.clk_mhz.items():
-            if clk_mhz not in main_rates:
-                clk_name = VHDL.CLK_MHZ_GROUP_TEXT(clk_mhz, None)
-                main_rates_str = sorted(r for r in main_rates if r is not None)
-                raise ElaborationError(
-                    f"make_clock({clk_mhz}) on global wire '{clk_wire_name}' "
-                    f"(would generate clk_{clk_name}) does not match the rate of "
-                    f"any @MAIN in this design -- @MAIN rates present: "
-                    f"{main_rates_str}. A tagged clock must equal some @MAIN's rate "
-                    f"exactly."
-                )
+    # ── No global wire crosses clocks but through a crossing; list crossings ──
+    _check_clock_crossings(parser_state)
+
+    # ── Every clock bound to a pin or wire is some @MAIN's clock ──
+    _check_clock_bindings(parser_state)
 
     # ── Validate global Wire[T] / Input[T] / Output[T] rules ──
     for wire_name in parser_state.global_vars:
+        if wire_name in parser_state.clk_cross_var_info:
+            continue  # an async FIFO's crossing: the back end's, not a wire
         writers = [
             fname
             for fname, logic in parser_state.FuncLogicLookupTable.items()
@@ -8913,6 +9536,10 @@ def PARSE_FILE(py_file, run_syn_initial_hooks=False, resolved_part=None):
         main_logic = parser_state.FuncLogicLookupTable[main_name]
         protected.update(main_logic.inputs)
         protected.update(main_logic.outputs)
+    # An async FIFO's crossing functions: the back end builds record fields
+    # and its clk_cross entity's connections from these names
+    for info in parser_state.clk_cross_var_info.values():
+        protected.update(info.write_read_funcs)
     reserved = set(parser_state.FuncLogicLookupTable) - set(
         parser_state.pypeline_name_descriptions
     )

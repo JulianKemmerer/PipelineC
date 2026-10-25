@@ -63,10 +63,10 @@ For getting started information see the [README](README.md).
 
 **Part IV — Multiple clock domains**
 
-36. [Clock Domains (COMING SOON)](#clock-domains-coming-soon)
-37. [Async Wires: `Wire[T, ASYNC]` (COMING SOON)](#async-wires-wiret-async-coming-soon)
-38. [Clock-Crossing FIFOs (COMING SOON)](#clock-crossing-fifos-coming-soon)
-39. [Building and Simulating Multi-Clock Designs (COMING SOON)](#building-and-simulating-multi-clock-designs-coming-soon)
+36. [Clock Domains](#clock-domains)
+37. [Async Wires: `Wire[T, ASYNC]`](#async-wires-wiret-async)
+38. [Clock-Crossing FIFOs](#clock-crossing-fifos)
+39. [Building and Simulating Multi-Clock Designs](#building-and-simulating-multi-clock-designs)
 
 **Part V — Escape hatches**
 
@@ -545,7 +545,8 @@ lanes = [MAIN(make_lane(i), name=f"lane{i}") for i in range(4)]
 ```
 
 Each call makes one `@MAIN`: four entities here, `lane0` to `lane3`, each with its own
-counter. `MAIN(fn, name="rx", mhz=100.0)` also gives a rate. The decorator takes `name=`
+counter. `MAIN(fn, name="rx", mhz=100.0)` also gives a rate, and
+`MAIN(fn, name="rx", clock=eth_clk)` a [clock](#declaring-a-clock-make_clock). The decorator takes `name=`
 too: `@MAIN(name="top0")`, `@MAIN(100.0, name="top0")`.
 
 **Names.**
@@ -605,11 +606,11 @@ names, default parts, and command-line selection rules.
 
 ### Naming a clock with `make_clock`
 
-By default the clock for a given `@MAIN(mhz)` rate is a tool-named top-level
-port, e.g. `clk_100p0`. `make_clock(mhz)` overrides this: it tags a global
-`Input[uint1_t]` or `Wire[uint1_t]` as *being* that clock, so the wire's own
-name becomes the real top-level port (or internal signal) instead. This is the
-pypeline equivalent of PipelineC's `DECL_INPUT` + `CLK_MHZ` pragma pair.
+By default the clock of `@MAIN(mhz)` is a top-level port named after its rate, such as
+`clk_100p0`. To bring a clock in on a pin with a fixed name, for example to match a board
+constraints file, bind a clock from `make_clock` to a global `Input[uint1_t]`: the pin
+replaces the rate-derived port. This is the Pypeline equivalent of PipelineC's
+`DECL_INPUT` + `CLK_MHZ` pragma pair.
 
 ```python
 from pypeline import MAIN, Input, uint1_t, make_clock
@@ -622,20 +623,16 @@ def solution(x: uint1_t) -> uint1_t:
     ...
 ```
 
-`make_clock`'s rate must equal some `@MAIN`'s rate in the design exactly — that
-match is how the tool decides which `@MAIN`'s clock this wire is. Use it on an
-`Input[uint1_t]` for an external clock, or a `Wire[uint1_t]` for an internally
-generated one (driven by another `@MAIN`, mirroring PipelineC's
-[internal_clocks.c](../examples/internal_clocks.c) example). That pattern needs
-two `@MAIN`s at different rates. The hardware builds, but no signal can cross
-between the two clock domains ([#342](https://github.com/JulianKemmerer/PipelineC/discussions/342)), and simulation handles only one clock rate
-([#354](https://github.com/JulianKemmerer/PipelineC/issues/354)); see
-[Limitations / Not Yet Supported](#limitations--not-yet-supported). It cannot be used on an `Output[T]` (a clock
-net needs exactly one driver, which an `Output` doesn't model) or on a wire whose
-rate collides with another `make_clock`-tagged wire at the same rate.
+`make_clock(85.0)` is the unnamed 85 MHz clock, the one `@MAIN(85.0)` runs on. A clock bound
+to a pin must be the clock of some `@MAIN`, and a clock has one pin: two clocks of one rate
+on two pins need names, `make_clock(85.0, name=...)`. A clock bound to a `Wire[uint1_t]` is
+driven by logic instead ([Clocks made by logic](#clocks-made-by-logic)). A clock cannot be
+bound to an `Output[T]`: a clock net needs exactly one driver, which an `Output` doesn't
+model.
 
-Clock objects with names, and moving data between clocks through async wires and global
-FIFOs, are COMING SOON: see [Part IV — Multiple clock domains](#part-iv--multiple-clock-domains).
+Clocks with names, synthesis targets, board clocks, and moving data between clocks through
+async wires and global FIFOs are described in
+[Part IV — Multiple clock domains](#part-iv--multiple-clock-domains).
 
 ---
 
@@ -2689,9 +2686,8 @@ Restrictions:
 - Each writer function must still have exactly one instance in the design hierarchy.
 - Leaves no writer claims read as zero, exactly like the single-writer partial-write
   case above.
-- All writers (and readers) of a split wire must share the same clock domain, exactly
-  like any other shared global wire. COMING SOON: each leaf on its own writer's clock, with
-  reads across clocks through async wires; see
+- Each leaf is on its own writer's clock. Its readers must be on that clock too, unless
+  the wire is an async wire; see
   [Which clock a global wire is on](#which-clock-a-global-wire-is-on).
 
 ### `Input[T]` / `Output[T]` — top-level FPGA ports
@@ -2982,10 +2978,9 @@ name for a FIFO declared in an imported module). It holds the FIFO hardware and 
 ends' clock. Generated VHDL shows it under that name, and timing reports call it
 `global FIFO rx [top.py:14]`.
 
-**Across clocks (COMING SOON).** Today both ends must be on one clock. The same
-`global_fifo(n)` will become an async FIFO when its two ends are used on different clocks,
-and `global_sync_fifo(n)` and `global_async_fifo(n)` will say which one you expect. See
-[Clock-Crossing FIFOs](#clock-crossing-fifos-coming-soon).
+**Across clocks.** The same `global_fifo(n)` becomes an async FIFO when its two ends are
+used on different clocks. `global_sync_fifo(n)` and `global_async_fifo(n)` say which one you
+expect. See [Clock-Crossing FIFOs](#clock-crossing-fifos).
 
 Rules:
 
@@ -2995,10 +2990,10 @@ Rules:
 - Both ends must be used. An unused end is an error that names it.
 - Driving a half that the FIFO drives (`cmds.wr.ready`, `cmds.rd.stream`), or a whole end,
   is an error that names the end.
-- Both ends' `@MAIN`s run on one clock: the same rate, or both bare. Ends on two clocks are
-  an error until [clock-crossing FIFOs](#clock-crossing-fifos-coming-soon) arrive. Clock
-  inference does not pass through a FIFO, so a bare `@MAIN` does not take its rate from the
-  other end.
+- Ends on two clocks make an async FIFO ([Clock-Crossing FIFOs](#clock-crossing-fifos)),
+  except for `global_sync_fifo(n)` and a single-clock module, where they are an error. Clock
+  inference does not pass through a FIFO, so a bare `@MAIN` does not take its clock from
+  the other end.
 - Writes into an end use constant indices or whole values. A FIFO's wire always has
   several writers (the producer, the consumer and the FIFO), and a variable-index write
   is not supported on a wire with more than one writer function
@@ -4997,7 +4992,7 @@ don't have to unpack/repack `.data`/`.valid` by hand. (It's a thin layer over
 `make_stream_fifo` directly and never need to touch `make_fifo` itself.)
 
 To put a FIFO between two functions anywhere in the design, declare a global FIFO
-instead: [`Fifo[T]`](#fifot--global-fifos). Across two clocks this is COMING SOON.
+instead: [`Fifo[T]`](#fifot--global-fifos), on one clock or across two.
 
 ```python
 from pypeline import uint32_t, MAIN
@@ -5686,21 +5681,18 @@ next to the library source, for the full reference and a complete testbench.
 Every `@MAIN` is a clock domain: it and every function it calls run on one clock. A
 single-clock design never names its clock. A bare `@MAIN` runs on the default clock, whose
 top-level port is `clk_None`. `@MAIN(100.0)` runs on the clock of that rate, port
-`clk_100p0`, and [`make_clock`](#naming-a-clock-with-make_clock) gives a clock's port a
-fixed name. A design whose `@MAIN`s run at different rates builds today, each on its own
-clock, but nothing can cross between the clocks yet.
-
-> **COMING SOON.** The sections in this part describe planned syntax for naming clocks and
-> moving data between them. None of it is implemented yet. Features planned for later are
-> listed in [Limitations / Not Yet Supported](#limitations--not-yet-supported).
+`clk_100p0`. [`make_clock`](#declaring-a-clock-make_clock) makes a clock with a name, a
+synthesis target or a pin. Features planned for later, such as related clocks and
+simulating several clocks, are listed in
+[Limitations / Not Yet Supported](#limitations--not-yet-supported).
 
 Any two different clocks are unrelated: asynchronous to each other, with the paths between
 them untimed. Data moves between clocks in one of two ways:
 
-- an [async wire](#async-wires-wiret-async-coming-soon), `Wire[T, ASYNC]`, which adds no
-  logic. It suits flags and slowly changing values that the reader synchronizes itself.
-- a [global FIFO](#clock-crossing-fifos-coming-soon), `Fifo[T]`, for a stream of values
-  that must arrive whole and in order.
+- an [async wire](#async-wires-wiret-async), `Wire[T, ASYNC]`, which adds no logic. It
+  suits flags and slowly changing values that the reader synchronizes itself.
+- a [global FIFO](#clock-crossing-fifos), `Fifo[T]`, for a stream of values that must
+  arrive whole and in order.
 
 Reading a value written on another clock in any other way is an elaboration error.
 
@@ -5736,17 +5728,17 @@ def app():
         handle_byte(rx.rd.stream.data)           # some hardware function of yours
 ```
 
-## Clock Domains (COMING SOON)
+## Clock Domains
 
 How clocks are told apart:
 
 - **The default clock.** A bare `@MAIN` that is not placed on another clock (see
   [Which clock a bare `@MAIN` gets](#which-clock-a-bare-main-gets)) runs on the default
-  clock, as today. Its port is `clk_None`, and the tool uses 1000 MHz for it only in its
-  own timing measurements. The default clock is a clock of its own: `@MAIN(1000.0)` is a
-  different clock, `clk_1000p0`.
-- **A clock with only a rate** is named after it, as today: `@MAIN(100.0)` runs on
-  `clk_100p0`. Every unnamed clock of one rate is the same clock.
+  clock. Its port is `clk_None`, and the tool uses 1000 MHz for it only in its own timing
+  measurements. The default clock is a clock of its own: `@MAIN(1000.0)` is a different
+  clock, `clk_1000p0`.
+- **A clock with only a rate** is named after it: `@MAIN(100.0)` runs on `clk_100p0`.
+  Every unnamed clock of one rate is the same clock.
 - **A name tells apart two clocks of one rate.** Clocks are identified by rate first and
   then by name. Two clocks of one rate with different names are different clocks, and so
   are two clocks of different rates, whatever their names. Most designs need only rates.
@@ -5769,14 +5761,21 @@ def eth_tx(): ...
 
 @MAIN(125.0)                                   # the same clock as dsp_clk: rate 125, no name
 def filt(): ...
+
+lanes = [MAIN(make_lane(i), clock=rx_clk, name=f"lane{i}") for i in range(4)]
 ```
 
 - The name becomes part of the clock's name, and of its port unless a pin is bound to it:
   `clk_25p0_eth_rx`.
 - `syn_mhz=` asks for margin above the real rate. Tools that only synthesize aim at
   `syn_mhz`, and tools that place and route aim at `mhz` (PipelineC's `MAIN_SYN_MHZ`).
-  A clock has one `syn_mhz`, however many `@MAIN`s use it.
-- `@MAIN(100.0)` stays shorthand for the unnamed clock of that rate.
+  A clock has one `syn_mhz`, however many `@MAIN`s use it: `filt` above aims at 147 MHz
+  too, and two different `syn_mhz` for one clock are an error.
+- `@MAIN(100.0)` and `@MAIN(mhz=100.0)` are shorthand for the unnamed clock of that rate.
+  Name the clock once: a rate or a clock, not both.
+- [`@MAIN`s made in code](#mains-made-in-code-mainfn-name) take `clock=` the same way: `MAIN(fn, clock=clk, name=...)`.
+- A name is letters, digits and single underscores between them. Two names of one rate
+  that differ only in case are an error, since VHDL would read them as one.
 - A clock is an ordinary Python value. It can be imported from another module or built
   from a [build parameter](#build-parameters-param-and--d):
   `make_clock(param("ETH_MHZ", 125.0))`.
@@ -5792,17 +5791,18 @@ eth_clk = make_clock(125.0, name="eth_rx")
 ETH_RX_CLK: Input[uint1_t] = eth_clk           # eth_clk's port is the pin ETH_RX_CLK
 ```
 
-Today's `pll_clk: Input[uint1_t] = make_clock(85.0)` keeps working. It binds the unnamed
-85 MHz clock, the one `@MAIN(85.0)` runs on. Today's rule that a `make_clock` rate must
-equal some `@MAIN`'s rate becomes: a clock bound to a pin must be some `@MAIN`'s clock.
+`pll_clk: Input[uint1_t] = make_clock(85.0)` binds the unnamed 85 MHz clock, the one
+`@MAIN(85.0)` runs on. A clock bound to a pin must be some `@MAIN`'s clock, and a clock has
+one pin: two clocks of one rate on two pins need names.
 
-Board modules under [include/pypeline/board](../include/pypeline/board) will export their
+Board modules under [include/pypeline/board](../include/pypeline/board) export their
 clocks bound to the board's pin names. A design then names the board's clock instead of
-repeating its rate:
+repeating its rate. Importing such a module binds its pin, so some `@MAIN` must run on its
+clock:
 
 ```python
-# include/pypeline/board/arty/clocks.py (planned)
-from pypeline import *
+# include/pypeline/board/arty/clocks.py
+from pypeline import Input, make_clock, uint1_t
 clk100 = make_clock(100.0)
 CLK100MHZ: Input[uint1_t] = clk100             # the pin name in the Arty constraints file
 
@@ -5816,8 +5816,7 @@ def top(): ...
 ### Clocks made by logic
 
 A clock can be driven by logic. Bind it to a `Wire[uint1_t]` and write that wire from a
-`@MAIN` on another clock, as today (PipelineC's
-[internal_clocks.c](../examples/internal_clocks.c)):
+`@MAIN` on another clock (PipelineC's [internal_clocks.c](../examples/internal_clocks.c)):
 
 ```python
 slow_clk = make_clock(1.0)
@@ -5846,19 +5845,25 @@ when the slow clock also drives a pin.
 
 ### Which clock a bare `@MAIN` gets
 
-A bare `@MAIN` takes the clock of the functions it shares plain global wires with, as
-today. A board port module such as
+A bare `@MAIN` takes the clock of the functions it shares plain global wires with: every
+function that writes or reads any part of the wire. A board port module such as
 [`vga_pmod_ja_jb.py`](../include/pypeline/board/arty/vga_pmod_ja_jb.py) runs on the clock of
 the `@MAIN` that writes its wires. `@MAIN`s connected by plain wires therefore need one
 clock named among them, or none at all.
 
-- Inference follows plain wires only, never async wires or global FIFOs.
+- Inference follows plain wires, pins and [global instances](#instf--global-instances):
+  an instance runs on the clock of the functions that use it. It never follows async wires
+  or global FIFOs.
+- A pin or wire with a stated clock (`Input[T, clk]`, `Wire[T, clk]`) places the bare
+  `@MAIN`s that use it on that clock.
 - A bare `@MAIN` that inference does not reach runs on the default clock, `clk_None`. If it
   shares async wires or global FIFOs with functions on other clocks, a warning names those
   clocks, in case it was meant to run on one of them.
 - A bare `@MAIN` that plain wires connect to two different clocks is an error that names
-  both paths.
-- The build log says which clock each bare `@MAIN` got.
+  both paths, wire by wire with source lines. Through a global instance, the error names
+  the instance.
+- The build log says which clock each bare `@MAIN` got, and how: `Clock of bare @MAIN
+  'vga_to_pmod8': clk_25p175, from @MAIN 'app' -> wire 'vga_pmod' ...`.
 
 **Helper functions need nothing new.** A function that is not a `@MAIN` runs on its
 caller's clock, and a helper called from `@MAIN`s on two clocks becomes two instances, one
@@ -5872,8 +5877,8 @@ wire already behaves as one independent wire per scalar leaf, each with its own 
 ([Splitting a compound wire](#splitting-a-compound-wire-across-multiple-writer-functions)),
 so different leaves of one wire can be written on different clocks. Reading a leaf written
 on another clock is allowed only when the wire is an
-[async wire](#async-wires-wiret-async-coming-soon). A global FIFO crosses clocks inside its
-own hardware, and each of its two ends is used on one clock.
+[async wire](#async-wires-wiret-async). A global FIFO crosses clocks inside its own
+hardware, and each of its two ends is used on one clock.
 
 Any other read across clocks stops elaboration, naming both ends:
 
@@ -5887,16 +5892,24 @@ or move the values through a global FIFO:
   status_q: Fifo[status_t] = global_fifo(4)
 ```
 
+A pin read on two clocks is an error too, unless it says so
+([Pins with a stated clock](#pins-with-a-stated-clock)).
+
 A wire can also state the clock its writer must be on. The marker documents the wire, and
 the compiler checks it:
 
 ```python
 eth_status: Wire[status_t, eth_clk]            # written on eth_clk, or an error
+eth_debug: Wire[debug_t, eth_clk, VOLATILE]    # with VOLATILE too
 ```
+
+After the type, a `Wire`, `Input` or `Output` takes at most one of `ASYNC` or a clock, and
+`VOLATILE` alone or with a clock. `ASYNC` already behaves as `VOLATILE`, so the two
+together are an error. `Inst[f]` and `Fifo[T]` take no markers.
 
 ---
 
-## Async Wires: `Wire[T, ASYNC]` (COMING SOON)
+## Async Wires: `Wire[T, ASYNC]`
 
 An async wire carries its writer's value to readers on other clocks unchanged, with no
 added logic. It is declared like a [`VOLATILE`](#volatile-wires) wire, with a marker next to
@@ -5916,6 +5929,7 @@ two clocks. This is PipelineC's `#pragma ASYNC_WIRE` on a shared global.
   only allows reads on other clocks.
 - An `ASYNC` wire that no function reads on another clock gets a warning. There the marker
   does nothing, and its paths stay timed.
+- `Output[T, ASYNC]` works the same way for a pin that functions on other clocks also read.
 
 ### Synchronizing in the reader
 
@@ -5982,12 +5996,12 @@ arrive at a reader in the same cycle:
 
 Flags written straight from a register are safe, as are values that change only while the
 reader ignores them. A value that must arrive whole, such as a count, an address or a
-message, goes through a [global FIFO](#clock-crossing-fifos-coming-soon). The two flags in
+message, goes through a [global FIFO](#clock-crossing-fifos). The two flags in
 `status` above are independent, so reading them separately is fine.
 
 ### Pins with a stated clock
 
-A pin read by functions on one clock is synchronous to that clock, as today. A pin
+A pin read by functions on one clock is synchronous to that clock. A pin
 synchronous to some other clock, or to none, says so:
 
 ```python
@@ -5996,8 +6010,8 @@ RMII_RXD: Input[uint2_t, rmii_clk]             # synchronous to the RMII clock
 BTN: Input[uint4_t, ASYNC]                     # synchronous to no clock
 ```
 
-`Input[T, clk]` puts the pin on that clock. Functions on `clk` read it directly, and a read
-on any other clock is a crossing error. `Input[T, ASYNC]` is an async wire whose writer is
+`Input[T, clk]` puts the pin on that clock. Functions on `clk` read it directly, a read
+on any other clock is an error, and a bare `@MAIN` that reads it runs on `clk`. `Input[T, ASYNC]` is an async wire whose writer is
 the pin. Any clock may read it, and the reader synchronizes it (PipelineC's
 `DECL_INPUT_REG` plus `CDC2`).
 
@@ -6010,7 +6024,7 @@ line up with, so alignment registers would only add delay.
 
 ---
 
-## Clock-Crossing FIFOs (COMING SOON)
+## Clock-Crossing FIFOs
 
 A [global FIFO](#fifot--global-fifos) whose write end is used on one clock and
 its read end on another is an async FIFO. The FIFO hardware itself crosses the clocks, and
@@ -6053,6 +6067,11 @@ declaration. `global_fifo` is for code that works either way, such as a FIFO bet
 and whatever clock its user runs on, like PipelineC's `GLOBAL_FIFO`. On one clock,
 `global_fifo` and `global_sync_fifo` both build the library FIFO.
 
+Across clocks the compiler builds the FIFO as two `@MAIN`s, `rx_FIFO_wr` on the write clock
+and `rx_FIFO_rd` on the read clock, around one two-clock FIFO instance, `rx_FIFO`, at the top
+level; those are the names timing reports and the generated VHDL show. An async FIFO's
+name may not contain `_READ` or `_WRITE`.
+
 ### The async FIFO hardware: `impl=`
 
 An async FIFO is one entity with two clocks, which a Pypeline function, with its one clock,
@@ -6065,13 +6084,16 @@ cannot describe. The FIFO comes from the back end, as in PipelineC:
 
 `impl="builtin"` forces the built-in FIFO on every tool, for example so that a VHDL
 simulator without the Xilinx libraries can run it. `impl=param("FIFO_IMPL", None)` makes
-the choice a [build parameter](#build-parameters-param-and--d).
+the choice a [build parameter](#build-parameters-param-and--d). `global_fifo` and
+`global_async_fifo` take `impl=`; `global_sync_fifo` has no async FIFO to choose. With no
+synthesis tool selected, the built-in FIFO is built.
 
 ### Depth and latency across clocks
 
 `n` is the minimum number of words. It is rounded up to a power of two and raised to the
 implementation's minimum: 4 for the built-in async FIFO and 16 for `xpm_fifo_async`. The
-built-in FIFO holds one word more in its output register.
+built-in FIFO holds one word more in its output register. The
+[crossing report](#the-crossing-report) shows the depth each FIFO got.
 
 Crossing adds latency, because the FIFO's pointers pass through two synchronizer registers
 on each side. In the built-in async FIFO, a word written appears at the read end on the
@@ -6080,7 +6102,7 @@ second write-clock edge.
 
 ---
 
-## Building and Simulating Multi-Clock Designs (COMING SOON)
+## Building and Simulating Multi-Clock Designs
 
 ### Timing constraints
 
@@ -6096,27 +6118,31 @@ synthesis tool writes multi-clock constraints yet; see
 
 ### The crossing report
 
-Every build lists its crossings, as text and JSON, next to the other
-[generated reports](README.md#generated-files-and-reports). Clocks are called by their
-Python names where they have one:
+Every build lists its crossings in `clock_crossings.log`, and in `clock_crossings.json`
+for scripts, next to the other [generated reports](README.md#generated-files-and-reports):
+one row per async wire leaf and reading clock, and one per global FIFO, on one clock or
+two. Clocks are called by their Python names where they have one:
 
 ```
-crossing          clocks                    kind                hardware          source
-link_up           eth_clk -> clk_100p0      ASYNC wire          none              top.py:12
-status.eth_up     eth_clk -> clk_100p0      ASYNC wire          none              top.py:13
-status.pcie_up    pcie_clk -> clk_100p0     ASYNC wire          none              top.py:13
-rx                eth_clk -> clk_100p0      global_async_fifo   built-in async    top.py:14
-cmds              clk_None                  global_sync_fifo    make_stream_fifo  top.py:15
+crossing        clocks                 kind               hardware          depth  source
+link_up         eth_clk -> clk_100p0   ASYNC wire         none                     top.py:12
+status.eth_up   eth_clk -> clk_100p0   ASYNC wire         none                     top.py:13
+status.pcie_up  pcie_clk -> clk_100p0  ASYNC wire         none                     top.py:13
+rx              eth_clk -> clk_100p0   global_async_fifo  built-in async    64     top.py:14
+cmds            clk_None               global_sync_fifo   make_stream_fifo  16     top.py:15
 ```
+
+An `Input[T, ASYNC]` pin's rows read `pin -> clk_100p0`.
 
 ### Pipelining and the sweep
 
-- Each `@MAIN` is judged against its own clock, as today. Paths between clocks are
+- Each `@MAIN` is judged against its own clock. Paths between clocks are
   untimed, so they never reach the sweep.
 - A critical path that starts and ends inside a global FIFO, synchronous or asynchronous,
   is reported as that FIFO's, with its source line. The sweep does not blame a `@MAIN` for
-  it or add pipeline stages for it. A path from a FIFO's output into a `@MAIN`'s logic
-  still belongs to that `@MAIN`.
+  it or add pipeline stages for it, and if it misses its clock's goal the build ends
+  `TIMING NOT MET: global FIFO rx [top.py:14] ...`. A path from a FIFO's output into a
+  `@MAIN`'s logic still belongs to that `@MAIN`.
 - An async wire is `VOLATILE` in pipelined code
   ([Async wires in pipelined code](#async-wires-in-pipelined-code)). A function with
   pipeline stages cannot use both halves of one FIFO end, and a global FIFO is never
@@ -6124,12 +6150,14 @@ cmds              clk_None                  global_sync_fifo    make_stream_fifo
 
 ### Simulation across clocks
 
-Native simulation runs one clock. A design with more than one clock is refused with a
-message that names its clocks. Today the refusal counts rates: a design whose `@MAIN`s
-name more than one rate is refused, and two named clocks of one rate will count as two.
-Single-clock designs with global FIFOs simulate natively, through the library FIFO's
+Native simulation runs one clock. A design whose `@MAIN`s name more than one clock, two
+rates or two named clocks of one rate, is refused with a message that names the clocks and
+their `@MAIN`s. A bare `@MAIN` names no clock and simulates with the others; the build, not
+native simulation, says when it would put such a `@MAIN` on the default clock. Single-clock
+designs with global FIFOs simulate natively, through the library FIFO's
 [`@sim_model`](#sim_model--python-simulation-models-for-hardware-functions). Simulating
-several clocks is listed under [Limitations](#limitations--not-yet-supported).
+several clocks, natively or with a generated VHDL testbench, is listed under
+[Limitations](#limitations--not-yet-supported).
 
 ---
 
@@ -6702,7 +6730,6 @@ category so unrelated kinds of restriction don't read as equivalent — a langua
 restriction you must design around is a different kind of fact than "this hasn't been
 built yet," and both differ from a bug. A status that names a failure, such as *Invalid
 VHDL* or *Wrong in native simulation*, marks a known bug; its notes give the workaround.
-A COMING SOON status marks planned syntax that already has its own section in this guide.
 The last column links the GitHub issue (a bug) or discussion (a feature idea) that
 tracks the row.
 
@@ -6725,9 +6752,7 @@ tracks the row.
 | Language | **Global wires through `from module import ...`** | Not supported | `from module import *` and `from module import name` work for functions, types and constants. A `Wire[T]` has no Python value to import, so use `import module` and `module.w` (see [Calling functions across files](#calling-functions-across-files)) | — |
 | Language | **Initializers on `Wire[T]` / `Input[T]` / `Output[T]`** | Not allowed | Assign inside `@MAIN` instead | — |
 | Language | **Control flow inside an interface function** | Rejected | `if`/`for`/`while` and conditional expressions in an interface-function body raise an `InterfaceError`; route conditional steering through an explicit handshake mux/demux module instead (see [`@interface`](#bidirectional-ports-interface)). Interfaces are also point-to-point: fan-out of a single interface, dangling outputs and input-to-output bypass are rejected — fan out through a module with an [array port](#array-ports-fan-out) instead. Array *input* ports are not supported. Compile-time `for`/`while` unrolling in ordinary `@hw_func`s is unaffected | — |
-| Source model | **Named clocks (single domain)** | Supported | Use `make_clock(mhz)` on a global `Input[uint1_t]`/`Wire[uint1_t]`; see [Top-Level Entry Points](#top-level-entry-points) | — |
-| Source model | **Multiple clock domains** | Partly supported | `@MAIN`s at different rates build, each with its own clock, including a clock generated by another `@MAIN` (see [Naming a clock with `make_clock`](#naming-a-clock-with-make_clock)). Nothing can cross between domains: a global wire shared by two rates is rejected, and there are no clock groups or asynchronous wires. Simulation handles one rate: native simulation refuses a design whose `@MAIN`s name more than one rate, and cocotb testbench generation supports a single clock. Global FIFOs work on one clock ([`Fifo[T]`](#fifot--global-fifos)). Named clocks, async wires and clock-crossing FIFOs are COMING SOON ([Part IV](#part-iv--multiple-clock-domains)) | [#342](https://github.com/JulianKemmerer/PipelineC/discussions/342), [#354](https://github.com/JulianKemmerer/PipelineC/issues/354) |
-| Source model | **Async clock-crossing FIFOs** | COMING SOON | `rx: Fifo[T] = global_async_fifo(n)`; see [Clock-Crossing FIFOs](#clock-crossing-fifos-coming-soon) | [#342](https://github.com/JulianKemmerer/PipelineC/discussions/342) |
+| Source model | **Multiple clock domains** | Supported | `@MAIN`s on several clocks, named clocks from `make_clock`, clock pins, async wires and global FIFOs across clocks; see [Part IV](#part-iv--multiple-clock-domains). Every pair of different clocks is asynchronous. The rows below list what is not built yet | [#342](https://github.com/JulianKemmerer/PipelineC/discussions/342) |
 | Source model | **Related clocks** | Not supported | Clocks from one source with an integer ratio, whose paths between them would be timed. Until then every pair of different clocks is asynchronous, with untimed paths | [#342](https://github.com/JulianKemmerer/PipelineC/discussions/342) |
 | Source model | **Crossings between related clocks** | Not supported | Free-flowing integer-ratio crossings like PipelineC's `volatile` crossings. Use an async wire or a global FIFO | [#342](https://github.com/JulianKemmerer/PipelineC/discussions/342) |
 | Source model | **Resets across clocks** | Not supported | No reset domains or reset synchronizers, and a global FIFO cannot be cleared from either side | — |
@@ -6748,7 +6773,7 @@ tracks the row.
 | Source model | **`AUTO_PIPELINE(...).latency` before implementation** | Usually reads `0` | `latency=N` reads N immediately; an active automatic implementation bootstraps `start_latency=S` at S. The selected value becomes visible when source is re-elaborated with the implemented plan | — |
 | Simulation | **Simulation of `vhdl()`** | Needs a model | `vhdl()`-based functions raise `NotImplementedError` in simulation unless a [`@sim_model`](#sim_model--python-simulation-models-for-hardware-functions) is attached (as `make_fifo`, `make_ram` and `make_stream_ram` do, covering `make_stream_fifo`/`make_stream_auto_pipeline` too) | — |
 | Simulation | **Two calls to one stateful function on the same source line** | Wrong in native simulation | Native simulation keys register state by source line, so `acc(a) + acc(b)` shares one register there but has two in hardware. Put each call on its own line (see [Registers in simulation](#registers-in-simulation--multiple-instances)) | [#353](https://github.com/JulianKemmerer/PipelineC/issues/353) |
-| Simulation | **More than one clock** | Not supported | Native simulation and generated VHDL testbenches run one clock. Native simulation refuses a design whose `@MAIN`s name more than one rate, naming the rates and the `@MAIN`s on each; bare `@MAIN`s name no rate and do not count | [#354](https://github.com/JulianKemmerer/PipelineC/issues/354), [#342](https://github.com/JulianKemmerer/PipelineC/discussions/342) |
+| Simulation | **More than one clock** | Not supported | Native simulation and generated cocotb testbenches run one clock. Native simulation refuses a design whose `@MAIN`s name more than one clock, two rates or two named clocks of one rate, naming the clocks and the `@MAIN`s on each; bare `@MAIN`s name no clock and do not count (see [Simulation across clocks](#simulation-across-clocks)). Build with `--comb --no_synth` and drive `top` from a VHDL testbench of your own | [#354](https://github.com/JulianKemmerer/PipelineC/issues/354), [#342](https://github.com/JulianKemmerer/PipelineC/discussions/342) |
 | Simulation | **`@sim_input` called with different arguments in one cycle** | Wrong in native simulation | The once-per-cycle cache ignores arguments, so every call in a cycle returns the first call's value. Use one function per value | [#355](https://github.com/JulianKemmerer/PipelineC/issues/355) |
 | Simulation | **A `@sim_input` result stored in a local, or used inside an expression** | Rejected | `x = stim()` and `stim() + 1` raise a clear error in native sim (at import) and in elaboration. Declare a module-level `Input[T]` and assign the call to it as its own statement (`in0 = stim()`); it becomes a real top-level port (see [`@sim_input`](#sim_input--driving-simulation-inputs)). A future version could accept a local by turning it into an implicit `Input[T]` port of the function's return type | — |
 | Simulation | **`sim_print` of a `uint32_t` value ≥ 2³¹** | Fails in VHDL only | `sim_print` lowers to `integer'image(to_integer(x))`, and VHDL's `integer` is 32-bit *signed*, so GHDL raises `overflow detected` at runtime. Native simulation prints it happily, so this only ever appears in a cocotb/GHDL run — mask or narrow the value before probing it | [#360](https://github.com/JulianKemmerer/PipelineC/issues/360) |

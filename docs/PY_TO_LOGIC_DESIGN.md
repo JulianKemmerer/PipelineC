@@ -90,6 +90,7 @@ See [auto-pipelined RAM compilation](AUTO_PIPELINE_DESIGN.md#ram-compiler-sweep-
   - [Instance discovery](#instance-discovery)
   - [Instance MAINs: Step 7.1](#instance-mains-step-71)
   - [Checking users: `_check_global_insts`](#checking-users-_check_global_insts)
+  - [Async global FIFOs](#async-global-fifos)
   - [Pipelines: `func_no_added_latency`](#pipelines-func_no_added_latency)
   - [Which parts are FIFO-specific](#which-parts-are-fifo-specific)
 - [Multi-File Import Support](#multi-file-import-support)
@@ -155,9 +156,12 @@ See [auto-pipelined RAM compilation](AUTO_PIPELINE_DESIGN.md#ram-compiler-sweep-
   - [Scoped operator registrations](#scoped-operator-registrations)
 - [Pypeline Pragmas (`PART` / `MAIN_MHZ`)](#pypeline-pragmas-part--main_mhz)
   - [`PART(...)` — FPGA Target Device](#part--fpga-target-device)
-  - [`@MAIN(mhz)` — Clock Frequency Constraint](#mainmhz--clock-frequency-constraint)
-  - [Clock Domain Inference (`INFER_CLOCK_DOMAINS`)](#clock-domain-inference-infer_clock_domains)
-  - [`make_clock(mhz)` — Python Equivalent of `CLK_MHZ`](#make_clockmhz--python-equivalent-of-clk_mhz)
+  - [`@MAIN` clocks](#main-clocks)
+  - [Clock domains](#clock-domains)
+  - [Clock bindings, markers and clock names](#clock-bindings-markers-and-clock-names)
+  - [Clock assignment (`_assign_clocks`)](#clock-assignment-_assign_clocks)
+  - [The crossing check (`_check_clock_crossings`)](#the-crossing-check-_check_clock_crossings)
+  - [The crossing report](#the-crossing-report)
 - [`AUTO_PIPELINE(func, latency, start_latency, max_latency)` — Forced Submodule Pipelining](#auto_pipelinefunc-latency-start_latency-max_latency--forced-submodule-pipelining)
   - [Syntax — a callable tag object, not a wrapper around a call expression](#syntax--a-callable-tag-object-not-a-wrapper-around-a-call-expression)
   - [Validation](#validation)
@@ -2705,7 +2709,9 @@ A global instance, `alu0: Inst[f]` ([guide](pypeline_guide.md#instf--global-inst
 and a global FIFO, `rx: Fifo[T] = global_fifo(n)`
 ([guide](pypeline_guide.md#fifot--global-fifos)), are each an ordinary compound global
 wire plus a compiler-made MAIN that calls one module and binds the wire's paths to its
-ports. Both annotations are `_GlobalInstType`s, which are `_WireType`s
+ports. A FIFO whose ends are on two clocks gets two MAINs and a clock crossing instead
+([Async global FIFOs](#async-global-fifos)). Both annotations are `_GlobalInstType`s,
+which are `_WireType`s
 ([`pypeline_DESIGN.md`](pypeline_DESIGN.md#instf--_insttype--global-instances)), so
 discovery, elaboration, the multi-writer rules, readback and the VHDL top treat the wire
 like any other. Several functions write it: the users drive the inputs (a FIFO's
@@ -2716,8 +2722,8 @@ producer `wr.stream`, its consumer `rd.ready`), and the MAIN drives the outputs 
 | | `Inst[f]` | `Fifo[T]` |
 |---|---|---|
 | declaration in `ParserState.pypeline_global_insts` | `GlobalInstDecl` | `GlobalFifoDecl` |
-| its MAIN | `<key>_INST`, registered at PARSE_FILE Step 7.1 | `<key>_FIFO`, added by `_check_global_insts` after clock assignment |
-| the MAIN's clock | inferred: a bare MAIN that `INFER_CLOCK_DOMAINS` reaches through the wire | its ends' clock; inference skips the wire (`joins_clocks` False) |
+| its MAIN | `<key>_INST`, registered at PARSE_FILE Step 7.1 | `<key>_FIFO`, added by `_check_global_insts` after clock assignment; across clocks, `<key>_FIFO_wr` and `<key>_FIFO_rd` |
+| the MAIN's clock | assigned: a bare MAIN that `_assign_clocks` reaches through the wire | its ends' clock (each side MAIN its end's); clock assignment does not pass through the wire (`joins_clocks` False) |
 | the MAIN's `func_no_added_latency` reason | `"global instance"` | `"global FIFO"` |
 | a handshake user's reason | `"global instance handshake"` | `"global FIFO handshake"` |
 | users | the Wire rules, leaf by leaf | one function, with one instance, per end |
@@ -2729,7 +2735,10 @@ producer `wr.stream`, its consumer `rd.ready`), and the MAIN drives the outputs 
 key, Python name, annotation, initializer, the declaring module's globals, file and line,
 `main_name` (the key plus `ann.main_suffix`) and its MAIN's no-added-latency reason
 (`ann.kind_name`). A `GlobalFifoDecl` also holds `kind` (`global_fifo`,
-`global_sync_fifo` or `module`), `n` and `data_t`. `describe()` gives the report name,
+`global_sync_fifo`, `global_async_fifo` or `module`), `n` and `data_t`. Every
+declaration has `main_names`, the MAINs that hold its hardware (`[main_name]` until an
+async FIFO sets its two side MAINs), and `crossing`, an async FIFO's crossing name or
+None. `describe()` gives the report name,
 `global instance alu0 [top.py:5]` or `global FIFO rx [top.py:14]`, and
 `label(path, names)` a recorded path as the user writes it. An `Inst[f]` with an
 initializer is an `ElaborationError`, and so is a `Fifo[T]` without one (or with a value
@@ -2753,14 +2762,14 @@ and calls `pypeline._register_main(main, None, "<key>_INST", decl.loc)`. It reco
 `func_no_added_latency["<key>_INST"] = "global instance"`. Step 7.2 then elaborates it as
 a made MAIN with a bare rate, and the rest of PARSE_FILE treats it as a MAIN: the instance
 walk, the AUTO_PIPELINE and `pipeline_latency` checks (of a call site inside it too),
-trimming, the dangling check, the call graph, and clock inference, which joins it with its
-users through the wire. Step 7.2's checks report a name some function already has.
+trimming, the dangling check, the call graph, and clock assignment, which joins it with its
+users through the wire ([Clock assignment](#clock-assignment-_assign_clocks)). Step 7.2's checks report a name some function already has.
 
 ### Checking users: `_check_global_insts`
 
-`PARSE_FILE` calls it right after `INFER_CLOCK_DOMAINS`, and so after trimming and
-`_build_func_call_graph`, before the global-wire rule checks. The users of a declaration
-are the functions, other than its own MAIN, whose access records
+`PARSE_FILE` calls it right after `_assign_clocks`, and so after trimming, before the
+crossing check and the global-wire rule checks. The users of a declaration are the
+functions, other than its own MAIN, whose access records
 ([Access records](#access-records)) touch its wire. Paths are compared in the VHDL-safe
 tokens the records hold (`_sanitize_ref_tok`: a port `out` is recorded as `out_v`), and
 `_global_inst_py_names` maps them back for messages. `decl.check_users` raises an
@@ -2774,10 +2783,7 @@ tokens the records hold (`_sanitize_ref_tok`: a port `out` is recorded as `out_v
 - `Fifo`, for each end `E`, whose users are those overlapping `(E,)` (`_path_overlaps`: one
   path contains the other): no user; more than one user; a user with more than one
   instance; a user driving the half the FIFO drives (`wr.ready`, `rd.stream`), a whole end
-  or the whole wire. Then the ends' MAINs on different clocks: "Clock-crossing FIFOs are
-  not supported yet", with a note when a bare MAIN did not take its rate through the FIFO.
-  This is where an async FIFO would branch off instead. It returns the write end's MAIN's
-  clock.
+  or the whole wire. It returns `{end: (user, MAIN, 'file:line')}` for `wr` and `rd`.
 
 Each user that both drives and reads one interface port with both halves is a handshake
 user and gets the kind's reason in `func_no_added_latency`: in a pipeline the port's reads
@@ -2785,12 +2791,58 @@ would be sampled at the first stage and its writes published at the last. An
 `AUTO_PIPELINE` call site whose target is a handshake user is an `ElaborationError` that
 points to `make_stream_auto_pipeline`.
 
-Then each FIFO's MAIN, built from the same `decl.hardware()`, goes to `_add_late_mains`
-([MAINs added after clock assignment](#mains-added-after-clock-assignment-_add_late_mains))
-as a `LateMain` on its ends' clock, with reason `"global FIFO"` and owner
-`"<describe()>: its FIFO MAIN"`. Being in `main_mhz` makes either kind's MAIN name
+Then `decl.realize(parser_state, hardware, ends)` gives the `LateMain`s that hold each
+declaration's hardware, and `_add_late_mains` adds them
+([MAINs added after clock assignment](#mains-added-after-clock-assignment-_add_late_mains)).
+An `Inst` gives none: its MAIN exists since Step 7.1. A FIFO decides its kind from its
+ends' MAINs' clocks:
+
+| Ends | `global_fifo` | `global_sync_fifo` | `global_async_fifo` | module initializer |
+|---|---|---|---|---|
+| one clock | FIFO MAIN | FIFO MAIN | error | FIFO MAIN |
+| two clocks | async FIFO | error | async FIFO | error ("a single-clock module, which cannot cross clocks") |
+
+A FIFO MAIN, `<key>_FIFO`, built from the same `decl.hardware()` with `decl.make_main`,
+is a `LateMain` on its ends' clock, with reason `"global FIFO"` and owner
+`"<describe()>: its FIFO MAIN"`. Each two-clock error names both ends' users, MAINs and
+clocks, and adds a hint when one MAIN is bare: a bare MAIN does not take its clock
+through a FIFO. Being in `main_mhz` makes either kind's MAIN name
 protected in the emission registry. The global-wire rule loop then runs as usual: every
 writer of an instance's wire has one instance, and the writers' regions are disjoint.
+
+### Async global FIFOs
+
+`GlobalFifoDecl._realize_async(parser_state, wr_clock, rd_clock)` builds a FIFO whose ends
+are on two clocks as a clock crossing of the back end's, the shape of PipelineC's
+`GLOBAL_STREAM_FIFO`. The crossing is named `<key>_FIFO` (`decl.main_name`), which here
+is not a MAIN:
+
+1. **The name.** It may not contain `_READ` or `_WRITE`:
+   `LOGIC.CLK_CROSS_FUNC_TO_VAR_NAME` finds a crossing from its functions' names by
+   splitting there.
+2. **The parts.** `pypeline._make_global_fifo_async_parts` builds the stubs
+   `<key>_FIFO_WRITE_1` and `<key>_FIFO_READ_1` and the side MAINs `<key>_FIFO_wr` and
+   `<key>_FIFO_rd`, with `top_level_module_globals` as `reserved`
+   ([`pypeline_DESIGN.md`](pypeline_DESIGN.md#fifot--_fifotype--global-fifos)).
+3. **The crossing.** A `LOGIC.ClkCrossVarInfo` under `<key>_FIFO`: `flow_control`, the
+   stubs as `write_read_funcs`, the side MAINs as `write_read_main_funcs`, sizes 1/1, and
+   `async_impl` from the initializer's `impl`. `global_vars["<key>_FIFO"]` is a
+   `VariableInfo` of type `T[async_depth]`, from which the back end takes the data type
+   and depth; `async_depth` is `n` rounded up to a power of two, at least 4. The
+   global-wire rule loop in PARSE_FILE skips names in `clk_cross_var_info`.
+4. **The stubs.** Each is elaborated by `_elaborate_main` (so a name some function
+   already has is an error naming the FIFO) and tagged `is_clock_crossing` and
+   `uses_nonvolatile_state_regs` before any call of it is elaborated. The side MAINs are
+   elaborated later, by `_add_late_mains`, so each call site's `CLOCK_ENABLE` port and the
+   cached `LOGIC_NEEDS_CLOCK_ENABLE` already see the tag. The second tag keeps the stubs
+   from being sliced or synthesized alone: the `clk_cross` entity is their hardware.
+5. **The side MAINs.** Two `LateMain`s, `<key>_FIFO_wr` on the write clock and
+   `<key>_FIFO_rd` on the read clock, reason `"global FIFO"`. `decl.crossing` and
+   `decl.main_names` are set to them.
+
+The back end does the rest as for C: `VHDL.WRITE_CLK_CROSS_ENTITIES` writes
+`clk_cross_<key>_FIFO` with `xpm_fifo_async` or the built-in async FIFO
+(`VHDL.CLK_CROSS_USES_XPM`), and the top connects the side MAINs' calls to it.
 
 ### Pipelines: `func_no_added_latency`
 
@@ -2810,8 +2862,9 @@ Generating the MAIN (`_make_global_inst_main`), registering or adding it, the
 instance-table walk, the access-record checks, the handshake rule, the sweep's path
 ownership and the report name are shared by both kinds. What is FIFO-specific: the
 `{wr, rd}` wire type and the binding of the module's two stream ports onto it
-(`_stream_module_ports`), one user per end, building its MAIN only after clock assignment,
-and the skip in clock inference.
+(`_stream_module_ports`), one user per end, building its MAINs only after clock
+assignment, no clock assignment through its wire, the async branch
+([Async global FIFOs](#async-global-fifos)), and its crossing-report row.
 
 ---
 
@@ -3066,8 +3119,8 @@ registered while global declarations are discovered (Steps 4.5/4.6) are included
   that a table key already has, ignoring case (an `ElaborationError` naming `owner`), then
   calls `_elaborate_live_func(name, fn, key=name)`. The Logic is keyed by the MAIN name
   whatever key its function would otherwise get (a closure's canonical name, a def's own
-  name). Step 7.2 then sets `main_mhz` and `main_syn_mhz` from `_MainInfo.mhz`, and
-  `main_clk_group` to `None`.
+  name). Step 7.2 then puts it on `_MainInfo.clock` with `_set_main_clock` (a bare MAIN on
+  `(None, None)` until clock assignment).
 
 A MAIN's name is its table key, its entity name and its port prefix. Being in `main_mhz`
 makes it protected in `EmissionNames`, so it is emitted verbatim.
@@ -3085,8 +3138,8 @@ names; other generated roots are parsed from their own source.
 `_add_late_mains(parser_state, late_mains)` adds MAINs that cannot exist before clock
 assignment, such as a global FIFO's, whose kind depends on its ends' clocks. Each
 `LateMain(fn, name, clock, reason, owner)` is elaborated by `_elaborate_main` under
-`name`. It gets `clock = (mhz, syn_mhz, clk_group)` and `func_no_added_latency[name] =
-reason`, and it takes no part in clock inference. Then the functions added get what
+`name`. It goes on `clock`, a clock identity `(mhz, name)`, with `_set_main_clock`, gets
+`func_no_added_latency[name] = reason`, and takes no part in clock assignment. Then the functions added get what
 PARSE_FILE gives the others, in its order:
 
 1. `_build_inst_lookup` from the new MAINs;
@@ -3098,7 +3151,7 @@ PARSE_FILE gives the others, in its order:
    `submodule_latencies_are_self_timed` from the collapsed ones;
 3. trimming of the new MAINs and of new AUTO_FSM measurement roots;
 4. `LOGIC.FIND_DANGLING_LOGIC` on the new functions;
-5. `_validate_wires_funcs` (read-only) and `_build_func_call_graph` (it only adds).
+5. `_validate_wires_funcs` (read-only).
 
 ### Elaboration ordering — sub-files first
 
@@ -4827,157 +4880,166 @@ Called once at module level (usually near the top of the design file). Sets the 
 writes it to `parser_state.part`. This value is forwarded to the synthesis backend
 (Vivado or PYRTL); when `None` the tool chain defaults to a software timing estimator.
 
-### `@MAIN(mhz)` — Clock Frequency Constraint
+### `@MAIN` clocks
 
 ```python
-@MAIN(25.0)         # positional
+@MAIN(25.0)         # positional rate: the unnamed clock of that rate
 @MAIN(mhz=25.0)     # keyword
-@MAIN               # no constraint (same as before)
+@MAIN(eth_clk)      # a clock from make_clock(...); also clock=eth_clk
+@MAIN               # no clock: assigned by _assign_clocks
 def my_main(): ...
 ```
 
-`_register_main` records the rate in the MAIN's record, `wrapped._pypeline_main.mhz`
-(also for `MAIN(fn, mhz=...)`). `PARSE_FILE` stores it in `parser_state.main_mhz[name]`
-and `parser_state.main_syn_mhz[name]` for each MAIN: in Step 7 for a `@MAIN` def, in
-Step 7.2 for the others.
+`_register_main` records the clock, a `pypeline._Clock` or None, in the MAIN's record,
+`wrapped._pypeline_main.clock` (also for `MAIN(fn, mhz=...)` and `MAIN(fn, clock=...)`).
+`_set_main_clock(parser_state, name, identity)` puts a MAIN on a clock identity
+`(mhz, name)`: `main_mhz[name]` is the rate, `main_clk_group[name]` the clock's name, and
+`main_syn_mhz[name]` the clock's `syn_mhz` (from `pypeline_clock_syn_mhz`), else the rate.
+Step 7 does this for a `@MAIN` def and Step 7.2 for the others, from `_MainInfo.clock`;
+a bare MAIN starts on `(None, None)`. `_add_late_mains` does it for the MAINs it adds.
 
 `name` is the MAIN's name: the module-prefixed function name (`file_a_main` for imported
 sub-files, bare name for the top file), or its `name=`.
 
-### Clock Domain Inference (`INFER_CLOCK_DOMAINS`)
+### Clock domains
 
-Most designs import a board support file whose functions are also `@MAIN` entry points (e.g.
-`board_vga.vga_to_pmod8`). Those functions carry `main_mhz = None` because the user only
-annotates their own top-level MAIN. The inference step propagates the user's MHz to all
-other MAINs that share a global wire with a known-MHz MAIN.
+The user guide's [Part IV](pypeline_guide.md#part-iv--multiple-clock-domains) is the
+reference for what a design may say. The compiler fills the same `ParserState` fields the
+C front end does (`main_mhz`, `main_clk_group`, `main_syn_mhz`, `clk_mhz`, `clk_group`,
+`async_wires`, `clk_cross_var_info`), so the back end needs no Pypeline branch, plus its
+own:
 
-The logic lives in `LOGIC.INFER_CLOCK_DOMAINS(var_to_rw_main_funcs, var_to_read_func, var_to_write_func, parser_state)`:
+| Field | Holds | Filled by |
+|---|---|---|
+| `pypeline_wire_decls` | wire key → `WireDecl(ann, bare_name, loc, binding)` for every global `Wire`/`Input`/`Output`/`Inst`/`Fifo` | `_discover_global_wires` |
+| `pypeline_clock_names` | clock identity → its Python name (`eth_clk`), for messages and the report | `_discover_global_wires` |
+| `pypeline_clock_syn_mhz` | clock identity → its `syn_mhz` | `_assign_clocks` |
+| `pypeline_clock_crossings` | the crossing report's `CrossingRow`s | `_check_clock_crossings` |
+| `wire_clocks_checked` | wires whose clocks were checked leaf by leaf | `_check_clock_crossings` |
 
-- Iterates `parser_state.global_vars`; for each shared global, finds all MAINs that use
-  it via `global_var_state_reg_info.used_in_funcs` → `RECURSIVE_FIND_MAIN_FUNCS`.
-- If any one MAIN has a non-None MHz, propagates it to the others (same clock group).
-- A second pass handles C-style clock-crossing variables (`_WRITE`/`_READ` pairs) via
-  `var_to_rw_main_funcs`; these are empty for the Python path.
-- Repeats until no further propagation occurs (fixed-point loop).
-- Skips `async_wires` and the wires of `parser_state.pypeline_global_insts` whose
-  declaration has `joins_clocks` False (global FIFOs): a FIFO's ends keep their own clocks,
-  and its FIFO MAIN, added later, takes theirs. A global instance's wire is not skipped,
-  so inference passes through it ([Global instances](#global-instances-instf-fifot)).
+PARSE_FILE runs the clock steps after trimming, the dangling check and `@wires`
+validation, in this order: `_assign_clocks`, `_check_global_insts` (which adds the global
+FIFOs' MAINs), `_check_clock_crossings`, `_check_clock_bindings`, then the global-wire
+rule checks. `ELABORATE_LIVE_ROOTS` runs none of them: native simulation runs one clock.
 
-`INFER_CLOCK_DOMAINS` is a standalone function so it can be reused by both paths —
-`GET_CLK_CROSSING_INFO` (C path only) calls it too, rather than embedding its own copy of
-the loop.
+`_clock_str(parser_state, identity)` names a clock in messages, `eth_clk
+(clk_125p0_eth_rx)` or `clk_100p0`. Notes and warnings go through
+`_print_clock_message_once`: PARSE_FILE runs several times per build, and each message
+prints once per process.
 
-`PARSE_FILE` calls it with empty dicts after registering all MAINs:
+### Clock bindings, markers and clock names
 
-```python
-LOGIC.INFER_CLOCK_DOMAINS({}, {}, {}, parser_state)
-```
+`_discover_global_wires` records each global's `WireDecl`, and:
 
-`GET_CLK_CROSSING_INFO` (C path only) calls it with the populated dicts from its regex
-search of `preprocessed_c_text`.
+- **Markers.** An `ASYNC` annotation (`ann.is_async`) puts the key in
+  `parser_state.async_wires`; its `pipeline_timing` is `"volatile"`, as `ann.volatile` is
+  set. A clock marker stays on `ann.clock` for clock assignment and the crossing check.
+- **Bindings.** A global whose initializer is a `_Clock` (`pll: Input[uint1_t] = clk`)
+  binds that clock to the pin or wire; any other initializer is still an error. An
+  `Output` cannot carry a clock (a clock net has one driver, which an `Output` does not
+  model), a binding takes no `ASYNC` or clock marker, and the type must be `uint1_t`. A
+  clock has one binding: a second pin or wire for one identity is an error that says two
+  clocks of one rate need names. The binding fills `clk_mhz[key]` and, for a named clock,
+  `clk_group[key]`, as the C front end's `CLK_MHZ` / `CLK_MHZ_GROUP` do, so every back-end
+  consumer (`VHDL.GET_ALL_USER_CLOCKS`, the internal-signal and `dont_touch` emission in
+  `WRITE_MULTIMAIN_TOP`, `get_nets` versus `get_ports` in
+  `SYN.WRITE_CLK_CONSTRAINTS_FILE`) works unchanged. `WireDecl.binding` keeps the clock.
+- **Clock names.** Every other module global bound to a `_Clock` gives
+  `pypeline_clock_names` its first Python name for that clock. A name starting with `_`
+  is skipped, and so is a declared wire, which is named after its pin.
 
-#### `RECURSIVE_FIND_MAIN_FUNCS` needs a function-name call graph — `_build_func_call_graph`
+`_check_clock_bindings` runs last: a bound clock must be the clock of some MAIN, since
+that is what tells the back end which clock the net carries. The error lists the MAINs'
+clocks.
 
-`RECURSIVE_FIND_MAIN_FUNCS(func_name, func_name_to_calls, func_names_to_called_from,
-main_funcs)` walks `parser_state.func_name_to_calls` / `func_names_to_called_from` — dicts
-keyed by **function name**, not per-call-site instance path — to find which MAIN(s)
-transitively call a given function. On the C path these are built by
-`GET_FUNC_NAME_TO_FROM_FUNC_CALLS_LOOKUPS` (walks `c_ast.FuncCall` nodes); nothing on the
-Python path ever populated them, so they stayed at their `ParserState.__init__` default of
-`{}`. `RECURSIVE_FIND_MAIN_FUNCS`'s only base case that works with empty dicts is
-`func_name in main_funcs` (the function *is* a MAIN) — so inference only ever succeeded for
-a global wire read/written directly inside a MAIN's own top-level body. A wire touched
-inside a called `@hw_func` (or, worse, a factory-produced closure instantiated deep inside
-another MAIN, e.g. a function passed as a parameter and called from inside a factory's
-body) silently contributed nothing to the shared-global's candidate-MAIN set, so a MAIN
-whose only connection to a known clock was through such a helper never got its MHz
-inferred — surfacing later as a spurious "Cannot have multiple clock domains for shared
-global" exception in `VHDL.py`, even in single-clock-domain designs.
+### Clock assignment (`_assign_clocks`)
 
-`PY_TO_LOGIC.py`'s `_build_func_call_graph(parser_state)` fixes this by populating the same
-two dicts directly from data elaboration already computed: every `Logic()`'s
-`submodule_instances` (`inst_name -> called func_name`, populated generically by
-`_add_submodule_instance` for every hardware call site, including calls through
-factory-bound parameters). No C-AST-style re-derivation needed — the call information is
-already exact:
+`_assign_clocks` replaces `LOGIC.INFER_CLOCK_DOMAINS` for Pypeline; the C front end keeps
+it. First the design's clocks (every MAIN's, every marker's and binding's) are checked for
+agreement with `pypeline._clock_conflict`, and each `syn_mhz` goes into
+`pypeline_clock_syn_mhz`. Then a multi-source breadth-first search, one per clock:
 
-```python
-def _build_func_call_graph(parser_state):
-    for func_name, logic in parser_state.FuncLogicLookupTable.items():
-        called_func_names = set(logic.submodule_instances.values())
-        ...
-        parser_state.func_name_to_calls.setdefault(func_name, set()).update(called_func_names)
-        for called_func_name in called_func_names:
-            parser_state.func_names_to_called_from.setdefault(called_func_name, set()).add(func_name)
-```
+- **Nodes** are MAINs and plain wires. A plain wire is a declared global that is not
+  `ASYNC` and not the wire of a declaration with `joins_clocks` False (a global FIFO). An
+  `Inst[f]`'s wire is plain, so its `<key>_INST` MAIN joins its users.
+- **Edges** join a plain wire to every MAIN with an instance of a function in its
+  `VariableInfo.used_in_funcs`, writers and readers of any leaf alike. A function's MAINs
+  come from `FuncToInstances` (`_func_mains`), so a wire used one call deep reaches the
+  MAIN above it.
+- **Sources** are the MAINs with a clock and the wires with a clock marker. A
+  stated-clock wire reached from another clock passes nothing on; the crossing check
+  reports it.
+- **Flow** reaches only bare MAINs; a MAIN with a clock keeps it.
 
-`PARSE_FILE` calls this **after** trimming (`TRIM_COLLAPSE_FUNC_DEFS_RECURSIVE`) and the
-dangling-logic check, but before `INFER_CLOCK_DOMAINS` — trimming can remove dead
-submodule instances via `REMOVE_WIRES_AND_SUBMODULES_RECURSIVE`, so building the graph
-first would let it embed call edges that no longer exist in the final logic:
+Each bare MAIN then takes:
 
-```python
-_build_func_call_graph(parser_state)
-LOGIC.INFER_CLOCK_DOMAINS({}, {}, {}, parser_state)
-```
+- **one clock**: that clock, with a note `Clock of bare @MAIN 'reader': clk_100p0, from
+  @MAIN 'driver' -> wire 'shared' (used by ... at top.py:9) -> @MAIN 'reader' (...)`. An
+  instance MAIN and a `@wires` MAIN get no note.
+- **two clocks**: an `ElaborationError` naming both paths, built from the BFS parents
+  and the access records' lines (`_wire_access_loc`). When a path passes through an
+  `Inst[f]`'s wire, the error is worded for the instance instead ("it is used on ... and
+  on ..."). An instance MAIN reached by two clocks takes one, and
+  `GlobalInstDecl.check_users` reports its users' clocks.
+- **none**: the default clock `(None, None)`, with a warning when it shares an async wire
+  or a global FIFO with functions on other clocks.
 
-### `make_clock(mhz)` — Python Equivalent of `CLK_MHZ`
+### The crossing check (`_check_clock_crossings`)
 
-`pypeline.make_clock(mhz)` (`src/pypeline.py`) returns a `_ClockMarker(mhz)` instance. It's
-meant to be used as a global `Wire`/`Input` declaration's *initializer*, which is otherwise
-banned:
+Runs after `_check_global_insts`, so every MAIN, the FIFOs' included, has its clock. For
+each wire in `pypeline_wire_decls`:
 
-```python
-pll_clk: Input[uint1_t] = make_clock(85.0)
-```
+- **A pin** (`Input`): its readers' clocks. An `ASYNC` pin gives a row per reading clock
+  (kind `ASYNC pin`, write clock None). A pin with a clock marker must be read on that
+  clock. Any other pin must be read on one clock.
+- **Any other wire:** for each writer (with one instance; the wire rules report the
+  rest), its clock must be the wire's stated clock if it has one. Each path it drives
+  (`global_wire_driven_paths`; the written paths, or the whole wire, for a
+  dynamic-index write) is compared with every read path that overlaps it
+  (`global_wire_read_paths`, `_path_overlaps`) on every reader instance. A reader on
+  another clock is a row for an `ASYNC` wire (kind `ASYNC wire`, the longer of the two
+  paths as its label) and otherwise the error:
 
-Unlike `PART`/`MAIN_MHZ`, this isn't a module-level registry read after `exec_module` —
-`_discover_global_wires` (Step 4.5/4.6) already has the live module namespace in hand via
-`module_globals`, and the marker only makes sense attached to one specific `AnnAssign` node,
-so it's read directly there:
+  ```
+  ElaborationError: wire 'status.eth_up' crosses clocks without a crossing.
+    driven on clock eth_clk (clk_125p0_eth_rx) by eth_rx() at top.py:24
+    read on clock clk_100p0 by sys() at top.py:31
+  Declare it an async wire, and synchronize it in the reader:
+    status: Wire[status_t, ASYNC]
+  or move the values through a global FIFO:
+    status_q: Fifo[status_t] = global_fifo(4)
+  ```
 
-```python
-if node.value is not None:
-    maybe_marker = module_globals.get(node.target.id)
-    if isinstance(maybe_marker, _ClockMarker):
-        clock_marker = maybe_marker
-        if kind == "Output":
-            raise ElaborationError(...)   # a clock net needs exactly one driver
-    else:
-        raise ElaborationError(...)       # the original "no initializer" ban, preserved
-```
+  An `ASYNC` wire never read on another clock gets a warning: its paths stay timed.
 
-After `reg_name` is computed (so an imported sub-file's `Wire` gets its `{prefix}_` name),
-the marker's rate is written straight into `parser_state.clk_mhz[reg_name]` — the same dict
-the C frontend's `#pragma CLK_MHZ` populates (`C_TO_LOGIC.py`'s `APPEND_PRAGMA_INFO`), so
-every VHDL/SYN consumer (`VHDL.GET_ALL_USER_CLOCKS`, the internal-signal + `dont_touch`
-emission in `WRITE_MULTIMAIN_TOP`, the `get_nets`-vs-`get_ports` SDC constraint in
-`SYN.WRITE_CLK_CONSTRAINTS_FILE`) is already frontend-agnostic and needs no Python-specific
-branch. Two checks happen at this same site: the wire's `var_info.type_name` must be
-`uint1_t` (a clock is a single bit), and no other tagged wire may already be registered at
-the same rate (two same-rate clocks would collide on one generated `clk_<rate>` net; not
-distinguishable without clock groups, which pypeline doesn't have).
+Being leaf by leaf, the check passes a struct wire whose fields are written on different
+clocks and read on their writers' clocks, and a global FIFO's `{wr, rd}` wire, whose `wr`
+leaves are used on the write clock and `rd` leaves on the read clock. An instance's wire
+passes, since its users share one clock. Every wire checked goes into
+`wire_clocks_checked`, and `VHDL.WRITE_MULTIMAIN_TOP` skips its whole-wire "Cannot have
+multiple clock domains for shared global" check for those; C designs keep that check.
 
-A `make_clock`-tagged rate is only meaningful if some `@MAIN` actually runs at that rate —
-otherwise the emitted `clk_<rate>` net has no reader. That can't be checked at
-`_discover_global_wires` time (Step 4.5, before any `@MAIN`'s rate is known, and before
-`INFER_CLOCK_DOMAINS` may still assign a rate to a currently-bare `@MAIN`). `PARSE_FILE`
-checks it right after the `INFER_CLOCK_DOMAINS` call above:
+Each global FIFO then gets a row, kind its initializer's kind, with the clocks of its
+first and last `main_names`. Rows are sorted by source file and line.
 
-```python
-if parser_state.clk_mhz:
-    main_rates = set(parser_state.main_mhz.values())
-    for clk_wire_name, clk_mhz in parser_state.clk_mhz.items():
-        if clk_mhz not in main_rates:
-            raise ElaborationError(...)
-```
+### The crossing report
 
-Only single-clock-domain designs are supported this way — a `make_clock` rate must equal
-some `@MAIN`'s rate exactly, which is also how the wire is understood to belong to that
-`@MAIN`'s domain. Clock groups (`MAIN_MHZ_GROUP`) and `#pragma ASYNC_WIRE` have no pypeline
-equivalent; `parser_state.main_clk_group[hw_name]` stays hardcoded `None` for every
-Python-frontend `@MAIN` (see the `@MAIN(mhz)` section above).
+`WRITE_CLOCK_CROSSING_REPORT(parser_state, out_dir)` writes `clock_crossings.log`, an
+aligned table, and `clock_crossings.json`, one record per row with `crossing`, `clocks`,
+`write_clock`, `read_clock` (port names), `kind`, `hardware`, `depth` and `source`
+([guide](pypeline_guide.md#the-crossing-report)). Clocks go by their Python names, a pin
+as `pin`. `_crossing_hardware` gives a row's hardware and depth:
+
+| Row | hardware | depth |
+|---|---|---|
+| async wire or pin | `none` | — |
+| async FIFO | `xpm_fifo_async` (`VHDL.CLK_CROSS_USES_XPM`) or `built-in async` | `async_depth`, at least 16 for XPM |
+| FIFO from `global_fifo`/`global_sync_fifo` on one clock | `make_stream_fifo` | `n` rounded up to a power of two, at least 2 |
+| FIFO from a module | the module's factory name | — |
+
+A design with no rows gets a log that says so. `AUTO_PIPELINE.WRITE_0_ADDED_CLKS_INIT_FILES`
+calls the writer for Pypeline builds, the first step that writes VHDL, when part and tool
+are known.
 
 ---
 
@@ -6462,19 +6524,20 @@ top.py  (single-file or multi-file entry point)
   │
   ├─ Apply pypeline pragmas:
   │   ├─ parser_state.part ← pypeline._part_registry   (from PART(...))
-  │   └─ parser_state.main_mhz[name] ← fn._pypeline_main.mhz  (from @MAIN(mhz) / MAIN(fn, mhz=))
+  │   └─ main_mhz / main_clk_group / main_syn_mhz ← fn._pypeline_main.clock  (_set_main_clock)
   │
   ├─ Trim/collapse logic (MAIN trees and AUTO_FSM measurement roots)
   │   + dangling logic check
   │
-  ├─ _build_func_call_graph()            func_name_to_calls / func_names_to_called_from
-  │                                      from each Logic()'s submodule_instances
-  │
-  ├─ INFER_CLOCK_DOMAINS({}, {}, {}, parser_state)
-  │   Propagates known MHz to board-support MAINs sharing global wires (fixed-point loop)
+  ├─ _assign_clocks()                  clocks flow from named MAINs and stated-clock
+  │                                     wires to bare MAINs through plain wires (BFS)
   │
   ├─ _check_global_insts()              check each Inst[f]'s / Fifo[T]'s users, add each
-  │                                     FIFO's <key>_FIFO MAIN (_add_late_mains)
+  │                                     FIFO's MAINs (_add_late_mains): <key>_FIFO, or
+  │                                     an async FIFO's <key>_FIFO_wr / <key>_FIFO_rd
+  │
+  ├─ _check_clock_crossings()           leaf-by-leaf clock check; crossing report rows
+  ├─ _check_clock_bindings()            every bound clock is some MAIN's clock
   │
   └─ ParserState → throughput placement → VHDL backend
                   (SWEEP_DESIGN.md)      (VHDL_DESIGN.md)

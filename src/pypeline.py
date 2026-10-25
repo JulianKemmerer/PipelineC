@@ -2234,7 +2234,7 @@ class _MainInfo(typing.NamedTuple):
 
     name: str  # hardware name: its entity, its port prefix, its main_mhz key
     named: bool  # given by name= or by the function's own @hw_func(name=)
-    mhz: "float | None"  # its rate, None for a bare @MAIN
+    clock: "_Clock | None"  # the clock it names (a rate is its unnamed clock), None when bare
     origin: str  # where it was made, for messages: "top.py:23"
 
 
@@ -2243,9 +2243,9 @@ def _frame_origin(frame):
     return f"{_os.path.basename(frame.f_code.co_filename)}:{frame.f_lineno}"
 
 
-def _register_main(func, mhz, name, origin):
-    """Register func as the @MAIN `name` at rate `mhz` (None: bare), made at
-    `origin`; returns its hw_func wrapper, which carries a _MainInfo as
+def _register_main(func, clock, name, origin):
+    """Register func as the @MAIN `name` on `clock` (a _Clock; None: bare),
+    made at `origin`; returns its hw_func wrapper, which carries a _MainInfo as
     _pypeline_main. Without a name the MAIN is named like its function:
     its @hw_func(name=) if it has one, else its module-prefixed Python name
     (_hw_func_name), as PY_TO_LOGIC names a top-level def. A given name is
@@ -2277,9 +2277,7 @@ def _register_main(func, mhz, name, origin):
         name = user_name or _hw_func_name(
             _module_prefix(wrapped.__module__), wrapped.__name__
         )
-    wrapped._pypeline_main = _MainInfo(
-        name, named, None if mhz is None else float(mhz), origin
-    )
+    wrapped._pypeline_main = _MainInfo(name, named, clock, origin)
     _main_registry.append(wrapped)
     return wrapped
 
@@ -2307,21 +2305,26 @@ def _duplicate_main_names(mains):
     return None
 
 
-def MAIN(func_or_mhz=None, *, mhz=None, name=None):
+def MAIN(func_or_clock=None, *, mhz=None, clock=None, name=None):
     """Marks a function as a top-level hardware process.
 
     As a decorator::
 
-        @MAIN                  # no clock constraint
-        @MAIN(100.0)           # positional MHz
+        @MAIN                  # no clock named: inferred, or the default clock
+        @MAIN(100.0)           # positional MHz: the unnamed clock of that rate
         @MAIN(mhz=100.0)       # keyword MHz
-        @MAIN(name="top0")     # a name of your choosing (also with a rate)
+        @MAIN(eth_clk)         # a clock from make_clock(...)
+        @MAIN(clock=eth_clk)   # keyword clock
+        @MAIN(name="top0")     # a name of your choosing (also with a clock)
 
     Or called on a function, for @MAINs made in code (one per lane in a
     loop, a factory's function, generated source)::
 
         lanes = [MAIN(make_lane(i), name=f"lane{i}") for i in range(4)]
         MAIN(fn, mhz=100.0, name="rx")
+        MAIN(fn, clock=eth_clk, name="rx")
+
+    Name the clock once: a rate or a clock, not both.
 
     A @MAIN is named after its function, module-prefixed in an imported
     module, unless name= gives its name verbatim. Its ports are
@@ -2333,19 +2336,57 @@ def MAIN(func_or_mhz=None, *, mhz=None, name=None):
     """
     if name is not None:
         _check_user_name(name, "MAIN")
-    if callable(func_or_mhz):
+    origin = _frame_origin(_sys._getframe(1))
+    if callable(func_or_clock):
         # Used as bare @MAIN, or called on a function
         return _register_main(
-            func_or_mhz, mhz, name, _frame_origin(_sys._getframe(1))
+            func_or_clock, _main_clock_arg(None, mhz, clock, origin), name, origin
         )
-    # Used as @MAIN(100.0), @MAIN(mhz=100.0) or @MAIN(name=...)
-    if func_or_mhz is not None:
-        mhz = float(func_or_mhz)
+    # Used as @MAIN(100.0), @MAIN(clk), @MAIN(mhz=...), @MAIN(clock=...) or @MAIN(name=...)
+    main_clock = _main_clock_arg(func_or_clock, mhz, clock, origin)
 
     def decorator(func):
-        return _register_main(func, mhz, name, _frame_origin(_sys._getframe(1)))
+        return _register_main(
+            func, main_clock, name, _frame_origin(_sys._getframe(1))
+        )
 
     return decorator
+
+
+def _main_clock_arg(positional, mhz, clock, origin):
+    """The _Clock a MAIN(...) call names, or None for a bare @MAIN: a
+    positional rate or clock, mhz=, or clock=, at most one of them. A rate is
+    the unnamed clock of that rate."""
+    given = []
+    if isinstance(positional, _Clock):
+        given.append(("a clock", positional))
+    elif positional is not None:
+        if isinstance(positional, bool) or not isinstance(positional, (int, float)):
+            raise TypeError(
+                f"MAIN({positional!r}) at {origin}: give a rate in MHz, a clock from "
+                f"make_clock(...), or a function"
+            )
+        given.append(("a rate", positional))
+    if mhz is not None:
+        given.append(("mhz=", mhz))
+    if clock is not None:
+        if not isinstance(clock, _Clock):
+            raise TypeError(
+                f"MAIN(clock={clock!r}) at {origin}: clock= takes a clock from "
+                f"make_clock(...); give a rate as mhz="
+            )
+        given.append(("clock=", clock))
+    if len(given) > 1:
+        raise TypeError(
+            f"MAIN at {origin} names its clock twice ({given[0][0]} and "
+            f"{given[1][0]}): give a rate or a clock, once"
+        )
+    if not given:
+        return None
+    value = given[0][1]
+    if isinstance(value, _Clock):
+        return value
+    return _Clock(value, origin=origin)
 
 
 def sim_output(fn):
@@ -5652,27 +5693,82 @@ class _VolatileMarker:
 VOLATILE = _VolatileMarker()
 
 
+class _AsyncMarker:
+    """`ASYNC` -- marks Wire/Input/Output[T, ASYNC] as an async wire: functions
+    on clocks other than its writer's may read it. Nothing is added between
+    writer and readers, and the paths between clocks are untimed; a reader
+    that needs a stable value synchronizes it with its own registers. Inside
+    pipelined functions it behaves as VOLATILE. Input[T, ASYNC] is a pin
+    synchronous to no clock. See pypeline_guide.md "Async Wires"."""
+
+    def __repr__(self):
+        return "ASYNC"
+
+
+ASYNC = _AsyncMarker()
+
+
 def _wire_ann_args(kind, item):
-    """Split a Wire/Input/Output[...] subscript into (inner ctype, volatile)."""
-    if isinstance(item, tuple):
-        if len(item) == 2 and item[1] is VOLATILE:
-            return item[0], True
+    """Split a Wire/Input/Output[...] subscript into (inner ctype, volatile,
+    is_async, clock): the type, then markers in any order -- at most one of
+    ASYNC or a clock (from make_clock), plus VOLATILE alone or with a clock.
+    ASYNC already behaves as VOLATILE, so naming both is an error."""
+    if not isinstance(item, tuple):
+        return item, False, False, None
+    inner, *markers = item
+    volatile = is_async = False
+    clock = None
+    for m in markers:
+        if m is VOLATILE and not volatile:
+            volatile = True
+        elif m is ASYNC and not is_async:
+            is_async = True
+        elif isinstance(m, _Clock) and clock is None:
+            clock = m
+        else:
+            raise TypeError(
+                f"{kind}[...] takes one hardware type, then optional markers: "
+                f"{kind}[T, VOLATILE], {kind}[T, ASYNC], {kind}[T, clk] or "
+                f"{kind}[T, clk, VOLATILE], with clk from make_clock(...); got "
+                f"{kind}{list(item)}"
+            )
+    if is_async and clock is not None:
         raise TypeError(
-            f"{kind}[...] takes one hardware type, optionally followed by VOLATILE: "
-            f"{kind}[T] or {kind}[T, VOLATILE]; got {kind}{list(item)}"
+            f"{kind}[T, ASYNC, {clock.port_name}]: ASYNC says any clock may read "
+            f"it, a clock marker that it is on {clock.port_name}; use one of them"
         )
-    return item, False
+    if is_async and volatile:
+        raise TypeError(
+            f"{kind}[T, ASYNC, VOLATILE]: ASYNC already behaves as VOLATILE in "
+            f"pipelined functions; write {kind}[T, ASYNC]"
+        )
+    return inner, volatile, is_async, clock
+
+
+def _wire_ann_str(kind, ann):
+    """How an annotation prints: Wire[uint8_t, ASYNC]."""
+    markers = ""
+    if ann.is_async:
+        markers += ", ASYNC"
+    if ann.clock is not None:
+        markers += f", {ann.clock.port_name}"
+    if ann.volatile and not ann.is_async:
+        markers += ", VOLATILE"
+    return f"{kind}[{ann.inner_ctype}{markers}]"
 
 
 class _WireType:
     """Produced by Wire[T]. Marks a module-level variable as a global combinatorial wire."""
 
-    def __init__(self, inner_ctype, volatile=False):
+    def __init__(self, inner_ctype, volatile=False, is_async=False, clock=None):
         self.inner_ctype = inner_ctype
-        self.volatile = volatile
+        # Not aligned in pipelined functions: VOLATILE, or ASYNC, which behaves so
+        self.volatile = volatile or is_async
+        self.is_async = is_async  # Wire[T, ASYNC]: readable on other clocks
+        self.clock = clock  # Wire[T, clk]: the clock its writers must be on
 
     def __str__(self):
-        return f"Wire[{self.inner_ctype}{', VOLATILE' if self.volatile else ''}]"
+        return _wire_ann_str("Wire", self)
 
     def __repr__(self):
         return str(self)
@@ -5722,12 +5818,15 @@ class Wire(metaclass=_WireMeta):
 class _InputType:
     """Produced by Input[T]. Marks a module-level variable as a top-level design input."""
 
-    def __init__(self, inner_ctype, volatile=False):
+    def __init__(self, inner_ctype, volatile=False, is_async=False, clock=None):
         self.inner_ctype = inner_ctype
-        self.volatile = volatile
+        # Not aligned in pipelined functions: VOLATILE, or ASYNC, which behaves so
+        self.volatile = volatile or is_async
+        self.is_async = is_async  # Input[T, ASYNC]: readable on any clock
+        self.clock = clock  # Input[T, clk]: the clock it is on
 
     def __str__(self):
-        return f"Input[{self.inner_ctype}{', VOLATILE' if self.volatile else ''}]"
+        return _wire_ann_str("Input", self)
 
     def __repr__(self):
         return str(self)
@@ -5754,12 +5853,15 @@ class Input(metaclass=_InputMeta):
 class _OutputType:
     """Produced by Output[T]. Marks a module-level variable as a top-level design output."""
 
-    def __init__(self, inner_ctype, volatile=False):
+    def __init__(self, inner_ctype, volatile=False, is_async=False, clock=None):
         self.inner_ctype = inner_ctype
-        self.volatile = volatile
+        # Not aligned in pipelined functions: VOLATILE, or ASYNC, which behaves so
+        self.volatile = volatile or is_async
+        self.is_async = is_async  # Output[T, ASYNC]: readable on any clock
+        self.clock = clock  # Output[T, clk]: the clock it is on
 
     def __str__(self):
-        return f"Output[{self.inner_ctype}{', VOLATILE' if self.volatile else ''}]"
+        return _wire_ann_str("Output", self)
 
     def __repr__(self):
         return str(self)
@@ -6094,6 +6196,19 @@ class _FifoType(_GlobalInstType):
 
         return global_fifo_main(wire_name, self.data_t, module)
 
+    def exec_async_part(self, func_name, src, ns, wire_name, part):
+        """One function of the async FIFO (_make_global_fifo_async_parts),
+        exec'd from a frame whose arguments describe it: name, data type, and
+        which part it is ("write", "read", "write end", "read end")."""
+
+        def global_async_fifo_part(fifo, data_t, part):
+            # The frame _exec_generated_func describes
+            return _exec_generated_func(
+                func_name, src, ns, folder="pypeline_generated_fifos"
+            )
+
+        return global_async_fifo_part(wire_name, self.data_t, part)
+
 
 class _FifoMeta(type):
     def __getitem__(cls, item):
@@ -6130,44 +6245,70 @@ class Fifo(metaclass=_FifoMeta):
     pass
 
 
-class _GlobalFifoInit:
-    """Produced by global_fifo(n) / global_sync_fifo(n): a Fifo[T]
-    initializer asking for the library FIFO, make_stream_fifo, holding at
-    least n words (_global_fifo_hardware). `kind` is the function's name."""
+# impl= values of an async global FIFO: None picks by synthesis tool
+# (xpm_fifo_async on Vivado, else the built-in pipelinec_async_fifo_fwft)
+_GLOBAL_FIFO_IMPLS = (None, "builtin")
 
-    def __init__(self, kind, n):
+
+class _GlobalFifoInit:
+    """Produced by global_fifo(n) / global_sync_fifo(n) / global_async_fifo(n):
+    a Fifo[T] initializer asking for a FIFO holding at least n words. On one
+    clock that is the library FIFO, make_stream_fifo (_global_fifo_hardware);
+    across two, the back end's async FIFO, chosen by `impl`. `kind` is the
+    function's name, which says which clocks the ends may be on."""
+
+    def __init__(self, kind, n, impl=None):
         if isinstance(n, bool) or not isinstance(n, int):
             raise TypeError(f"{kind}(n): n is a number of words, an int; got {n!r}")
         if n <= 0:
             raise ValueError(f"{kind}(n): n must be at least 1, got {n}")
+        if impl not in _GLOBAL_FIFO_IMPLS:
+            raise ValueError(
+                f"{kind}(n, impl={impl!r}): impl is None (by synthesis tool: "
+                f"xpm_fifo_async on Vivado, else the built-in async FIFO) or "
+                f"'builtin' (the built-in async FIFO on every tool)"
+            )
         self.kind = kind
         self.n = n
+        self.impl = impl  # the async FIFO's hardware (_GLOBAL_FIFO_IMPLS)
 
     def __repr__(self):
-        return f"{self.kind}({self.n})"
+        impl = "" if self.impl is None else f", impl={self.impl!r}"
+        return f"{self.kind}({self.n}{impl})"
 
 
-def global_fifo(n):
+def global_fifo(n, impl=None):
     """Initializer of a Fifo[T] declaration: a FIFO holding at least n words.
 
         rx: Fifo[uint8_t] = global_fifo(64)
 
     n is rounded up to a power of two, at least 2. With both ends on one
-    clock this is the library FIFO, make_stream_fifo(T, n). Ends on two clocks
-    are not supported yet.
+    clock this is the library FIFO, make_stream_fifo(T, n); with the ends on
+    two clocks, an async FIFO (at least 4 words, 16 for xpm_fifo_async).
+    impl="builtin" makes that async FIFO the built-in one on every tool.
     """
-    return _GlobalFifoInit("global_fifo", n)
+    return _GlobalFifoInit("global_fifo", n, impl)
 
 
 def global_sync_fifo(n):
-    """Like global_fifo(n), stating that the FIFO's ends stay on one clock."""
+    """Like global_fifo(n), stating that the FIFO's ends stay on one clock:
+    ends on two clocks are an error."""
     return _GlobalFifoInit("global_sync_fifo", n)
+
+
+def global_async_fifo(n, impl=None):
+    """Like global_fifo(n), stating that the FIFO's ends are on two clocks:
+    ends on one clock are an error. impl="builtin" forces the built-in async
+    FIFO on every tool (xpm_fifo_async is Vivado's default)."""
+    return _GlobalFifoInit("global_async_fifo", n, impl)
 
 
 def _global_fifo_hardware(data_t, init):
     """The single-clock module a Fifo[data_t] initializer stands for: the
-    library FIFO for global_fifo(n) / global_sync_fifo(n), else the
-    initializer itself (any stream module, _stream_module_ports checks it)."""
+    library FIFO for the global_*fifo(n) initializers, else the initializer
+    itself (any stream module, _stream_module_ports checks it). It is the
+    FIFO's hardware when its ends share a clock, and its native-sim model
+    (native sim runs one clock)."""
     if not isinstance(init, _GlobalFifoInit):
         return init
     from stream.stream_fifo import make_stream_fifo
@@ -6253,17 +6394,7 @@ def _make_global_inst_main(
     `reserved` (the compiler passes the top design file's globals, which
     elaboration merges in)."""
     module, ports, bindings = hardware
-    taken = set(module_globals) | set(module_globals.get("__annotations__", {}))
-    taken |= set(reserved)
-
-    def free(base):
-        name, i = base, 1
-        while name in taken:
-            i += 1
-            name = f"{base}_{i}"
-        taken.add(name)
-        return name
-
+    free = _free_name_picker(module_globals, reserved)
     hw = free(f"{ann.stem}_hardware")
     aliases = {
         p.name: free(ann.arg_alias(p))
@@ -6312,44 +6443,280 @@ def _make_global_inst_main(
     return main
 
 
-# make_clock(mhz) — tag a global Wire/Input as a clock (PipelineC's CLK_MHZ)
-# ──────────────────────────────────────────────────────────────────────────
+def _free_name_picker(module_globals, reserved=()):
+    """A function giving names for a generated MAIN's injected globals and
+    locals: `base`, or `base_2`, `base_3`, ..., avoiding every name of the
+    declaring module (its globals and wire annotations), `reserved`, and each
+    name it gave before."""
+    taken = set(module_globals) | set(module_globals.get("__annotations__", {}))
+    taken |= set(reserved)
+
+    def free(base):
+        name, i = base, 1
+        while name in taken:
+            i += 1
+            name = f"{base}_{i}"
+        taken.add(name)
+        return name
+
+    return free
 
 
-class _ClockMarker:
-    """Produced by make_clock(mhz). Used as the initializer of a global
-    Wire[uint1_t]/Input[uint1_t] declaration to tag that wire as a clock of a
-    given rate -- the pypeline equivalent of PipelineC's `CLK_MHZ` pragma.
+# data type -> (word_t, write_t, read_t) of its async global FIFO's crossing
+# functions, built once per type (_global_fifo_async_types)
+_global_fifo_async_type_cache: dict = {}
 
-    Usage at module level only, as the annotation's initializer:
-        pll_clk: Input[uint1_t] = make_clock(85.0)   # external clock port
-        internal_clk: Wire[uint1_t] = make_clock(1.0)  # internally generated clock
 
-    PY_TO_LOGIC reads this marker off the live module namespace during
-    _discover_global_wires; it carries no meaning at Python runtime (native sim
-    never reads a global wire's bound value, only its annotation type).
-    """
+def _global_fifo_async_types(data_t):
+    """(word_t, write_t, read_t) of the crossing functions of an async
+    Fifo[data_t]: word_t is data_t[1], one FIFO word as C's global FIFOs hold
+    it; write_t is {ready}, what <crossing>_WRITE_1 returns; read_t is
+    {data: word_t, valid}, what <crossing>_READ_1 returns. The field names
+    are the ones the back end's clk_cross entity drives."""
+    types = _global_fifo_async_type_cache.get(data_t)
+    if types is None:
+        word_t = data_t[1]
 
-    def __init__(self, mhz):
-        self.mhz = float(mhz)
+        @struct
+        class global_fifo_write_t(NamedTuple):
+            ready: uint1_t
+
+        @struct
+        class global_fifo_read_t(NamedTuple):
+            data: word_t
+            valid: uint1_t
+
+        types = (word_t, global_fifo_write_t, global_fifo_read_t)
+        _global_fifo_async_type_cache[data_t] = types
+    return types
+
+
+class _GlobalFifoAsyncParts(typing.NamedTuple):
+    """The generated functions of one async global FIFO (_make_global_fifo_async_parts)."""
+
+    write_stub: object  # <crossing>_WRITE_1(write_data, write_enable) -> {ready}
+    read_stub: object  # <crossing>_READ_1(read_enable) -> {data, valid}
+    wr_main: object  # <crossing>_wr: the write end's MAIN, on the write clock
+    rd_main: object  # <crossing>_rd: the read end's MAIN, on the read clock
+
+
+def _make_global_fifo_async_parts(
+    crossing, wire_name, ann, module_globals, reserved=()
+):
+    """The functions of the async global FIFO `wire_name` (a Fifo[T]
+    annotation `ann`), named after `crossing` (<key>_FIFO): the two crossing
+    stubs and the two side MAINs, the shape of PipelineC's GLOBAL_STREAM_FIFO.
+
+    The stubs <crossing>_WRITE_1 and <crossing>_READ_1 have no hardware of
+    their own: the compiler tags them as the clock crossing <crossing>, and
+    the back end connects their calls to its clk_cross_<crossing> entity
+    (xpm_fifo_async, or the built-in pipelinec_async_fifo_fwft). Their names
+    and argument names are that back end's convention. The MAIN <crossing>_wr
+    passes the write end's stream to the write stub and drives wr.ready; the
+    MAIN <crossing>_rd passes rd.ready to the read stub and drives rd.stream.
+
+    Built here, beside _make_global_inst_main, so every generated FIFO
+    source and its name info come from one place; only the compiler calls
+    it, since native simulation runs one clock. Like that function, the side
+    MAINs are exec'd in a copy of the declaring module's globals and name
+    the wire by its bare name."""
+    word_t, write_t, read_t = _global_fifo_async_types(ann.data_t)
+    free = _free_name_picker(module_globals, reserved)
+    word, wr_ret, rd_ret, bit = (
+        free("fifo_word_t"),
+        free("fifo_write_t"),
+        free("fifo_read_t"),
+        free("fifo_uint1_t"),
+    )
+    types = {word: word_t, wr_ret: write_t, rd_ret: read_t, bit: uint1_t}
+    stub_ns = dict(types)
+    w_name, r_name = f"{crossing}_WRITE_1", f"{crossing}_READ_1"
+    unused = free("fifo_unused")
+    write_stub = hw_func(
+        ann.exec_async_part(
+            w_name,
+            f"def {w_name}(write_data: {word}, write_enable: {bit}) -> {wr_ret}:\n"
+            f"    {unused}: {wr_ret}\n"
+            f"    return {unused}\n",
+            stub_ns,
+            wire_name,
+            "write",
+        )
+    )
+    read_stub = hw_func(
+        ann.exec_async_part(
+            r_name,
+            f"def {r_name}(read_enable: {bit}) -> {rd_ret}:\n"
+            f"    {unused}: {rd_ret}\n"
+            f"    return {unused}\n",
+            dict(stub_ns),
+            wire_name,
+            "read",
+        )
+    )
+    w_alias, r_alias = free("fifo_write"), free("fifo_read")
+    data, wrote, read = free("fifo_data"), free("fifo_wrote"), free("fifo_got")
+    ns = dict(module_globals)
+    ns.update(types)
+    ns[w_alias], ns[r_alias] = write_stub, read_stub
+    wr_name, rd_name = f"{crossing}_wr", f"{crossing}_rd"
+    wr_main = hw_func(
+        ann.exec_async_part(
+            wr_name,
+            f"def {wr_name}():\n"
+            f"    {data}: {word}\n"
+            f"    {data}[0] = {wire_name}.wr.stream.data\n"
+            f"    {wrote} = {w_alias}(write_data={data}, "
+            f"write_enable={wire_name}.wr.stream.valid)\n"
+            f"    {wire_name}.wr.ready = {wrote}.ready\n",
+            dict(ns),
+            wire_name,
+            "write end",
+        )
+    )
+    rd_main = hw_func(
+        ann.exec_async_part(
+            rd_name,
+            f"def {rd_name}():\n"
+            f"    {read} = {r_alias}(read_enable={wire_name}.rd.ready)\n"
+            f"    {wire_name}.rd.stream.data = {read}.data[0]\n"
+            f"    {wire_name}.rd.stream.valid = {read}.valid\n",
+            dict(ns),
+            wire_name,
+            "read end",
+        )
+    )
+    for main in (wr_main, rd_main):
+        main._pypeline_global_inst = ann.kind_name
+    return _GlobalFifoAsyncParts(write_stub, read_stub, wr_main, rd_main)
+
+
+# make_clock(mhz, name=, syn_mhz=) — clocks (PipelineC's MAIN_MHZ groups, CLK_MHZ)
+# ────────────────────────────────────────────────────────────────────────────────
+
+# A clock name= is appended to its port name after "_": letters and digits,
+# single underscores between them
+_CLOCK_NAME_RE = _re.compile(r"[A-Za-z0-9]+(_[A-Za-z0-9]+)*")
+
+
+def _clock_text(mhz, name):
+    """The part of a clock's port name after "clk_": 100p0, 25p0_eth_rx,
+    500p0khz, None. Must equal VHDL.CLK_MHZ_GROUP_TEXT(mhz, name), which the
+    back end uses (pypeline.py may not import the compiler; a unit test
+    compares the two)."""
+    if mhz is None:
+        text = "None"
+    else:
+        num, unit = mhz, ""
+        if num < 1.0:
+            num, unit = mhz * 1e3, "khz"
+            if num < 1.0:
+                num, unit = mhz * 1e6, "hz"
+        text = str(num).replace(".", "p") + unit
+    return f"{text}_{name}" if name else text
+
+
+class _Clock:
+    """A clock, made by make_clock(mhz, name=, syn_mhz=); @MAIN(mhz) and
+    @MAIN(mhz=...) make the unnamed clock of that rate.
+
+    Clocks are identified by rate, then name: every unnamed clock of one rate
+    is one clock, two names at one rate are two clocks, and so are two rates.
+    Equality and hashing follow that identity. syn_mhz is a property of the
+    clock, checked for agreement across its objects by the compiler
+    (_clock_conflict). The default clock, (None, None), has no object."""
+
+    def __init__(self, mhz, name=None, syn_mhz=None, origin=None):
+        if isinstance(mhz, bool) or not isinstance(mhz, (int, float)):
+            raise TypeError(f"make_clock(mhz): mhz is a rate in MHz, got {mhz!r}")
+        if mhz <= 0:
+            raise ValueError(f"make_clock(mhz) requires mhz > 0, got {mhz}")
+        if name is not None:
+            if not isinstance(name, str) or not _CLOCK_NAME_RE.fullmatch(name):
+                raise ValueError(
+                    f"make_clock(name={name!r}): a clock name becomes part of its "
+                    f"port name, clk_<rate>_<name>: use letters, digits and single "
+                    f"underscores between them"
+                )
+        if syn_mhz is not None:
+            if isinstance(syn_mhz, bool) or not isinstance(syn_mhz, (int, float)):
+                raise TypeError(f"make_clock(syn_mhz=): a rate in MHz, got {syn_mhz!r}")
+            if syn_mhz <= 0:
+                raise ValueError(f"make_clock(syn_mhz=) must be > 0, got {syn_mhz}")
+        self.mhz = float(mhz)  # its rate
+        self.name = name  # tells it apart from other clocks of its rate
+        # Goal of synthesis-only tools (PipelineC's MAIN_SYN_MHZ), None: mhz
+        self.syn_mhz = None if syn_mhz is None else float(syn_mhz)
+        self.origin = origin  # where it was made, for messages: "top.py:12"
+
+    @property
+    def identity(self):
+        """(mhz, name): what tells two clocks apart."""
+        return (self.mhz, self.name)
+
+    @property
+    def port_name(self):
+        """Its clock's name in the generated design: clk_125p0_eth_rx."""
+        return "clk_" + _clock_text(self.mhz, self.name)
+
+    def __eq__(self, other):
+        return isinstance(other, _Clock) and other.identity == self.identity
+
+    def __hash__(self):
+        return hash(self.identity)
 
     def __repr__(self):
-        return f"make_clock({self.mhz})"
+        args = [repr(self.mhz)]
+        if self.name is not None:
+            args.append(f"name={self.name!r}")
+        if self.syn_mhz is not None:
+            args.append(f"syn_mhz={self.syn_mhz!r}")
+        return f"make_clock({', '.join(args)})"
 
 
-def make_clock(mhz):
-    """Tag a global Wire[uint1_t]/Input[uint1_t] as a clock of the given rate.
+def make_clock(mhz, name=None, syn_mhz=None):
+    """A clock of `mhz` MHz, for @MAIN(clk), @MAIN(clock=clk), clock markers
+    (Wire[T, clk], Input[T, clk]) and clock bindings::
 
-    Ex.::
+        eth_clk = make_clock(125.0, name="eth_rx")  # the clock clk_125p0_eth_rx
+        ETH_RX_CLK: Input[uint1_t] = eth_clk        # arrives on this pin
+        dsp_clk = make_clock(125.0, syn_mhz=147.0)  # clk_125p0, synthesis aims at 147
 
-        pll_clk: Input[uint1_t] = make_clock(85.0)
-        @MAIN(85.0)
-        def solution(): ...
+        @MAIN(eth_clk)
+        def eth_rx(): ...
+
+    name= tells apart two clocks of one rate; without it the clock is the
+    unnamed clock of its rate, the one @MAIN(mhz) runs on, so
+    `pll_clk: Input[uint1_t] = make_clock(85.0)` binds @MAIN(85.0)'s clock.
+    syn_mhz= is the goal of tools that only synthesize. A clock bound to a pin
+    or a wire must be the clock of some @MAIN.
     """
-    mhz = float(mhz)
-    if mhz <= 0:
-        raise ValueError(f"make_clock(mhz) requires mhz > 0, got {mhz}")
-    return _ClockMarker(mhz)
+    return _Clock(mhz, name, syn_mhz, _frame_origin(_sys._getframe(1)))
+
+
+def _clock_conflict(clocks):
+    """The error message for the first conflict among `clocks` (_Clock
+    objects of one design): one clock given two syn_mhz values, or two names
+    of one rate that VHDL, ignoring case, reads as one. None when they agree."""
+    syn = {}
+    by_port = {}
+    for clk in clocks:
+        if clk.syn_mhz is not None:
+            prior = syn.setdefault(clk.identity, clk)
+            if prior.syn_mhz != clk.syn_mhz:
+                return (
+                    f"Clock {clk.port_name} has two syn_mhz values: "
+                    f"{prior.syn_mhz} ({prior.origin}) and {clk.syn_mhz} "
+                    f"({clk.origin}). A clock has one synthesis goal."
+                )
+        prior = by_port.setdefault(clk.port_name.lower(), clk)
+        if prior.identity != clk.identity:
+            return (
+                f"Clocks {prior.port_name} ({prior.origin}) and {clk.port_name} "
+                f"({clk.origin}) differ only in case, which VHDL ignores: rename "
+                f"one of them"
+            )
+    return None
 
 
 # ─────────────────────────────────────────────
