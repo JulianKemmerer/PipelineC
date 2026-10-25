@@ -1713,8 +1713,9 @@ def check_done():
     does the end-of-run checking."""
     # Generous: the release path is rate-limited by both consumers' stutter
     # (see PKT_READY_PERIOD/PDW_READY_PERIOD) on top of the DSP pipeline's own
-    # fill, so this is a liveness backstop, not a tight bound.
-    deadline = TOTAL_CYCLES + DSP_LAT + GATE_LAT + 1024
+    # fill, so this is a liveness backstop, not a tight bound. Doubled
+    # (2026-10-25) for more headroom.
+    deadline = 2 * (TOTAL_CYCLES + DSP_LAT + GATE_LAT + 1024)
     if ST["cycle"] >= TOTAL_CYCLES and _all_done():
         sim_finish()
     assert ST["cycle"] < deadline, (

@@ -30,6 +30,8 @@ definitions directly, without going through that push/pop path, so scope=
 on a bare top-level function is a no-op today. This test therefore exercises
 INFERRED via a global exact-type override (item 3) rather than scope=; the
 Step-7 gap is a pre-existing limitation, not something this change fixes.
+It is reproduced by scoped_operator_registration_test.py
+(scoped_operator_registration_known_issue in known_issues_tests.py).
 """
 import os
 import sys

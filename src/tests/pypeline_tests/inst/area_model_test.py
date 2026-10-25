@@ -456,11 +456,15 @@ def test_um2_per_abstract_area_unit_matches_committed_cache():
     num = sum(w * v for w, v in points)
     den = sum(w * w for w, _v in points)
     fitted_k = num / den
-    mae = sum(abs(v - fitted_k * w) for w, v in points) / len(points)
+    # Fit quality per adder bit: an absolute residual grows with the width,
+    # so an um2 bound breaks as soon as the cache gains wide adders.
+    mae_per_bit = sum(abs(v / w - fitted_k) for w, v in points) / len(points)
     # Originally measured at 5 points (widths 17-34): absolute residuals
     # 29-159 um2 (1.2-6.3 um2/bit), MAE ~100. With the suite's wider sky130
     # coverage (25 points, both operands >= 8 bits): k ~101.7, MAE ~92.
-    assert mae < 150.0, (fitted_k, mae, points)
+    # With 128-261 bit adders in the cache (70 points): k ~102.0, MAE ~226
+    # um2, but ~5.9 um2/bit (wide MINUS runs ~10% above wide PLUS).
+    assert mae_per_bit < 10.0, (fitted_k, mae_per_bit, points)
     rel_err = abs(fitted_k - AUTO.UM2_PER_ABSTRACT_AREA_UNIT) / fitted_k
     assert rel_err < 0.05, (
         f"refit k = {fitted_k:.2f} um2/adder-bit from {len(points)} "

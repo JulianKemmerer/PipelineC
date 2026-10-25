@@ -27,6 +27,7 @@ import sys
 from common import (
     EXAMPLES_PYPELINE_DIR,
     INST_DIR,
+    PYPELINE_SIM_DEBUG,
     PYPELINEC,
     SYN_TOOL_ARGS,
     Test,
@@ -237,6 +238,47 @@ def get_tests() -> list:
             needs_out_dir=True,
             expect_fail=True,
             requires=["ghdl"],
+        )
+    )
+    # Native sim gives two instances of a stateful callee one state when only
+    # a stateless caller separates them: a stateless wrapper called twice, or
+    # two make_stream_fifo FIFOs called from one MAIN. pypeline_sim_debug.py
+    # reports MISMATCH.
+    tests.append(
+        Test(
+            name="stateless_caller_sim_state_known_issue",
+            category="known_issues",
+            cmd=[PYPELINE_SIM_DEBUG, INST_DIR / "stateless_caller_sim_state_design.py",
+                 "--sim", "--comb", "--run", "all"],
+            needs_out_dir=True,
+            expect_fail=True,
+            requires=["ghdl"],
+        )
+    )
+    # A global wire read back by its writer, with no shared wire in the
+    # design: global_wires_pkg is not written but top.vhd and the MAIN's ports
+    # use its types, so GHDL rejects the VHDL.
+    tests.append(
+        Test(
+            name="global_wire_unshared_readback_known_issue",
+            category="known_issues",
+            cmd=[PYPELINE_SIM_DEBUG, INST_DIR / "global_wire_unshared_readback_design.py",
+                 "--sim", "--comb", "--run", "all"],
+            needs_out_dir=True,
+            expect_fail=True,
+            requires=["ghdl"],
+        )
+    )
+    # scope= registrations: ignored on a plain top-level @hw_func (PARSE_FILE
+    # Step 7), and a callee shared by a scoped and an unscoped caller is one
+    # entity built under whichever came first.
+    tests.append(
+        Test(
+            name="scoped_operator_registration_known_issue",
+            category="known_issues",
+            cmd=[INST_DIR / "scoped_operator_registration_test.py"],
+            needs_out_dir=True,
+            expect_fail=True,
         )
     )
     # (operator_library_predicate_never_fires_known_issue was here while
