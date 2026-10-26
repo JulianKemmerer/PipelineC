@@ -3,9 +3,9 @@
 Instructions for LLM coding agents working in the PypelineC repository.
 
 **Read [CONTRIBUTING.md's "When making changes" section](CONTRIBUTING.md#when-making-changes)
-first, then read this entire file before planning your edits.** This file adds detailed agent
-instructions. Follow both. The design documents in [`docs/`](docs/) are the
-architectural record.
+first, then read this entire file before planning your edits.** This file adds detailed
+agent instructions to that section; follow both. The design documents in [`docs/`](docs/)
+are the architectural record.
 
 ## What is here
 
@@ -34,11 +34,10 @@ Other top-level places:
 - `src/tests/pypeline_tests/`: the test suite ([`docs/pypeline_TESTS.md`](docs/pypeline_TESTS.md)).
 - `docs/`: user docs ([`docs/README.md`](docs/README.md),
   [`docs/pypeline_guide.md`](docs/pypeline_guide.md)), one `*_DESIGN.md` per main
-  module, the [priority-ranked issues inventory](docs/issues_inventory.md), the
-  [compiler complexity review](docs/code_reviews/complexity_review/REVIEW_COMPLEXITY.md)
-  and the [test-suite review and recommendations](docs/code_reviews/tests_review/TEST_REVIEW.md).
+  module, the issues inventory and the code reviews (see
+  [Check known issues and code reviews](#check-known-issues-and-code-reviews)).
 
-Common commands (run from the repo root; put `--out_dir` outside the repo):
+Common commands, run from the repo root:
 
 ```
 ./src/pypelinec design.py --comb --no_synth --out_dir OUT   # elaborate and write VHDL, no synthesis
@@ -47,73 +46,58 @@ Common commands (run from the repo root; put `--out_dir` outside the repo):
 ./src/pipelinec design.c --comb --no_synth --out_dir OUT     # legacy C front end
 ```
 
-For test-runner commands and selection caveats, see [Testing](#testing).
+For test-runner commands, see [Testing](#testing).
 
 ## Ground rules
 
-- **Scratch goes outside the repo.** Build output, harness scripts, A/B copies and
-  handoff notes do not belong in the tree.
+- **Scratch goes outside the repo.** Build output (`--out_dir`), harness scripts, A/B
+  copies and handoff notes do not belong in the tree.
 - **Don't edit sources while your own build runs.** Pipelining passes re-run the
   design in-process and re-read function source from disk (`inspect.getsource`).
   An edit shifts line numbers under live function objects, and a later pass reads the
-  wrong source block. Batch edits outside of tests or simply work from copies of the repo.
+  wrong source block. Make edits between runs, or run from a frozen copy of the
+  compiler and design. The copy needs everything the repo ships (`cache/`, data
+  files), or tests fail for setup reasons.
 - **One `pypelinec` process per output directory.** To reuse a warm build in
   parallel runs, copy the whole directory. Don't add locking so processes can share one.
 - **Python 3.8.** Python 3.8 is supported, so don't use newer syntax for now.
   Scripts that edit source by `ast` offsets must check the text at each offset,
   because 3.8 reports wrong column offsets inside f-strings.
-- **Continue relevant work, or wait.** While a build or test runs, continue only
-  relevant, necessary work that can be done safely without affecting the run.
-  When none remains, use a blocking wait or completion notification as described
-  in [Long runs](#long-runs). Do not invent extra work just to stay active.
+- **Long runs.** Run a long build or test run (timing sweep, hardware run, big test
+  selection) in the background only when there is relevant, necessary work you can
+  do alongside it without affecting it. Otherwise, or once that work is done, use a
+  blocking wait or a completion notification. Don't spend tokens polling log files or
+  process status, and don't invent work to stay active. Let required tests finish:
+  duration alone is not a reason to stop them.
 
 ## Before you change code
 
 ### Check known issues and code reviews
 
-- **Check existing problems before planning or editing.** Read the
-  [priority-ranked issues inventory](docs/issues_inventory.md). It orders known
-  bugs and limitations by seriousness and adds reproduction steps, code pointers
-  and workarounds to the GitHub issue records. Search it for the affected features
-  and modules, and consult the relevant linked issue threads. Account for known
-  failure modes, limitations and workarounds in the implementation and test plan.
-  This check applies to ordinary feature and cleanup work too, not just bug fixes.
-- **Read relevant review notes before extending existing code.** The
+- **Check the issues inventory first**, for feature and cleanup work as well as bug
+  fixes. The [priority-ranked issues inventory](docs/issues_inventory.md) adds
+  reproduction steps, code pointers and workarounds to the GitHub issues. Search it
+  for the affected features and modules, read the linked issue threads, and account
+  for known failure modes, limitations and workarounds in the implementation and
+  test plan.
+- **Read the relevant reviews.** For compiler changes, read the overview of the
   [compiler complexity review](docs/code_reviews/complexity_review/REVIEW_COMPLEXITY.md)
-  and [test-suite review and recommendations](docs/code_reviews/tests_review/TEST_REVIEW.md)
-  serve two purposes: finding broader architectural improvements to work on, and
-  identifying problems to avoid making worse in everyday contributions. For compiler
-  changes, read the complexity overview and the affected modules' reviews linked
-  from it. When adding or changing tests, read the test-suite review and consult
-  its linked inventory for the affected tests.
-- **Do not perpetuate the patterns the reviews identify.** Look for existing
-  shared mechanisms before adding duplicate logic, keep responsibilities in their
-  owning modules, and avoid adding overlapping test builds or unrelated scenarios
-  to an already unwieldy test file. Check the specific review's recommendations
-  when choosing an implementation; nearby code is not automatically a good model.
-- **Verify review findings against the current tree.** Reviews describe particular
-  source snapshots and include proposals. They are not proof that a bug remains
-  unfixed or that a proposed API, runner flag or directory layout exists. Use
-  current source and the relevant design/test reference to resolve discrepancies.
-- **Update review sections when the code's condition changes.** If verification
-  shows that a finding is resolved, partly addressed or no longer accurate, or
-  your own changes alter it, revise the affected review section in place. Update
-  its recommendations and any corresponding overview or module-review summaries
-  so they agree. State what remains to be done and the source or test evidence
-  supporting the revised finding. Keep historical measurements tied to their
-  original source and conditions; claim only the checks you actually reran and
-  the findings you revalidated. Update the relevant `*_DESIGN.md`
-  sections alongside these review updates.
-- **Keep the response proportional to the task.** A local fix does not require
-  implementing an entire architectural recommendation. Prefer a focused change
-  that avoids adding to the identified problem. If the change must extend a
-  flagged pattern, explain the tradeoff and identify the remaining cleanup in the
+  and the affected modules' reviews linked from it. When adding or changing tests,
+  read the [test-suite review](docs/code_reviews/tests_review/TEST_REVIEW.md) and its
+  linked inventory for the affected tests.
+- **Don't extend the patterns they flag:** duplicated logic, responsibilities outside
+  their owning module, overlapping test builds, unrelated scenarios added to an
+  already unwieldy test file. Check the specific review's recommendations when
+  choosing an implementation; nearby code is not automatically a good model.
+- **Keep the response proportional.** A local fix doesn't need to implement a whole
+  architectural recommendation, only to avoid adding to the problem. If a change must
+  extend a flagged pattern, explain the tradeoff and name the remaining cleanup in the
   handoff or final report.
-- **Establish whether failures predate the change.** Consult the relevant issue
-  and reproducer, and compare against an unchanged baseline when needed. A similar
-  symptom alone does not establish that a failure is a known issue. Report the
-  evidence and issue reference; do not hide a failure or call it a regression
-  without checking.
+- **Verify review findings against the current tree.** Reviews describe particular
+  source snapshots and include proposals. They don't prove that a bug remains
+  unfixed or that a proposed API, runner flag or directory layout exists. Resolve
+  discrepancies from the current source and the relevant design or test reference,
+  and update a review whose finding has changed (see [Documentation](#documentation)).
 
 ### Find where the change belongs
 
@@ -159,7 +143,6 @@ For test-runner commands and selection caveats, see [Testing](#testing).
 - Implement agreed designs faithfully. Don't add heuristic bounds, arbitrary floors or
   behavioral limits nobody asked for unless they're confirmed and tested.
 - If a simplification turns out unsafe during implementation, fix it and say so plainly.
-- Include how the change will be tested in any plan.
 
 ## Code hygiene
 
@@ -179,10 +162,6 @@ For test-runner commands and selection caveats, see [Testing](#testing).
   Don't silently drop it.
 - **Console noise:** print each compiler `NOTE:` or warning once per build phase or
   session, not once per candidate pass or iteration.
-- **Formatting:** Ruff lints and formats ([`ruff.toml`](ruff.toml),
-  [`.pre-commit-config.yaml`](.pre-commit-config.yaml)). Format only the lines you
-  change. Don't run the formatter over whole files, so the diff shows only behavior
-  changes.
 
 ## Names, caches and determinism
 
@@ -213,18 +192,12 @@ For test-runner commands and selection caveats, see [Testing](#testing).
 
 ## Writing Pypeline designs and libraries
 
-- **Native simulation never emits VHDL.** `sim_call` and `--sim --comb` without
-  `--cocotb` run the design as Python and never go through the `PY_TO_LOGIC` elaborator. A
-  passing native sim proves nothing about the generated hardware. Give each new
+- **Synthesize what you build.** Native simulation (`sim_call`, and `--sim --comb`
+  without `--cocotb`) runs the design as Python and never goes through the
+  `PY_TO_LOGIC` elaborator, so it misses errors like the two below. Give each new
   reusable block a `*_synth_top.py` registered as a synthesis test, and register the
   composed top-level design as its own synthesis test too: per-block tests can't see
   the cross-module paths that often set the clock rate.
-- **Native sim doesn't model VHDL-only primitives.** Functions that exist only as
-  VHDL primitives (`rotl`, `bswap`, `bit_dup`, `array_to_uint_le`, and `vhdl()`-based
-  wrappers like `make_stream_fifo`) raise `NotImplementedError` in native sim. That is
-  expected. Use them in designs anyway, and test that code through cocotb + GHDL.
-  Check the specific factory first: being built on `vhdl()` doesn't by itself mean a
-  wrapper can't simulate natively.
 - **VHDL reserved words fail only at synthesis.** Don't name `@enum` members or
   `@struct` fields `release`, `reject`, `register`, `next`, `block`, `open`, `range`,
   `wait`, `file`, `label`, `null` or any other VHDL reserved word. Locals with such
@@ -233,7 +206,14 @@ For test-runner commands and selection caveats, see [Testing](#testing).
 - **Ternary branches must have identical types.** A bare integer literal gets its
   minimum width, so `CONST if c else x16` fails when `CONST = 1`. Bind the constant to
   a typed local first (`k: uint16_t = CONST`).
-- **Never hardcode a latency.** Use/create `.latency` values from things like `AUTO_PIPELINE` instead.
+- **Native sim doesn't model VHDL-only primitives.** Functions that exist only as
+  VHDL primitives (`rotl`, `bswap`, `bit_dup`, `array_to_uint_le`, and `vhdl()`-based
+  wrappers like `make_stream_fifo`) raise `NotImplementedError` in native sim. That is
+  expected. Use them in designs anyway, and test that code through cocotb + GHDL.
+  Check the specific factory first: being built on `vhdl()` doesn't by itself mean a
+  wrapper can't simulate natively.
+- **Never hardcode a latency.** Read it from a `.latency` value (an `AUTO_PIPELINE`
+  instance has one), and give new pipelined blocks one too.
 - **Read the critical path, don't guess.** Before changing a design for timing, read
   the failing path from the synthesis tool's log in the output directory.
 
@@ -243,9 +223,7 @@ Read [`docs/pypeline_TESTS.md`](docs/pypeline_TESTS.md) before selecting or chan
 tests, especially [Categories](docs/pypeline_TESTS.md#categories),
 [Running](docs/pypeline_TESTS.md#running) and, when adding coverage,
 [Adding a test](docs/pypeline_TESTS.md#adding-a-test). Keep detailed suite reference
-material there. The [test-suite review](docs/code_reviews/tests_review/TEST_REVIEW.md)
-identifies weaknesses and proposed improvements; verify the current registrations
-and runner when it points out differences from the reference.
+material there.
 
 ### Run the existing suite
 
@@ -270,20 +248,20 @@ python3 src/tests/pypeline_tests/run_all.py --category unit -t doc_links_test -j
 python3 src/tests/pypeline_tests/run_all.py --category known_issues -t NAME -j 1
 ```
 
-- **Use a category and an exact name for a single test.** Names can be reused
-  across categories; an unqualified `-t NAME` currently selects only one of those
-  registrations. Do not use numeric `-t` indices: the displayed `--list` order and
-  numeric selection order can differ. `--category CATEGORY --list` lists that
-  category, but `--list` currently returns before applying `-t` or `-k`, so it does
-  not preview those filters. These limitations are described in the
-  [selection review](docs/code_reviews/tests_review/TEST_REVIEW.md#4-fix-targeting-before-changing-coverage).
+- **Select a single test by category and exact name.** Names can be reused across
+  categories, and an unqualified `-t NAME` currently selects only one of those
+  registrations. Don't use numeric `-t` indices: the displayed `--list` order and
+  numeric selection order can differ. `--list` returns before applying `-t` or `-k`,
+  so it does not preview those filters.
+- **One `-t` and one `-k`.** Repeating either does not build a list; run an explicit
+  list as separate category/name invocations. Don't assume a name substring selects
+  every execution mode or dependency of a feature. The
+  [selection review](docs/code_reviews/tests_review/TEST_REVIEW.md#4-fix-targeting-before-changing-coverage)
+  describes these limitations.
 - **Run new or changed tests through the runner.** Directly executing a fixture
   bypasses category checks, including checking that a synthesis log names the
   expected tool. Use direct runs for diagnosis only, then verify through the
   registered invocation.
-- `run_all.py` accepts one `-t` and one `-k`; repeating either does not build a
-  list. For an explicit list, use separate category/name invocations. Do not assume
-  a name substring selects every execution mode or dependency of a feature.
 - The runner creates a fresh output root and prints each test's log path. Inspect
   those logs for failures. Choose `-j` to fit the machine and tools; some test
   wrappers launch their own parallel work. Keep timeouts enabled unless the
@@ -305,9 +283,6 @@ python3 src/tests/pypeline_tests/run_all.py --category known_issues -t NAME -j 1
   registered command and assertions; a category name alone does not establish its
   cost or coverage. An `elab` pass does not prove the VHDL compiles, and a native
   simulation pass does not prove hardware correctness.
-- Not every machine has every vendor tool. Inspect the summary for skips, timeouts
-  and missing-tool failures; none is a pass. Say which tests you couldn't run, and
-  why, along with the commands needed to complete that coverage.
 
 ### Write tests
 
@@ -354,31 +329,32 @@ python3 src/tests/pypeline_tests/run_all.py --category known_issues -t NAME -j 1
   results before the run that measures them finishes. Base recommendations on test
   results. Say whether a pass count comes from one complete run or from reruns of
   earlier failures.
-- **Compare like with like.** Gate a change against a baseline built from the same
-  commit and cache state, so unrelated commits can neither hide nor fake a difference.
+- **Tell your failures from existing ones.** Gate a change against a baseline built
+  from the same commit and cache state, so unrelated commits can neither hide nor
+  fake a difference. Before calling a failure a known issue or a regression, check
+  the relevant issue and reproducer and, when needed, the unchanged baseline: a
+  similar symptom alone is not enough. Report the evidence and the issue reference;
+  never hide a failure.
 - **Keep quality-of-results changes apart from efficiency changes.** If work to cut
   synthesis runs also changes placement or trim decisions, describe and verify each
   change on its own, and say which results support which.
-
-### Long runs
-
-- Run long builds (timing sweeps, hardware runs, big test runs) in the background
-  when there is relevant, necessary independent work to do safely. Otherwise, or
-  once that work is finished, use a blocking wait or completion notification.
-  Do not spend tokens repeatedly polling log files or process status. Let required
-  tests finish even when no other work remains; duration alone is not a reason to
-  stop them.
-- Consider building from a frozen copy of the compiler and design, so later edits
-  can't change a run in progress. The copy needs everything the repo ships
-  (`cache/`, data files), or tests fail for setup reasons.
+- **Report what you couldn't run.** Not every machine has every vendor tool. Skips,
+  timeouts and missing-tool failures are not passes. Say which tests you couldn't
+  run and why, along with the commands needed to complete that coverage.
 
 ## Documentation
 
 - **Every source change updates its docs.** Find and update every design document
-  that describes code you changed, along with review findings and recommendations
-  affected by the change. When you change CLI flags, configuration variables,
-  generated output paths or function names, grep all of `docs/` and `README.md`
-  and update every occurrence, including flag tables and artifact lists.
+  that describes code you changed. When you change CLI flags, configuration
+  variables, generated output paths or function names, grep all of `docs/` and
+  `README.md` and update every occurrence, including flag tables and artifact lists.
+- **Keep reviews current.** If verification shows that a review finding is resolved,
+  partly addressed or no longer accurate, or your change alters it, revise that
+  review section in place, together with its recommendations, any overview or
+  module-review summary of it, and the matching `*_DESIGN.md` sections. State what
+  remains to be done and the source or test evidence for the revised finding. Keep
+  historical measurements tied to their original source and conditions, and claim
+  only the checks you reran and the findings you revalidated.
 - **Reference, not a logbook.** Docs describe what the code does now, in the present
   tense. No dated entries, no "recently added" or "now supports", no session
   write-ups. `git log` is the change record. A reason worth keeping goes in the file's
@@ -403,7 +379,7 @@ python3 src/tests/pypeline_tests/run_all.py --category known_issues -t NAME -j 1
 - **Diagrams are generated.** Edit the Python source next to an image (for example
   `docs/images/dev_board.py`) and re-render it. Never hand-edit the SVG.
 
-## Issues, handoffs and reviews
+## Issues and handoffs
 
 ### Issues
 
@@ -424,7 +400,7 @@ python3 src/tests/pypeline_tests/run_all.py --category known_issues -t NAME -j 1
 ### Handoffs
 
 A handoff is a standalone Markdown note for another session or person to act on.
-It holds a reproducer, expected vs actual behavior, the suspected code location, a
+If possible it holds a reproducer, expected vs actual behavior, the suspected code location, a
 suggested fix and a regression test. It contains only the work being handed off: no
 list of follow-ups already tracked in issues or the inventory. Keep handoffs out of
 `docs/`, and tell the human where you put one.

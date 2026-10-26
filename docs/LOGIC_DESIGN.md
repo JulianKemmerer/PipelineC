@@ -218,7 +218,7 @@ Wire, instance and entity names follow conventions every stage parses back:
 `LEAF_NAME`, `GET_CONTAINER_INST` and `RECURSIVE_FIND_MAIN_FUNC_FROM_INST` take instance
 names apart. The sweep attributes timing paths by finding function names inside these
 strings, so a naming change can change sweep decisions (see
-[CONTRIBUTING.md](../CONTRIBUTING.md#implementation-and-code-hygiene)).
+[AGENTS.md](../AGENTS.md#names-caches-and-determinism)).
 
 Types are plain C type strings (`"uint32_t"`, `"uint32_t[4]"`, `"point_t"`, `"float"`) in
 `Logic.wire_to_c_type`. The `C_TYPE_IS_*` / `C_TYPES_ARE_*` predicates (including
