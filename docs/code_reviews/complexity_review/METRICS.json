@@ -1,0 +1,1441 @@
+{
+  "base_commit": "9eafa7d8",
+  "snapshot": "Working tree including pre-existing concurrent changes; individual file hashes identify measurements, not an atomic repository snapshot.",
+  "tools": {
+    "lizard": "1.24.2",
+    "radon": "6.0.1",
+    "pylint": "3.2.7",
+    "vulture": "2.14"
+  },
+  "files": [
+    {
+      "module": "AUTO_COMB_OPT",
+      "path": "src/AUTO_COMB_OPT.py",
+      "sha256": "d286bcd68072f28a98a084cae3b87b7fbc2399a74835af2d4c7afa45a52420cb",
+      "lines": 424,
+      "nloc": 365,
+      "functions": 9,
+      "functions_ccn_gt15": 3,
+      "functions_ccn_gt50": 1,
+      "max_ccn": 66,
+      "top_functions": [
+        {
+          "name": "_implementation_seeds",
+          "start": 104,
+          "end": 227,
+          "ccn": 66,
+          "nloc": 113
+        },
+        {
+          "name": "prepare",
+          "start": 230,
+          "end": 365,
+          "ccn": 43,
+          "nloc": 120
+        },
+        {
+          "name": "BUILD_FUNC",
+          "start": 368,
+          "end": 396,
+          "ccn": 16,
+          "nloc": 28
+        },
+        {
+          "name": "generate",
+          "start": 63,
+          "end": 94,
+          "ccn": 12,
+          "nloc": 30
+        },
+        {
+          "name": "DUMP_GENERATED_SOURCE",
+          "start": 399,
+          "end": 424,
+          "ccn": 10,
+          "nloc": 24
+        }
+      ]
+    },
+    {
+      "module": "AUTO",
+      "path": "src/AUTO.py",
+      "sha256": "2c13c4ed64dcc752f959953ad8ca2ef5a4b82d7532a1e2c65ad78061fd86e005",
+      "lines": 3458,
+      "nloc": 2365,
+      "functions": 115,
+      "functions_ccn_gt15": 17,
+      "functions_ccn_gt50": 1,
+      "max_ccn": 57,
+      "top_functions": [
+        {
+          "name": "_cleanup_once",
+          "start": 290,
+          "end": 478,
+          "ccn": 57,
+          "nloc": 174
+        },
+        {
+          "name": "PREPARE_CONSTANT_SPECIALIZATIONS",
+          "start": 576,
+          "end": 723,
+          "ccn": 40,
+          "nloc": 135
+        },
+        {
+          "name": "delay_implementation_seeds",
+          "start": 1102,
+          "end": 1173,
+          "ccn": 35,
+          "nloc": 69
+        },
+        {
+          "name": "_build_dag_level",
+          "start": 2633,
+          "end": 2857,
+          "ccn": 33,
+          "nloc": 159
+        },
+        {
+          "name": "DECODE_OP",
+          "start": 1822,
+          "end": 1945,
+          "ccn": 31,
+          "nloc": 83
+        }
+      ]
+    },
+    {
+      "module": "AUTO_FSM",
+      "path": "src/AUTO_FSM.py",
+      "sha256": "e5b4f71d80b7bb7354d1b87e029f030d53f5c55f9c1322254c81ae85e296068d",
+      "lines": 8080,
+      "nloc": 5977,
+      "functions": 190,
+      "functions_ccn_gt15": 26,
+      "functions_ccn_gt50": 4,
+      "max_ccn": 108,
+      "top_functions": [
+        {
+          "name": "generate",
+          "start": 6999,
+          "end": 7557,
+          "ccn": 108,
+          "nloc": 496
+        },
+        {
+          "name": "_BUILD_SCHEDULE",
+          "start": 3383,
+          "end": 3754,
+          "ccn": 75,
+          "nloc": 302
+        },
+        {
+          "name": "_SWEEP_MIN_AREA_SCHEDULE",
+          "start": 4238,
+          "end": 4672,
+          "ccn": 53,
+          "nloc": 226
+        },
+        {
+          "name": "DESCRIBE_SCHEDULE",
+          "start": 5171,
+          "end": 5322,
+          "ccn": 53,
+          "nloc": 136
+        },
+        {
+          "name": "SCHEDULE_DAG",
+          "start": 2048,
+          "end": 2265,
+          "ccn": 45,
+          "nloc": 141
+        }
+      ]
+    },
+    {
+      "module": "AUTO_MULTI_CYCLE",
+      "path": "src/AUTO_MULTI_CYCLE.py",
+      "sha256": "e34e71247b8e2a6e7743d0824bf7441fe549f2535ef1ede7f961a33c4c041fb0",
+      "lines": 672,
+      "nloc": 498,
+      "functions": 27,
+      "functions_ccn_gt15": 3,
+      "functions_ccn_gt50": 0,
+      "max_ccn": 23,
+      "top_functions": [
+        {
+          "name": "CHECK_MCP_TIMING_REPORT",
+          "start": 257,
+          "end": 308,
+          "ccn": 23,
+          "nloc": 45
+        },
+        {
+          "name": "AUTO_MULTI_CYCLE_GROUP_FOR_PATH_REPORT",
+          "start": 311,
+          "end": 354,
+          "ccn": 17,
+          "nloc": 39
+        },
+        {
+          "name": "REMEMBER_ISOLATED_REPORTS",
+          "start": 504,
+          "end": 542,
+          "ccn": 16,
+          "nloc": 37
+        },
+        {
+          "name": "SEED_COUNTS",
+          "start": 581,
+          "end": 629,
+          "ccn": 15,
+          "nloc": 44
+        },
+        {
+          "name": "PROPOSE_CONFIRM_DOWN",
+          "start": 632,
+          "end": 672,
+          "ccn": 13,
+          "nloc": 34
+        }
+      ]
+    },
+    {
+      "module": "AUTO_PIPELINE",
+      "path": "src/AUTO_PIPELINE.py",
+      "sha256": "b4f6de1218f8b7fbb2d60fa04c4a5b53f8950211d320bd21f85dd8942ebae24f",
+      "lines": 5174,
+      "nloc": 3768,
+      "functions": 131,
+      "functions_ccn_gt15": 19,
+      "functions_ccn_gt50": 2,
+      "max_ccn": 119,
+      "top_functions": [
+        {
+          "name": "GET_PIPELINE_MAP",
+          "start": 905,
+          "end": 1933,
+          "ccn": 119,
+          "nloc": 508
+        },
+        {
+          "name": "__init__",
+          "start": 4895,
+          "end": 5168,
+          "ccn": 79,
+          "nloc": 218
+        },
+        {
+          "name": "GET_PIPELINE_MAP.PIPELINE_DONE",
+          "start": 1274,
+          "end": 1379,
+          "ccn": 38,
+          "nloc": 92
+        },
+        {
+          "name": "write_png",
+          "start": 643,
+          "end": 886,
+          "ccn": 37,
+          "nloc": 156
+        },
+        {
+          "name": "_ENFORCE_ONE_AUTO_PIPELINE_REGION",
+          "start": 4464,
+          "end": 4580,
+          "ccn": 33,
+          "nloc": 113
+        }
+      ]
+    },
+    {
+      "module": "CC_TOOLS",
+      "path": "src/CC_TOOLS.py",
+      "sha256": "1028546fedf8530696d025121fbc44f061311597784b55c48d2903ed15eca9d6",
+      "lines": 207,
+      "nloc": 139,
+      "functions": 5,
+      "functions_ccn_gt15": 0,
+      "functions_ccn_gt50": 0,
+      "max_ccn": 5,
+      "top_functions": [
+        {
+          "name": "SYN_AND_REPORT_TIMING_NEW",
+          "start": 89,
+          "end": 207,
+          "ccn": 5,
+          "nloc": 79
+        },
+        {
+          "name": "__init__",
+          "start": 38,
+          "end": 54,
+          "ccn": 3,
+          "nloc": 14
+        },
+        {
+          "name": "__init__",
+          "start": 28,
+          "end": 34,
+          "ccn": 2,
+          "nloc": 7
+        },
+        {
+          "name": "SYN_AND_REPORT_TIMING",
+          "start": 58,
+          "end": 79,
+          "ccn": 1,
+          "nloc": 21
+        },
+        {
+          "name": "SYN_AND_REPORT_TIMING_MULTIMAIN",
+          "start": 83,
+          "end": 84,
+          "ccn": 1,
+          "nloc": 2
+        }
+      ]
+    },
+    {
+      "module": "COCOTB",
+      "path": "src/COCOTB.py",
+      "sha256": "086d2efea599842a4750847ad0f8d3e67b2efb0d3e9ed9b5631d1121815a9c0c",
+      "lines": 353,
+      "nloc": 133,
+      "functions": 3,
+      "functions_ccn_gt15": 1,
+      "functions_ccn_gt50": 0,
+      "max_ccn": 19,
+      "top_functions": [
+        {
+          "name": "DO_SIM",
+          "start": 60,
+          "end": 296,
+          "ccn": 19,
+          "nloc": 101
+        },
+        {
+          "name": "CHECK_COCOTB_RESULTS",
+          "start": 299,
+          "end": 353,
+          "ccn": 7,
+          "nloc": 28
+        },
+        {
+          "name": "GET_MAKEFILE_TEXT",
+          "start": 15,
+          "end": 57,
+          "ccn": 1,
+          "nloc": -3
+        }
+      ]
+    },
+    {
+      "module": "CXXRTL",
+      "path": "src/CXXRTL.py",
+      "sha256": "6acc2c7967b983c44abd529e881d4f8eca4cc52f5168eea8855b68a5cb67fcf7",
+      "lines": 133,
+      "nloc": 64,
+      "functions": 1,
+      "functions_ccn_gt15": 0,
+      "functions_ccn_gt50": 0,
+      "max_ccn": 9,
+      "top_functions": [
+        {
+          "name": "DO_SIM",
+          "start": 14,
+          "end": 133,
+          "ccn": 9,
+          "nloc": 58
+        }
+      ]
+    },
+    {
+      "module": "C_TO_FSM",
+      "path": "src/C_TO_FSM.py",
+      "sha256": "2cbd701ff9c4f705aba5aacea7f1327d1c8706c52490983f12b104f77e465f0d",
+      "lines": 2444,
+      "nloc": 1848,
+      "functions": 29,
+      "functions_ccn_gt15": 8,
+      "functions_ccn_gt50": 1,
+      "max_ccn": 56,
+      "top_functions": [
+        {
+          "name": "FSM_LOGIC_TO_C_CODE",
+          "start": 771,
+          "end": 1261,
+          "ccn": 56,
+          "nloc": 425
+        },
+        {
+          "name": "C_AST_FSM_FUNDEF_BODY_TO_LOGIC",
+          "start": 1994,
+          "end": 2204,
+          "ccn": 46,
+          "nloc": 138
+        },
+        {
+          "name": "STATE_GROUP_TO_C_CODE",
+          "start": 233,
+          "end": 768,
+          "ccn": 39,
+          "nloc": 479
+        },
+        {
+          "name": "GET_STATE_TRANS_LISTS",
+          "start": 1405,
+          "end": 1509,
+          "ccn": 22,
+          "nloc": 60
+        },
+        {
+          "name": "C_AST_NODE_TO_C_CODE",
+          "start": 21,
+          "end": 105,
+          "ccn": 18,
+          "nloc": 56
+        }
+      ]
+    },
+    {
+      "module": "DEVICE_MODELS",
+      "path": "src/DEVICE_MODELS.py",
+      "sha256": "ae4239587346785fa84d01a44256276a8c2673c080df42fbf0342bc4826763c6",
+      "lines": 1963,
+      "nloc": 1411,
+      "functions": 52,
+      "functions_ccn_gt15": 4,
+      "functions_ccn_gt50": 1,
+      "max_ccn": 65,
+      "top_functions": [
+        {
+          "name": "run_sta",
+          "start": 505,
+          "end": 807,
+          "ccn": 65,
+          "nloc": 280
+        },
+        {
+          "name": "__init__",
+          "start": 1356,
+          "end": 1452,
+          "ccn": 24,
+          "nloc": 86
+        },
+        {
+          "name": "SYN_AND_REPORT_TIMING_NEW",
+          "start": 1795,
+          "end": 1963,
+          "ccn": 22,
+          "nloc": 141
+        },
+        {
+          "name": "_run_synth_and_sta",
+          "start": 1559,
+          "end": 1764,
+          "ccn": 16,
+          "nloc": 177
+        },
+        {
+          "name": "_build_cell_graph",
+          "start": 465,
+          "end": 493,
+          "ccn": 14,
+          "nloc": 25
+        }
+      ]
+    },
+    {
+      "module": "DIAMOND",
+      "path": "src/DIAMOND.py",
+      "sha256": "229b2e143e253a81fb9d2543d7d64a0766707db51e4384522e82fd09d4050071",
+      "lines": 478,
+      "nloc": 311,
+      "functions": 12,
+      "functions_ccn_gt15": 1,
+      "functions_ccn_gt50": 0,
+      "max_ccn": 20,
+      "top_functions": [
+        {
+          "name": "init_synplify",
+          "start": 279,
+          "end": 372,
+          "ccn": 20,
+          "nloc": 68
+        },
+        {
+          "name": "SYN_AND_REPORT_TIMING_NEW",
+          "start": 65,
+          "end": 192,
+          "ccn": 11,
+          "nloc": 99
+        },
+        {
+          "name": "init_lse",
+          "start": 375,
+          "end": 466,
+          "ccn": 10,
+          "nloc": 37
+        },
+        {
+          "name": "init_synplify",
+          "start": 231,
+          "end": 257,
+          "ccn": 8,
+          "nloc": 23
+        },
+        {
+          "name": "init_lse",
+          "start": 203,
+          "end": 229,
+          "ccn": 7,
+          "nloc": 23
+        }
+      ]
+    },
+    {
+      "module": "EDAPLAY",
+      "path": "src/EDAPLAY.py",
+      "sha256": "d4fa664e85a913fb596422c4573fa0dd10362d5d4eb464705a3c8f65eb4d1a1c",
+      "lines": 25,
+      "nloc": 16,
+      "functions": 1,
+      "functions_ccn_gt15": 0,
+      "functions_ccn_gt50": 0,
+      "max_ccn": 3,
+      "top_functions": [
+        {
+          "name": "SETUP_EDAPLAY",
+          "start": 12,
+          "end": 25,
+          "ccn": 3,
+          "nloc": 12
+        }
+      ]
+    },
+    {
+      "module": "EFINITY",
+      "path": "src/EFINITY.py",
+      "sha256": "d40612cf13c7bd22e1ad4dc0894fd3397cf8b1a567f1ac1f031a6c689e980b5e",
+      "lines": 439,
+      "nloc": 330,
+      "functions": 7,
+      "functions_ccn_gt15": 0,
+      "functions_ccn_gt50": 0,
+      "max_ccn": 14,
+      "top_functions": [
+        {
+          "name": "__init__",
+          "start": 53,
+          "end": 109,
+          "ccn": 14,
+          "nloc": 50
+        },
+        {
+          "name": "__init__",
+          "start": 113,
+          "end": 170,
+          "ccn": 10,
+          "nloc": 41
+        },
+        {
+          "name": "SYN_AND_REPORT_TIMING_NEW",
+          "start": 205,
+          "end": 439,
+          "ccn": 8,
+          "nloc": 190
+        },
+        {
+          "name": "PART_TO_FAMILY_TIMING_MODEL",
+          "start": 25,
+          "end": 31,
+          "ccn": 3,
+          "nloc": 7
+        },
+        {
+          "name": "NODE_TO_ELEM",
+          "start": 35,
+          "end": 49,
+          "ccn": 1,
+          "nloc": 4
+        }
+      ]
+    },
+    {
+      "module": "GOWIN",
+      "path": "src/GOWIN.py",
+      "sha256": "cf6182591502c604e43b689c0216c1890603917f11bc4f517974df49604c1d4c",
+      "lines": 615,
+      "nloc": 511,
+      "functions": 9,
+      "functions_ccn_gt15": 0,
+      "functions_ccn_gt50": 0,
+      "max_ccn": 15,
+      "top_functions": [
+        {
+          "name": "SYN_AND_REPORT_TIMING_NEW",
+          "start": 464,
+          "end": 607,
+          "ccn": 15,
+          "nloc": 93
+        },
+        {
+          "name": "__init__",
+          "start": 31,
+          "end": 66,
+          "ccn": 9,
+          "nloc": 28
+        },
+        {
+          "name": "__init__",
+          "start": 70,
+          "end": 97,
+          "ccn": 8,
+          "nloc": 28
+        },
+        {
+          "name": "PART_TO_DEVICE_VERSIONS",
+          "start": 406,
+          "end": 428,
+          "ccn": 7,
+          "nloc": 19
+        },
+        {
+          "name": "PART_GRADE_TO_TOOL_GRADE",
+          "start": 398,
+          "end": 403,
+          "ccn": 5,
+          "nloc": 6
+        }
+      ]
+    },
+    {
+      "module": "LOGIC",
+      "path": "src/LOGIC.py",
+      "sha256": "8b5789ec4082e27df625d41a028780b448a349de834e89390075947dcd9fa5c7",
+      "lines": 3959,
+      "nloc": 2746,
+      "functions": 124,
+      "functions_ccn_gt15": 8,
+      "functions_ccn_gt50": 3,
+      "max_ccn": 82,
+      "top_functions": [
+        {
+          "name": "MERGE_COMB_LOGIC",
+          "start": 742,
+          "end": 1122,
+          "ccn": 82,
+          "nloc": 302
+        },
+        {
+          "name": "C_BUILT_IN_FUNC_IS_RAW_HDL",
+          "start": 1842,
+          "end": 2062,
+          "ccn": 69,
+          "nloc": 217
+        },
+        {
+          "name": "TRIM_COLLAPSE_FUNC_DEFS_RECURSIVE",
+          "start": 2945,
+          "end": 3283,
+          "ccn": 52,
+          "nloc": 219
+        },
+        {
+          "name": "INFER_CLOCK_DOMAINS",
+          "start": 3580,
+          "end": 3776,
+          "ccn": 49,
+          "nloc": 174
+        },
+        {
+          "name": "BUILD_C_BUILT_IN_SUBMODULE_FUNC_LOGIC",
+          "start": 2091,
+          "end": 2246,
+          "ccn": 20,
+          "nloc": 98
+        }
+      ]
+    },
+    {
+      "module": "MODELSIM",
+      "path": "src/MODELSIM.py",
+      "sha256": "db28ba7e0fd0615a74cfda8a295d5ab4b57da6bddfd202d9723ebdbc8e885e13",
+      "lines": 124,
+      "nloc": 89,
+      "functions": 1,
+      "functions_ccn_gt15": 0,
+      "functions_ccn_gt50": 0,
+      "max_ccn": 5,
+      "top_functions": [
+        {
+          "name": "DO_OPTIONAL_DEBUG",
+          "start": 28,
+          "end": 124,
+          "ccn": 5,
+          "nloc": 74
+        }
+      ]
+    },
+    {
+      "module": "OPEN_TOOLS",
+      "path": "src/OPEN_TOOLS.py",
+      "sha256": "e630c99a9f74449cfed592270f606eeaae59129efe9e12a21c82c5a0667eb32c",
+      "lines": 1831,
+      "nloc": 1365,
+      "functions": 27,
+      "functions_ccn_gt15": 4,
+      "functions_ccn_gt50": 0,
+      "max_ccn": 39,
+      "top_functions": [
+        {
+          "name": "GET_PRIMITIVE_MODULE_TEXT",
+          "start": 1068,
+          "end": 1831,
+          "ccn": 39,
+          "nloc": 673
+        },
+        {
+          "name": "SYN_AND_REPORT_TIMING_NEW",
+          "start": 666,
+          "end": 950,
+          "ccn": 31,
+          "nloc": 209
+        },
+        {
+          "name": "__init__",
+          "start": 440,
+          "end": 555,
+          "ccn": 27,
+          "nloc": 83
+        },
+        {
+          "name": "PART_TO_CMD_LINE_OPTS",
+          "start": 341,
+          "end": 424,
+          "ccn": 17,
+          "nloc": 48
+        },
+        {
+          "name": "__init__",
+          "start": 559,
+          "end": 598,
+          "ccn": 10,
+          "nloc": 31
+        }
+      ]
+    },
+    {
+      "module": "PYRTL",
+      "path": "src/PYRTL.py",
+      "sha256": "dbdc156684aca8259250ddd730559f0764e5cbd6c746fd504ed36a0c18093d07",
+      "lines": 335,
+      "nloc": 184,
+      "functions": 8,
+      "functions_ccn_gt15": 0,
+      "functions_ccn_gt50": 0,
+      "max_ccn": 12,
+      "top_functions": [
+        {
+          "name": "SYN_AND_REPORT_TIMING_NEW",
+          "start": 121,
+          "end": 325,
+          "ccn": 12,
+          "nloc": 104
+        },
+        {
+          "name": "_RAISE_IF_NO_TIMING_PATHS",
+          "start": 328,
+          "end": 335,
+          "ccn": 5,
+          "nloc": 8
+        },
+        {
+          "name": "IS_INSTALLED",
+          "start": 48,
+          "end": 57,
+          "ccn": 3,
+          "nloc": 10
+        },
+        {
+          "name": "__init__",
+          "start": 69,
+          "end": 86,
+          "ccn": 3,
+          "nloc": 13
+        },
+        {
+          "name": "NO_TIMING_PATHS_ERROR_TEXT",
+          "start": 38,
+          "end": 45,
+          "ccn": 1,
+          "nloc": 8
+        }
+      ]
+    },
+    {
+      "module": "PY_TO_LOGIC",
+      "path": "src/PY_TO_LOGIC.py",
+      "sha256": "6282da17b7b06d98562bfd9eacf6c4f179f19dd7e1485ba5b6e432f4487de73f",
+      "lines": 10151,
+      "nloc": 6905,
+      "functions": 271,
+      "functions_ccn_gt15": 30,
+      "functions_ccn_gt50": 3,
+      "max_ccn": 65,
+      "top_functions": [
+        {
+          "name": "_elab_assign",
+          "start": 2994,
+          "end": 3267,
+          "ccn": 65,
+          "nloc": 206
+        },
+        {
+          "name": "PARSE_FILE",
+          "start": 9133,
+          "end": 9554,
+          "ccn": 58,
+          "nloc": 236
+        },
+        {
+          "name": "_assign_clocks",
+          "start": 7785,
+          "end": 7976,
+          "ccn": 57,
+          "nloc": 127
+        },
+        {
+          "name": "_elab_call",
+          "start": 4998,
+          "end": 5241,
+          "ccn": 47,
+          "nloc": 150
+        },
+        {
+          "name": "_discover_global_wires",
+          "start": 7065,
+          "end": 7277,
+          "ccn": 47,
+          "nloc": 174
+        }
+      ]
+    },
+    {
+      "module": "QUARTUS",
+      "path": "src/QUARTUS.py",
+      "sha256": "3116095a343dbb841f591250a8203941f2c4df9b8626da94155e021af31b2f98",
+      "lines": 528,
+      "nloc": 362,
+      "functions": 10,
+      "functions_ccn_gt15": 0,
+      "functions_ccn_gt50": 0,
+      "max_ccn": 13,
+      "top_functions": [
+        {
+          "name": "__init__",
+          "start": 165,
+          "end": 253,
+          "ccn": 13,
+          "nloc": 57
+        },
+        {
+          "name": "SYN_AND_REPORT_TIMING_NEW",
+          "start": 289,
+          "end": 455,
+          "ccn": 8,
+          "nloc": 135
+        },
+        {
+          "name": "PART_TO_FAMILY",
+          "start": 29,
+          "end": 42,
+          "ccn": 6,
+          "nloc": 14
+        },
+        {
+          "name": "GET_PRIMITIVE_MODULE_TEXT",
+          "start": 51,
+          "end": 127,
+          "ccn": 5,
+          "nloc": 26
+        },
+        {
+          "name": "__init__",
+          "start": 148,
+          "end": 161,
+          "ccn": 4,
+          "nloc": 13
+        }
+      ]
+    },
+    {
+      "module": "RAW_VHDL",
+      "path": "src/RAW_VHDL.py",
+      "sha256": "2d4e062f40d1475289481b9c22397070bf217d30553c5d3af1b22037c69e4a0a",
+      "lines": 4997,
+      "nloc": 3929,
+      "functions": 57,
+      "functions_ccn_gt15": 3,
+      "functions_ccn_gt50": 0,
+      "max_ccn": 35,
+      "top_functions": [
+        {
+          "name": "GET_BITMANIP_C_ENTITY_WIRES_DECL_AND_PACKAGE_STAGES_TEXT",
+          "start": 4205,
+          "end": 4339,
+          "ccn": 35,
+          "nloc": 112
+        },
+        {
+          "name": "GET_MUX_C_BUILT_IN_C_ENTITY_WIRES_DECL_AND_PROCESS_STAGES_TEXT",
+          "start": 3996,
+          "end": 4157,
+          "ccn": 22,
+          "nloc": 138
+        },
+        {
+          "name": "GET_BIN_OP_C_BUILT_IN_C_ENTITY_WIRES_DECL_AND_PROCESS_STAGES_TEXT",
+          "start": 788,
+          "end": 870,
+          "ccn": 16,
+          "nloc": 83
+        },
+        {
+          "name": "GET_CONST_REF_RD_BUILT_IN_C_ENTITY_WIRES_DECL_AND_PROCESS_STAGES_TEXT",
+          "start": 966,
+          "end": 1120,
+          "ccn": 15,
+          "nloc": 96
+        },
+        {
+          "name": "GET_BITS_PER_STAGE_DICT",
+          "start": 2203,
+          "end": 2255,
+          "ccn": 12,
+          "nloc": 38
+        }
+      ]
+    },
+    {
+      "module": "SIM",
+      "path": "src/SIM.py",
+      "sha256": "d1c943ccc58f93379ad404a695d8e0b926bd64f0088d49c8aaa31ccce7dd8c2b",
+      "lines": 364,
+      "nloc": 262,
+      "functions": 11,
+      "functions_ccn_gt15": 2,
+      "functions_ccn_gt50": 0,
+      "max_ccn": 21,
+      "top_functions": [
+        {
+          "name": "_DO_OPTIONAL_SIM",
+          "start": 110,
+          "end": 207,
+          "ccn": 21,
+          "nloc": 78
+        },
+        {
+          "name": "CHECK_PIPELINED_NATIVE_SIM_SUPPORTED",
+          "start": 297,
+          "end": 364,
+          "ccn": 17,
+          "nloc": 51
+        },
+        {
+          "name": "SET_SIM_TOOL",
+          "start": 20,
+          "end": 36,
+          "ccn": 8,
+          "nloc": 14
+        },
+        {
+          "name": "GET_SIM_FILES",
+          "start": 210,
+          "end": 233,
+          "ccn": 8,
+          "nloc": 19
+        },
+        {
+          "name": "DO_OPTIONAL_SIM",
+          "start": 80,
+          "end": 107,
+          "ccn": 7,
+          "nloc": 25
+        }
+      ]
+    },
+    {
+      "module": "SWEEP",
+      "path": "src/SWEEP.py",
+      "sha256": "ab4832880159c43ec50eed70e6c665ce9da5255857b1b1e21ec9d8d3251dcf3a",
+      "lines": 9446,
+      "nloc": 7281,
+      "functions": 183,
+      "functions_ccn_gt15": 37,
+      "functions_ccn_gt50": 3,
+      "max_ccn": 339,
+      "top_functions": [
+        {
+          "name": "DO_PLANNED_THROUGHPUT_SWEEP",
+          "start": 6596,
+          "end": 8337,
+          "ccn": 339,
+          "nloc": 1471
+        },
+        {
+          "name": "RESOLVE_INTERNAL_PIPELINE_PLACEMENTS",
+          "start": 2545,
+          "end": 2801,
+          "ccn": 71,
+          "nloc": 245
+        },
+        {
+          "name": "finalize",
+          "start": 846,
+          "end": 1089,
+          "ccn": 60,
+          "nloc": 169
+        },
+        {
+          "name": "DO_THROUGHPUT_SWEEP",
+          "start": 8555,
+          "end": 8869,
+          "ccn": 50,
+          "nloc": 257
+        },
+        {
+          "name": "RECORD_SYNTHESIS_OBSERVATION",
+          "start": 9237,
+          "end": 9403,
+          "ccn": 47,
+          "nloc": 161
+        }
+      ]
+    },
+    {
+      "module": "SYN",
+      "path": "src/SYN.py",
+      "sha256": "bcecf84290d3fe66b0f4f26de0a49a9cebd44050b23584577918b9835dd50bba",
+      "lines": 3967,
+      "nloc": 2733,
+      "functions": 123,
+      "functions_ccn_gt15": 14,
+      "functions_ccn_gt50": 1,
+      "max_ccn": 60,
+      "top_functions": [
+        {
+          "name": "ADD_PATH_DELAY_TO_LOOKUP",
+          "start": 3189,
+          "end": 3512,
+          "ccn": 60,
+          "nloc": 235
+        },
+        {
+          "name": "WRITE_NAME_INDEX_LOG",
+          "start": 3701,
+          "end": 3838,
+          "ccn": 30,
+          "nloc": 104
+        },
+        {
+          "name": "LOGIC_IS_ZERO_DELAY",
+          "start": 1796,
+          "end": 1876,
+          "ccn": 28,
+          "nloc": 57
+        },
+        {
+          "name": "WRITE_CLK_CONSTRAINTS_FILE",
+          "start": 635,
+          "end": 760,
+          "ccn": 27,
+          "nloc": 104
+        },
+        {
+          "name": "CHECK_TOOL_INSTALLED",
+          "start": 303,
+          "end": 391,
+          "ccn": 26,
+          "nloc": 75
+        }
+      ]
+    },
+    {
+      "module": "VERILATOR",
+      "path": "src/VERILATOR.py",
+      "sha256": "79ebf7fc250c1ad2058ca4d8096f3ed136b8a0b5a90f28b09c76ae5d710e33aa",
+      "lines": 203,
+      "nloc": 125,
+      "functions": 2,
+      "functions_ccn_gt15": 1,
+      "functions_ccn_gt50": 0,
+      "max_ccn": 17,
+      "top_functions": [
+        {
+          "name": "DO_SIM",
+          "start": 28,
+          "end": 203,
+          "ccn": 17,
+          "nloc": 110
+        },
+        {
+          "name": "GET_VERILATOR_BIN_PATH",
+          "start": 19,
+          "end": 25,
+          "ccn": 3,
+          "nloc": 7
+        }
+      ]
+    },
+    {
+      "module": "VHDL",
+      "path": "src/VHDL.py",
+      "sha256": "daf0317fff1afdc8487d430ba6879a1c38c6cde31afd834202dcb77dd0a04957",
+      "lines": 7500,
+      "nloc": 6074,
+      "functions": 70,
+      "functions_ccn_gt15": 15,
+      "functions_ccn_gt50": 4,
+      "max_ccn": 203,
+      "top_functions": [
+        {
+          "name": "WRITE_MULTIMAIN_TOP",
+          "start": 417,
+          "end": 1815,
+          "ccn": 203,
+          "nloc": 1144
+        },
+        {
+          "name": "GET_PIPELINE_LOGIC_COMB_PROCESS_TEXT",
+          "start": 6617,
+          "end": 7186,
+          "ccn": 93,
+          "nloc": 468
+        },
+        {
+          "name": "GET_PIPELINE_ARCH_DECL_TEXT",
+          "start": 6195,
+          "end": 6612,
+          "ccn": 67,
+          "nloc": 351
+        },
+        {
+          "name": "WRITE_CLK_CROSS_ENTITIES",
+          "start": 2328,
+          "end": 3381,
+          "ccn": 64,
+          "nloc": 970
+        },
+        {
+          "name": "WRITE_GLOBAL_WIRES_VHDL_PACKAGE",
+          "start": 3396,
+          "end": 3667,
+          "ccn": 47,
+          "nloc": 224
+        }
+      ]
+    },
+    {
+      "module": "VIVADO",
+      "path": "src/VIVADO.py",
+      "sha256": "76b2e98f92f0bd91dfacaceda233ea47434dde780d2a2e313fbefcf0e72d2b05",
+      "lines": 1215,
+      "nloc": 821,
+      "functions": 17,
+      "functions_ccn_gt15": 4,
+      "functions_ccn_gt50": 0,
+      "max_ccn": 34,
+      "top_functions": [
+        {
+          "name": "__init__",
+          "start": 338,
+          "end": 496,
+          "ccn": 34,
+          "nloc": 123
+        },
+        {
+          "name": "__init__",
+          "start": 72,
+          "end": 227,
+          "ccn": 23,
+          "nloc": 94
+        },
+        {
+          "name": "PARSE_UTILIZATION",
+          "start": 248,
+          "end": 304,
+          "ccn": 19,
+          "nloc": 49
+        },
+        {
+          "name": "PARSE_EXTRA_PATHS",
+          "start": 1150,
+          "end": 1215,
+          "ccn": 17,
+          "nloc": 64
+        },
+        {
+          "name": "__init__",
+          "start": 316,
+          "end": 334,
+          "ccn": 14,
+          "nloc": 19
+        }
+      ]
+    },
+    {
+      "module": "pipelinec_driver",
+      "path": "src/pipelinec",
+      "sha256": "e3b581be15cefd78f9b1a9b2c876e6f48342803239a4b2dee3c56b46776c7a44",
+      "lines": 608,
+      "nloc": 510,
+      "functions": 0,
+      "functions_ccn_gt15": 0,
+      "functions_ccn_gt50": 0,
+      "max_ccn": 0,
+      "top_functions": []
+    },
+    {
+      "module": "pypeline",
+      "path": "src/pypeline.py",
+      "sha256": "631e521ce1ac0280804d03221e356b37f3f89c65cc6387ed81973864c352bdfa",
+      "lines": 11043,
+      "nloc": 6442,
+      "functions": 475,
+      "functions_ccn_gt15": 20,
+      "functions_ccn_gt50": 1,
+      "max_ccn": 89,
+      "top_functions": [
+        {
+          "name": "_build_reg_sim_func",
+          "start": 9752,
+          "end": 10249,
+          "ccn": 89,
+          "nloc": 323
+        },
+        {
+          "name": "_stable_key",
+          "start": 255,
+          "end": 396,
+          "ccn": 37,
+          "nloc": 119
+        },
+        {
+          "name": "_value_description",
+          "start": 489,
+          "end": 621,
+          "ccn": 36,
+          "nloc": 128
+        },
+        {
+          "name": "__init__",
+          "start": 3536,
+          "end": 3651,
+          "ccn": 32,
+          "nloc": 110
+        },
+        {
+          "name": "render",
+          "start": 428,
+          "end": 486,
+          "ccn": 26,
+          "nloc": 47
+        }
+      ]
+    },
+    {
+      "module": "pypeline_host",
+      "path": "src/pypeline_host.py",
+      "sha256": "a2a5645ab2f35f593e4d349b5e3a5803bc033ad30b9fe2e0b6e8e58954015dd6",
+      "lines": 682,
+      "nloc": 508,
+      "functions": 18,
+      "functions_ccn_gt15": 0,
+      "functions_ccn_gt50": 0,
+      "max_ccn": 12,
+      "top_functions": [
+        {
+          "name": "_value_literal",
+          "start": 226,
+          "end": 247,
+          "ccn": 12,
+          "nloc": 21
+        },
+        {
+          "name": "_byte_map",
+          "start": 525,
+          "end": 549,
+          "ccn": 10,
+          "nloc": 21
+        },
+        {
+          "name": "_emit_type",
+          "start": 552,
+          "end": 592,
+          "ccn": 10,
+          "nloc": 41
+        },
+        {
+          "name": "_value_literal_of",
+          "start": 250,
+          "end": 270,
+          "ccn": 8,
+          "nloc": 18
+        },
+        {
+          "name": "generate",
+          "start": 595,
+          "end": 660,
+          "ccn": 8,
+          "nloc": 59
+        }
+      ]
+    },
+    {
+      "module": "pypeline_sim",
+      "path": "src/pypeline_sim.py",
+      "sha256": "024db469c857ac37aabd72d05a4879c82cf771d51edff90e3fd205c788a130b2",
+      "lines": 627,
+      "nloc": 390,
+      "functions": 13,
+      "functions_ccn_gt15": 1,
+      "functions_ccn_gt50": 0,
+      "max_ccn": 40,
+      "top_functions": [
+        {
+          "name": "run_sim",
+          "start": 75,
+          "end": 324,
+          "ccn": 40,
+          "nloc": 178
+        },
+        {
+          "name": "_convergence_loop",
+          "start": 428,
+          "end": 466,
+          "ccn": 9,
+          "nloc": 28
+        },
+        {
+          "name": "_discover_wire_names._scan",
+          "start": 484,
+          "end": 502,
+          "ccn": 9,
+          "nloc": 19
+        },
+        {
+          "name": "_run_clock_cycle",
+          "start": 382,
+          "end": 425,
+          "ccn": 7,
+          "nloc": 22
+        },
+        {
+          "name": "_refuse_multi_clock",
+          "start": 327,
+          "end": 349,
+          "ccn": 5,
+          "nloc": 18
+        }
+      ]
+    },
+    {
+      "module": "pypeline_sim_debug",
+      "path": "src/pypeline_sim_debug.py",
+      "sha256": "c4b79d8d8b6a0f7551e30cdc9981f62b2b52031a7a7212baec08954c118ba0e5",
+      "lines": 302,
+      "nloc": 224,
+      "functions": 5,
+      "functions_ccn_gt15": 1,
+      "functions_ccn_gt50": 0,
+      "max_ccn": 32,
+      "top_functions": [
+        {
+          "name": "main",
+          "start": 106,
+          "end": 298,
+          "ccn": 32,
+          "nloc": 162
+        },
+        {
+          "name": "_print_context",
+          "start": 86,
+          "end": 103,
+          "ccn": 6,
+          "nloc": 18
+        },
+        {
+          "name": "_cycles_of_debug_lines",
+          "start": 64,
+          "end": 76,
+          "ccn": 5,
+          "nloc": 12
+        },
+        {
+          "name": "_run_pypelinec",
+          "start": 49,
+          "end": 61,
+          "ccn": 3,
+          "nloc": 13
+        },
+        {
+          "name": "_find_c_file",
+          "start": 79,
+          "end": 83,
+          "ccn": 3,
+          "nloc": 5
+        }
+      ]
+    },
+    {
+      "module": "utilities",
+      "path": "src/utilities.py",
+      "sha256": "e5491dfa9b4dbc18f10271614f96f0de1045c2c5150b9008b3ef908cf0a7b9cf",
+      "lines": 150,
+      "nloc": 98,
+      "functions": 10,
+      "functions_ccn_gt15": 0,
+      "functions_ccn_gt50": 0,
+      "max_ccn": 9,
+      "top_functions": [
+        {
+          "name": "GET_VERSION_STR",
+          "start": 71,
+          "end": 102,
+          "ccn": 9,
+          "nloc": 25
+        },
+        {
+          "name": "_GIT",
+          "start": 51,
+          "end": 65,
+          "ccn": 3,
+          "nloc": 15
+        },
+        {
+          "name": "GET_TOOL_PATH",
+          "start": 15,
+          "end": 19,
+          "ccn": 2,
+          "nloc": 5
+        },
+        {
+          "name": "REPO_ABS_DIR",
+          "start": 31,
+          "end": 38,
+          "ccn": 2,
+          "nloc": 8
+        },
+        {
+          "name": "DISPLAY_SOURCE",
+          "start": 41,
+          "end": 48,
+          "ccn": 2,
+          "nloc": 5
+        }
+      ]
+    }
+  ]
+}
