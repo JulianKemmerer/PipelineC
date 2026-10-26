@@ -1,8 +1,13 @@
 # AGENTS.md
 
-Instructions for AI coding agents, and the people directing them, working in the
-PypelineC repository. Read all of it before your first edit. The design documents in
-[`docs/`](docs/) are the architectural record; this file covers how to work in the repo.
+Instructions for LLM/AI coding agents working in the PypelineC repository. Human
+contributors are not required to read this file.
+
+**Read [CONTRIBUTING.md's "When making changes" section](CONTRIBUTING.md#when-making-changes)
+first, then read this entire file before your first edit.** That section contains
+the shared expectations for humans and agents; this file adds detailed agent
+instructions. Follow both. The design documents in [`docs/`](docs/) are the
+architectural record.
 
 ## What is here
 
@@ -31,7 +36,9 @@ Other top-level places:
 - `src/tests/pypeline_tests/`: the test suite ([`docs/pypeline_TESTS.md`](docs/pypeline_TESTS.md)).
 - `docs/`: user docs ([`docs/README.md`](docs/README.md),
   [`docs/pypeline_guide.md`](docs/pypeline_guide.md)), one `*_DESIGN.md` per main
-  module, and the [open issues inventory](docs/issues_inventory.md).
+  module, the [priority-ranked issues inventory](docs/issues_inventory.md), the
+  [compiler complexity review](docs/code_reviews/complexity_review/REVIEW_COMPLEXITY.md)
+  and the [test-suite review and recommendations](docs/code_reviews/tests_review/TEST_REVIEW.md).
 
 Common commands (run from the repo root; put `--out_dir` outside the repo):
 
@@ -40,10 +47,9 @@ Common commands (run from the repo root; put `--out_dir` outside the repo):
 ./src/pypelinec tb.py --sim --comb --run all                 # native Python simulation
 ./src/pypelinec tb.py --sim --comb --cocotb --ghdl --run all # generated VHDL through cocotb + GHDL
 ./src/pipelinec design.c --comb --no_synth --out_dir OUT     # legacy C front end
-python3 src/tests/pypeline_tests/run_all.py --list           # numbered test list
-python3 src/tests/pypeline_tests/run_all.py -t NAME          # one test, with its category's tool check
-python3 src/tests/pypeline_tests/run_all.py --category elab --category unit -j 4
 ```
+
+For test-runner commands and selection caveats, see [Testing](#testing).
 
 ## Ground rules
 
@@ -72,10 +78,58 @@ python3 src/tests/pypeline_tests/run_all.py --category elab --category unit -j 4
   `match`, `X | Y` annotations evaluated at runtime, parenthesized context managers.
   Scripts that edit source by `ast` offsets must check the text at each offset,
   because 3.8 reports wrong column offsets inside f-strings.
-- **Keep working during long runs.** While a long build or test run goes, do
-  independent work that doesn't touch the files it imports.
+- **Continue relevant work, or wait.** While a build or test runs, continue only
+  relevant, necessary work that can be done safely without affecting the run.
+  When none remains, use a blocking wait or completion notification as described
+  in [Long runs](#long-runs). Do not invent extra work just to stay active.
 
 ## Before you change code
+
+### Check known issues and code reviews
+
+- **Check existing problems before planning or editing.** Read the
+  [priority-ranked issues inventory](docs/issues_inventory.md). It orders known
+  bugs and limitations by seriousness and adds reproduction steps, code pointers
+  and workarounds to the GitHub issue records. Search it for the affected features
+  and modules, and consult the relevant linked issue threads. Account for known
+  failure modes, limitations and workarounds in the implementation and test plan.
+  This check applies to ordinary feature and cleanup work too, not just bug fixes.
+- **Read relevant review notes before extending existing code.** The
+  [compiler complexity review](docs/code_reviews/complexity_review/REVIEW_COMPLEXITY.md)
+  and [test-suite review and recommendations](docs/code_reviews/tests_review/TEST_REVIEW.md)
+  serve two purposes: finding broader architectural improvements to work on, and
+  identifying problems to avoid making worse in everyday contributions. For compiler
+  changes, read the complexity overview and the affected modules' reviews linked
+  from it. When adding or changing tests, read the test-suite review and consult
+  its linked inventory for the affected tests.
+- **Do not perpetuate the patterns the reviews identify.** Look for existing
+  shared mechanisms before adding duplicate logic, keep responsibilities in their
+  owning modules, and avoid adding overlapping test builds or unrelated scenarios
+  to an already unwieldy test file. Check the specific review's recommendations
+  when choosing an implementation; nearby code is not automatically a good model.
+- **Verify review findings against the current tree.** Reviews describe particular
+  source snapshots and include proposals. They are not proof that a bug remains
+  unfixed or that a proposed API, runner flag or directory layout exists. Use
+  current source and the relevant design/test reference to resolve discrepancies.
+- **Update review sections when the code's condition changes.** If verification
+  shows that a finding is resolved, partly addressed or no longer accurate, or
+  your own changes alter it, revise the affected review section in place. Update
+  its recommendations and any corresponding overview or module-review summaries
+  so they agree. State what remains to be done and the source or test evidence
+  supporting the revised finding. Keep historical measurements tied to their
+  original source and conditions; claim only the checks you actually reran and
+  the findings you revalidated. Update the relevant `*_DESIGN.md`
+  sections alongside these review updates.
+- **Keep the response proportional to the task.** A local fix does not require
+  implementing an entire architectural recommendation. Prefer a focused change
+  that avoids adding to the identified problem. If the change must extend a
+  flagged pattern, explain the tradeoff and identify the remaining cleanup in the
+  handoff or final report.
+- **Establish whether failures predate the change.** Consult the relevant issue
+  and reproducer, and compare against an unchanged baseline when needed. A similar
+  symptom alone does not establish that a failure is a known issue. Report the
+  evidence and issue reference; do not hide a failure or call it a regression
+  without checking.
 
 ### Find where the change belongs
 
@@ -210,8 +264,55 @@ python3 src/tests/pypeline_tests/run_all.py --category elab --category unit -j 4
 
 ## Testing
 
-[`docs/pypeline_TESTS.md`](docs/pypeline_TESTS.md) describes the categories, file
-layout and runner options. The essentials:
+Read [`docs/pypeline_TESTS.md`](docs/pypeline_TESTS.md) before selecting or changing
+tests, especially [Categories](docs/pypeline_TESTS.md#categories),
+[Running](docs/pypeline_TESTS.md#running) and, when adding coverage,
+[Adding a test](docs/pypeline_TESTS.md#adding-a-test). Keep detailed suite reference
+material there. The [test-suite review](docs/code_reviews/tests_review/TEST_REVIEW.md)
+identifies weaknesses and proposed improvements; verify the current registrations
+and runner when it points out differences from the reference.
+
+### Run the existing suite
+
+Run from the repo root. Replace `CATEGORY`, `NAME` and `SUBSTRING` with the category
+and registered test names you intend to exercise:
+
+```sh
+# Discover registered names in a category without running them.
+python3 src/tests/pypeline_tests/run_all.py --category unit --list
+
+# Run one registered test with its category's checks.
+python3 src/tests/pypeline_tests/run_all.py --category CATEGORY -t NAME -j 1
+
+# Run matching names within one category, or several relevant categories.
+python3 src/tests/pypeline_tests/run_all.py --category CATEGORY -k SUBSTRING -j 2
+python3 src/tests/pypeline_tests/run_all.py --category elab --category unit -j 4
+
+# Documentation changes: check repository links and documentation conventions.
+python3 src/tests/pypeline_tests/run_all.py --category unit -t doc_links_test -j 1
+
+# Known-issue reproducers are opt-in, including when selecting one by name.
+python3 src/tests/pypeline_tests/run_all.py --category known_issues -t NAME -j 1
+```
+
+- **Use a category and an exact name for a single test.** Names can be reused
+  across categories; an unqualified `-t NAME` currently selects only one of those
+  registrations. Do not use numeric `-t` indices: the displayed `--list` order and
+  numeric selection order can differ. `--category CATEGORY --list` lists that
+  category, but `--list` currently returns before applying `-t` or `-k`, so it does
+  not preview those filters. These limitations are described in the
+  [selection review](docs/code_reviews/tests_review/TEST_REVIEW.md#4-fix-targeting-before-changing-coverage).
+- **Run new or changed tests through the runner.** Directly executing a fixture
+  bypasses category checks, including checking that a synthesis log names the
+  expected tool. Use direct runs for diagnosis only, then verify through the
+  registered invocation.
+- `run_all.py` accepts one `-t` and one `-k`; repeating either does not build a
+  list. For an explicit list, use separate category/name invocations. Do not assume
+  a name substring selects every execution mode or dependency of a feature.
+- The runner creates a fresh output root and prints each test's log path. Inspect
+  those logs for failures. Choose `-j` to fit the machine and tools; some test
+  wrappers launch their own parallel work. Keep timeouts enabled unless the
+  selected workload calls for an explicit override.
 
 ### Choose what to run
 
@@ -222,41 +323,59 @@ layout and runner options. The essentials:
   compiler or backend changes. A change to shared planner or sweep policy (behavior
   that applies to every design of a kind) also needs that policy's broader categories.
 - **The per-tool sweep matrix** (`-k sweep_float32`) only needs the backends whose code
-  or shared timing parsing the change touched.
+  or shared timing parsing the change touched. Restrict it with the corresponding
+  `--category synth_<tool>` selections.
 - **Don't wait on long DSP testbenches** (`pdw_tb` and similar) once everything
-  relevant has passed. Kill them.
-- **Run new or changed tests through `run_all.py -t NAME`**, not directly. Run
-  directly, a test skips its category's tool check, which fails a test whose log shows
-  a synthesis tool other than the one its category names.
-- `run_all.py` takes one `-t` and one `-k`. To run an explicit list, write a small
-  wrapper over `common.run_tests`.
-- Not every machine has every vendor tool. Say which tests you couldn't run, and why.
+  relevant has passed, if they are unrelated to the change. Avoid selecting them;
+  if already launched, stop only your own unrelated runs and report them as
+  incomplete. Complete the integration checks the affected behavior needs.
+- **Match the test's execution mode to the claim.** Native simulation, elaboration,
+  generated-HDL simulation and synthesis establish different things. Check the
+  registered command and assertions; a category name alone does not establish its
+  cost or coverage. An `elab` pass does not prove the VHDL compiles, and a native
+  simulation pass does not prove hardware correctness.
+- Not every machine has every vendor tool. Inspect the summary for skips, timeouts
+  and missing-tool failures; none is a pass. Say which tests you couldn't run, and
+  why, along with the commands needed to complete that coverage.
 
 ### Write tests
 
-- **Pick the test by the bug's failure mode.** If the bug makes a tool fail loudly
-  (GHDL or synthesis rejects the VHDL), the test is a plain design file registered in
-  `synth_tests.py` or `elab_tests.py`, with no custom assertions. If the bug is silent
-  (wrong logic, no error), call `PY_TO_LOGIC.PARSE_FILE` in-process and inspect the
-  compiler's state directly. Don't copy the nearest-looking test's plumbing.
+- **Pick the test by the bug's failure mode.** An elaboration failure can use a
+  plain design registered in `elab_tests.py`. A GHDL or synthesis rejection needs
+  an invocation that actually runs that tool. Silent bugs need assertions on the
+  affected behavior: inspect `PY_TO_LOGIC.PARSE_FILE` state for structural contracts,
+  or check generated hardware behavior through the appropriate HDL simulation.
+  Don't copy the nearest-looking test's plumbing without checking what it proves.
 - **Prove the test catches the bug.** Revert the fix by hand, confirm the test fails,
   then restore it. A test that passes either way tests nothing; the exact construction
   often decides whether the buggy path is reached.
-- **Prefer a `test_*` function in an existing file** over a new file: each
-  registration pays its own elaboration, synthesis or GHDL start-up cost.
+- **Reuse a related test file when its execution mode and setup fit.** Each
+  registration can pay its own elaboration, synthesis or GHDL start-up cost, but
+  combining unrelated cases or cheap assertions with expensive integration builds
+  makes focused testing harder. Follow the test review's guidance on preserving
+  coverage while sharing setup; do not merge or delete tests merely to reduce file
+  counts. When adding a `test_*` function, verify that the registered invocation
+  runs it: importing a design through `pypelinec` skips its `__main__` test harness.
 - **Layout in `inst/`:** `*_test.py` files are registered tests (`registration_audit_test`
-  enforces that every one is registered), `*_design.py` files are fixtures. Put
-  regression tests and known-issue reproducers there as standalone files, and register
-  each one in the right runner module with a comment saying what it checks.
+  enforces that every one is registered), `*_design.py` files are fixtures. Keep
+  regression cases and known-issue reproducers in these files rather than inlining
+  them into category drivers. Register each new test file in the right runner
+  module with a comment saying what it checks; a new case in an existing file
+  should use that file's existing registration when it exercises the case.
 - **Synthesizing tests use `device_models` (sky130) by default**, one tool per test.
   Use Vivado only for Vivado-specific behavior, on a part with a committed cache. See
   [Choosing a synthesis tool](docs/pypeline_TESTS.md#choosing-a-synthesis-tool).
 - **One behavior per test.** Name each test function after the behavior it checks,
   and split a test that checks several. Keep header comments and registration
   docstrings in step with the real build counts, scenarios and run times.
-- **Known issues:** reproducers of unfixed bugs go in `known_issues_tests.py` with
-  `expect_fail=True`. The category is excluded from the default run. An XPASS means
-  the bug got fixed: promote the test out of that category.
+- **Known issues:** register unfixed-bug reproducers in `known_issues_tests.py`.
+  Use `expect_fail=True` when the underlying command fails while the bug is present;
+  an XFAIL records that failure, not correct behavior. If exit status cannot capture
+  the bug, use explicit assertions and document the verdict semantics. The category
+  is excluded from the default run. Investigate an XPASS and, once the fix is
+  verified, promote the reproducer to the appropriate normal regression category
+  and update the issue inventory. Do not count an unrelated setup failure as proof
+  that a known bug reproduced.
 - **The PDW project has one test in `run_all.py`:** `pdw_tb`, with no timeout.
   Don't register PDW component tests. DSP library tests are fine.
 
@@ -274,8 +393,12 @@ layout and runner options. The essentials:
 
 ### Long runs
 
-- Run long builds (timing sweeps, hardware runs, big test runs) in the background and
-  wait for their completion notice. Don't poll in a loop.
+- Run long builds (timing sweeps, hardware runs, big test runs) in the background
+  when there is relevant, necessary independent work to do safely. Otherwise, or
+  once that work is finished, use a blocking wait or completion notification.
+  Do not spend tokens repeatedly polling log files or process status. Let required
+  tests finish even when no other work remains; duration alone is not a reason to
+  stop them.
 - Consider building from a frozen copy of the compiler and design, so later edits
   can't change a run in progress. The copy needs everything the repo ships
   (`cache/`, data files), or tests fail for setup reasons.
@@ -283,15 +406,17 @@ layout and runner options. The essentials:
   (`SIGSTOP`) a runner with tests in flight: a runner started from a background shell
   dies with its tests when its wrapper exits. To change parallelism, start a second
   runner on the tests not yet started.
-- Wait on a process with a `/proc/PID/stat` state check that treats `Z` (zombie) as
-  finished. `kill -0` succeeds on a zombie.
+- If a wait helper must check `/proc/PID/stat`, treat `Z` (zombie) as finished;
+  `kill -0` succeeds on a zombie. Keep any necessary polling inside the helper,
+  rather than issuing repeated agent tool calls to check process state.
 
 ## Documentation
 
 - **Every source change updates its docs.** Find and update every design document
-  that describes code you changed. When you change CLI flags, configuration
-  variables, generated output paths or function names, grep all of `docs/` and
-  `README.md` and update every occurrence, including flag tables and artifact lists.
+  that describes code you changed, along with review findings and recommendations
+  affected by the change. When you change CLI flags, configuration variables,
+  generated output paths or function names, grep all of `docs/` and `README.md`
+  and update every occurrence, including flag tables and artifact lists.
 - **Reference, not a logbook.** Docs describe what the code does now, in the present
   tense. No dated entries, no "recently added" or "now supports", no session
   write-ups. `git log` is the change record. A reason worth keeping goes in the file's
@@ -329,9 +454,11 @@ layout and runner options. The essentials:
   Pypeline already solves with a comment saying so. Open-ended discussions stay open.
 - **When you find a bug to address later,** draft a GitHub issue: a title, a
   description of what happens with a minimal reproducing snippet, the observed effect
-  and any workaround. Add an entry to [`docs/issues_inventory.md`](docs/issues_inventory.md)
-  at its rank and a reproducer to `known_issues_tests.py`. The issue number can stay
-  TBD until the issue exists.
+  and any workaround. First check for an existing issue and reproducer; extend the
+  existing record when it is the same bug. Otherwise add an entry to
+  [`docs/issues_inventory.md`](docs/issues_inventory.md) at its rank and register a
+  reproducer in `known_issues_tests.py`. The issue number can stay TBD until the
+  issue exists.
 
 ### Handoffs
 
