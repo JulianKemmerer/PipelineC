@@ -1,17 +1,15 @@
 # AGENTS.md
 
-Instructions for LLM/AI coding agents working in the PypelineC repository. Human
-contributors are not required to read this file.
+Instructions for LLM coding agents working in the PypelineC repository.
 
 **Read [CONTRIBUTING.md's "When making changes" section](CONTRIBUTING.md#when-making-changes)
-first, then read this entire file before your first edit.** That section contains
-the shared expectations for humans and agents; this file adds detailed agent
+first, then read this entire file before planning your edits.** This file adds detailed agent
 instructions. Follow both. The design documents in [`docs/`](docs/) are the
 architectural record.
 
 ## What is here
 
-PypelineC is a hardware description language with automatic pipelining. It has two
+PypelineC is a hardware description language. It has two
 front ends that build the same `Logic` objects (`src/LOGIC.py`):
 
 - **Pypeline** (Python, current): `src/PY_TO_LOGIC.py` elaborates designs written with
@@ -53,29 +51,15 @@ For test-runner commands and selection caveats, see [Testing](#testing).
 
 ## Ground rules
 
-- **No commits.** Never run `git commit` or any git command that writes the index:
-  `add`, `mv`, `rm`, `stash`, `worktree`. Use plain `mv`, `rm` and edits. Read-only
-  git (`status`, `diff`, `log`, `ls-files`) is fine. End multi-file work with one
-  `git add ...` line for the human to run. List every new and modified path, plus the
-  old paths of removed or renamed files so the deletions get staged too. For a
-  "before" reference, copy the clean tree outside the repo.
 - **Scratch goes outside the repo.** Build output, harness scripts, A/B copies and
   handoff notes do not belong in the tree.
 - **Don't edit sources while your own build runs.** Pipelining passes re-run the
   design in-process and re-read function source from disk (`inspect.getsource`).
   An edit shifts line numbers under live function objects, and a later pass reads the
-  wrong source block. Batch all edits, then launch builds. While they run, only read,
-  or write outside the repo. If a build that overlapped edits fails strangely, rerun
-  it clean before debugging anything.
+  wrong source block. Batch edits outside of tests or simply work from copies of the repo.
 - **One `pypelinec` process per output directory.** To reuse a warm build in
   parallel runs, copy the whole directory. Don't add locking so processes can share one.
-- **Other sessions may be editing too.** Re-read shared files (test registrations,
-  docs) right before a targeted edit. If a file already carries someone else's
-  changes, point the human to `git add -p` for it.
-- **Never message other agent sessions** unless told to. A "note to another session"
-  means a handoff file (see [Handoffs](#handoffs)).
-- **Python 3.8.** The package supports Python 3.8, so don't use newer syntax:
-  `match`, `X | Y` annotations evaluated at runtime, parenthesized context managers.
+- **Python 3.8.** Python 3.8 is supported, so don't use newer syntax for now.
   Scripts that edit source by `ast` offsets must check the text at each offset,
   because 3.8 reports wrong column offsets inside f-strings.
 - **Continue relevant work, or wait.** While a build or test runs, continue only
@@ -146,13 +130,11 @@ For test-runner commands and selection caveats, see [Testing](#testing).
   doc text, move the doc text to that module's doc.
 - Check import constraints before placing code. Native simulation
   (`pypeline_sim.py`) never imports `PY_TO_LOGIC`, so code it runs can't live there.
-- The C front end (`C_TO_LOGIC.py`, `C_TO_FSM.py`) is intentionally undocumented.
+- The C front end (`C_TO_LOGIC.py`, `C_TO_FSM.py`) is intentionally undocumented for now.
   Don't plan design docs for it.
 
 ### Layering rules
 
-- **AUTO_PIPELINE decides, VHDL renders.** Planning code doesn't write VHDL text, and
-  rendering code doesn't make planning decisions.
 - **The driver stays thin.** `src/pipelinec` holds argparse, run settings and a
   top-level sequence of named calls. It defines no functions and no loops. A step
   with logic of its own is a function in the module whose feature it serves
@@ -188,11 +170,6 @@ For test-runner commands and selection caveats, see [Testing](#testing).
 - **Declared state:** declare results stored on `ParserState`, or on any other shared
   object, in its `__init__` with a one-line comment. Don't compute such state lazily on
   first use or branch on `hasattr`: behavior then depends on call order.
-- **No sentinel values in tuned numbers:** don't signal a mode with a special value of
-  a number that other code scales or nudges. For example, no later multiplication can
-  move a `0.0` multiplier off zero. Use an explicit flag.
-- **One-time guards:** when adding a new reason to run a step that is guarded to run
-  once (a measurement fallback, say), check whether the guard blocks the new reason.
 - **Retire what you replace:** when new logic replaces a rule, delete the code that
   can no longer run. Search `src/` and `docs/` for the old function and rule names and
   fix every comment and doc that cites them, in other modules too. Re-read the
@@ -256,9 +233,7 @@ For test-runner commands and selection caveats, see [Testing](#testing).
 - **Ternary branches must have identical types.** A bare integer literal gets its
   minimum width, so `CONST if c else x16` fails when `CONST = 1`. Bind the constant to
   a typed local first (`k: uint16_t = CONST`).
-- **Publish latency as `.latency`.** Expose every pipeline register's depth through a
-  `.latency` attribute and compute alignment, testbench delays and golden models from
-  it. Never hardcode a latency that timing work might change.
+- **Never hardcode a latency.** Use/create `.latency` values from things like `AUTO_PIPELINE` instead.
 - **Read the critical path, don't guess.** Before changing a design for timing, read
   the failing path from the synthesis tool's log in the output directory.
 
@@ -325,10 +300,6 @@ python3 src/tests/pypeline_tests/run_all.py --category known_issues -t NAME -j 1
 - **The per-tool sweep matrix** (`-k sweep_float32`) only needs the backends whose code
   or shared timing parsing the change touched. Restrict it with the corresponding
   `--category synth_<tool>` selections.
-- **Don't wait on long DSP testbenches** (`pdw_tb` and similar) once everything
-  relevant has passed, if they are unrelated to the change. Avoid selecting them;
-  if already launched, stop only your own unrelated runs and report them as
-  incomplete. Complete the integration checks the affected behavior needs.
 - **Match the test's execution mode to the claim.** Native simulation, elaboration,
   generated-HDL simulation and synthesis establish different things. Check the
   registered command and assertions; a category name alone does not establish its
@@ -376,8 +347,6 @@ python3 src/tests/pypeline_tests/run_all.py --category known_issues -t NAME -j 1
   verified, promote the reproducer to the appropriate normal regression category
   and update the issue inventory. Do not count an unrelated setup failure as proof
   that a known bug reproduced.
-- **The PDW project has one test in `run_all.py`:** `pdw_tb`, with no timeout.
-  Don't register PDW component tests. DSP library tests are fine.
 
 ### Report results honestly
 
@@ -402,13 +371,6 @@ python3 src/tests/pypeline_tests/run_all.py --category known_issues -t NAME -j 1
 - Consider building from a frozen copy of the compiler and design, so later edits
   can't change a run in progress. The copy needs everything the repo ships
   (`cache/`, data files), or tests fail for setup reasons.
-- Launch long test runners detached (`setsid`, with their own log file). Never pause
-  (`SIGSTOP`) a runner with tests in flight: a runner started from a background shell
-  dies with its tests when its wrapper exits. To change parallelism, start a second
-  runner on the tests not yet started.
-- If a wait helper must check `/proc/PID/stat`, treat `Z` (zombie) as finished;
-  `kill -0` succeeds on a zombie. Keep any necessary polling inside the helper,
-  rather than issuing repeated agent tool calls to check process state.
 
 ## Documentation
 
@@ -438,7 +400,6 @@ python3 src/tests/pypeline_tests/run_all.py --category known_issues -t NAME -j 1
 - **No machine-local absolute paths** in docs or issue text. Read every link you
   add: a malformed link (a space in the URL, say) isn't parsed as a link at all, so
   the link test passes it silently.
-- **Output shown in docs comes from real runs.**
 - **Diagrams are generated.** Edit the Python source next to an image (for example
   `docs/images/dev_board.py`) and re-render it. Never hand-edit the SVG.
 
@@ -467,26 +428,3 @@ It holds a reproducer, expected vs actual behavior, the suspected code location,
 suggested fix and a regression test. It contains only the work being handed off: no
 list of follow-ups already tracked in issues or the inventory. Keep handoffs out of
 `docs/`, and tell the human where you put one.
-
-### Reviews
-
-A synthesis backend that doesn't report measured area is not a review finding; most
-tools aren't expected to measure area. Gaps in timing parsing still count.
-
-## Projects built on PipelineC
-
-Downstream projects such as `wireguard-fpga` live in their own repositories, owned by
-their own sessions.
-
-- Don't edit them from a PipelineC session. If a compiler change needs a change
-  there, write a handoff with `file:line` and the exact edit.
-- Reading their sources and building them is fine. Put `--out_dir` outside their
-  tree, and check their `git status` before and after to show nothing changed.
-- WireGuard verification is three configurations (encrypt, decrypt, and shared with
-  both resources shared), each with the native random testbench and the fixed-vector
-  `syn_tb`. Skip the legacy Poly1305, partial-sharing and stress variants unless the
-  change targets them.
-- Before handing off a structural WireGuard change, run its default hardware sweep and
-  compare pipeline depths, multi-cycle path counts, device fit and timing with the
-  recorded reference. Native simulation can't check any of those. Report only the
-  hardware results you observed.
