@@ -1,8 +1,8 @@
 # COCOTB complexity review
 
-Generated cocotb testbenches, makefiles and result interpretation for HDL simulation. [SIM design](../SIM_DESIGN.md) documents this adapter and the single-clock generated template.
+Generated cocotb testbenches, makefiles and result interpretation for HDL simulation. [SIM design](../../SIM_DESIGN.md) documents this adapter and the single-clock generated template.
 
-Source: [COCOTB.py](../../src/COCOTB.py). Reviewed on the working tree based on `9eafa7d8`, including concurrent multi-clock changes. Potential failures are not reproduced defects unless stated.
+Source: [COCOTB.py](../../../src/COCOTB.py). Reviewed on the working tree based on `9eafa7d8`, including concurrent multi-clock changes. Potential failures are not reproduced defects unless stated.
 
 ## Table of Contents
 

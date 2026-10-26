@@ -1,8 +1,8 @@
 # LOGIC complexity review
 
-The shared representation used by the Python front end, synthesis, scheduling and VHDL emission. [LOGIC design](../LOGIC_DESIGN.md) explicitly distinguishes C-only methods from shared passes; raw complexity rankings alone would over-prioritize the legacy merge functions.
+The shared representation used by the Python front end, synthesis, scheduling and VHDL emission. [LOGIC design](../../LOGIC_DESIGN.md) explicitly distinguishes C-only methods from shared passes; raw complexity rankings alone would over-prioritize the legacy merge functions.
 
-Source: [LOGIC.py](../../src/LOGIC.py). This is a targeted structural review of the working tree based on commit `9eafa7d8`, including concurrent multi-clock changes. Function names are the stable navigation aid; line numbers describe the measured snapshot. Suspected failure cases are not confirmed bugs unless explicitly labeled.
+Source: [LOGIC.py](../../../src/LOGIC.py). This is a targeted structural review of the working tree based on commit `9eafa7d8`, including concurrent multi-clock changes. Function names are the stable navigation aid; line numbers describe the measured snapshot. Suspected failure cases are not confirmed bugs unless explicitly labeled.
 
 ## Table of Contents
 

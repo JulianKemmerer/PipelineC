@@ -2,7 +2,7 @@
 
 A diagnostic CLI comparing native and cocotb/VHDL debug output. It supports testing the Python front end rather than compiling hardware itself; its correctness determines whether differential failures are trustworthy.
 
-Source: [pypeline_sim_debug.py](../../src/pypeline_sim_debug.py). Reviewed on the working tree based on `9eafa7d8`, including concurrent multi-clock changes. Locations refer to that snapshot. Failure scenarios are hypotheses unless explicitly confirmed.
+Source: [pypeline_sim_debug.py](../../../src/pypeline_sim_debug.py). Reviewed on the working tree based on `9eafa7d8`, including concurrent multi-clock changes. Locations refer to that snapshot. Failure scenarios are hypotheses unless explicitly confirmed.
 
 ## Table of Contents
 

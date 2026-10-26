@@ -1,6 +1,6 @@
 # pipelinec driver complexity review
 
-Source: [src/pipelinec](../../src/pipelinec), also reached through the `src/pypelinec` symlink. The extensionless Python driver is included because it controls the Pypeline build lifecycle. Reviewed on the working tree based on `9eafa7d8`.
+Source: [src/pipelinec](../../../src/pipelinec), also reached through the `src/pypelinec` symlink. The extensionless Python driver is included because it controls the Pypeline build lifecycle. Reviewed on the working tree based on `9eafa7d8`.
 
 ## Table of Contents
 
@@ -36,6 +36,6 @@ This is a coordination refactor. Moving argparse declarations elsewhere alone sa
 
 ## Validation
 
-No new CLI failure was reproduced. Exercise the mode matrix: comb/native, comb/HDL, no-synth with fixed latency, pipelined build, missing synthesis tools, timing failure and explicit part/tool disagreement. Assert final artifacts and simulator inputs come from the same generation. Existing [test documentation](../pypeline_TESTS.md) identifies the relevant suites.
+No new CLI failure was reproduced. Exercise the mode matrix: comb/native, comb/HDL, no-synth with fixed latency, pipelined build, missing synthesis tools, timing failure and explicit part/tool disagreement. Assert final artifacts and simulator inputs come from the same generation. Existing [test documentation](../../pypeline_TESTS.md) identifies the relevant suites.
 
 See the [cross-module recommendations](REVIEW_COMPLEXITY.md).

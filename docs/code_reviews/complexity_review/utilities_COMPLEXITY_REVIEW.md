@@ -2,7 +2,7 @@
 
 Small dependency-light helpers shared by compiler modules. This file has no dedicated design document and does not need a broad architectural rewrite.
 
-Source: [utilities.py](../../src/utilities.py). Reviewed on the working tree based on `9eafa7d8`, including concurrent multi-clock changes. Locations refer to that snapshot. Failure scenarios are hypotheses unless explicitly confirmed.
+Source: [utilities.py](../../../src/utilities.py). Reviewed on the working tree based on `9eafa7d8`, including concurrent multi-clock changes. Locations refer to that snapshot. Failure scenarios are hypotheses unless explicitly confirmed.
 
 ## Table of Contents
 

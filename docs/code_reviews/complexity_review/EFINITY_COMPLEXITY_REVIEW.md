@@ -1,8 +1,8 @@
 # EFINITY complexity review
 
-Efinix project generation and timing adapter; relevant to Python designs targeting this tool. See [SYN design](../SYN_DESIGN.md#3-the-backend-contract).
+Efinix project generation and timing adapter; relevant to Python designs targeting this tool. See [SYN design](../../SYN_DESIGN.md#3-the-backend-contract).
 
-Source: [EFINITY.py](../../src/EFINITY.py). Reviewed on the working tree based on `9eafa7d8`, including concurrent multi-clock changes. Potential failures are not reproduced defects unless stated.
+Source: [EFINITY.py](../../../src/EFINITY.py). Reviewed on the working tree based on `9eafa7d8`, including concurrent multi-clock changes. Potential failures are not reproduced defects unless stated.
 
 ## Table of Contents
 

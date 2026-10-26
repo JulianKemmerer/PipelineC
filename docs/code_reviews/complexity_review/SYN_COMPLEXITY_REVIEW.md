@@ -1,8 +1,8 @@
 # SYN complexity review
 
-Tool selection, measurement collection, constraints, cache/manifests and report normalization shared by Pypeline builds. [SYN design](../SYN_DESIGN.md) defines the backend contract and several distinct cache layers.
+Tool selection, measurement collection, constraints, cache/manifests and report normalization shared by Pypeline builds. [SYN design](../../SYN_DESIGN.md) defines the backend contract and several distinct cache layers.
 
-Source: [SYN.py](../../src/SYN.py). Reviewed on the working tree based on `9eafa7d8`, including concurrent multi-clock changes. Locations refer to that snapshot. Failure scenarios are hypotheses unless explicitly confirmed.
+Source: [SYN.py](../../../src/SYN.py). Reviewed on the working tree based on `9eafa7d8`, including concurrent multi-clock changes. Locations refer to that snapshot. Failure scenarios are hypotheses unless explicitly confirmed.
 
 ## Table of Contents
 

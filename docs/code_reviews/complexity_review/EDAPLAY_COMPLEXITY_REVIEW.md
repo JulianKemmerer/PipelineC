@@ -1,8 +1,8 @@
 # EDAPLAY complexity review
 
-Copies generated VHDL for manual EDA Playground use. This is a small export utility with no complex algorithm; [SIM design](../SIM_DESIGN.md) supplies context.
+Copies generated VHDL for manual EDA Playground use. This is a small export utility with no complex algorithm; [SIM design](../../SIM_DESIGN.md) supplies context.
 
-Source: [EDAPLAY.py](../../src/EDAPLAY.py). Reviewed on the working tree based on `9eafa7d8`, including concurrent multi-clock changes. Potential failures are not reproduced defects unless stated.
+Source: [EDAPLAY.py](../../../src/EDAPLAY.py). Reviewed on the working tree based on `9eafa7d8`, including concurrent multi-clock changes. Potential failures are not reproduced defects unless stated.
 
 ## Table of Contents
 

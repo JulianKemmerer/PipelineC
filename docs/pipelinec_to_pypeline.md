@@ -310,7 +310,10 @@ def my_top():
 ```
 
 Multiple `#pragma MAIN` functions in one `.c` file → multiple `@MAIN` functions in one
-`.py` file. They share the same global signals (see §8).
+`.py` file. They share the same global signals (see §8). A bare `@MAIN` takes the clock of
+the `@MAIN`s it shares plain wires with, as a C `MAIN` with no MHz has its clock inferred;
+with no clock named anywhere it runs on the default clock `clk_None`
+([Which clock a bare `@MAIN` gets](pypeline_guide.md#which-clock-a-bare-main-gets)).
 
 See [pypeline_guide.md: Top-Level Entry Points](pypeline_guide.md#top-level-entry-points).
 
@@ -562,6 +565,8 @@ def consumer():
 | `fifo_name_READ_1(read_enable)` | drive `fifo_name.rd.ready`, read `fifo_name.rd.stream` |
 | the generated `_wr_stream_in` / `_rd_stream_out` MAINs | one compiler-made MAIN, `fifo_name_FIFO`; across clocks, two: `fifo_name_FIFO_wr` and `fifo_name_FIFO_rd` |
 | `depth` | `n`, the minimum number of words, rounded up to a power of two |
+| `GLOBAL_FIFO_WIDTH_DEPTH(T, fifo_name, W, depth)` | `fifo_name: Fifo[T[W]] = global_fifo(depth)`: a word of `W` elements |
+| `GLOBAL_STREAM_FIFO_SKID_BUFF` and its `_IN_` / `_OUT_` variants | a skid buffer ([8e](#8e-skid_buf--registered-stream-handshake)) inside the producer or consumer function |
 
 On one clock the FIFO is the library's `make_stream_fifo`; any single-clock stream module
 can be the initializer instead (`make_stream_fifo(T, n)`, `make_skid_buffer(T)`). Exactly
@@ -821,7 +826,12 @@ Most PipelineC `#pragma` annotations have a direct pypeline equivalent.
 | `DECL_INPUT(uint1_t, w)` + `CLK_MHZ_GROUP(w, 25.0, grp)` | `w: Input[uint1_t] = make_clock(25.0, name="grp")` | [Clock pins and board clocks](pypeline_guide.md#clock-pins-and-board-clocks) |
 | `#pragma ASYNC_WIRE v` | `v: Wire[T, ASYNC]` (or `Input[T, ASYNC]`, `Output[T, ASYNC]`) | [Async Wires: `Wire[T, ASYNC]`](pypeline_guide.md#async-wires-wiret-async) |
 | `CDC2(type, name, registered, in)` | two `Reg[T]` in the reading function, fed from an async wire | [Synchronizing in the reader](pypeline_guide.md#synchronizing-in-the-reader) |
+| `xil_cdc2_bit(x)` | a `vhdl()` function wrapping `xpm_cdc_single` | [Raw VHDL Passthrough](pypeline_guide.md#raw-vhdl-passthrough-vhdl) |
+| an asynchronous pin, `DECL_INPUT_REG` + `CDC2` | `pin: Input[T, ASYNC]`, synchronized by registers in the reader | [Pins with a stated clock](pypeline_guide.md#pins-with-a-stated-clock) |
+| `CLK_MHZ(w, 1.0)` on a global written by a clock-divider `MAIN` | `w: Wire[uint1_t] = make_clock(1.0)`, written by a `@MAIN` on another clock | [Clocks made by logic](pypeline_guide.md#clocks-made-by-logic) |
 | `GLOBAL_STREAM_FIFO` / `GLOBAL_FIFO` across clocks | `name: Fifo[T] = global_fifo(n)` or `global_async_fifo(n)` | [Clock-Crossing FIFOs](pypeline_guide.md#clock-crossing-fifos) |
+| libraries that cross clocks: the shared resource bus with host clocks, debug probes to the UART clock | one global FIFO per channel or probe | [Clock-Crossing FIFOs](pypeline_guide.md#clock-crossing-fifos) |
+| `IO_PAIR`, `ID_INST` | not needed: a global FIFO is one declaration, used by one function per end | [`Fifo[T]`](pypeline_guide.md#fifot--global-fifos) |
 | `#pragma FEEDBACK x` | `x: Feedback[T]` annotation | [Feedback Wires: `Feedback[T]`](pypeline_guide.md#feedback-wires-feedbackt) |
 | `#pragma FUNC_WIRES func` | `@wires` decorator on the function | [Just-Wires Synthesis Hint: `@wires`](pypeline_guide.md#just-wires-synthesis-hint-wires) |
 | `#pragma FUNC_LATENCY func N` | `@pipeline_latency(N)` on the function definition | [Fixed user pipelines](pypeline_guide.md#fixed-user-pipelines) |
@@ -942,7 +952,7 @@ The following PipelineC features do not yet have a pypeline equivalent.
 | PipelineC feature | Notes |
 |---|---|
 | Multi-clock simulation | Native simulation and generated cocotb testbenches run one clock; native simulation refuses a design whose `@MAIN`s name more than one clock ([#354](https://github.com/JulianKemmerer/PipelineC/issues/354)). Multi-clock designs themselves build: see §11 above and [Part IV](pypeline_guide.md#part-iv--multiple-clock-domains) |
-| Volatile ratio crossings, `IO_PAIR` and `ID_INST` | Not supported — every pair of different clocks is asynchronous, so use an async wire or a global FIFO ([#342](https://github.com/JulianKemmerer/PipelineC/discussions/342)) |
+| Integer-ratio `volatile` crossings | Not supported — every pair of different clocks is asynchronous, so use an async wire or a global FIFO ([#342](https://github.com/JulianKemmerer/PipelineC/discussions/342)) |
 | Multiple / early `return` statements (returning from inside an `if` branch) | Not supported — a pypeline function has exactly one `return`, which must be the final top-level statement; restructure to assign a result variable in each branch and return it once at the end (see [pypeline_guide.md: Your First Hardware Function](pypeline_guide.md#your-first-hardware-function)); discussed in [#343](https://github.com/JulianKemmerer/PipelineC/discussions/343) |
 | `Reg[char_t[N]] = <initializer>` (register power-on value for a char array, e.g. equivalent of C's `static char name[16] = "boot";`) | Not supported for hardware elaboration — raises `ElaborationError`. `Reg[char_t[N]]` with no initializer (zero-init) works normally. See [pypeline_DESIGN.md](pypeline_DESIGN.md#char-array-support) and [#357](https://github.com/JulianKemmerer/PipelineC/issues/357) |
 | C-style casts to an `@enum` type or an array type | Not supported (scalar int↔int, `char_t`, and struct/`@interface`-half casts are — see [§3d Casting](#3d-casting)) |

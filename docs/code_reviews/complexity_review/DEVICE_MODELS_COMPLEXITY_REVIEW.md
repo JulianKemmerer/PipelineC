@@ -1,8 +1,8 @@
 # DEVICE_MODELS complexity review
 
-Liberty-backed synthesis/STA and area modeling, used for fast Python HDL exploration. [DEVICE_MODELS design](../DEVICE_MODELS_DESIGN.md) states the model's limitations and its distinction from routed timing.
+Liberty-backed synthesis/STA and area modeling, used for fast Python HDL exploration. [DEVICE_MODELS design](../../DEVICE_MODELS_DESIGN.md) states the model's limitations and its distinction from routed timing.
 
-Source: [DEVICE_MODELS.py](../../src/DEVICE_MODELS.py). Reviewed on the working tree based on `9eafa7d8`, including concurrent multi-clock changes. Locations refer to that snapshot. Failure scenarios are hypotheses unless explicitly confirmed.
+Source: [DEVICE_MODELS.py](../../../src/DEVICE_MODELS.py). Reviewed on the working tree based on `9eafa7d8`, including concurrent multi-clock changes. Locations refer to that snapshot. Failure scenarios are hypotheses unless explicitly confirmed.
 
 ## Table of Contents
 

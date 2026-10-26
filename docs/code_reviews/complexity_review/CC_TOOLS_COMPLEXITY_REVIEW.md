@@ -1,8 +1,8 @@
 # CC_TOOLS complexity review
 
-CologneChip GateMate adapter. Small code size hides weak report validation and shared-directory/process assumptions. See [SYN design](../SYN_DESIGN.md#3-the-backend-contract).
+CologneChip GateMate adapter. Small code size hides weak report validation and shared-directory/process assumptions. See [SYN design](../../SYN_DESIGN.md#3-the-backend-contract).
 
-Source: [CC_TOOLS.py](../../src/CC_TOOLS.py). Reviewed on the working tree based on `9eafa7d8`, including concurrent multi-clock changes. Potential failures are not reproduced defects unless stated.
+Source: [CC_TOOLS.py](../../../src/CC_TOOLS.py). Reviewed on the working tree based on `9eafa7d8`, including concurrent multi-clock changes. Potential failures are not reproduced defects unless stated.
 
 ## Table of Contents
 

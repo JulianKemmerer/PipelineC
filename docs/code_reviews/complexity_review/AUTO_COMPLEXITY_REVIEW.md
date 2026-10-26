@@ -1,8 +1,8 @@
 # AUTO complexity review
 
-Shared typed combinational graph construction, cleanup, rewrite search, costing and source regeneration. [AUTO design](../AUTO_DESIGN.md) documents substantial reuse already achieved between AUTO_FSM and AUTO_COMB_OPT.
+Shared typed combinational graph construction, cleanup, rewrite search, costing and source regeneration. [AUTO design](../../AUTO_DESIGN.md) documents substantial reuse already achieved between AUTO_FSM and AUTO_COMB_OPT.
 
-Source: [AUTO.py](../../src/AUTO.py). This is a targeted structural review of the working tree based on commit `9eafa7d8`, including concurrent multi-clock changes. Function names are the stable navigation aid; line numbers describe the measured snapshot. Suspected failure cases are not confirmed bugs unless explicitly labeled.
+Source: [AUTO.py](../../../src/AUTO.py). This is a targeted structural review of the working tree based on commit `9eafa7d8`, including concurrent multi-clock changes. Function names are the stable navigation aid; line numbers describe the measured snapshot. Suspected failure cases are not confirmed bugs unless explicitly labeled.
 
 ## Table of Contents
 

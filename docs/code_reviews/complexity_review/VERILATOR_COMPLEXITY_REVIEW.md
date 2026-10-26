@@ -1,8 +1,8 @@
 # VERILATOR complexity review
 
-Verilator harness/build adapter after generated VHDL is converted to Verilog. Read [SIM design](../SIM_DESIGN.md) for its role and user-provided main.cpp support.
+Verilator harness/build adapter after generated VHDL is converted to Verilog. Read [SIM design](../../SIM_DESIGN.md) for its role and user-provided main.cpp support.
 
-Source: [VERILATOR.py](../../src/VERILATOR.py). Reviewed on the working tree based on `9eafa7d8`, including concurrent multi-clock changes. Potential failures are not reproduced defects unless stated.
+Source: [VERILATOR.py](../../../src/VERILATOR.py). Reviewed on the working tree based on `9eafa7d8`, including concurrent multi-clock changes. Potential failures are not reproduced defects unless stated.
 
 ## Table of Contents
 

@@ -1,8 +1,8 @@
 # DIAMOND complexity review
 
-Lattice Diamond adapter supporting LSE and Synplify timing formats. Its public interface is documented in [SYN design](../SYN_DESIGN.md#3-the-backend-contract).
+Lattice Diamond adapter supporting LSE and Synplify timing formats. Its public interface is documented in [SYN design](../../SYN_DESIGN.md#3-the-backend-contract).
 
-Source: [DIAMOND.py](../../src/DIAMOND.py). Reviewed on the working tree based on `9eafa7d8`, including concurrent multi-clock changes. Potential failures are not reproduced defects unless stated.
+Source: [DIAMOND.py](../../../src/DIAMOND.py). Reviewed on the working tree based on `9eafa7d8`, including concurrent multi-clock changes. Potential failures are not reproduced defects unless stated.
 
 ## Table of Contents
 

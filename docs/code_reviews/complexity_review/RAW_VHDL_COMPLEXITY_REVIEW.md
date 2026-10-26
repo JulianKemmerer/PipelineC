@@ -1,8 +1,8 @@
 # RAW_VHDL complexity review
 
-Built-in operator and memory HDL templates, including genuine bit-internal pipeline splits. Despite C-oriented function names, these are used by Pypeline. [RAW_VHDL design](../RAW_VHDL_DESIGN.md) distinguishes bit-sliceable arithmetic from whole-operation boundaries.
+Built-in operator and memory HDL templates, including genuine bit-internal pipeline splits. Despite C-oriented function names, these are used by Pypeline. [RAW_VHDL design](../../RAW_VHDL_DESIGN.md) distinguishes bit-sliceable arithmetic from whole-operation boundaries.
 
-Source: [RAW_VHDL.py](../../src/RAW_VHDL.py). Reviewed on the working tree based on `9eafa7d8`, including concurrent multi-clock changes. Locations refer to that snapshot. Failure scenarios are hypotheses unless explicitly confirmed.
+Source: [RAW_VHDL.py](../../../src/RAW_VHDL.py). Reviewed on the working tree based on `9eafa7d8`, including concurrent multi-clock changes. Locations refer to that snapshot. Failure scenarios are hypotheses unless explicitly confirmed.
 
 ## Table of Contents
 

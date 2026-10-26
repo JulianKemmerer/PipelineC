@@ -1,6 +1,6 @@
 # C_TO_FSM complexity review
 
-Source: [C_TO_FSM.py](../../src/C_TO_FSM.py). This is a scope/boundary review of the legacy C FSM frontend, based on `9eafa7d8`; it is not a detailed correctness audit of C parsing. The requested Python HDL focus places this below every shared compiler pass.
+Source: [C_TO_FSM.py](../../../src/C_TO_FSM.py). This is a scope/boundary review of the legacy C FSM frontend, based on `9eafa7d8`; it is not a detailed correctness audit of C parsing. The requested Python HDL focus places this below every shared compiler pass.
 
 ## Table of Contents
 

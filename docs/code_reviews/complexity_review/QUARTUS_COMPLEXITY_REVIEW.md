@@ -1,8 +1,8 @@
 # QUARTUS complexity review
 
-Quartus adapter and LPM_MULT primitive rendering, called after Python elaboration through SYN. See [the backend contract](../SYN_DESIGN.md#3-the-backend-contract).
+Quartus adapter and LPM_MULT primitive rendering, called after Python elaboration through SYN. See [the backend contract](../../SYN_DESIGN.md#3-the-backend-contract).
 
-Source: [QUARTUS.py](../../src/QUARTUS.py). Reviewed on the working tree based on `9eafa7d8`, including concurrent multi-clock changes. Potential failures are not reproduced defects unless stated.
+Source: [QUARTUS.py](../../../src/QUARTUS.py). Reviewed on the working tree based on `9eafa7d8`, including concurrent multi-clock changes. Potential failures are not reproduced defects unless stated.
 
 ## Table of Contents
 

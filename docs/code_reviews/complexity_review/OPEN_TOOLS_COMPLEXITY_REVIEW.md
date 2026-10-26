@@ -1,8 +1,8 @@
 # OPEN_TOOLS complexity review
 
-GHDL/Yosys/nextpnr and device-specific open-tool flows, plus ECP5 primitive rendering. [SYN design](../SYN_DESIGN.md) is its architectural reference.
+GHDL/Yosys/nextpnr and device-specific open-tool flows, plus ECP5 primitive rendering. [SYN design](../../SYN_DESIGN.md) is its architectural reference.
 
-Source: [OPEN_TOOLS.py](../../src/OPEN_TOOLS.py). Reviewed on the working tree based on `9eafa7d8`, including concurrent multi-clock changes. Potential failures are not reproduced defects unless stated.
+Source: [OPEN_TOOLS.py](../../../src/OPEN_TOOLS.py). Reviewed on the working tree based on `9eafa7d8`, including concurrent multi-clock changes. Potential failures are not reproduced defects unless stated.
 
 ## Table of Contents
 

@@ -1,8 +1,8 @@
 # AUTO_FSM complexity review
 
-Resource sharing, scheduling, register allocation, feedback and generated FSMs for Python HDL. [AUTO_FSM design](../AUTO_FSM_DESIGN.md) is necessary context: this is not the legacy C coroutine frontend.
+Resource sharing, scheduling, register allocation, feedback and generated FSMs for Python HDL. [AUTO_FSM design](../../AUTO_FSM_DESIGN.md) is necessary context: this is not the legacy C coroutine frontend.
 
-Source: [AUTO_FSM.py](../../src/AUTO_FSM.py). This is a targeted structural review of the working tree based on commit `9eafa7d8`, including concurrent multi-clock changes. Function names are the stable navigation aid; line numbers describe the measured snapshot. Suspected failure cases are not confirmed bugs unless explicitly labeled.
+Source: [AUTO_FSM.py](../../../src/AUTO_FSM.py). This is a targeted structural review of the working tree based on commit `9eafa7d8`, including concurrent multi-clock changes. Function names are the stable navigation aid; line numbers describe the measured snapshot. Suspected failure cases are not confirmed bugs unless explicitly labeled.
 
 ## Table of Contents
 

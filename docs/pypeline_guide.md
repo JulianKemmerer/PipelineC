@@ -6766,7 +6766,7 @@ tracks the row.
 | Source model | **A global instance on a stated clock** | Not supported | An instance runs on the clock of the functions that use it ([`Inst[f]`](#instf--global-instances)) | — |
 | Source model | **Global FIFOs and instances made by library code** | Not supported | A `Fifo[T]` or `Inst[f]` is a module-level declaration, so a factory cannot create one | — |
 | Source model | **Global FIFO chains with skid buffers** | Not supported | No `chain(skid, global_fifo(64), skid)` initializer; put a skid buffer inside the producer or consumer function | — |
-| Source model | **Global FIFO sizes in Python** | Not supported | No `rx.depth` or `rx.capacity_beats` on a global FIFO for sizing credits and timeouts | — |
+| Source model | **Global FIFO sizes in Python** | Not supported | No `rx.depth`, `rx.capacity_beats` or crossing latencies (`rx.write_to_valid`, `rx.pop_to_ready`) on a global FIFO for sizing credits and timeouts; the crossing report lists each FIFO's depth | — |
 | Source model | **Connecting two wires through a FIFO** | Not supported | No `CONNECT(a, b, global_fifo(64))` between two stream wires; declare a `Fifo[T]` | — |
 | Source model | **RAMs, ROMs and stream RAMs** | Supported | [`make_ram` / `make_stream_ram`](#rams-make_ram--make_stream_ram) provide the portable source shapes; vendor-specific memory IP still needs `vhdl()` | — |
 | Source model | **Multi-cycle paths with a synthesis tool other than Vivado** | Not supported | Constraints for `MULTI_CYCLE[...]`, `AUTO_MULTI_CYCLE` and `make_stream_multi_cycle` are written only for Vivado. Other tools stop with "Multi cycle paths have only been tested with Vivado!" | [#346](https://github.com/JulianKemmerer/PipelineC/discussions/346) |

@@ -1,8 +1,8 @@
 # pypeline_sim complexity review
 
-Native single-clock simulation orchestration. The actual AST rewrites and arithmetic runtime live in pypeline.py; read [simulation design](../pypeline_sim_DESIGN.md) and the [API review](pypeline_COMPLEXITY_REVIEW.md).
+Native single-clock simulation orchestration. The actual AST rewrites and arithmetic runtime live in pypeline.py; read [simulation design](../../pypeline_sim_DESIGN.md) and the [API review](pypeline_COMPLEXITY_REVIEW.md).
 
-Source: [pypeline_sim.py](../../src/pypeline_sim.py). Reviewed on the working tree based on `9eafa7d8`, including concurrent multi-clock changes. Locations refer to that snapshot. Failure scenarios are hypotheses unless explicitly confirmed.
+Source: [pypeline_sim.py](../../../src/pypeline_sim.py). Reviewed on the working tree based on `9eafa7d8`, including concurrent multi-clock changes. Locations refer to that snapshot. Failure scenarios are hypotheses unless explicitly confirmed.
 
 ## Table of Contents
 

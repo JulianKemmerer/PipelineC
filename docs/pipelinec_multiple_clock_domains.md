@@ -107,6 +107,7 @@ builds of the repository examples and small test designs.
 - [16. Ideas for multiple clock domains in Pypeline](#16-ideas-for-multiple-clock-domains-in-pypeline)
   - [What Pypeline has today](#what-pypeline-has-today)
   - [What to keep, what to leave behind](#what-to-keep-what-to-leave-behind)
+  - [How other HDLs handle clock domains](#how-other-hdls-handle-clock-domains)
   - [Recommended scope](#recommended-scope)
   - [Clock domains in the source](#clock-domains-in-the-source)
   - [Asynchronous wires](#asynchronous-wires)
@@ -2314,9 +2315,10 @@ Everything below the front end is shared, so the back end handles several clocks
 Pypeline designs as it does for C: clock ports, user clocks, constraints, crossing entities
 and the sweep's per-MAIN goals work as described in sections 11 and 12. The proposals
 below were written before Pypeline had a way to say how data crosses or to name two clocks
-of one rate; the syntax built from them is in
-[pypeline_multiple_clock_domains.md](pypeline_multiple_clock_domains.md) and the guide's
-[Part IV](pypeline_guide.md#part-iv--multiple-clock-domains). A simulation that runs clocks
+of one rate. The syntax built from them is the guide's
+[Part IV](pypeline_guide.md#part-iv--multiple-clock-domains), and where and why it departs
+from these sketches is in
+[pypeline_DESIGN.md](pypeline_DESIGN.md#multi-clock-syntax). A simulation that runs clocks
 at their own rates is still missing.
 
 Two restrictions of the Pypeline language shape the proposals:
@@ -2361,6 +2363,62 @@ replacement:
 | `MAIN_MHZ f other_main` | order-dependent string reference that drops the group | sharing one clock object |
 | Wiring MAINs around FIFOs (`GLOBAL_STREAM_FIFO`'s `name_wr_stream_in` / `name_rd_stream_out`) | needed because C crossing functions are global functions; they add MAINs whose clocks must be inferred | call the FIFO's halves directly from any function in the right domain |
 | The word "volatile" for crossings | Pypeline's `VOLATILE` already means "not pipeline-aligned" | a separate `ASYNC` marker |
+
+### How other HDLs handle clock domains
+
+| HDL | Clocks are | Logic is placed by | Unsynchronized crossing | Escape hatch | Crossing library |
+|---|---|---|---|---|---|
+| SpinalHDL | `ClockDomain` objects with a frequency | `ClockingArea`, `cd(...)` | elaboration error (`CLOCK CROSSING VIOLATION`) | `crossClockDomain` tag | `BufferCC`, `StreamFifoCC`, `StreamCCByToggle` |
+| Amaranth | named `ClockDomain`s, bound late by name | `m.d.<domain>`, `DomainRenamer` | not checked | — | `lib.cdc` (`FFSynchronizer`, `PulseSynchronizer`, platform overrides via `get_ff_sync`), `SyncFIFO` / `AsyncFIFO` behind one interface |
+| Chisel | `Clock` values | `withClock` | not checked | — | rocket-chip `AsyncQueue` |
+| Clash | domains in types (`Signal dom a`), with period and edge | type variables | type error | `unsafeSynchronizer` | `dualFlipFlopSynchronizer`, `asyncFIFOSynchronizer` |
+| Bluespec | `Clock` values; an interface's methods can have different clocks | `clocked_by` | compile error | `mkNullCrossingWire` | `mkSyncBit`, `mkSyncPulse`, `mkSyncHandshake`, `mkSyncReg`, `mkSyncFIFO` |
+| Veryl | `'a` annotations on ports and signals | inference from assignments and `always_ff` clocks | compile error | `unsafe (cdc) { }`, even around a synchronizer cell | — |
+| Spade | `clock` arguments | `reg(clk)` per register | — | `unsafe entity` | `std::cdc::handshake` |
+| Silice | `@clock` bindings | per algorithm and instance | — | — | `::=` two-flop assignment, dual-clock BRAM |
+| LiteX | domain names | `ClockDomainsRenamer` | not checked | — | `stream.ClockDomainCrossing`: a plain connection when its two domains are equal, an `AsyncFIFO` otherwise |
+| Hardcaml, hwt | phantom-typed domains (Hardcaml paper); a clock per interface (hwt) | — | — | — | — |
+| PipelineC (C) | (MHz, group) per `MAIN` | pragmas, inference | error for shared globals | `ASYNC_WIRE` (turns the check off silently) | global FIFOs, `cdc.h` |
+| Pypeline | `make_clock` values, identified by rate and name | `@MAIN(clk)`, inference | elaboration error naming both ends | `Wire[T, ASYNC]` | global FIFOs |
+
+What they agree on: clocks are named values with properties; every register belongs to
+one clock, chosen by scope or by type; a reusable block names no clock, its instance does;
+an unsynchronized crossing is an error with an explicit way around it; one interface or
+signal can span clocks group by group (Amaranth lets different bits of one signal be
+driven from different domains, each bit from one). Pypeline's design takes those. Two
+more are still missing from Pypeline, a [synchronizer library](#synchronizer-library)
+whose parts a platform can replace, and crossings that carry their own timing
+constraints: Amaranth synchronizers take a `max_input_delay`, XPM macros bring their own
+`ASYNC_REG` attributes and constraints, and AMD's guidance for Gray-coded buses such as
+async FIFO pointers is `set_max_delay -datapath_only` plus `set_bus_skew`, with
+`set_clock_groups -asynchronous` between unrelated clocks
+([Constraints and timing](#constraints-and-timing)).
+
+Sources:
+
+- SpinalHDL: [Clock domains](https://spinalhdl.github.io/SpinalDoc-RTD/master/SpinalHDL/Structuring/clock_domain.html)
+  and [Clock crossing violation](https://spinalhdl.github.io/SpinalDoc-RTD/master/SpinalHDL/Design%20errors/clock_crossing_violation.html).
+- Amaranth: [Language guide, control domains](https://amaranth-lang.org/docs/amaranth/latest/guide.html),
+  [`lib.cdc`](https://amaranth-lang.org/docs/amaranth/latest/stdlib/cdc.html) and
+  [`lib.fifo`](https://amaranth-lang.org/docs/amaranth/latest/stdlib/fifo.html).
+- Chisel: [Multiple clock domains](https://www.chisel-lang.org/docs/explanations/multi-clock).
+- Clash: [`Clash.Signal`](https://hackage-content.haskell.org/package/clash-prelude-1.10.3/docs/Clash-Signal.html)
+  and [synchronizers](https://hackage-origin.haskell.org/package/clash-prelude-1.4.0/docs/Clash-Prelude-Synchronizer.html).
+- Bluespec: [`Clocks.bsv`](https://github.com/B-Lang-org/bsc/blob/main/src/Libraries/Base1/Clocks.bsv)
+  in the open-source compiler.
+- Veryl: [Clock domain annotation](https://doc.veryl-lang.org/book/05_language_reference/15_clock_domain_annotation.html)
+  and [Unsafe CDC](https://doc.veryl-lang.org/book/05_language_reference/15_clock_domain_annotation/01_unsafe_cdc.html).
+- Spade: [`std::cdc::handshake`](https://docs.spade-lang.org/std/cdc/item.handshake.html).
+- Silice: [Documentation](https://github.com/sylefeb/Silice/blob/master/learn-silice/Documentation.md).
+- LiteX: [`stream.py`](https://github.com/enjoy-digital/litex/blob/master/litex/soc/interconnect/stream.py).
+- Hardcaml: [Hardcaml paper](https://arxiv.org/pdf/2312.15035).
+- hwt: [`hwtLib.handshaked`](https://hwtlib.readthedocs.io/en/latest/hwtLib.handshaked.html).
+- AMD UG974, [Xilinx Parameterized Macros](https://docs.amd.com/r/en-US/ug974-vivado-ultrascale-libraries/Xilinx-Parameterized-Macros);
+  UG949, [Constraints on Individual CDC Paths](https://docs.amd.com/r/en-US/ug949-vivado-design-methodology/Constraints-on-Individual-CDC-Paths);
+  UG903, [set_bus_skew Example Two](https://docs.amd.com/r/en-US/ug903-vivado-using-constraints/set_bus_skew-Example-Two).
+- PipelineC discussions [#225](https://github.com/JulianKemmerer/PipelineC/discussions/225)
+  (explicit crossing kinds) and [#342](https://github.com/JulianKemmerer/PipelineC/discussions/342)
+  (Pypeline crossings).
 
 ### Recommended scope
 
@@ -2703,9 +2761,10 @@ telling the tools. A Pypeline version:
 
 ### How C clock-domain code would translate
 
-Under these proposals (option B for clocks), the C constructs of sections 2 to 9 map like
-this. [pipelinec_to_pypeline.md](pipelinec_to_pypeline.md) would gain these rows once
-they exist.
+Under these proposals (option B for clocks), the C constructs of sections 2 to 9 would map
+like this. What was built differs (global FIFO declarations with `.wr` / `.rd` ends, no
+synchronizer library yet); [pipelinec_to_pypeline.md](pipelinec_to_pypeline.md) has the
+rows for it.
 
 | C | Pypeline under the proposal |
 |---|---|
@@ -2743,15 +2802,21 @@ end: crossings that simulate natively at the right rates, with the same FIFO har
 
 ### Open questions
 
-- Clock objects (option B) or extra arguments (option A)? B is a little more work and
-  removes a class of string-matching mistakes.
-- Should `ASYNC` reads outside a synchronizer be errors or warnings?
+Answered by what was built:
+
+- Clock objects (option B), with `name=` where the sketch says `group=`.
+- `ASYNC` reads are neither errors nor warnings: with no synchronizer library there is
+  nothing to check them against. An `ASYNC` wire never read on another clock warns.
+- Factory-created global wires do not exist yet, so global FIFOs are module-level
+  declarations and a factory cannot make one (future work in the guide's
+  [Limitations](pypeline_guide.md#limitations--not-yet-supported)).
+
+Still open, for when native simulation runs several clocks (today it refuses them):
+
 - Should native simulation model `xpm_fifo_async` (what Vivado builds) or the built-in FIFO
   (what GHDL can simulate) when the two differ in latency?
 - Is the per-domain cycle count or the simulation time the key for comparing native and
   VHDL simulation output?
-- Are factory-created global wires wanted for other reasons? If yes, more of the CDC
-  library can be pure Pypeline.
 
 ## History
 

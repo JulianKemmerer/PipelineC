@@ -1,8 +1,8 @@
 # CXXRTL complexity review
 
-GHDL/Yosys CXXRTL simulation adapter. Small and template-oriented, but its clock and lifecycle behavior matters when selected for a Python design. See [SIM design](../SIM_DESIGN.md).
+GHDL/Yosys CXXRTL simulation adapter. Small and template-oriented, but its clock and lifecycle behavior matters when selected for a Python design. See [SIM design](../../SIM_DESIGN.md).
 
-Source: [CXXRTL.py](../../src/CXXRTL.py). Reviewed on the working tree based on `9eafa7d8`, including concurrent multi-clock changes. Potential failures are not reproduced defects unless stated.
+Source: [CXXRTL.py](../../../src/CXXRTL.py). Reviewed on the working tree based on `9eafa7d8`, including concurrent multi-clock changes. Potential failures are not reproduced defects unless stated.
 
 ## Table of Contents
 

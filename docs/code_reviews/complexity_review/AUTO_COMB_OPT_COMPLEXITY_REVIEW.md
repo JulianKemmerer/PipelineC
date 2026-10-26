@@ -1,8 +1,8 @@
 # AUTO_COMB_OPT complexity review
 
-Python-facing combinational optimization orchestration, using AUTO's shared DAG and emitter. [AUTO_COMB_OPT design](../AUTO_COMB_OPT_DESIGN.md) describes objective-specific plan pinning and the original implementation fallback.
+Python-facing combinational optimization orchestration, using AUTO's shared DAG and emitter. [AUTO_COMB_OPT design](../../AUTO_COMB_OPT_DESIGN.md) describes objective-specific plan pinning and the original implementation fallback.
 
-Source: [AUTO_COMB_OPT.py](../../src/AUTO_COMB_OPT.py). This is a targeted structural review of the working tree based on commit `9eafa7d8`, including concurrent multi-clock changes. Function names are the stable navigation aid; line numbers describe the measured snapshot. Suspected failure cases are not confirmed bugs unless explicitly labeled.
+Source: [AUTO_COMB_OPT.py](../../../src/AUTO_COMB_OPT.py). This is a targeted structural review of the working tree based on commit `9eafa7d8`, including concurrent multi-clock changes. Function names are the stable navigation aid; line numbers describe the measured snapshot. Suspected failure cases are not confirmed bugs unless explicitly labeled.
 
 ## Table of Contents
 

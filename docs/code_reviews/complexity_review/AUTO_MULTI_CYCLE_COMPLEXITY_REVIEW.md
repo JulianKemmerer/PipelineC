@@ -1,8 +1,8 @@
 # AUTO_MULTI_CYCLE complexity review
 
-Multi-cycle constraints, timing-path qualification, automatic cycle-count feedback and confirmation. [AUTO_MULTI_CYCLE design](../AUTO_MULTI_CYCLE_DESIGN.md) documents the current Vivado-only constraint contract.
+Multi-cycle constraints, timing-path qualification, automatic cycle-count feedback and confirmation. [AUTO_MULTI_CYCLE design](../../AUTO_MULTI_CYCLE_DESIGN.md) documents the current Vivado-only constraint contract.
 
-Source: [AUTO_MULTI_CYCLE.py](../../src/AUTO_MULTI_CYCLE.py). This is a targeted structural review of the working tree based on commit `9eafa7d8`, including concurrent multi-clock changes. Function names are the stable navigation aid; line numbers describe the measured snapshot. Suspected failure cases are not confirmed bugs unless explicitly labeled.
+Source: [AUTO_MULTI_CYCLE.py](../../../src/AUTO_MULTI_CYCLE.py). This is a targeted structural review of the working tree based on commit `9eafa7d8`, including concurrent multi-clock changes. Function names are the stable navigation aid; line numbers describe the measured snapshot. Suspected failure cases are not confirmed bugs unless explicitly labeled.
 
 ## Table of Contents
 

@@ -1,8 +1,8 @@
 # PYRTL complexity review
 
-A fast estimated-timing backend using a generated PyRTL analysis script after GHDL/Yosys lowering. [SYN design](../SYN_DESIGN.md) and [DEVICE_MODELS design](../DEVICE_MODELS_DESIGN.md) explain its place among timing models.
+A fast estimated-timing backend using a generated PyRTL analysis script after GHDL/Yosys lowering. [SYN design](../../SYN_DESIGN.md) and [DEVICE_MODELS design](../../DEVICE_MODELS_DESIGN.md) explain its place among timing models.
 
-Source: [PYRTL.py](../../src/PYRTL.py). Reviewed on the working tree based on `9eafa7d8`, including concurrent multi-clock changes. Potential failures are not reproduced defects unless stated.
+Source: [PYRTL.py](../../../src/PYRTL.py). Reviewed on the working tree based on `9eafa7d8`, including concurrent multi-clock changes. Potential failures are not reproduced defects unless stated.
 
 ## Table of Contents
 

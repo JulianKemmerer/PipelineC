@@ -1,8 +1,8 @@
 # VHDL complexity review
 
-The primary HDL renderer, used by Python builds for types, top-level connectivity, state and pipelined logic. Read [VHDL design](../VHDL_DESIGN.md). Rendering correctness also determines synthesis-cache identity.
+The primary HDL renderer, used by Python builds for types, top-level connectivity, state and pipelined logic. Read [VHDL design](../../VHDL_DESIGN.md). Rendering correctness also determines synthesis-cache identity.
 
-Source: [VHDL.py](../../src/VHDL.py). Reviewed on the working tree based on `9eafa7d8`, including concurrent multi-clock changes. Locations refer to that snapshot. Failure scenarios are hypotheses unless explicitly confirmed.
+Source: [VHDL.py](../../../src/VHDL.py). Reviewed on the working tree based on `9eafa7d8`, including concurrent multi-clock changes. Locations refer to that snapshot. Failure scenarios are hypotheses unless explicitly confirmed.
 
 ## Table of Contents
 

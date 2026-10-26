@@ -1,8 +1,8 @@
 # MODELSIM complexity review
 
-Interactive ModelSim project setup, not a complete automated Pypeline testbench. [SIM design](../SIM_DESIGN.md) is its reference.
+Interactive ModelSim project setup, not a complete automated Pypeline testbench. [SIM design](../../SIM_DESIGN.md) is its reference.
 
-Source: [MODELSIM.py](../../src/MODELSIM.py). Reviewed on the working tree based on `9eafa7d8`, including concurrent multi-clock changes. Potential failures are not reproduced defects unless stated.
+Source: [MODELSIM.py](../../../src/MODELSIM.py). Reviewed on the working tree based on `9eafa7d8`, including concurrent multi-clock changes. Potential failures are not reproduced defects unless stated.
 
 ## Table of Contents
 

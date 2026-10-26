@@ -1,8 +1,8 @@
 # VIVADO complexity review
 
-Vivado synthesis/report adapter. [SYN's backend contract](../SYN_DESIGN.md#3-the-backend-contract) describes the base report and optional path/coverage data used by the Python compiler.
+Vivado synthesis/report adapter. [SYN's backend contract](../../SYN_DESIGN.md#3-the-backend-contract) describes the base report and optional path/coverage data used by the Python compiler.
 
-Source: [VIVADO.py](../../src/VIVADO.py). Reviewed on the working tree based on `9eafa7d8`, including concurrent multi-clock changes. Potential failures are not reproduced defects unless stated.
+Source: [VIVADO.py](../../../src/VIVADO.py). Reviewed on the working tree based on `9eafa7d8`, including concurrent multi-clock changes. Potential failures are not reproduced defects unless stated.
 
 ## Table of Contents
 

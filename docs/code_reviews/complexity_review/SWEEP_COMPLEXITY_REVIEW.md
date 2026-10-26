@@ -1,8 +1,8 @@
 # SWEEP complexity review
 
-The largest concentration of decision complexity: physical placement planning, report attribution, timing refinement, trimming, locks and latency memory. [SWEEP design](../SWEEP_DESIGN.md) documents the intended decision order and conservative treatment of missing evidence.
+The largest concentration of decision complexity: physical placement planning, report attribution, timing refinement, trimming, locks and latency memory. [SWEEP design](../../SWEEP_DESIGN.md) documents the intended decision order and conservative treatment of missing evidence.
 
-Source: [SWEEP.py](../../src/SWEEP.py). Reviewed on the working tree based on `9eafa7d8`, including concurrent multi-clock changes. Locations refer to that snapshot. Failure scenarios are hypotheses unless explicitly confirmed.
+Source: [SWEEP.py](../../../src/SWEEP.py). Reviewed on the working tree based on `9eafa7d8`, including concurrent multi-clock changes. Locations refer to that snapshot. Failure scenarios are hypotheses unless explicitly confirmed.
 
 ## Table of Contents
 

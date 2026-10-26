@@ -1,8 +1,8 @@
 # AUTO_PIPELINE complexity review
 
-Pipeline representation, stage maps, HDL register lifetimes, explicit latency regions and the latency confirmation loop. Read [AUTO_PIPELINE design](../AUTO_PIPELINE_DESIGN.md); SWEEP chooses placements while this module makes them physical.
+Pipeline representation, stage maps, HDL register lifetimes, explicit latency regions and the latency confirmation loop. Read [AUTO_PIPELINE design](../../AUTO_PIPELINE_DESIGN.md); SWEEP chooses placements while this module makes them physical.
 
-Source: [AUTO_PIPELINE.py](../../src/AUTO_PIPELINE.py). This is a targeted structural review of the working tree based on commit `9eafa7d8`, including concurrent multi-clock changes. Function names are the stable navigation aid; line numbers describe the measured snapshot. Suspected failure cases are not confirmed bugs unless explicitly labeled.
+Source: [AUTO_PIPELINE.py](../../../src/AUTO_PIPELINE.py). This is a targeted structural review of the working tree based on commit `9eafa7d8`, including concurrent multi-clock changes. Function names are the stable navigation aid; line numbers describe the measured snapshot. Suspected failure cases are not confirmed bugs unless explicitly labeled.
 
 ## Table of Contents
 

@@ -1,8 +1,8 @@
 # SIM complexity review
 
-Simulator selection, build-phase dispatch, file inventories and support checks. [SIM design](../SIM_DESIGN.md) covers each adapter; separate reviews cover their implementations.
+Simulator selection, build-phase dispatch, file inventories and support checks. [SIM design](../../SIM_DESIGN.md) covers each adapter; separate reviews cover their implementations.
 
-Source: [SIM.py](../../src/SIM.py). Reviewed on the working tree based on `9eafa7d8`, including concurrent multi-clock changes. Locations refer to that snapshot. Failure scenarios are hypotheses unless explicitly confirmed.
+Source: [SIM.py](../../../src/SIM.py). Reviewed on the working tree based on `9eafa7d8`, including concurrent multi-clock changes. Locations refer to that snapshot. Failure scenarios are hypotheses unless explicitly confirmed.
 
 ## Table of Contents
 

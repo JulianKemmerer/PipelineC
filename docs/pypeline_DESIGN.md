@@ -146,6 +146,7 @@ one paragraph per change.
 - [Tests](#tests)
 - [History](#history)
   - [FSM-owned pipeline placement and native simulation](#fsm-owned-pipeline-placement-and-native-simulation)
+  - [Multi-clock syntax](#multi-clock-syntax)
 
 ---
 
@@ -2752,3 +2753,52 @@ Native AUTO_FSM construction shares a schedule version constant with the
 compiler while keeping deep validation out of the runtime tag. The cycle model
 continues to evaluate the original function, so generated datapath equivalence
 is checked in GHDL.
+
+### Multi-clock syntax
+
+The syntax of the guide's
+[Part IV](pypeline_guide.md#part-iv--multiple-clock-domains) was picked from reviewed
+options, starting from the proposals in
+[pipelinec_multiple_clock_domains.md](pipelinec_multiple_clock_domains.md#16-ideas-for-multiple-clock-domains-in-pypeline)
+and [other HDLs](pipelinec_multiple_clock_domains.md#how-other-hdls-handle-clock-domains).
+The alternatives below lost, for these reasons:
+
+- **A rate plus a group string** on `@MAIN` and `make_clock` (`@MAIN(25.0,
+  group="eth_rx")`, C's `MAIN_MHZ_GROUP`): every use repeats the same two values. A clock
+  value is shared instead, and its `name=` is the group.
+- **A `ClockDomain` class** with rate, edge, enable and target in one constructor, as in
+  SpinalHDL: most designs use two of them. `make_clock` can grow keyword arguments.
+- **A new clock per `make_clock` call**: identity by rate, then name, keeps `pll_clk:
+  Input[uint1_t] = make_clock(85.0)` binding the clock `@MAIN(85.0)` runs on, and most
+  designs never need two clocks of one rate.
+- **`@clk.main`**, a second spelling of `@MAIN(clk)`; and **`with clk:` blocks** around
+  MAIN definitions, which save nothing that inference does not and hide where a function
+  is placed.
+- **A whole wire on one clock**: crossings would always join two wires, status flags
+  written on several clocks would need a wire per clock, and a global FIFO's two ends
+  could not be one wire. Each leaf is on its writer's clock instead.
+- **Clock inference through async wires and FIFOs**: it never passes through them, so it
+  cannot loop the way C's does when a crossing side spans two clocks
+  ([Inference never ends](pipelinec_multiple_clock_domains.md#inference-never-ends-when-a-crossing-side-spans-two-clocks)).
+- **Raw reads marked where they happen**, `with unsafe_cdc("reason"):` as Veryl's `unsafe
+  (cdc)` blocks: it needs `with` blocks inside hardware functions. The `ASYNC` marker sits
+  at the declaration, and on one clock it warns that it does nothing, where C's
+  `ASYNC_WIRE` silently skips the checks.
+- **A FIFO factory with `.write()` / `.read()` halves** (`make_async_fifo(T, n)`, the
+  proposal's sketch): a factory cannot declare a global wire, so a global FIFO is a
+  module-level declaration with ends. Factory-made FIFOs stay future work.
+- **The kind in the type**, `SyncFifo[T, 16]` / `AsyncFifo[T, 64]`: choosing a particular
+  implementation then needs another argument, which the initializer gives.
+- **`push()` / `pop()` calls** instead of ends: each would have to be called exactly
+  once, with both handshake directions in its arguments and results.
+- **One stream wire read as `rx.stream` by both sides**: nothing at a use says which side
+  a function is on or which half it drives. `.wr` and `.rd` say it.
+- **`Fifo[some_intrf]`**: a FIFO supplies valid and ready itself, so `T` is the data type,
+  as for `Wire[T]`.
+- **`stream_fifo`, `stream_sync_fifo`, `stream_async_fifo`** as initializer names:
+  `stream_fifo` is already the usual name of a `make_stream_fifo(...)` result and of the
+  module `stream/stream_fifo.py`. The `global_` prefix overlaps no name and matches
+  PipelineC's `GLOBAL_FIFO`, which is also sync or async by its users' clocks.
+- **Matching C mechanism for mechanism**: name-based crossing detection, generated
+  headers, `ID_INST`, `IO_PAIR` and `ASYNC_WIRE` on one clock do not come back
+  ([What to keep, what to leave behind](pipelinec_multiple_clock_domains.md#what-to-keep-what-to-leave-behind)).

@@ -1,8 +1,8 @@
 # PY_TO_LOGIC complexity review
 
-This is the Python HDL front end and the highest-priority semantic review. [Its design document](../PY_TO_LOGIC_DESIGN.md) explains the alias and aggregate machinery that dominates the implementation.
+This is the Python HDL front end and the highest-priority semantic review. [Its design document](../../PY_TO_LOGIC_DESIGN.md) explains the alias and aggregate machinery that dominates the implementation.
 
-Source: [PY_TO_LOGIC.py](../../src/PY_TO_LOGIC.py). This is a targeted structural review of the working tree based on commit `9eafa7d8`, including concurrent multi-clock changes. Function names are the stable navigation aid; line numbers describe the measured snapshot. Suspected failure cases are not confirmed bugs unless explicitly labeled.
+Source: [PY_TO_LOGIC.py](../../../src/PY_TO_LOGIC.py). This is a targeted structural review of the working tree based on commit `9eafa7d8`, including concurrent multi-clock changes. Function names are the stable navigation aid; line numbers describe the measured snapshot. Suspected failure cases are not confirmed bugs unless explicitly labeled.
 
 ## Table of Contents
 

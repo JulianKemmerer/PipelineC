@@ -1,8 +1,8 @@
 # pypeline complexity review
 
-The public HDL API, elaboration metadata and native simulation runtime all live in this module. Nearly every Python design depends on it. Read with [API design](../pypeline_DESIGN.md) and [simulation design](../pypeline_sim_DESIGN.md).
+The public HDL API, elaboration metadata and native simulation runtime all live in this module. Nearly every Python design depends on it. Read with [API design](../../pypeline_DESIGN.md) and [simulation design](../../pypeline_sim_DESIGN.md).
 
-Source: [pypeline.py](../../src/pypeline.py). This is a targeted structural review of the working tree based on commit `9eafa7d8`, including concurrent multi-clock changes. Function names are the stable navigation aid; line numbers describe the measured snapshot. Suspected failure cases are not confirmed bugs unless explicitly labeled.
+Source: [pypeline.py](../../../src/pypeline.py). This is a targeted structural review of the working tree based on commit `9eafa7d8`, including concurrent multi-clock changes. Function names are the stable navigation aid; line numbers describe the measured snapshot. Suspected failure cases are not confirmed bugs unless explicitly labeled.
 
 ## Table of Contents
 

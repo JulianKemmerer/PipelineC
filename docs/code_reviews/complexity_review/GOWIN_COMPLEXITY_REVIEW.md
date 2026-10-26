@@ -1,8 +1,8 @@
 # GOWIN complexity review
 
-Gowin tool/part selection, HTML timing reports and final-build handling. [SYN design](../SYN_DESIGN.md) documents the part-version suffix and adapter contract.
+Gowin tool/part selection, HTML timing reports and final-build handling. [SYN design](../../SYN_DESIGN.md) documents the part-version suffix and adapter contract.
 
-Source: [GOWIN.py](../../src/GOWIN.py). Reviewed on the working tree based on `9eafa7d8`, including concurrent multi-clock changes. Potential failures are not reproduced defects unless stated.
+Source: [GOWIN.py](../../../src/GOWIN.py). Reviewed on the working tree based on `9eafa7d8`, including concurrent multi-clock changes. Potential failures are not reproduced defects unless stated.
 
 ## Table of Contents
 

@@ -1,8 +1,8 @@
 # pypeline_host complexity review
 
-Generates a standalone Python serializer module for host programs. [The API design's shared-layout section](../pypeline_DESIGN.md#one-walk-three-consumers) is an existing example of successful semantic reuse.
+Generates a standalone Python serializer module for host programs. [The API design's shared-layout section](../../pypeline_DESIGN.md#one-walk-three-consumers) is an existing example of successful semantic reuse.
 
-Source: [pypeline_host.py](../../src/pypeline_host.py). Reviewed on the working tree based on `9eafa7d8`, including concurrent multi-clock changes. Locations refer to that snapshot. Failure scenarios are hypotheses unless explicitly confirmed.
+Source: [pypeline_host.py](../../../src/pypeline_host.py). Reviewed on the working tree based on `9eafa7d8`, including concurrent multi-clock changes. Locations refer to that snapshot. Failure scenarios are hypotheses unless explicitly confirmed.
 
 ## Table of Contents
 
