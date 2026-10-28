@@ -24,6 +24,7 @@ simulator for Pypeline designs, or an external HDL simulator run on the generate
 - [1. Who does what](#1-who-does-what)
 - [2. Choosing a simulator](#2-choosing-a-simulator)
 - [3. When simulation runs](#3-when-simulation-runs)
+  - [Simulating built hardware](#simulating-built-hardware)
 - [4. The backend contract](#4-the-backend-contract)
 - [5. Backends](#5-backends)
   - [cocotb (`COCOTB.py`)](#cocotb-cocotbpy)
@@ -40,7 +41,7 @@ simulator for Pypeline designs, or an external HDL simulator run on the generate
 
 | module | role |
 |---|---|
-| `src/SIM.py` | selects the simulator (`SET_SIM_TOOL`), decides whether a native run needs a build (`NATIVE_SIM_SKIPS_BUILD`, `SIM_AT_COMB_STAGE`), runs it (`DO_OPTIONAL_SIM`, and `DO_COMB_STAGE_SIM` after a `--comb` build's final files) and gathers what every backend needs (`GET_SIM_GEN_INFO`, `GET_SIM_FILES`, `GET_MAIN_FUNC_LATENCIES`) |
+| `src/SIM.py` | selects the simulator (`SET_SIM_TOOL`), decides whether a native run needs a build (`NATIVE_SIM_SKIPS_BUILD`, `SIM_AT_COMB_STAGE`, `SIMULATE_BUILT_HARDWARE`), runs it (`DO_OPTIONAL_SIM`, and `DO_COMB_STAGE_SIM` after a `--comb` build's final files), records what native simulation takes from a build (`NATIVE_SIM_HARDWARE`, `WRITE_BUILT_HARDWARE`) and gathers what every backend needs (`GET_SIM_GEN_INFO`, `GET_SIM_FILES`, `GET_MAIN_FUNC_LATENCIES`) |
 | `src/pypeline_sim.py` | the native simulator, used as `SIM_TOOL` for `.py` designs ([`pypeline_sim_DESIGN.md`](pypeline_sim_DESIGN.md)) |
 | `src/COCOTB.py` | cocotb + GHDL on the generated VHDL, with a generated or user Makefile and testbench |
 | `src/VERILATOR.py` | GHDL + yosys to Verilog, then Verilator with a generated or user `main.cpp` |
@@ -71,7 +72,7 @@ replace the generated driver files.
 ## 3. When simulation runs
 
 `src/pipelinec` (see [The build driver](SYN_DESIGN.md#the-build-driver-srcpipelinec))
-calls `SIM` at three points:
+calls `SIM` at four points:
 
 - **Right after tool selection.** `NATIVE_SIM_SKIPS_BUILD(args)` is true when `SIM_TOOL is
   pypeline_sim` and comb simulation was requested (`--sim --comb`, `--sim_comb`, or
@@ -84,6 +85,10 @@ calls `SIM` at three points:
 
   is therefore `python3 src/pypeline_sim.py my_design.py --run 1000` **plus a full build
   first when `--comb` is absent**.
+- **Before any build.** `SIMULATE_BUILT_HARDWARE(args, src_file)` reads the `--out_dir`'s
+  `built_hardware.json` (see [Simulating built hardware](#simulating-built-hardware)). When
+  it holds another top's hardware and this is a native `--sim`, it simulates that
+  hardware and the driver exits. Otherwise a build follows, so it removes the record.
 - **After a `--comb` build's final files.** `DO_COMB_STAGE_SIM` runs the sim when
   `SIM_AT_COMB_STAGE(args)` is true: for `--sim_comb`, and for a native `--sim` run
   that was degraded to comb because no synthesis tool is installed (zero latency,
@@ -103,7 +108,8 @@ hooks never run twice (see
 [`@initial` / `@final`](pypeline_sim_DESIGN.md#initial--final--startend-of-run-hooks)).
 
 **Handing a build to the native simulator.** When `parser_state` and the final timing
-params exist, `DO_OPTIONAL_SIM` passes `pypeline_sim.run_sim`:
+params exist, `DO_OPTIONAL_SIM` passes `pypeline_sim.run_sim` what
+`NATIVE_SIM_HARDWARE(parser_state, multimain_timing_params)` collects:
 
 - the per-MAIN latencies (`GET_MAIN_FUNC_LATENCIES`, all zeros on the comb path);
 - the converged AUTO_PIPELINE latencies (`AUTO_PIPELINE.HARVEST_AUTO_PIPELINE_LATENCIES`;
@@ -118,12 +124,50 @@ params exist, `DO_OPTIONAL_SIM` passes `pypeline_sim.run_sim`:
   (`AUTO_MULTI_CYCLE.HARVEST_AUTO_MULTI_CYCLE_NCYCLES`);
 - the CLI `--part` / `--syn_tool`.
 
-Before that, `CHECK_PIPELINED_NATIVE_SIM_SUPPORTED` exits with an error if a pipelined
-region (a pure `@MAIN` with latency, or an AUTO_PIPELINE call site with latency) uses a
+Before that, `CHECK_PIPELINED_NATIVE_SIM_SUPPORTED` exits with an error, listing
+`PIPELINED_NATIVE_SIM_PROBLEMS`, if a pipelined region (a pure `@MAIN` with latency, or an AUTO_PIPELINE call site with latency) uses a
 `VOLATILE` global wire in its own body, or any global wire in a function called inside
 the region: the native model cannot place those in time. `pypeline._sim_region_for` is
 its runtime twin for plain native runs with no build. The native path always runs at the
 default `strict` accuracy; `pipelinec` has no equivalent of `pypeline_sim.py`'s `--mode`.
+
+### Simulating built hardware
+
+A testbench is simulated on the hardware built for the design's real top, never on a
+build of its own: its constant or `@sim_input` stimulus lets synthesis remove logic, and
+a sweep timed on that removes pipeline stages the real design needs (see
+[`WARN_UNTIMED_REGIONS`](SWEEP_DESIGN.md#untimed-regions)).
+
+- **The record.** After a synthesizing build of a `.py` design meets timing, the driver
+  calls `WRITE_BUILT_HARDWARE`. It writes `<out_dir>/built_hardware.json`
+  (`BUILT_HARDWARE_FILE`, format `BUILT_HARDWARE_VERSION`) with:
+  - what `NATIVE_SIM_HARDWARE` collects, as JSON: RAM plans as their fields, AUTO_FSM
+    schedules reduced to the fields native simulation reads
+    (`pypeline.AUTO_FSM_SIM_SCHEDULE_FIELDS`);
+  - the top it built;
+  - `PY_TO_LOGIC.DESIGN_SOURCE_HASHES()` of every source the build read;
+  - its design parameter values;
+  - `PIPELINED_NATIVE_SIM_PROBLEMS`, so a later simulation refuses what this one would;
+  - `unbuilt_latency_reads` (`_unbuilt_latency_reads`): the `.latency` value the final
+    elaboration read for each AUTO_PIPELINE or AUTO_MULTI_CYCLE it never instantiated,
+    by kind and key. A design reads such a tag when, for example, a factory builds an
+    alternative the configuration leaves unused. A tag read with two different values is
+    left out.
+- **Replacing it.** A record is only ever the last met build. `SIMULATE_BUILT_HARDWARE`
+  removes it whenever a build follows, which also covers `--comb` and `--no_synth`
+  builds that rewrite the directory, and a build that misses timing writes none.
+- **Simulating it.** `SIMULATE_BUILT_HARDWARE` runs when the record's top differs from
+  the file given, `SIM_TOOL` is the native simulator and `--sim` was given (a `--comb`
+  run has already exited). It:
+  - exits with an error if any recorded source's hash changed, or the record lists
+    problems;
+  - calls `run_sim` with the recorded hardware, `built_hardware_from=` the directory and
+    `design_params=` the recorded values and `unbuilt_latency_reads=` (see
+    [Simulating another top's built hardware](pypeline_sim_DESIGN.md#simulating-another-tops-built-hardware));
+  - turns a `pypeline.BuiltHardwareError` into an error exit.
+
+  Nothing is parsed, elaborated or written. A run of the same top in its own directory
+  is an ordinary build, so the existing edit-and-rebuild flow is unchanged.
 
 ## 4. The backend contract
 
@@ -254,6 +298,9 @@ the whole compiler; `VHDL.py` does not import `SIM`.
   yosys.
 - `src_module_import_test.py`: every src module, `SIM` and the backends included, imports
   first in a fresh interpreter.
+- `built_hardware_sim_test.py` (build_report, sky130): a testbench simulated on the hardware
+  built for its real top, and each refusal; see
+  [`pypeline_TESTS.md`](pypeline_TESTS.md).
 - The `native_vs_vhdl_sim` category (`native_vs_vhdl_sim_tests.py`) runs designs through
   both the native simulator and cocotb + GHDL and diffs the cycle logs; see
   [`pypeline_TESTS.md`](pypeline_TESTS.md).

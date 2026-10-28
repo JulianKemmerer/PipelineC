@@ -697,9 +697,10 @@ iteration, right after
 5. verification against its real `GET_TOTAL_LATENCY`;
 6. `params_are_fixed`.
 
-Mini-sweep locks cover only eligible instances within the blamed MAIN.
-`MINISWEEP_LOCK_TARGETS` also bounds region-conflict checks, so one MAIN's
-region retries cannot replace another MAIN's lock. If no in-MAIN instance
+A mini-sweep lock covers the eligible instances in the blamed MAIN, and
+`SWEEP.SHARE_LOCK` then puts it into every eligible instance in the MAINs at
+the same clock goal (the plan's `peers`). `MINISWEEP_LOCK_TARGETS` bounds
+each plan's region-conflict checks to its own MAIN. If no in-MAIN instance
 can absorb latency, the helper is unpipelinable in that plan.
 
 Containing landscapes then see an ordinary `Segment.LOCKED`, the mini-sweep lock path. A
@@ -726,8 +727,9 @@ delay axis, and the container can't count the region's latency.
     ([SWEEP_DESIGN.md §5](SWEEP_DESIGN.md#5-latency-memory)). In pass 2 and later
     the harvested cache supersedes the seed (`constraint.seed` is `None`), so every
     region again starts from its source constraint.
-  - A floor from a lower goal: a depth remembered at a lower clock goal is also the
-    least the region realizes at this one (`SWEEP.LATENCY_MEMORY_AP_FLOORS`, applied
+  - A floor from a lower goal: a depth remembered at a lower clock goal is the
+    start unless a hint is deeper, and it is also the least the region realizes at
+    this one (`SWEEP.LATENCY_MEMORY_AP_FLOORS`, applied
     by `_ENFORCE_ONE_AUTO_PIPELINE_REGION` in every pass, capped at M), so the sweep
     doesn't probe below it. Only a region takes a floor: the seeded tags
     `COLLECT_AUTO_PIPELINE_REGIONS` leaves unconstrained never get one, since nothing
@@ -738,7 +740,11 @@ delay axis, and the container can't count the region's latency.
     `func_delay_scale`, capped at M.
 
   Instances that share a canonical key form one group and are planned to one K, so the
-  harvested `.latency` can't diverge between them. `AUTO_PIPELINE(func, name=)` gives
+  harvested `.latency` can't diverge between them. When the members lie in several MAINs
+  at one clock goal, a decision for the group is made for every member: growth,
+  rebalancing and post-lock recalibration (`_REGION_GROUP_PLANS`) as well as interior
+  locks (`SWEEP.SHARE_LOCK`). The other MAIN takes no decision of its own for that
+  hotspot in the same iteration. `AUTO_PIPELINE(func, name=)` gives
   a group its own key, so two names on one function are two groups planned
   independently. Their instances retain callee-derived call-site labels; `name=` never changes
   emitted hierarchy or path attribution. Duplicate-call collapse never merges two groups.
@@ -746,7 +752,9 @@ delay axis, and the container can't count the region's latency.
   `SWEEP.PLAN_PIPELINE_PLACEMENTS` until it yields K; cut count never increases as the budget
   grows. The result is the planner's own tightest-stage placement for exactly K
   registers. When the count jumps past K, the nearest larger plan is trimmed down
-  (`_TRIM_PLACEMENT_PLAN_TO_COUNT`). Asking a fixed region for more registers than it
+  (`_TRIM_PLACEMENT_PLAN_TO_COUNT`). When no budget reaches K, the plan short of it
+  comes with the largest budget giving its cut count. The bisection's last budget
+  would be about 1e-6, and calibrating `region.scale` from it gave scales of 10⁸. Asking a fixed region for more registers than it
   has legal positions is an error.
 - **Verify and retry.** The realized latency can differ from the cut count, because of
   built-in operator stage granularity or non-deepening drops. A fixed region that
@@ -781,8 +789,8 @@ delay axis, and the container can't count the region's latency.
 - **Mini-sweeps** never lock a hotspot that contains a region, or that lies inside a
   fixed (`latency=`) or capped (`max_latency=`) region: those own their count, and a
   recount resets the interior. Inside an uncapped `start_latency=` region they do lock,
-  when every member of the region's group is in the blamed MAIN
-  (`SWEEP.REGION_INTERIOR_LOCK_BLOCKER`). The hint is a starting count only, and
+  when every member of the region's group is in the blamed MAIN or a MAIN at the same
+  clock goal (`SWEEP.REGION_INTERIOR_LOCK_BLOCKER`); the lock goes into every member. The hint is a starting count only, and
   region-wide growth over a serial-layout delay model can need twice the registers. See
   [`SWEEP_DESIGN.md` History](SWEEP_DESIGN.md#start_latency-regions-and-mini-sweeps).
 - **Everything else includes regions:**

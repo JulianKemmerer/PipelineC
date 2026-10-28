@@ -438,6 +438,15 @@ _GET_ZERO_CLK_HASH_EXT_LOOKUP_cache = {}
 _GET_ZERO_ADDED_CLKS_TIMING_PARAMS_LOOKUP_cache = {}
 
 
+def COPY_TIMING_PARAMS_LOOKUP(timing_params_lookup):
+    """An independent copy of an instance -> TimingParams table that shares
+    the Logic objects (TimingParams.DEEPCOPY). copy.deepcopy duplicates Logic
+    graphs: a per-instance copy gives every instance its own Logic (about
+    30 KB and 14 ms each on the Poly1305 body), and a later snapshot of that
+    table copies them all again."""
+    return {inst: params.DEEPCOPY() for inst, params in timing_params_lookup.items()}
+
+
 def DEL_ZERO_ADDED_CLKS_TIMING_PARAMS_CACHE():
     """Clear the zero-added-clocks TimingParams cache. Not part of DEL_PIPELINE_CACHES:
     re-parses (PY_TO_LOGIC) clear it because its TimingParams hold references to the
@@ -450,11 +459,9 @@ def GET_ZERO_ADDED_CLKS_TIMING_PARAMS_LOOKUP(parser_state):
     # print("GET_ZERO_ADDED_CLKS_TIMING_PARAMS_LOOKUP")
     cache_key = str(sorted(set(parser_state.LogicInstLookupTable.keys())))
     if cache_key in _GET_ZERO_ADDED_CLKS_TIMING_PARAMS_LOOKUP_cache:
-        cached_lookup = _GET_ZERO_ADDED_CLKS_TIMING_PARAMS_LOOKUP_cache[cache_key]
-        rv = {}
-        for inst_i, params_i in cached_lookup.items():
-            rv[inst_i] = params_i.DEEPCOPY()
-        return rv
+        return COPY_TIMING_PARAMS_LOOKUP(
+            _GET_ZERO_ADDED_CLKS_TIMING_PARAMS_LOOKUP_cache[cache_key]
+        )
 
     # Create empty lookup
     ZeroAddedClocksTimingParamsLookupTable = {}
@@ -4383,7 +4390,12 @@ def COUNT_TARGETED_PLACEMENTS(landscape, count, strict=True, prefer_fewer=False)
             over = (cuts, placements, mid)
         else:
             hi = mid
-            under = (cuts, placements, mid)
+            # The largest budget giving the most cuts short of `count`. When no
+            # budget reaches `count`, later midpoints only shrink toward 0
+            # with the same cuts, and a caller calibrating a scale from that
+            # budget (_ENFORCE_ONE_AUTO_PIPELINE_REGION) would get ~1e8.
+            if under is None or len(cuts) > len(under[0]):
+                under = (cuts, placements, mid)
         if hi - lo <= 1e-6 * max(1.0, hi):
             break
     if over is not None:
@@ -4502,7 +4514,7 @@ def _ENFORCE_ONE_AUTO_PIPELINE_REGION(
                 zero_tpl = GET_ZERO_ADDED_CLKS_TIMING_PARAMS_LOOKUP(parser_state)
             for inst in list(tpl.keys()):
                 if inst == region.inst or inst.startswith(region.inst + marker):
-                    tpl[inst] = copy.deepcopy(zero_tpl[inst])
+                    tpl[inst] = zero_tpl[inst].DEEPCOPY()
             region.landscape = SWEEP.BUILD_SLICE_LANDSCAPE(
                 region.inst, parser_state, tpl, func_delay_scale
             )
@@ -4709,7 +4721,7 @@ def REENFORCE_AUTO_PIPELINE_REGIONS(parser_state, tpl, scope_inst=None):
             zero_tpl = GET_ZERO_ADDED_CLKS_TIMING_PARAMS_LOOKUP(parser_state)
         for inst in list(tpl.keys()):
             if inst == region.inst or inst.startswith(region.inst + marker):
-                tpl[inst] = copy.deepcopy(zero_tpl[inst])
+                tpl[inst] = zero_tpl[inst].DEEPCOPY()
         region.landscape = SWEEP.BUILD_SLICE_LANDSCAPE(region.inst, parser_state, tpl, {})
         try:
             tpl = _ENFORCE_ONE_AUTO_PIPELINE_REGION(
@@ -4784,8 +4796,21 @@ def STOP_AT_AUTO_PIPELINE_LATENCY_LIMIT(plan, parser_state, capped_regions, hots
     plan.auto_pipeline_limit_blame = names_str
 
 
+def _REGION_GROUP_PLANS(plan, region):
+    """`plan` and each peer (a MAIN at the same clock goal, SWEEP.SHARE_LOCK)
+    holding a member of `region`'s group, with those members: one group
+    realizes one .latency, so a decision for it is made for every member."""
+    result = []
+    for owner in [plan] + list(getattr(plan, "peers", ())):
+        members = [r for r in owner.regions if r.group == region.group]
+        if members:
+            result.append((owner, members))
+    return result
+
+
 def AUTO_PIPELINE_REGION_FEEDBACK(plan, region, hotspot_func, target_mhz, curr_mhz, parser_state):
-    """Failing-timing feedback for a critical path inside a constrained region.
+    """Failing-timing feedback for a critical path inside a constrained region,
+    applied to every member of its group (_REGION_GROUP_PLANS).
     Returns (action string, made_change)."""
     import SWEEP
 
@@ -4796,21 +4821,25 @@ def AUTO_PIPELINE_REGION_FEEDBACK(plan, region, hotspot_func, target_mhz, curr_m
         max((target_mhz / curr_mhz) * 1.05, SWEEP.FUNC_SCALE_MIN_STEP),
         SWEEP.FUNC_SCALE_MAX_STEP,
     )
-    group = [r for r in plan.regions if r.group == region.group]
+    group = _REGION_GROUP_PLANS(plan, region)
     if not region.at_cap():
-        for r in group:
-            r.scale *= step
-        plan.func_delay_scale[hotspot_func] = (
-            plan.func_delay_scale.get(hotspot_func, 1.0) * step
-        )
+        for owner, members in group:
+            for r in members:
+                r.scale *= step
+            owner.func_delay_scale[hotspot_func] = (
+                owner.func_delay_scale.get(hotspot_func, 1.0) * step
+            )
+            owner.needs_replan = True
         return f"grow_auto_pipeline({region.label()} x{region.scale:.2f})", True
     if not region.rebalance_attempted:
         # Same register count, re-placed with the hotspot weighted heavier
-        for r in group:
-            r.rebalance_attempted = True
-        plan.func_delay_scale[hotspot_func] = (
-            plan.func_delay_scale.get(hotspot_func, 1.0) * step
-        )
+        for owner, members in group:
+            for r in members:
+                r.rebalance_attempted = True
+            owner.func_delay_scale[hotspot_func] = (
+                owner.func_delay_scale.get(hotspot_func, 1.0) * step
+            )
+            owner.needs_replan = True
         return (
             f"rebalance_auto_pipeline({region.label()} at "
             f"{region.constraint.describe()})",
@@ -4821,11 +4850,12 @@ def AUTO_PIPELINE_REGION_FEEDBACK(plan, region, hotspot_func, target_mhz, curr_m
 
 
 def RESET_REGION_CALIBRATION_AFTER_LOCK(plan, region):
-    """A mini-sweep just locked a helper inside `region`'s group. The group's
-    scale was calibrated (start_latency=) and grown against the unlocked
-    landscape the lock replaced, so plan what remains from the clock period."""
-    for r in plan.regions:
-        if r.group == region.group:
+    """A mini-sweep just locked a helper inside `region`'s group, in every
+    member (SWEEP.SHARE_LOCK). The group's scale was calibrated
+    (start_latency=) and grown against the unlocked landscape the lock
+    replaced, so plan what remains from the clock period."""
+    for _owner, members in _REGION_GROUP_PLANS(plan, region):
+        for r in members:
             r.scale = 1.0
             r.start_pending = False
 

@@ -2947,6 +2947,70 @@ def PRINT_PIPELINE_DEPTH_SUMMARY(parser_state, TimingParamsLookupTable):
             )
 
 
+# An AUTO_PIPELINE region whose measured delay, split evenly over its built
+# stages, still exceeds this many clock periods cannot be what met timing
+# (WARN_UNTIMED_REGIONS)
+UNTIMED_REGION_PERIODS = 1.25
+
+
+def WARN_UNTIMED_REGIONS(parser_state, multimain_timing_params):
+    """One warning per AUTO_PIPELINE region whose MAIN met timing at a depth the
+    region's own measured delay rules out: even split evenly over its built
+    stages it needs over UNTIMED_REGION_PERIODS clock periods per stage. The
+    synthesized design then never timed the region's paths: synthesis removed
+    its logic (constant inputs, unused outputs) or left it between unconstrained
+    ports. The met result says nothing about it, and the sweep may have removed
+    stages it needs. Estimated delays are skipped, and builds without a sweep
+    (--comb) leave regions unpipelined on purpose. Returns {warned key: its
+    MAIN instance}: the latency memory remembers none of them
+    (BUILD_LATENCY_PIECES)."""
+    import pypeline
+
+    if pypeline.AUTO_PIPELINE_BUILD_MODE() != "sweep":
+        return {}
+    tpl = multimain_timing_params.TimingParamsLookupTable
+    failing = {
+        failure[0]
+        for failure in getattr(multimain_timing_params, "sweep_timing_failures", None) or []
+    }
+    warned = {}
+    for inst, logic in sorted(parser_state.LogicInstLookupTable.items()):
+        for local_sub, key in sorted((logic.sub_inst_to_auto_pipeline_key or {}).items()):
+            if key is None or key in warned or AUTO_PIPELINE._PINNED_AUTO_FSM_UNIT(logic, local_sub):
+                continue
+            sub_inst = inst + LOGIC.SUBMODULE_MARKER + local_sub
+            region = parser_state.LogicInstLookupTable.get(sub_inst)
+            params = tpl.get(sub_inst)
+            main = sub_inst.split(LOGIC.SUBMODULE_MARKER)[0]
+            mhz = parser_state.main_mhz.get(main)
+            if (
+                region is None
+                or params is None
+                or region.delay is None
+                or region.delay_is_estimated
+                or not mhz
+                or main in failing
+            ):
+                continue
+            period_ns = 1000.0 / mhz
+            delay_ns = region.delay / SYN.DELAY_UNIT_MULT
+            stages = params.GET_TOTAL_LATENCY(parser_state, tpl) + 1
+            if delay_ns / stages <= UNTIMED_REGION_PERIODS * period_ns:
+                continue
+            warned[key] = main
+            print(
+                f"[sweep] WARNING: AUTO_PIPELINE {key} met {mhz} MHz with {stages} "
+                f"pipeline stage(s), but its measured delay of {delay_ns:.1f} ns needs "
+                f"about {math.ceil(delay_ns / period_ns)} stages. Synthesis never timed its "
+                "paths: it removed the logic (constant inputs, unused outputs) or "
+                "left it between unconstrained ports, so this result says nothing "
+                "about it, and the latency memory will not remember it. Build a top "
+                "that drives and uses it through real ports.",
+                flush=True,
+            )
+    return warned
+
+
 def PRINT_TIMING_FAILURES(parser_state, multimain_timing_params) -> bool:
     """Print one ERROR line per main that missed its timing goal, a global
     instance's or FIFO's MAIN named by its declaration (MAIN_DISPLAY_NAME).
@@ -3582,8 +3646,18 @@ def RESOLVE_LATENCY_MEMORY(parser_state, hints, reparse):
                 piece = None
             if piece:
                 selected[(kind, key)] = piece
-                seeds[(kind, key)] = (piece["latency"], _seed_source_text(
-                    f"latency memory ({piece['source']})", piece, piece))
+                remembered = _seed_source_text(
+                    f"latency memory ({piece['source']})", piece, piece)
+                hint = hints.get((kind, key))
+                if (hint is not None and piece["goal_mhz"] < item["goal_mhz"]
+                        and hint[0] > piece["latency"]):
+                    # A lower-goal depth is a floor at this goal, not its
+                    # answer: a deeper explicit hint is the better start.
+                    seeds[(kind, key)] = (
+                        hint[0], f"{hint[1]}, above the floor {piece['latency']} "
+                                 f"from {remembered}")
+                else:
+                    seeds[(kind, key)] = (piece["latency"], remembered)
         # A constructed tag need not have a .latency read. Its parser
         # constraint still records what was served, avoiding redundant parses.
         constraints = {("AUTO_PIPELINE", key): constraint
@@ -3863,7 +3937,7 @@ def _latency_owners(parser_state):
     return owners
 
 
-def BUILD_LATENCY_PROFILE(parser_state, multimain_timing_params, history):
+def BUILD_LATENCY_PROFILE(parser_state, multimain_timing_params, history, untimed=()):
     """The latency_profile.json document (pure but for the harvest walks):
     deterministic, sorted, without timestamps or absolute paths."""
     import pypeline
@@ -3889,11 +3963,16 @@ def BUILD_LATENCY_PROFILE(parser_state, multimain_timing_params, history):
         if (kind, key) not in built:
             continue
         verdicts = [finals.get(m) for m in sorted(mains)]
-        verified = bool(verdicts) and all(
-            v is not None
-            and v[1].get("met") is True
-            and v[1].get("met_basis") in ("measured", "no_failing_path_reported")
-            for v in verdicts
+        verified = (
+            bool(verdicts)
+            and all(
+                v is not None
+                and v[1].get("met") is True
+                and v[1].get("met_basis") in ("measured", "no_failing_path_reported")
+                for v in verdicts
+            )
+            # A met MAIN says nothing about a region synthesis never timed
+            and not (kind == "AUTO_PIPELINE" and key in untimed)
         )
         goals = [v[0] for v in verdicts if v is not None and v[0] is not None]
         achieved = [
@@ -3933,12 +4012,19 @@ def BUILD_LATENCY_PROFILE(parser_state, multimain_timing_params, history):
     }
 
 
-def BUILD_LATENCY_PIECES(parser_state, params, history, profile):
-    """Record each piece only if all of its owning MAINs met timing."""
+def BUILD_LATENCY_PIECES(parser_state, params, history, profile, untimed=None):
+    """Record each piece only if all of its owning MAINs met timing, and none of
+    the AUTO_PIPELINE regions synthesis never timed ({key: MAIN instance},
+    WARN_UNTIMED_REGIONS), nor a MAIN or lock containing one."""
     identities = _latency_piece_identities(parser_state)
     finals = (history or {}).get("mains", {})
+    untimed = untimed or {}
+    untimed_mains = set(untimed.values())
 
-    def verified(mains):
+    def verified(mains, whole=False):
+        """whole: the piece captures whole MAINs (a MAIN implementation or lock)."""
+        if whole and set(mains) & untimed_mains:
+            return False
         return bool(mains) and all(
             finals.get(parser_state.LogicInstLookupTable[m].func_name, {}).get("final", {}).get("met") is True
             and finals[parser_state.LogicInstLookupTable[m].func_name]["final"].get("met_basis")
@@ -3948,7 +4034,9 @@ def BUILD_LATENCY_PIECES(parser_state, params, history, profile):
     built = {(e["kind"], e["key"]): e for e in profile["entries"]}
     pieces = []
     for (kind, key), identity in sorted(identities.items()):
-        if not verified(identity["mains"]) or identity["goal_mhz"] is None:
+        if kind == "AUTO_PIPELINE" and key in untimed:
+            continue
+        if not verified(identity["mains"], whole=kind == "main") or identity["goal_mhz"] is None:
             continue
         piece = dict(kind=kind, key=key, digest=identity["digest"],
                      goal_mhz=identity["goal_mhz"], part=part, tool=tool)
@@ -3965,7 +4053,7 @@ def BUILD_LATENCY_PIECES(parser_state, params, history, profile):
     for (main_name, func, goal, fingerprint), lock in sorted(CARRIED_LOCKS.items()):
         mains = {m for m in parser_state.main_mhz
                  if parser_state.LogicInstLookupTable[m].func_name == main_name}
-        if not verified(mains) or lock.concrete is None:
+        if not verified(mains, whole=True) or lock.concrete is None:
             continue
         if not any(SYN.GET_TARGET_MHZ(m, parser_state) == goal for m in mains):
             continue
@@ -3987,16 +4075,19 @@ def MERGE_LATENCY_PIECES(previous, pieces):
             for e in list(groups[pair].values())[-LATENCY_MEMORY_MAX_ENTRIES:]]
 
 
-def RECORD_LATENCY_PROFILE(parser_state, multimain_timing_params, history):
-    """The profile format stays v1; memory v2 stores independently reusable pieces."""
+def RECORD_LATENCY_PROFILE(parser_state, multimain_timing_params, history, untimed=None):
+    """The profile format stays v1; memory v2 stores independently reusable pieces.
+    untimed: the regions WARN_UNTIMED_REGIONS found, recorded as unverified."""
     try:
-        profile = BUILD_LATENCY_PROFILE(parser_state, multimain_timing_params, history)
+        profile = BUILD_LATENCY_PROFILE(parser_state, multimain_timing_params, history, untimed or {})
         out_dir = SYN.SYN_OUTPUT_DIRECTORY
         SYN._write_json_atomic(os.path.join(out_dir, LATENCY_PROFILE_FILE), profile)
         if not LATENCY_MEMORY_ENABLED:
             print(f"Latency profile: {os.path.join(out_dir, LATENCY_PROFILE_FILE)} (latency memory off)", flush=True)
             return profile
-        pieces = BUILD_LATENCY_PIECES(parser_state, multimain_timing_params, history, profile)
+        pieces = BUILD_LATENCY_PIECES(
+            parser_state, multimain_timing_params, history, profile, untimed
+        )
         out_path = os.path.join(out_dir, LATENCY_MEMORY_FILE)
         doc = {"schema_version": LATENCY_MEMORY_SCHEMA_VERSION,
                "pieces": MERGE_LATENCY_PIECES(_read_latency_pieces(out_path), pieces)}
@@ -4090,13 +4181,14 @@ def WRITE_SWEEP_RESULTS(parser_state, multimain_timing_params, src_file):
         parser_state, multimain_timing_params.TimingParamsLookupTable
     )
     ADD_OVER_CAPACITY_FAILURES(parser_state, multimain_timing_params)
+    untimed = WARN_UNTIMED_REGIONS(parser_state, multimain_timing_params)
     sweep_history = WRITE_SWEEP_HISTORY(
         parser_state, multimain_timing_params, build_complete=True
     )
     SYN.WRITE_FINAL_FILES(multimain_timing_params, parser_state)
     PY_TO_LOGIC.RUN_SYN_FINAL_HOOKS()
     if src_file.endswith(".py") and pypeline.AUTO_PIPELINE_BUILD_MODE() == "sweep":
-        RECORD_LATENCY_PROFILE(parser_state, multimain_timing_params, sweep_history)
+        RECORD_LATENCY_PROFILE(parser_state, multimain_timing_params, sweep_history, untimed)
 
 
 def RECORD_CONFIRMATION_RESULTS(
@@ -4966,6 +5058,9 @@ class MainSweepPlan:
         # needs both external register banks.  Keep those decisions separate
         # so adjacent helpers can share one real boundary register.
         self.locked = {}
+        # The other MAINs' plans at this clock goal. A lock or a region-group
+        # decision this plan makes holds for their instances too (SHARE_LOCK).
+        self.peers = []
         self.mini_sweep_boundary_diagnostics = {}
         self.hotspot_streak = {}  # func name -> consecutive attributions
         self.minisweeps_used = 0
@@ -5648,16 +5743,18 @@ def REGION_INTERIOR_LOCK_BLOCKER(region, plan, parser_state):
 
     A fixed (latency=) or capped (max_latency=) region owns its register
     count and resets its interior on a recount, which would drop the lock.
-    Every member of the region's group must lie in this plan's MAIN: locks
-    are per MAIN, and group members must realize one .latency."""
+    Every member of the region's group must lie in this plan's MAIN or a
+    peer's, at the same clock goal: the lock then goes into every member
+    (SHARE_LOCK), and group members must realize one .latency."""
     if region.constraint.upper_bound() is not None:
         return "constrained AUTO_PIPELINE region"
     marker = LOGIC.SUBMODULE_MARKER
+    mains = [plan.main_inst] + [peer.main_inst for peer in getattr(plan, "peers", ())]
     for other in AUTO_PIPELINE.COLLECT_AUTO_PIPELINE_REGIONS(parser_state):
-        if other.group == region.group and not other.inst.startswith(
-            plan.main_inst + marker
+        if other.group == region.group and not any(
+            other.inst.startswith(main + marker) for main in mains
         ):
-            return "AUTO_PIPELINE region shared with another MAIN"
+            return "AUTO_PIPELINE region shared with a MAIN at another clock goal"
     return None
 
 
@@ -5754,7 +5851,8 @@ def MEASURED_LOCK_MODEL(func, inst, parser_state):
 
 
 def CARRIED_LOCK_KEY(plan, func, fingerprint, parser_state):
-    """Carried locks belong to their owning MAIN: independent depths per MAIN."""
+    """Carried locks are kept per owning MAIN. A lock found at one goal is in
+    every same-goal MAIN's plan (SHARE_LOCK), so each stores its own copy."""
     main_name = parser_state.LogicInstLookupTable[plan.main_inst].func_name
     return (main_name, func, plan.target_mhz, fingerprint)
 
@@ -5821,6 +5919,70 @@ def STORE_CARRIED_LOCKS(plans, parser_state):
             CARRIED_LOCKS[CARRIED_LOCK_KEY(plan, func, fingerprint, parser_state)] = (
                 copy.deepcopy(lock)
             )
+
+
+def LINK_PEER_PLANS(plans):
+    """Give each plan its peers: the other MAINs' plans at its clock goal."""
+    for plan in plans.values():
+        plan.peers = sorted(
+            (
+                other
+                for other in plans.values()
+                if other is not plan and other.target_mhz == plan.target_mhz
+            ),
+            key=lambda other: other.main_inst,
+        )
+
+
+def SHARE_LOCK(plan, func, parser_state, only_unlocked=False):
+    """Apply this plan's lock on `func` to every eligible instance of `func`
+    in its peers, the MAINs at the same clock goal: an interior that meets the
+    goal in one instance meets it in all of them, and the instances of one
+    AUTO_PIPELINE group must realize one .latency. A peer keeps its own
+    boundary banks, chosen from its own topology, and replans with the lock.
+    `only_unlocked` (carried locks) leaves a peer that already locks `func`,
+    or replays a preserved implementation, as it is. Returns the peers that
+    took the lock."""
+    lock = next(
+        (
+            plan.locked[inst]
+            for inst in sorted(plan.locked)
+            if parser_state.LogicInstLookupTable[inst].func_name == func
+        ),
+        None,
+    )
+    if lock is None:
+        return []
+    took = []
+    for peer in plan.peers:
+        targets, _excluded = MINISWEEP_LOCK_TARGETS(func, peer, parser_state)
+        if not targets or (
+            only_unlocked
+            and (
+                any(inst in peer.locked for inst in targets)
+                or getattr(peer, "realized_snapshot", None) is not None
+            )
+        ):
+            continue
+        peer_name = parser_state.LogicInstLookupTable[peer.main_inst].func_name
+        reason = LOCK_BLOCKED_REASON(func, peer, targets, parser_state)
+        if reason is not None:
+            print(f"[sweep] Not applying the lock for {func} in {peer_name}: {reason}", flush=True)
+            continue
+        for inst in targets:
+            for locked_inst in list(peer.locked):
+                if _INSTS_CONFLICT(inst, locked_inst):
+                    del peer.locked[locked_inst]
+            peer.locked[inst] = copy.deepcopy(lock)
+        SET_MINISWEEP_BOUNDARY_STRATEGY(peer, func, lock.boundary_strategy, parser_state)
+        peer.needs_replan = True
+        print(
+            f"[sweep] Applying the lock for {func} to {len(targets)} instance(s) in "
+            f"{peer_name}, also at {plan.target_mhz:g} MHz",
+            flush=True,
+        )
+        took.append(peer)
+    return took
 
 
 def HOTSPOT_IS_LOCKED(hotspot_func, plan, parser_state):
@@ -6593,6 +6755,7 @@ def PLAN_FINGERPRINT_PLACEMENTS(plan):
     return merged
 
 
+@SYN.PHASED("sweep planning")
 def DO_PLANNED_THROUGHPUT_SWEEP(parser_state, multimain_timing_params):
     """Replaces the old middle-out sweep. One full-design synthesis per
     iteration; landscape planning decides where registers go, timing report
@@ -6626,6 +6789,7 @@ def DO_PLANNED_THROUGHPUT_SWEEP(parser_state, multimain_timing_params):
         plan = MainSweepPlan(main_inst, target_mhz)
         plan.subtrees = subtrees
         plans[main_inst] = plan
+    LINK_PEER_PLANS(plans)
 
     # Full-design reports verify planless MAINs. Only explicit full-hierarchy
     # characterization retains the additional informational standalone checks.
@@ -6713,6 +6877,13 @@ def DO_PLANNED_THROUGHPUT_SWEEP(parser_state, multimain_timing_params):
             multimain_timing_params.TimingParamsLookupTable,
             plan.realized_snapshot,
         )
+    # A carried lock holds for every instance of its module at its goal: a
+    # peer with none of its own takes it.
+    for plan in sorted(plans.values(), key=lambda plan: plan.main_inst):
+        for func in sorted(
+            {parser_state.LogicInstLookupTable[inst].func_name for inst in plan.locked}
+        ):
+            SHARE_LOCK(plan, func, parser_state, only_unlocked=True)
     internal_placement_config = LOAD_INTERNAL_PLACEMENT_CONFIG()
     if internal_placement_config is not None:
         print(
@@ -7167,6 +7338,10 @@ def DO_PLANNED_THROUGHPUT_SWEEP(parser_state, multimain_timing_params):
         # (fresh concrete lock, boundary policy, same-depth refinement): their
         # repeated MHz is not stagnation yet - that candidate is observed first.
         new_candidate_plans = set()
+        # main inst -> (hotspot func, action) a peer at the same goal already
+        # decided for it this iteration (a shared lock or region-group change):
+        # it takes no second decision for that hotspot.
+        decided_by_peer = {}
         opaque_refinements = set()  # Text evidenced on failing geometry paths only.
         # main inst -> {path evidence key: failing path this MAIN only crosses}
         crossings = {}
@@ -7578,6 +7753,14 @@ def DO_PLANNED_THROUGHPUT_SWEEP(parser_state, multimain_timing_params):
                                 plan.global_scale *= step
                                 action = f"replan(global x{plan.global_scale:.2f}, {hotspot_func} unpipelinable)"
                                 made_change = True
+                        elif (
+                            hotspot_func is not None
+                            and decided_by_peer.get(main_inst, (None,))[0] == hotspot_func
+                        ):
+                            # The next synthesis tries what a peer decided
+                            # for every instance of this hotspot.
+                            action = decided_by_peer[main_inst][1]
+                            made_change = True
                         elif hotspot_func is not None and HOTSPOT_IS_LOCKED(
                             hotspot_func, plan, parser_state
                         ):
@@ -7670,6 +7853,12 @@ def DO_PLANNED_THROUGHPUT_SWEEP(parser_state, multimain_timing_params):
                                 new_candidate_plans.add(main_inst)
                                 action = f"minisweep({hotspot_func})"
                                 made_change = True
+                                for peer in SHARE_LOCK(plan, hotspot_func, parser_state):
+                                    new_candidate_plans.add(peer.main_inst)
+                                    decided_by_peer[peer.main_inst] = (
+                                        hotspot_func,
+                                        f"{action} from {main_logic.func_name}",
+                                    )
                             else:
                                 action, region_changed = AUTO_PIPELINE.AUTO_PIPELINE_REGION_FEEDBACK(
                                     plan,
@@ -7681,11 +7870,23 @@ def DO_PLANNED_THROUGHPUT_SWEEP(parser_state, multimain_timing_params):
                                 )
                                 if region_changed:
                                     made_change = True
+                                    for peer in plan.peers:
+                                        if any(r.group == region.group for r in peer.regions):
+                                            decided_by_peer[peer.main_inst] = (
+                                                hotspot_func,
+                                                f"{action} from {main_logic.func_name}",
+                                            )
                         elif hotspot_func is not None:
                             if TRY_HOTSPOT_MINISWEEP(hotspot_func, plan, parser_state):
                                 new_candidate_plans.add(main_inst)
                                 action = f"minisweep({hotspot_func})"
                                 made_change = True
+                                for peer in SHARE_LOCK(plan, hotspot_func, parser_state):
+                                    new_candidate_plans.add(peer.main_inst)
+                                    decided_by_peer[peer.main_inst] = (
+                                        hotspot_func,
+                                        f"{action} from {main_logic.func_name}",
+                                    )
                             else:
                                 # Not yet repeated, or the isolated probe
                                 # couldn't fix it: densify
@@ -7893,7 +8094,7 @@ def DO_PLANNED_THROUGHPUT_SWEEP(parser_state, multimain_timing_params):
         if candidate_key is not None and SNAPSHOT_BETTER(candidate_key, best_key):
             best_key = candidate_key
             best_score = overall_score
-            best_tpl = copy.deepcopy(tpl)
+            best_tpl = AUTO_PIPELINE.COPY_TIMING_PARAMS_LOOKUP(tpl)
             best_auto_multi_cycle = dict(synthesized_auto_multi_cycle)
             best_iter_records = iter_records
             best_plan_regions = copy.deepcopy(built_plan_regions)
@@ -8001,7 +8202,7 @@ def DO_PLANNED_THROUGHPUT_SWEEP(parser_state, multimain_timing_params):
                 )
                 if met_snapshot_cuts is None or total_cuts_now < met_snapshot_cuts:
                     met_snapshot_cuts = total_cuts_now
-                    met_snapshot_tpl = copy.deepcopy(tpl)
+                    met_snapshot_tpl = AUTO_PIPELINE.COPY_TIMING_PARAMS_LOOKUP(tpl)
                     met_snapshot_auto_multi_cycle = dict(synthesized_auto_multi_cycle)
                     met_snapshot_iter_records = iter_records
                     met_snapshot_plan_regions = copy.deepcopy(built_plan_regions)

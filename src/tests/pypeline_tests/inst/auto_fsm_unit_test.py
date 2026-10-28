@@ -537,6 +537,53 @@ def test_cleanup_refuses_custom_operator_identity():
     assert dag["nodes"]["call"]["entity"] == "custom_add"
 
 
+def test_cleanup_folds_width_decided_comparisons():
+    """A comparison of a function input that its width alone decides folds,
+    so no measured constant wrapper is built for it (issue #288: Vivado
+    reports no timing path for `uint1 > 1` and the build stops)."""
+    import LOGIC
+
+    ps = LOGIC.ParserState()
+    cases = [
+        # (op, input port, constant, constant port, input casts, folded value)
+        (">", "uint1_t", 1, "uint1_t", [], 0),
+        (">=", "uint3_t", 8, "uint4_t", [], 0),
+        ("<", "uint3_t", 8, "uint4_t", [], 1),
+        (">", "int4_t", 7, "int4_t", [], 0),
+        (">=", "int4_t", -8, "int4_t", [], 1),
+        ("<", "uint8_t", 4, "uint8_t", [["uint2_t"]], 1),
+        ("==", "uint2_t", 4, "uint3_t", [], 0),
+        (">", "uint8_t", 1, "uint8_t", [], None),
+    ]
+    for op, port, value, const_port, casts, folded in cases:
+        node = _cleanup_node(
+            op,
+            [["in", "x"], ["lit", value, const_port]],
+            [port, const_port],
+            "uint1_t",
+            (casts or [[]]) + [[]],
+        )
+        dag, counts = AUTO.cleanup(
+            _cleanup_graph({"cmp": node}, ["node", "cmp"]), ps, "root"
+        )
+        if folded is None:
+            assert dag["output"] == ["node", "cmp"], (op, port, value, dag)
+            assert counts["folded"] == 0
+        else:
+            assert dag["output"] == ["lit", folded, "uint1_t"], (op, port, value, dag)
+            assert counts["folded"] == 1
+
+
+def test_area_frontier_keeps_points_fewer_states_do_not_beat():
+    """The area search reports its latency/area trade so a caller can pick a
+    max_latency= cap without synthesis. A point is kept only when it is
+    cheaper than every point with fewer states; the report is diagnostic and
+    never part of the FSM's hardware identity."""
+    frontier = AUTO_FSM._pareto_frontier({50: 100.0, 45: 120.0, 64: 90.0, 55: 110.0})
+    assert frontier == [[45, 120.0], [50, 100.0], [64, 90.0]], frontier
+    assert "area_frontier" in AUTO_FSM._SCHEDULE_NON_HARDWARE_KEYS
+
+
 def test_cleanup_cse_is_deterministic():
     import LOGIC
 
@@ -669,10 +716,134 @@ def test_mixed_units_break_only_registered_ordering_edges():
     assert len(schedule["fus"]) == 2 and schedule["n_states"] == 3
 
 
+def test_area_search_memo_reuses_plans_byte_identically(tmp):
+    """Bindings of one graph share SCHEDULE_DAG plans through the area search's
+    memo: a cap's one-unit-per-operation trial, and bisection points that
+    coincide. A schedule built from reused plans, its operand-mux snapshot
+    included, is the one scheduling again builds."""
+    ps, key, tag = parse_design(tmp, mhz=25.0, name="d_plan_memo")
+    fake_delays(ps, key, tag)
+    tag.max_latency = 3
+    adder = next(iter(AUTO_FSM.BUILD_SCHEDULE(ps, key, tag, 0.9)["fus"].values()))
+    bindings = [(), ((adder, 2),), ((adder, 3),)]
+    calls = []
+    real_schedule_dag = AUTO_FSM.SCHEDULE_DAG
+
+    def counting_schedule_dag(*args, **kwargs):
+        calls.append(1)
+        return real_schedule_dag(*args, **kwargs)
+
+    AUTO_FSM.SCHEDULE_DAG = counting_schedule_dag
+    try:
+        memo = AUTO_FSM._AreaSearchMemo()
+        shared = [
+            AUTO_FSM.BUILD_SCHEDULE(
+                ps, key, tag, 0.9, None, (), None, unshared, _graph_memo=memo
+            )
+            for unshared in bindings
+        ]
+        n_shared = len(calls)
+        del calls[:]
+        alone = [
+            AUTO_FSM.BUILD_SCHEDULE(ps, key, tag, 0.9, None, (), None, unshared)
+            for unshared in bindings
+        ]
+        n_alone = len(calls)
+    finally:
+        AUTO_FSM.SCHEDULE_DAG = real_schedule_dag
+    for unshared, a, b in zip(bindings, shared, alone):
+        assert json.dumps(a, sort_keys=True, default=str) == json.dumps(
+            b, sort_keys=True, default=str
+        ), f"binding {unshared}: a schedule from reused plans differs"
+    assert n_shared < n_alone, (n_shared, n_alone)
+    print(
+        f"PASS: bindings share plans through the area search memo, byte for "
+        f"byte ({n_shared} SCHEDULE_DAG runs vs {n_alone} without it)"
+    )
+
+
+def test_forked_map_keeps_order_merges_caches_and_raises():
+    """_map_forked returns results in item order, merges back what workers add
+    to its caches, and raises a worker's exception in the caller."""
+    cache = {"before": 0}
+
+    def square(item):
+        if item == "boom":
+            raise AUTO_FSM.AutoFsmInternalError("boom")
+        cache[("square", item)] = item * item
+        cache[("absent", item)] = None  # a None result is an entry too
+        return item * 10
+
+    old_jobs = SYN.NUM_PROCESSES
+    SYN.NUM_PROCESSES = 3
+    try:
+        items = list(range(7))
+        assert AUTO_FSM._map_forked(square, items, [cache]) == [i * 10 for i in items]
+        assert cache == dict(
+            [("before", 0)]
+            + [(("square", i), i * i) for i in items]
+            + [(("absent", i), None) for i in items]
+        ), cache
+        try:
+            AUTO_FSM._map_forked(square, [1, "boom", 2], [cache])
+            raised = False
+        except AUTO_FSM.AutoFsmInternalError:
+            raised = True
+        assert raised, "a worker's exception is raised in the caller"
+        try:
+            # A worker killed outright (by the OOM killer, say) stops the
+            # search with an error instead of leaving the caller waiting.
+            AUTO_FSM._map_forked(lambda _item: os._exit(3), [1, 2])
+            stopped = False
+        except AUTO_FSM.AutoFsmInternalError as error:
+            stopped = "code 3" in str(error)
+        assert stopped, "a worker that dies raises an error naming its exit code"
+    finally:
+        SYN.NUM_PROCESSES = old_jobs
+    print(
+        "PASS: forked builds keep item order, merge caches back, raise errors "
+        "and report a worker that dies"
+    )
+
+
+def test_area_search_is_the_same_at_any_jobs(parser_state, key, tag):
+    """An area search builds each step's candidates in forked workers under
+    -j 3 and returns the schedule -j 1 returns, byte for byte."""
+    forks = []
+    real_get_context = AUTO_FSM.multiprocessing.get_context
+
+    def counting_get_context(method):
+        forks.append(method)
+        return real_get_context(method)
+
+    old_jobs = SYN.NUM_PROCESSES
+    AUTO_FSM.multiprocessing.get_context = counting_get_context
+    try:
+        SYN.NUM_PROCESSES = 1
+        serial = AUTO_FSM.SWEEP_MIN_AREA_SCHEDULE(parser_state, key, tag, 0.9)
+        n_serial_forks = len(forks)
+        SYN.NUM_PROCESSES = 3
+        forked = AUTO_FSM.SWEEP_MIN_AREA_SCHEDULE(parser_state, key, tag, 0.9)
+    finally:
+        SYN.NUM_PROCESSES = old_jobs
+        AUTO_FSM.multiprocessing.get_context = real_get_context
+    assert n_serial_forks == 0 and forks, (n_serial_forks, forks)
+    assert json.dumps(serial, sort_keys=True, default=str) == json.dumps(
+        forked, sort_keys=True, default=str
+    ), "an area search returned a different schedule under -j 3"
+    print(
+        f"PASS: the area search returns the same schedule under -j 3 "
+        f"({len(forks)} forked steps) as under -j 1"
+    )
+
+
 def main():
     test_cleanup_constant_casts()
+    test_forked_map_keeps_order_merges_caches_and_raises()
     test_cleanup_identity_preserves_narrowing()
     test_cleanup_refuses_custom_operator_identity()
+    test_cleanup_folds_width_decided_comparisons()
+    test_area_frontier_keeps_points_fewer_states_do_not_beat()
     test_cleanup_cse_is_deterministic()
     test_cleanup_factoring_preserves_reconvergent_glue()
     test_pipelined_unit_launches_each_cycle()
@@ -1210,6 +1381,7 @@ def main():
             "the cap is recorded in the schedule (a cached schedule built under "
             "a different cap must not be reused)",
         )
+        test_area_search_memo_reuses_plans_byte_identically(tmp)
 
         print("[operand multiplexers are array reads, not if/elif chains]")
         name4, src4, _g4 = AUTO_FSM.GENERATE_FSM_SOURCE(tag, sched, ps)
@@ -1531,6 +1703,7 @@ def main():
             "the sweep never returns something its own model calls worse than "
             "the plain schedule it started from",
         )
+        test_area_search_is_the_same_at_any_jobs(ps6, key6, tag6)
         check(
             swept["opened"] == [],
             "the sweep declines to open the adder into gates (its own model "
@@ -1994,6 +2167,26 @@ def main():
         check(
             AUTO_FSM.BLAMED_AUTO_FSM_KEYS(None, params13, scheds13) == {"kx", "ky"},
             "BLAMED_AUTO_FSM_KEYS is the same attribution",
+        )
+        # A pinned unit's region stop names the unit, not its FSM. Blaming
+        # every FSM under the MAIN instead would tighten FSMs that met timing.
+        pinned = dict(
+            unit_entity="unit_e", latency=3, ii=1, registered_selection=True,
+            placement_digest="5c58",
+        )
+        scheds14 = {
+            "kx": {"entity": "fsm_x_entity", "implementations": {"e": pinned}},
+            "ky": {"entity": "fsm_y_entity"},
+        }
+        params14 = type("P", (), {})()
+        params14.sweep_timing_failures = [(
+            "main_a", 80.0, 43.71, "auto_pipeline_latency_limit: "
+            + AUTO_FSM._pinned_unit_name(pinned) + "_latency_3",
+        )]
+        ratios14 = AUTO_FSM._BLAMED_MISS_RATIOS(None, params14, scheds14)
+        check(
+            ratios14 == {"kx": 43.71 / 80.0},
+            f"a pinned unit's miss blames only its owning FSM ({ratios14})",
         )
 
     # ── soft-operator equivalents: which built-ins can be opened, and into

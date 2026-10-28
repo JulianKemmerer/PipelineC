@@ -1085,6 +1085,20 @@ section for how to tag prints for this tool.
 `--out_dir <path>` sets the build/simulation output directory explicitly (VHDL, logs,
 timing-params caches, etc.), instead of a freshly generated default directory.
 
+A build leaves several kinds of results behind. Each has one job:
+
+| Result | Where | Used for |
+|---|---|---|
+| Synthesis logs | the output directory; with `--syn_cache`, the shared store | Reused whenever a later run synthesizes exactly the same inputs, in any output directory sharing the store |
+| Latency memory (`latency_memory.json`, store pieces) | the output directory; the store | Starting depths, counts, locks and MAIN implementations for later builds of unchanged hardware. Synthesis confirms every reuse |
+| AUTO_FSM search results (`auto_fsm_searches/`, store `auto_fsm/`) | the output directory; the store | A later build that schedules an FSM from identical inputs (its source, the delays, clock goal, carried schedule and compiler) reuses the result instead of searching again |
+| `latency_profile.json` | the output directory | What the build built for each AUTO_PIPELINE / AUTO_MULTI_CYCLE. Keep a copy to pass as `--latency_hints` |
+| `--latency_hints FILE` | a file you keep | Starting latencies only, like `start_latency=` |
+| `built_hardware.json` | the output directory, once the build met timing | The finished hardware: a testbench simulated in this directory runs on it without any build |
+
+Only the last one fixes the hardware. The others make the next build cheaper, and
+that build still synthesizes and sweeps the top you give it.
+
 - **Reusing a warm directory.** A later invocation pointed at the same `--out_dir`
   reuses the earlier run's warm sweep/build results instead of paying for them again.
   So does an invocation pointed at a copy of that directory.
@@ -1116,6 +1130,12 @@ timing-params caches, etc.), instead of a freshly generated default directory.
   A plan can therefore depend on what earlier builds left behind;
   `--no_stored_measurements` turns this off. See
   [SYN_DESIGN.md](SYN_DESIGN.md#stored-measurements).
+- **Estimated primitive widths.** A built-in add, subtract, equality or bitwise
+  operator at a width this tool and part haven't measured is estimated from the
+  widths they have, instead of synthesized on its own. AUTO_FSM still measures an
+  estimate close enough to its state budget to change a decision, and full-design
+  synthesis checks the result. `--no_primitive_delay_model` turns this off. See
+  [SYN_DESIGN.md](SYN_DESIGN.md#shared-operator-cache-cache).
 - **Results remembered from earlier builds.** A synthesizing build reuses what
   earlier builds verified, piece by piece: AUTO_PIPELINE depths, AUTO_MULTI_CYCLE
   counts, mini-sweep locks and whole MAIN implementations. A piece is reused only
@@ -1127,6 +1147,8 @@ timing-params caches, etc.), instead of a freshly generated default directory.
   the memory off. See
   [pypeline_guide.md](pypeline_guide.md#starting-latencies-the-latency-memory-and---latency_hints)
   and [SWEEP_DESIGN.md](SWEEP_DESIGN.md#5-latency-memory).
+- **Simulating a testbench on built hardware.** See
+  [Simulating a testbench on built hardware](#simulating-a-testbench-on-built-hardware).
 - **Default and layout.** Without `--out_dir`, a new output directory is created inside
   the current one. `built_in/` holds the VHDL for built-in operators and muxes, `<top>/`
   (named by `--top`) holds the final top level, and code from each source file goes in a
@@ -1135,6 +1157,43 @@ timing-params caches, etc.), instead of a freshly generated default directory.
   change ([#331](https://github.com/JulianKemmerer/PipelineC/discussions/331),
   [#214](https://github.com/JulianKemmerer/PipelineC/discussions/214)). Use the manifests
   in [Generated files and reports](#generated-files-and-reports) rather than relying on it.
+
+### Simulating a testbench on built hardware
+
+Build the design's real top, with its real input and output ports, then simulate its
+testbench in that output directory:
+
+```
+pypelinec design_top.py --out_dir build_out           # synthesis and the timing sweep
+pypelinec design_tb.py --sim --run all --out_dir build_out
+```
+
+The second command builds nothing: no elaboration, AUTO_FSM search or synthesis. Native
+simulation of the testbench runs with the MAIN latencies, AUTO_PIPELINE depths,
+AUTO_MULTI_CYCLE counts, AUTO_FSM schedules and RAM plans recorded in
+`build_out/built_hardware.json`, and leaves the directory unchanged.
+
+**Why not build the testbench instead.** A testbench drives the design with constants or
+with `@sim_input` values that do not exist in hardware. Synthesis can then remove logic
+the testbench never exercises, and a sweep that trusts that timing removes pipeline
+stages the real design needs. A region whose own measured delay cannot meet the clock at
+the depth it was built, while the design met timing anyway, gets a build warning, and the
+latency memory does not remember it.
+
+The simulation stops with an error, instead of guessing, when:
+- a source file the build read has changed since (rebuild the top first);
+- a design parameter both runs declare has a different value;
+- the testbench uses an AUTO_PIPELINE, AUTO_FSM, AUTO_MULTI_CYCLE or auto-pipelined RAM
+  the build never decided, or has a `@MAIN` the sweep could pipeline that the build
+  never built. Testbench MAINs are normally `@wires` or stateful, which need no build.
+  A tag the built design read but never used, such as a factory's unused alternative,
+  is allowed as long as the testbench only reads its `.latency`: it gets the value the
+  build read.
+
+This applies to native simulation without `--comb` of a file other than the one built in
+that directory. Simulating the built file itself in its own directory builds it again, as
+before; `--comb` simulation never builds. To simulate generated VHDL instead
+(`--cocotb --ghdl`), build the testbench top in its own output directory.
 
 ### Build modes and output options
 
@@ -1146,7 +1205,8 @@ timing-params caches, etc.), instead of a freshly generated default directory.
 | `--full_hier_syn` | Measure every hierarchy level individually instead of estimating its delay. Opaque `vhdl()` text still starts at zero. |
 | `--no_hier_syn` | Estimate hierarchy delays from primitive measurements and disable hierarchical fallback. Automatic multi-cycle and FSM decisions still receive required measurements. |
 | `--no_stored_measurements` | Estimate hierarchy delays and areas even when this `--out_dir` or the `--syn_cache` store holds an earlier synthesis of the same exact inputs (by default such a measurement replaces the estimate) |
-| `--latency_hints FILE` | Starting latencies for AUTO_PIPELINE / AUTO_MULTI_CYCLE tags, by tag key (a named tag's key is its name): a `latency_profile.json` from an earlier build, or `{"AUTO_PIPELINE": {key: N}, "AUTO_MULTI_CYCLE": {key: N}}`. Each is a start, like `start_latency=`. Repeatable; a matching remembered result takes precedence |
+| `--no_primitive_delay_model` | Synthesize every built-in add, subtract, equality and bitwise operator at an unmeasured width, instead of estimating it from the widths this tool/part has measured |
+| `--latency_hints FILE` | Starting latencies for AUTO_PIPELINE / AUTO_MULTI_CYCLE tags, by tag key (a named tag's key is its name): a `latency_profile.json` from an earlier build, or `{"AUTO_PIPELINE": {key: N}, "AUTO_MULTI_CYCLE": {key: N}}`. Each is a start, like `start_latency=`. Repeatable; a result remembered at this goal takes precedence, and one remembered at a lower goal is a floor that a deeper hint starts above |
 | `--no_latency_memory` | Neither use nor update the results earlier builds verified (`latency_memory.json` and the `--syn_cache` store's pieces); `latency_profile.json` is still written and hints still apply |
 | `--pipeline_min_effort N` | After timing is met, allow up to N additional full-design runs to reduce register count; zero accepts the first passing result |
 | `--mult infer\|fabric` | Infer target multiplier/DSP primitives or force multipliers into fabric logic |
@@ -1160,9 +1220,11 @@ timing-params caches, etc.), instead of a freshly generated default directory.
 include or ignore operand width. The default is backend-dependent: PyRTL uses its
 measured width-independent model, while the sky130 device model keys by width.
 
-`-j N` / `--jobs N` limits concurrent synthesis processes. Treat it primarily as a
-memory limit: each job is a complete vendor process. Efinity place-and-route has been
-observed near 3.7 GB per leaf, so use `-j 1` on a memory-constrained machine.
+`-j N` / `--jobs N` limits concurrent synthesis processes, and the worker processes an
+AUTO_FSM area search builds its candidates in. Treat it primarily as a memory limit:
+each synthesis job is a complete vendor process, and each search worker is a copy of
+the compiler. Efinity place-and-route has been observed near 3.7 GB per leaf, so use
+`-j 1` on a memory-constrained machine. The AUTO_FSM result is the same at any `-j`.
 
 An implemented netlist with no timing paths is an error, commonly because all logic was
 optimized away and no top-level output remains. Mark intentionally path-free source with
@@ -1288,6 +1350,13 @@ Consume the explicit manifests and indexes instead of globbing generated directo
   keep as a `--latency_hints` file. `latency_memory.json` holds the verified results
   (depths, counts, mini-sweep locks, MAIN implementations) later builds reuse; deleting
   it is always safe.
+- `built_hardware.json` (synthesizing builds of Pypeline designs that met timing) records
+  what native simulation needs from the build: every MAIN latency, AUTO_PIPELINE depth,
+  AUTO_MULTI_CYCLE count, AUTO_FSM schedule and RAM plan, the `.latency` values the
+  design read for tags it never instantiated, and the hashes of the sources the build
+  read. A testbench simulated in this output directory runs on this hardware
+  ([Simulating a testbench on built hardware](#simulating-a-testbench-on-built-hardware)).
+  A new build in the directory removes it first.
 - `clock_crossings.log` (and `clock_crossings.json` for scripts) lists every async wire
   leaf and global FIFO of a Pypeline design, with its clocks, kind, hardware, depth and
   source line ([The crossing report](pypeline_guide.md#the-crossing-report)).

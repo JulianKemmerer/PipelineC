@@ -279,7 +279,13 @@ Titanium routing graph for each leaf and peaks near 3.7GB resident doing it,
 so four at once exhausts a 16GB machine. Worse, the kernel's OOM killer picks
 by `oom_score_adj`, so what dies is typically a browser or editor rather than
 the build, and the build fails later with a confusing missing-`.timing.rpt`
-error. `-j 1` is the fix there.
+error. `-j 1` is the fix there. The same count sizes the forked workers of an
+AUTO_FSM area search step ([`AUTO_FSM_DESIGN.md`](AUTO_FSM_DESIGN.md#the-search-itself)).
+A worker shares the compiler's pages copy-on-write; on the Poly1305 epilogue
+fixture (`qor/poly1305/auto_fsm.py`, Vivado xc7a200tffg1156-2, 80 MHz) each of
+three added about 570 MB of private memory to a 1.65 GB compiler. A worker
+killed for memory stops the build with an error that names `-j`; it does not
+hang it.
 
 `SET_MEASURED_DELAY_FROM_REPORT` turns a per-function report into
 `Logic.delay` (integer tenths of a nanosecond, `DELAY_UNIT_MULT`), records its
@@ -350,9 +356,15 @@ select independent consumers for fixed-latency placement. AUTO_FSM operation
 roots, constant-specialized wrappers and registered operand muxes are also
 independent consumers, even if no
 pipeline landscape enters their stateful caller. After scheduling, the generated
-stateful FSM is one measured atomic span (added to the measurement frontier) and
-nothing inside it is collected, so rescheduling keeps the operation delays
-carried from the bootstrap pass. In `--no_hier_syn` mode it is estimated instead.
+stateful FSM is one atomic span and nothing inside it is collected, so
+rescheduling keeps the operation delays carried from the bootstrap pass. Its
+delay is its installed schedule's worst state, or a longer measured stage of one
+of its pinned units (`SYN.SCHEDULED_FSM_DELAYS`, `AUTO_FSM.SCHEDULED_FSM_DELAY_DU`),
+marked as an estimate. A whole-module run reports an input-to-output figure, not a
+state's register-to-register delay, and took about 8 minutes per FSM on the 256-bit
+WireGuard build. The sweep cannot pipeline an FSM, and AUTO_FSM's loop attributes
+in-context paths itself. An FSM with no installed schedule is measured by one
+whole-module run, as the frontier. In `--no_hier_syn` mode it is estimated instead.
 
 ### Measurements and estimates
 
@@ -369,8 +381,9 @@ The default synthesis jobs are:
   evidence for their current datapath shape get a targeted report for count
   selection. This is separate from geometry and never assigns the holder's
   internal critical path or cycle-normalized delay to `Logic.delay`.
-- **Scheduled AUTO_FSM spans:** one whole-module run per generated stateful
-  FSM, plus its registered operand muxes (see above).
+- **Scheduled AUTO_FSM spans:** none when the FSM's schedule is installed (its
+  worst state is the delay, see above), otherwise one whole-module run; plus its
+  registered operand muxes.
 - **Pinned AUTO_FSM unit placements:** before a whole-design build, each newly
   chosen pipelined unit runs once with its pinned recipe, through the
   backend's ordinary per-instance `SYN_AND_REPORT_TIMING`. Its worst
@@ -485,6 +498,29 @@ type. `USE_COMBINATIONAL_PLANNER_WEIGHTS` selects whether the planner weighs
 the combinational component or the full register-to-register delay
 (`GET_PLANNER_DELAY`); it is part of the cache directory so the two never mix.
 
+**Estimated primitive widths (`PrimitiveDelayModel`).** A built-in integer add,
+subtract, equality or bitwise operator at a width with no `.delay` entry gets an
+estimate before it gets a synthesis run of its own.
+- **Fit.** `ADD_PATH_DELAY_TO_LOOKUP` fits the current tool/part directory once
+  per call, one least-squares line per (operator, signedness) family. The delay
+  is linear in width for PLUS and MINUS, linear in log2 width for EQ and NEQ, and
+  constant for AND, OR, XOR and NOT (`PRIMITIVE_DELAY_MODEL_SHAPES`).
+- **Limits.** A family predicts only inside its measured width range and only
+  from at least `PRIMITIVE_DELAY_MODEL_MIN_WIDTHS` (3) widths. Multiplies,
+  comparators (soft operators) and composite functions are never modeled.
+- **Precedence.** An exact `.delay` entry, a known zero delay, and an earlier
+  run of the same exact inputs (`SET_STORED_DELAY`) all come first.
+- **Marking.** An estimate sets `delay_is_estimated`, never enters the cache,
+  and records its error bound, the fit's largest leave-one-out error, in
+  `Logic.delay_model_error`. AUTO_FSM measures an estimate only when a decision
+  could turn on it ([AUTO_FSM_DESIGN.md](AUTO_FSM_DESIGN.md#35-delay-measurement)).
+- **Evidence.** Leave-one-out on the WireGuard Vivado logs (xc7a200tffg1156-2) gave
+  median errors of 0.04 ns for PLUS (max 0.58 ns, at 1 bit), 0.15 ns for MINUS
+  and 0.20 ns for EQ. Seventy-six cold primitive runs, about 1.3 minutes each
+  and mostly Vivado start-up, took 1.6 hours of that build's wall time.
+- **Off switch.** `--no_primitive_delay_model` sets
+  `USE_PRIMITIVE_DELAY_MODEL = False`.
+
 ### Synthesis logs in the output directory
 
 **Every backend reuses a log only for identical inputs.** A log's name comes from the
@@ -593,9 +629,11 @@ several share. Examples: WireGuard's per-profile build directories, a fresh
     the end of the build (`SYNTHESIS_REUSE_EXIT_REPORT`, an `atexit` hook), and any half-written entry an interrupted insert left
     that long ago. It also removes the store's latency memory pieces
     (`DIR/latency/v2/<tool>/<part>/<kind>/<key digest>.json`, shared by every output
-    directory, see [SWEEP_DESIGN.md](SWEEP_DESIGN.md#5-latency-memory)) that no
-    build has read or written for that long, and the old `latency/v1/` files current
-    builds no longer read.
+    directory, see [SWEEP_DESIGN.md](SWEEP_DESIGN.md#5-latency-memory)) and its
+    AUTO_FSM search results (`DIR/auto_fsm/v1/<tool>/<part>/<digest>.pkl.z`, see
+    [AUTO_FSM_DESIGN.md](AUTO_FSM_DESIGN.md#search-results-persist-across-builds))
+    that no build has read or written for that long, and the old `latency/v1/` files
+    current builds no longer read.
   - Deleting the store is always safe.
   - Each build ends with `Synthesis results: N reused from the output directory,
     M from the store DIR, K new run(s)`, plus a count of stale logs set aside
@@ -774,6 +812,12 @@ Times are `H:MM:SS` wall clock from compiler start (`SYN.ELAPSED_STR`). The buil
   succeeds, fails timing, or raises (an `atexit` hook, `SYN.ELAPSED_SUMMARY_STR`). The
   rest of the total is per-function characterization, HDL writing, simulation and
   bitstream generation. A comb-only native `--sim` skips the build and this line.
+- `Time by build phase: ...` right after it, longest first, when any named phase
+  ran. `SYN.PHASE` / `SYN.PHASED` charge wall time to a phase, a nested phase's
+  time to that phase only: whole-design synthesis, per-function delay
+  measurement, re-elaboration, AUTO_FSM schedule search, AUTO_FSM pinned-unit
+  measurement and sweep planning. On WireGuard's 80 MHz AUTO_FSM builds, half or
+  more of the wall time was outside Vivado; this line says which phase it was.
 
 ## 8. Command line
 
@@ -793,12 +837,13 @@ observation, `fit_status` is `unknown`.
 |---|---|
 | `--syn_tool NAME` | build with that backend (`vivado`, `quartus`, `diamond`, `gowin`, `efinity`, `open_tools`, `cc_tools`, `pyrtl`, `device_models`); alone, it supplies its own `DEFAULT_PART`. Must agree with the part -- see §2 |
 | `--part PARTSTR` | target that FPGA part instead of `PART(...)` in the source; setting both differently is an error |
-| `-j N` / `--jobs N` | cap synthesis runs in flight (default `config/num_processes.cfg`). Really a memory knob -- see §4 |
+| `-j N` / `--jobs N` | cap synthesis runs in flight and AUTO_FSM search workers (default `config/num_processes.cfg`). Really a memory knob -- see §4 |
 | `--comb` | no pipelining; one synthesis run reporting combinational fmax per clock |
 | `--no_synth` | like `--comb`, without synthesis: just write the combinational HDL |
 | `--full_hier_syn` | synthesize every hierarchy level for path delays; opaque `vhdl()` text starts at zero estimated delay |
 | `--no_hier_syn` | Collect geometry from required primitive operators; opaque `vhdl()` text starts at zero. Skip combinational frontier measurements and hierarchical fallback. AUTO_MCP endpoint evidence and AUTO_FSM calibration remain independent consumers. Usable stored measurements can still replace estimates (§6). |
 | `--no_stored_measurements` | estimate delays and areas as if no earlier run existed: don't use an earlier synthesis of the same exact inputs from the output directory or the `--syn_cache` store in place of an estimate (§6) |
+| `--no_primitive_delay_model` | synthesize every built-in primitive width with no cached measurement instead of estimating it from measured widths (`USE_PRIMITIVE_DELAY_MODEL`, §6 "Shared operator cache") |
 | `--mux_delay_by_width` / `--no_mux_delay_by_width` | force width-keyed or collapsed MUX delay-cache entries |
 | `--syn_cache DIR` | share synthesis results between output directories through the store DIR (§6) |
 | `--syn_cache_prune DAYS` | at the end of the build, remove `--syn_cache` entries unused for DAYS days |
@@ -826,7 +871,10 @@ in the module whose feature it serves. In order, it:
    `--list_params` prints `pypeline_sim.design_param_list_text` and exits. It then
    sets the module globals and selects the simulator. A comb-only native simulation
    of a `.py` design stops here and simulates without building
-   (`SIM.NATIVE_SIM_SKIPS_BUILD`). The build settings come after that shortcut, and
+   (`SIM.NATIVE_SIM_SKIPS_BUILD`), and so does a native `--sim` of another top on the
+   hardware built in `--out_dir` (`SIM.SIMULATE_BUILT_HARDWARE`, which otherwise
+   removes that directory's hardware record before the build replaces it). The build
+   settings come after these shortcuts, and
    then the `atexit` hooks that end every build with `SYN.SYNTHESIS_REUSE_EXIT_REPORT`
    (§6) and then the elapsed summary (§7);
 2. installs `--latency_hints` starting latencies (`SWEEP.INSTALL_LATENCY_HINTS`). It
@@ -847,8 +895,9 @@ in the module whose feature it serves. In order, it:
    ([build entry points](AUTO_PIPELINE_DESIGN.md#4-build-entry-points)). Next,
    `SWEEP.WRITE_SWEEP_RESULTS` writes the sweep history, final files and latency
    profile. The build exits non-zero if a timing goal was missed
-   (`SWEEP.PRINT_TIMING_FAILURES`). Otherwise it generates the bitstream (`--pins`)
-   and runs the requested simulation (`SIM.DO_OPTIONAL_SIM`, see
+   (`SWEEP.PRINT_TIMING_FAILURES`). Otherwise it records the hardware for native
+   simulation of other tops (`SIM.WRITE_BUILT_HARDWARE`), generates the bitstream
+   (`--pins`) and runs the requested simulation (`SIM.DO_OPTIONAL_SIM`, see
    [`SIM_DESIGN.md`](SIM_DESIGN.md));
 7. writes the generated sources (`AUTO_COMB_OPT.DUMP_GENERATED_SOURCE`, needed by a
    `--no_synth` build without fixed latencies, which writes no final files) and

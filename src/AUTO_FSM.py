@@ -75,6 +75,8 @@ import re
 import hashlib
 import json
 import math
+import multiprocessing
+import multiprocessing.connection
 import os
 import pickle
 import zlib
@@ -1062,27 +1064,43 @@ def ALLOCATE_REGISTERS(nodes, output_ref, n_states, cross_fu_types=()):
     # c type -> its registers' indices, ascending: only these can hold a value
     # of that type, so the search below never scans the others.
     regs_of_type = {}
+    # (c type, producing unit) -> its registers' indices, ascending. A type
+    # outside cross_fu_types only ever reuses a register its own unit fills,
+    # and every such register has that one source.
+    regs_of_source = {}
     assignment = {}
     reg_types = {}
     for nid in order:
         ctype, lo, hi = ranges[nid]
         fu = nodes[nid].get("fu")
-        candidates = []
-        for idx in regs_of_type.get(ctype, ()):
-            _reg_type, reg_fus, busy_until = free_at[idx]
-            same_source = fu in reg_fus
-            if (same_source or ctype in cross_fu_types) and busy_until < lo:
-                # Preserve a single-source register whenever possible; after
-                # that, prefer the register with the fewest existing sources.
-                # Merely taking the first free interval can introduce a mux
-                # even though a later free register already has this FU as its
-                # source, losing area for no live-range benefit.
-                candidates.append((0 if same_source else 1, len(reg_fus), idx))
-        chosen = min(candidates)[2] if candidates else None
+        if ctype in cross_fu_types:
+            candidates = []
+            for idx in regs_of_type.get(ctype, ()):
+                _reg_type, reg_fus, busy_until = free_at[idx]
+                same_source = fu in reg_fus
+                if busy_until < lo:
+                    # Preserve a single-source register whenever possible;
+                    # after that, prefer the register with the fewest existing
+                    # sources. Merely taking the first free interval can
+                    # introduce a mux even though a later free register
+                    # already has this FU as its source, losing area for no
+                    # live-range benefit.
+                    candidates.append((0 if same_source else 1, len(reg_fus), idx))
+            chosen = min(candidates)[2] if candidates else None
+        else:
+            chosen = next(
+                (
+                    idx
+                    for idx in regs_of_source.get((ctype, fu), ())
+                    if free_at[idx][2] < lo
+                ),
+                None,
+            )
         if chosen is None:
             chosen = len(free_at)
             free_at.append((ctype, frozenset((fu,)), hi))
             regs_of_type.setdefault(ctype, []).append(chosen)
+            regs_of_source.setdefault((ctype, fu), []).append(chosen)
             reg_types[chosen] = ctype
         else:
             reg_fus = free_at[chosen][1] | frozenset((fu,))
@@ -1903,6 +1921,10 @@ def _unit_profiles(
 
     if satisfied():
         return state["profiles"]
+    # Advanced as a new object, never in place, so a forked characterization
+    # returns it as a changed cache entry (_map_forked).
+    state = dict(state, profiles=list(state["profiles"]))
+    parser_state.pypeline_auto_fsm_unit_profiles[context] = state
     isolated, root = _unit_isolated_tree(parser_state, unit["entity"], delays)
     # This unique root makes the existing instance-keyed zero-clock caches
     # independent of every real MAIN and every other unit characterization.
@@ -1928,7 +1950,7 @@ def _unit_profiles(
         except AUTO_PIPELINE.AutoPipelineLatencyInfeasible:
             state["done"] = True
             break
-        table = {inst: params.DEEPCOPY() for inst, params in zero.items()}
+        table = AUTO_PIPELINE.COPY_TIMING_PARAMS_LOOKUP(zero)
         table = SWEEP.APPLY_PIPELINE_PLACEMENTS(placements, isolated, table)
         SWEEP.CHECK_PIPELINE_PLACEMENTS_REALIZED(placements, isolated, table)
         AUTO_PIPELINE._INVALIDATE_REGION_CACHES(root, table)
@@ -1976,13 +1998,9 @@ def _unit_profiles(
     return state["profiles"]
 
 
-def _make_unit_tag(parser_state, key, node, implementation):
-    """The selected placement is part of this internal region's identity."""
-    import pypeline
-
-    unit = _unit_function(parser_state, key, node, implementation.get("selection_rows"))
-    if unit is None or unit["entity"] != implementation["unit_entity"]:
-        raise AUTO.AutoError("AUTO_FSM: selected functional unit is unavailable")
+def _pinned_unit_name(implementation):
+    """The AUTO_PIPELINE tag name of a pinned placement: the selected
+    placement is part of this internal region's identity."""
     identity = _unit_recipe_digest(
         (
             implementation["unit_entity"],
@@ -1992,10 +2010,20 @@ def _make_unit_tag(parser_state, key, node, implementation):
             implementation["placement_digest"],
         )
     )
+    return "auto_fsm_pinned_" + identity[:20]
+
+
+def _make_unit_tag(parser_state, key, node, implementation):
+    """The selected placement is part of this internal region's identity."""
+    import pypeline
+
+    unit = _unit_function(parser_state, key, node, implementation.get("selection_rows"))
+    if unit is None or unit["entity"] != implementation["unit_entity"]:
+        raise AUTO.AutoError("AUTO_FSM: selected functional unit is unavailable")
     tag = pypeline.AUTO_PIPELINE(
         unit["function"],
         latency=implementation["latency"],
-        name="auto_fsm_pinned_" + identity[:20],
+        name=_pinned_unit_name(implementation),
     )
     tag._auto_fsm_implementation = json.loads(AUTO.frozen(implementation))
     return tag
@@ -2123,8 +2151,8 @@ def SCHEDULE_DAG(
         if ids is None:
             ids = [_fu_id(entity, i) for i in range(max(1, copies.get(entity, 1)))]
             fu_ids[entity] = ids
+        rows = implementations.get(entity, {}).get("selection_rows")
         for fu in ids:
-            rows = implementations.get(entity, {}).get("selection_rows")
             if (
                 fu not in fus_used
                 and state >= next_launch.get(fu, 1)
@@ -2159,6 +2187,10 @@ def SCHEDULE_DAG(
         state_worst = 0
         deferred = []
         waiting_for_future = False
+        # entity -> whether a copy is still in a pipelined launch interval,
+        # for every entity with no copy free this state. Units only get busier
+        # within a state, so neither answer changes before the next one.
+        exhausted = {}
         while heap:
             item = heapq.heappop(heap)
             nid = item[1]
@@ -2166,13 +2198,15 @@ def SCHEDULE_DAG(
                 waiting_for_future = True
                 deferred.append(item)
                 continue
-            fu = free_fu(nodes[nid]["entity"], fus_used)
+            entity = nodes[nid]["entity"]
+            fu = None if entity in exhausted else free_fu(entity, fus_used)
             if fu is None:
-                if any(
-                    next_launch.get(candidate, 1) > state
-                    for candidate in fu_ids[nodes[nid]["entity"]]
-                ):
-                    waiting_for_future = True
+                if entity not in exhausted:
+                    exhausted[entity] = any(
+                        next_launch.get(candidate, 1) > state
+                        for candidate in fu_ids[entity]
+                    )
+                waiting_for_future = waiting_for_future or exhausted[entity]
                 deferred.append(item)
                 continue
             same_state_preds = [p for p in preds[nid] if state_of[p] == state]
@@ -2277,14 +2311,16 @@ def _edges_stay_acyclic(fu_edges, new_edges):
     the graph nor walks all of it: since `fu_edges` has no cycle, any cycle
     the union has runs through a new edge, and so through that edge's target.
     A depth-first search of the union from the new targets alone therefore
-    finds a cycle exactly when one exists."""
+    finds a cycle exactly when one exists. An edge `fu_edges` already has
+    adds nothing, so only the others are searched from."""
     added = {}
     for a, b in new_edges:
         if a == b:
             # A unit feeding itself within one state would need two copies of
             # it live at once -- exactly what sharing forbids.
             return False
-        added.setdefault(a, set()).add(b)
+        if b not in fu_edges.get(a, ()):
+            added.setdefault(a, set()).add(b)
     color = {}
 
     def visit(n):
@@ -2590,9 +2626,11 @@ def BUILD_SCHEDULE(
     so encodings share packing only under the same model. A refusal (AutoError) is remembered and raised
     again the same way.
 
-    `_graph_memo` is private to one fixed-parser area search. Binding and depth
-    variants reuse its cleaned graph when source boundary choices and delays
-    agree; each result is decoded independently before scheduling.
+    `_graph_memo`, an _AreaSearchMemo, is private to one fixed-parser area
+    search. Binding and depth variants reuse its cleaned graph when source
+    boundary choices and delays agree, and its SCHEDULE_DAG plan when they also
+    agree on unit counts and implementations; each result is decoded
+    independently.
     """
     # `auto` is a driver-level request because each encoding needs its own full
     # area sweep. Keep the low-level builder useful to direct callers/tests by
@@ -3330,10 +3368,149 @@ def _merge_widths(dag, choices, parser_state, delays):
     return dag, count
 
 
+class _AreaSearchMemo:
+    """Caches private to one fixed-parser area search (BUILD_SCHEDULE's
+    `_graph_memo`). Every entry is compressed, and decoded afresh for each
+    candidate that reuses it."""
+
+    def __init__(self):
+        # graph identity -> (cleaned graph, cleanup stats)
+        self.graphs = {}
+        # (graph identity, select delay, implementations, unit counts) ->
+        # (SCHEDULE_DAG plan, the operand-mux snapshot entries it priced)
+        self.plans = {}
+
+
+# (function, items, caches) for the workers _map_forked forks, which inherit it.
+_FORKED_MAP = None
+# In a forked worker: per cache, a shallow copy of it as the parent had it or as
+# this worker last reported it.
+_FORKED_SENT = None
+# True in a forked worker, where a nested _map_forked runs serially.
+_IN_FORKED_WORKER = False
+
+
+def _map_forked(fn, items, caches=()):
+    """[fn(item) for item in items], in forked worker processes when -j allows
+    more than one and the platform can fork. Workers inherit the caller's state
+    as it is at the call, and nothing is pickled to start them. Results come
+    back in item order, and an exception in a worker is raised here. The dicts
+    in `caches` hold pure results keyed by their inputs, and a value is
+    replaced, never changed in place, when it advances (a resumable
+    characterization, say). What a worker adds or replaces is merged back in
+    item order, so later calls reuse it as they would after running here."""
+    n_workers = min(SYN.GET_NUM_PROCESSES(), len(items))
+    if (
+        n_workers < 2
+        or _IN_FORKED_WORKER
+        or "fork" not in multiprocessing.get_all_start_methods()
+    ):
+        return [fn(item) for item in items]
+    global _FORKED_MAP
+    _FORKED_MAP = (fn, items, caches)
+    context = multiprocessing.get_context("fork")
+    tasks = context.SimpleQueue()
+    workers = {}
+    try:
+        for _ in range(n_workers):
+            reader, writer = context.Pipe(duplex=False)
+            process = context.Process(target=_forked_worker, args=(tasks, writer))
+            process.daemon = True
+            process.start()
+            writer.close()
+            workers[reader] = process
+        for index in range(len(items)):
+            tasks.put(index)
+        for _ in range(n_workers):
+            tasks.put(None)
+        packed = {}
+        while len(packed) < len(items):
+            if not workers:
+                raise AutoFsmInternalError(
+                    "AUTO_FSM: forked search workers stopped before returning "
+                    f"{len(items) - len(packed)} of {len(items)} results"
+                )
+            for reader in multiprocessing.connection.wait(list(workers)):
+                try:
+                    index, failed, payload = reader.recv()
+                except EOFError:
+                    process = workers.pop(reader)
+                    process.join()
+                    if process.exitcode != 0:
+                        raise AutoFsmInternalError(
+                            f"AUTO_FSM: a forked search worker exited with code "
+                            f"{process.exitcode} (killed for memory? -j sets "
+                            f"how many run at once)"
+                        )
+                    continue
+                if failed:
+                    raise pickle.loads(payload)
+                packed[index] = payload
+    finally:
+        _FORKED_MAP = None
+        for reader, process in workers.items():
+            if process.is_alive():
+                process.terminate()
+            process.join()
+            reader.close()
+    results = []
+    for index in range(len(items)):
+        result, changed = pickle.loads(zlib.decompress(packed[index]))
+        for cache, entries in zip(caches, changed):
+            cache.update(entries)
+        results.append(result)
+    return results
+
+
+def _forked_worker(tasks, writer):
+    """A _map_forked worker: runs item indices from `tasks` until None and
+    sends (index, failed, payload) for each. A failure's payload is the
+    pickled exception; its traceback is printed here."""
+    global _IN_FORKED_WORKER
+    _IN_FORKED_WORKER = True
+    while True:
+        index = tasks.get()
+        if index is None:
+            break
+        try:
+            writer.send((index, False, _forked_call(index)))
+        except Exception as error:
+            import traceback
+
+            traceback.print_exc()
+            try:
+                payload = pickle.dumps(error, pickle.HIGHEST_PROTOCOL)
+            except Exception:
+                payload = pickle.dumps(
+                    AutoFsmInternalError(f"{type(error).__name__}: {error}")
+                )
+            writer.send((index, True, payload))
+            break
+    writer.close()
+
+
+def _forked_call(index):
+    """One _map_forked item in a worker: its result, and the cache entries
+    added or replaced since this worker last reported."""
+    global _FORKED_SENT
+    fn, items, caches = _FORKED_MAP
+    if _FORKED_SENT is None:
+        _FORKED_SENT = [dict(cache) for cache in caches]
+    result = fn(items[index])
+    changed = []
+    absent = object()
+    for cache, sent in zip(caches, _FORKED_SENT):
+        new = [(k, v) for k, v in cache.items() if sent.get(k, absent) is not v]
+        sent.update(new)
+        changed.append(new)
+    return zlib.compress(pickle.dumps((result, changed), pickle.HIGHEST_PROTOCOL), 1)
+
+
 def _clean_schedule_graph(
     parser_state, func_entity, delays, budget_du, opened, preserved, merged, fused, memo
 ):
     """Reuse typed graphs across bindings within one fixed-parser area search.
+    Returns the graph, its cleanup stats and its identity in `memo`.
 
     Fused pairs and width merges rebind an already-cleaned graph, so the graph
     before them is kept as well: those moves skip descent and cleanup.
@@ -3341,8 +3518,9 @@ def _clean_schedule_graph(
     identity = AUTO.fingerprint(
         (func_entity, delays, budget_du, opened, sorted(preserved), merged, fused)
     )
+    memo = memo.graphs if memo is not None else None
     if memo is not None and identity in memo:
-        return pickle.loads(zlib.decompress(memo[identity]))
+        return pickle.loads(zlib.decompress(memo[identity])) + (identity,)
     cleaned = AUTO.fingerprint(
         ("cleaned", func_entity, delays, budget_du, opened, sorted(preserved))
     )
@@ -3377,7 +3555,7 @@ def _clean_schedule_graph(
         memo[identity] = zlib.compress(
             pickle.dumps((dag, stats), pickle.HIGHEST_PROTOCOL), 1
         )
-    return dag, stats
+    return dag, stats, identity
 
 
 def _BUILD_SCHEDULE(
@@ -3483,7 +3661,7 @@ def _BUILD_SCHEDULE(
             f"arguments/return values."
         )
     opened = tuple(sorted(set(opened)))
-    dag, cleanup_stats = _clean_schedule_graph(
+    dag, cleanup_stats, graph_identity = _clean_schedule_graph(
         parser_state,
         func_entity,
         delays,
@@ -3574,7 +3752,10 @@ def _BUILD_SCHEDULE(
     if predicted_folds > SWEEP_LARGE_SCHEDULE_FOLDS:
         _warn_large_schedule(parser_state, key, busiest_entity, predicted_folds)
 
+    # (entity, fold count) -> (mux delay, the snapshot entries it recorded)
     mux_du_cache = {}
+    # The (entity, fold count) pairs priced since `scheduled` last cleared it.
+    mux_priced = set()
 
     def mux_du_of(nid):
         node = dag["nodes"][nid]
@@ -3583,15 +3764,17 @@ def _BUILD_SCHEDULE(
             # The selected AUTO_PIPELINE region already contains the muxes.
             return 0
         n = _fold_count_per_unit(folds.get(e, 1), copies.get(e, 1))
+        mux_priced.add((e, n))
         cached = mux_du_cache.get((e, n))
         if cached is None:
-            cached = 0
+            du_max, entries = 0, []
             for ctype in node["port_types"]:
                 du = AUTO._mux_delay_du(parser_state, types, ctype, n, mux_snapshot)
                 mux_snapshot.setdefault(f"{ctype}#{n}", du)
-                cached = max(cached, du)
-            mux_du_cache[(e, n)] = cached
-        return cached
+                entries.append((f"{ctype}#{n}", mux_snapshot[f"{ctype}#{n}"]))
+                du_max = max(du_max, du)
+            cached = mux_du_cache[(e, n)] = (du_max, entries)
+        return cached[0]
 
     def select_du_of(nid):
         entity = dag["nodes"][nid]["entity"]
@@ -3599,31 +3782,53 @@ def _BUILD_SCHEDULE(
             return 0
         return select_arrivals.get(entity, select_proxy)
 
-    plan = SCHEDULE_DAG(
-        dag,
-        budget_du,
-        mux_du_of,
-        max_states,
-        copies,
-        implementations,
-        select_du_of,
-        no_chain_edges,
-        no_chain_entity_pairs,
+    # What a plan depends on besides `copies`, within one area search.
+    plan_context = (
+        (graph_identity, select_proxy, AUTO.frozen(implementations))
+        if graph_memo is not None
+        else None
     )
-    if plan["latency_infeasible"]:
-        # A cap that sharing alone cannot meet: give units back until it is.
-        plan = _replicate_to_cap(
+
+    def scheduled():
+        """SCHEDULE_DAG at the current `copies`. Within an area search, the
+        candidates on one graph share plans: one unit per operation, say, is
+        the same plan for every binding of it. A reused plan records the
+        operand-mux snapshot entries its scheduling priced, as scheduling
+        it again would."""
+        plan_key = None
+        if plan_context is not None:
+            plan_key = plan_context + (tuple(sorted(copies.items())),)
+            hit = graph_memo.plans.get(plan_key)
+            if hit is not None:
+                plan, entries = pickle.loads(zlib.decompress(hit))
+                for snapshot_key, du in entries:
+                    mux_snapshot.setdefault(snapshot_key, du)
+                return plan
+        mux_priced.clear()
+        plan = SCHEDULE_DAG(
             dag,
             budget_du,
             mux_du_of,
             max_states,
-            folds,
             copies,
             implementations,
             select_du_of,
             no_chain_edges,
             no_chain_entity_pairs,
         )
+        if plan_key is not None:
+            entries = sorted(
+                {entry for pair in mux_priced for entry in mux_du_cache[pair][1]}
+            )
+            graph_memo.plans[plan_key] = zlib.compress(
+                pickle.dumps((plan, entries), pickle.HIGHEST_PROTOCOL), 1
+            )
+        return plan
+
+    plan = scheduled()
+    if plan["latency_infeasible"]:
+        # A cap that sharing alone cannot meet: give units back until it is.
+        plan = _replicate_to_cap(folds, copies, scheduled)
     # Recorded after the latency-driven bumps above, so the schedule always
     # states the binding it actually has.
     unshared = tuple(sorted((e, n) for e, n in copies.items() if n > 1))
@@ -3808,20 +4013,10 @@ def _replication_for_latency(folds, max_states, implementations=None):
     return copies
 
 
-def _replicate_to_cap(
-    dag,
-    budget_du,
-    mux_du_of,
-    max_states,
-    folds,
-    copies,
-    implementations=None,
-    select_du_of=None,
-    no_chain_edges=(),
-    no_chain_entity_pairs=(),
-):
+def _replicate_to_cap(folds, copies, scheduled):
     """The SCHEDULE_DAG plan with the most sharing found that meets a
     max_latency cap, setting `copies` (in place) to its binding.
+    `scheduled()` returns the plan at the current `copies`.
 
     Searches one knob: a limit k on operations per unit, every entity getting
     max(its current copies, ceil(folds / k)) units. Uniform rather than
@@ -3850,17 +4045,7 @@ def _replicate_to_cap(
                 copies[entity] = need
         counts = tuple(sorted(copies.items()))
         if counts not in plans:
-            plans[counts] = SCHEDULE_DAG(
-                dag,
-                budget_du,
-                mux_du_of,
-                max_states,
-                copies,
-                implementations,
-                select_du_of,
-                no_chain_edges,
-                no_chain_entity_pairs,
-            )
+            plans[counts] = scheduled()
         return plans[counts]
 
     best = trial(1)
@@ -4235,6 +4420,17 @@ def _sweep_required_improvement(anchor, candidate):
     )
 
 
+def _pareto_frontier(cheapest_by_states):
+    """[[states, estimated area]] pairs no point with fewer states beats on
+    area: the latency/area trade the area search saw."""
+    points, best = [], None
+    for states, cost in sorted(cheapest_by_states.items()):
+        if best is None or cost < best:
+            points.append([states, round(cost, 1)])
+            best = cost
+    return points
+
+
 def _SWEEP_MIN_AREA_SCHEDULE(
     parser_state,
     key,
@@ -4245,6 +4441,7 @@ def _SWEEP_MIN_AREA_SCHEDULE(
     debug=False,
     func_entity_override=None,
     build_memo=None,
+    graph_memo=None,
 ):
     """Search for the SMALLEST schedule that still meets the clock goal and the
     latency cap, by opening operations up one entity at a time.
@@ -4285,7 +4482,8 @@ def _SWEEP_MIN_AREA_SCHEDULE(
     """
 
     memo = {}
-    graph_memo = {}
+    if graph_memo is None:
+        graph_memo = _AreaSearchMemo()
     anchor = BUILD_SCHEDULE(
         parser_state, key, tag, budget_scale, prev_schedule, ctl=ctl,
         func_entity_override=func_entity_override, build_memo=build_memo,
@@ -4293,6 +4491,8 @@ def _SWEEP_MIN_AREA_SCHEDULE(
     )
     anchor_cost = ESTIMATE_SCHEDULE_AREA(parser_state, anchor, memo)
     anchor_excess = _state_excess(anchor)
+    # States -> the cheapest estimated area of a feasible candidate seen there.
+    frontier = {} if anchor["latency_infeasible"] else {anchor["n_states"]: anchor_cost}
     best, best_cost = anchor, anchor_cost
     best_excess = (anchor["latency_infeasible"], anchor_excess)
     cur = anchor
@@ -4318,10 +4518,12 @@ def _SWEEP_MIN_AREA_SCHEDULE(
     def pipeline_moves(schedule):
         """Local depth steps, as UNSHARE adds one copy: each selection form's
         shallowest feasible depth, one level either side of a chosen depth,
-        and back to combinational. Depths are characterized only that far."""
-        moves = []
+        and back to combinational. Depths are characterized only that far,
+        one unit per _map_forked item."""
         delays = anchor["entity_delays_snapshot"]
-        for node in _unit_candidate_nodes(parser_state, schedule):
+
+        def unit_moves(node):
+            moves = []
             entity = node["entity"]
             chosen = pipelined.get(entity)
             chosen_latency, chosen_rows = (
@@ -4362,7 +4564,20 @@ def _SWEEP_MIN_AREA_SCHEDULE(
                 )
             if chosen is not None:
                 moves.append((entity, None))
-        return moves
+            return moves
+
+        return [
+            move
+            for moves in _map_forked(
+                unit_moves,
+                _unit_candidate_nodes(parser_state, schedule),
+                [
+                    parser_state.pypeline_auto_fsm_unit_profiles,
+                    SYN.CACHED_PATH_DELAY_READS,
+                ],
+            )
+            for move in moves
+        ]
 
     n_considered = 0
     uphill = 0
@@ -4390,34 +4605,18 @@ def _SWEEP_MIN_AREA_SCHEDULE(
             flush=True,
         )
 
-    def evaluate(
-        trial_opened,
-        trial_unshared,
-        trial_pipelined,
-        trial_merged=None,
-        trial_fused=None,
-    ):
-        """The candidate schedule, or None with the reason it was rejected.
-        Third element is the candidate's estimated cost, computed here (once)
-        rather than by trace() or the caller -- ESTIMATE_SCHEDULE_AREA is not
-        cheap (register allocation + operand-mux planning over the whole
-        function), memo only covers its per-entity area lookups, and this
-        function used to be called a second time per surviving candidate
-        under --auto_fsm_sweep_debug just to print the same number."""
-        trial_merged = merged if trial_merged is None else trial_merged
-        trial_fused = fused if trial_fused is None else trial_fused
-        identity = AUTO.frozen(
-            (
-                sorted(trial_opened),
-                sorted(trial_unshared.items()),
-                sorted(trial_pipelined.items()),
-                sorted(trial_merged),
-                sorted(trial_fused),
-            )
+    def build(choices):
+        """The schedule for one move's (opened, unshared, pipelined, merged,
+        fused), or None with the reason it was rejected. Third element is the
+        candidate's estimated cost, computed here (once) rather than by
+        trace() or the caller -- ESTIMATE_SCHEDULE_AREA is not cheap (register
+        allocation + operand-mux planning over the whole function), memo only
+        covers its per-entity area lookups, and this function used to be
+        called a second time per surviving candidate under
+        --auto_fsm_sweep_debug just to print the same number."""
+        trial_opened, trial_unshared, trial_pipelined, trial_merged, trial_fused = (
+            choices
         )
-        if identity in visited:
-            return None, "rejected: already considered", None
-        visited.add(identity)
         try:
             sched = BUILD_SCHEDULE(
                 parser_state,
@@ -4469,6 +4668,57 @@ def _SWEEP_MIN_AREA_SCHEDULE(
             return None, "rejected: unchanged physical schedule", None
         return sched, "considered", ESTIMATE_SCHEDULE_AREA(parser_state, sched, memo)
 
+    def evaluate(moves):
+        """The considered candidates among `moves`, in move order, as
+        (closeness to the budget, cost, label, schedule, opened, unshared,
+        pipelined, merged, fused). A move is (trace label, candidate label,
+        opened, unshared, pipelined, merged, fused). Each step's builds are
+        independent, so _map_forked may run them in parallel; everything
+        else happens here, in move order."""
+        nonlocal n_considered
+        todo, slots = [], []
+        for move in moves:
+            choices = move[2:]
+            identity = AUTO.frozen(
+                (
+                    sorted(choices[0]),
+                    sorted(choices[1].items()),
+                    sorted(choices[2].items()),
+                    sorted(choices[3]),
+                    sorted(choices[4]),
+                )
+            )
+            if identity in visited:
+                slots.append(None)
+                continue
+            visited.add(identity)
+            slots.append(len(todo))
+            todo.append(choices)
+        caches = [graph_memo.graphs, graph_memo.plans, memo, SYN.CACHED_PATH_DELAY_READS]
+        if build_memo is not None:
+            caches.append(build_memo)
+        built = _map_forked(build, todo, caches)
+        considered = []
+        for move, slot in zip(moves, slots):
+            n_considered += 1
+            sched, why, cost = (
+                (None, "rejected: already considered", None)
+                if slot is None
+                else built[slot]
+            )
+            trace(move[0], sched, why, cost)
+            if sched is None:
+                continue
+            if not sched["latency_infeasible"]:
+                frontier[sched["n_states"]] = min(
+                    cost, frontier.get(sched["n_states"], cost)
+                )
+            considered.append(
+                ((sched["latency_infeasible"], _state_excess(sched)), cost, move[1], sched)
+                + tuple(move[2:])
+            )
+        return considered
+
     if debug:
         print(
             f"AUTO_FSM {key}: sweep anchor (share everything): est "
@@ -4492,7 +4742,9 @@ def _SWEEP_MIN_AREA_SCHEDULE(
     else:
         n_moves = MAX_SWEEP_MOVES
     for _move in range(n_moves):
-        candidates = []  # (excess, cost, tie-break label, schedule, opened, unshared)
+        # (trace label, candidate label, opened, unshared, pipelined, merged,
+        # fused) for every move off `cur`, in a fixed order.
+        moves = []
         allow_expansion = len(cur["nodes"]) <= MAX_SWEEP_DAG_NODES
         for entity in sorted(
             _openable_entities(parser_state, cur, opened) if allow_expansion else ()
@@ -4501,21 +4753,10 @@ def _SWEEP_MIN_AREA_SCHEDULE(
             trial_pipelined = {
                 e: latency for e, latency in pipelined.items() if e != entity
             }
-            sched, why, cost = evaluate(trial_opened, unshared, trial_pipelined)
-            n_considered += 1
-            trace(("open", entity), sched, why, cost)
-            if sched is not None:
-                candidates.append(
-                    (
-                        (sched["latency_infeasible"], _state_excess(sched)),
-                        cost,
-                        ("open", entity),
-                        sched,
-                        trial_opened,
-                        unshared,
-                        trial_pipelined,
-                    )
-                )
+            label = ("open", entity)
+            moves.append(
+                (label, label, trial_opened, unshared, trial_pipelined, merged, fused)
+            )
         unit_moves = _unshareable_entities(cur, unshared) if allow_expansion else {}
         unshare_moves = [
             ("unshare", entity, n) for entity, n in sorted(unit_moves.items())
@@ -4528,21 +4769,17 @@ def _SWEEP_MIN_AREA_SCHEDULE(
         for move, entity, n_units in unshare_moves:
             trial_unshared = dict(unshared)
             trial_unshared[entity] = n_units
-            sched, why, cost = evaluate(opened, trial_unshared, pipelined)
-            n_considered += 1
-            trace((move, f"{entity} -> {n_units} units"), sched, why, cost)
-            if sched is not None:
-                candidates.append(
-                    (
-                        (sched["latency_infeasible"], _state_excess(sched)),
-                        cost,
-                        (move, entity),
-                        sched,
-                        opened,
-                        trial_unshared,
-                        pipelined,
-                    )
+            moves.append(
+                (
+                    (move, f"{entity} -> {n_units} units"),
+                    (move, entity),
+                    opened,
+                    trial_unshared,
+                    pipelined,
+                    merged,
+                    fused,
                 )
+            )
         for entity, implementation in pipeline_moves(cur):
             latency = implementation["latency"] if implementation is not None else None
             choice = (
@@ -4558,63 +4795,35 @@ def _SWEEP_MIN_AREA_SCHEDULE(
             else:
                 trial_pipelined[entity] = choice
             trial_opened = [e for e in opened if e != entity]
-            sched, why, cost = evaluate(trial_opened, unshared, trial_pipelined)
-            n_considered += 1
             description = (
                 f"{entity} combinational"
                 if latency is None
                 else f"{entity} L={latency}, selection={implementation['selection_rows']}"
             )
-            trace(("pipeline", description), sched, why, cost)
-            if sched is not None:
-                candidates.append(
-                    (
-                        (sched["latency_infeasible"], _state_excess(sched)),
-                        cost,
-                        ("pipeline", description),
-                        sched,
-                        trial_opened,
-                        unshared,
-                        trial_pipelined,
-                    )
-                )
-        candidates = [candidate + (merged, fused) for candidate in candidates]
-
+            label = ("pipeline", description)
+            moves.append(
+                (label, label, trial_opened, unshared, trial_pipelined, merged, fused)
+            )
         trial_dag = {"nodes": cur["nodes"], "output": cur["output"]}
-        moves = [
+        rebinds = [
             ("merge", (narrow, wide))
             for narrow, wide in _local_merge_choices(trial_dag, parser_state)
             if [narrow, wide] not in merged
         ]
-        moves += [
+        rebinds += [
             ("fuse", pattern)
             for pattern in sorted(_pair_matches(trial_dag, parser_state))
             if pattern in parser_state.pypeline_auto_fsm_fusions
             and pattern not in fused
         ]
-        for move, item in moves:
+        for move, item in rebinds:
             trial_merged = merged + [list(item)] if move == "merge" else merged
             trial_fused = fused + [item] if move == "fuse" else fused
-            sched, why, cost = evaluate(
-                opened, unshared, pipelined, trial_merged, trial_fused
-            )
-            n_considered += 1
             label = (move, " -> ".join(item) if move == "merge" else item)
-            trace(label, sched, why, cost)
-            if sched is not None:
-                candidates.append(
-                    (
-                        (sched["latency_infeasible"], _state_excess(sched)),
-                        cost,
-                        label,
-                        sched,
-                        opened,
-                        unshared,
-                        pipelined,
-                        trial_merged,
-                        trial_fused,
-                    )
-                )
+            moves.append(
+                (label, label, opened, unshared, pipelined, trial_merged, trial_fused)
+            )
+        candidates = evaluate(moves)
         if not candidates:
             if debug:
                 print(
@@ -4665,6 +4874,7 @@ def _SWEEP_MIN_AREA_SCHEDULE(
 
     best["est_area"] = round(best_cost, 3)
     best["est_area_anchor"] = round(anchor_cost, 3)
+    best["area_frontier"] = _pareto_frontier(frontier)
     best["sweep_candidates"] = n_considered
     best["sweep_skipped_dag_nodes"] = (
         len(anchor["nodes"]) if len(anchor["nodes"]) > MAX_SWEEP_DAG_NODES else None
@@ -4674,16 +4884,19 @@ def _SWEEP_MIN_AREA_SCHEDULE(
 
 def SWEEP_MIN_AREA_SCHEDULE(
     parser_state, key, tag, budget_scale, prev_schedule=None, ctl=DEFAULT_CTL, debug=False,
-    build_memo=None,
+    build_memo=None, graph_memo=None,
 ):
     """Search original and combinationally rewritten graphs by total FSM area.
 
     Rewrites are choices, not a preprocessing commitment: a larger combinational
     graph can require fewer registers, muxes or states after scheduling.
+    `graph_memo` (an _AreaSearchMemo) may be shared by every search of one
+    (parser_state, key, tag, budget_scale, prev_schedule).
     """
+    graph_memo = graph_memo if graph_memo is not None else _AreaSearchMemo()
     best = _SWEEP_MIN_AREA_SCHEDULE(
         parser_state, key, tag, budget_scale, prev_schedule, ctl=ctl, debug=debug,
-        build_memo=build_memo,
+        build_memo=build_memo, graph_memo=graph_memo,
     )
     entity = AUTO._entity_key_for_callable(parser_state, tag.func)
     choices = list(getattr(parser_state, "pypeline_comb_area_opt_candidates", {}).get(entity, []))
@@ -4703,6 +4916,7 @@ def SWEEP_MIN_AREA_SCHEDULE(
             candidate = _SWEEP_MIN_AREA_SCHEDULE(
                 parser_state, key, tag, budget_scale, prev_schedule, ctl=ctl, debug=debug,
                 func_entity_override=candidate_entity, build_memo=build_memo,
+                graph_memo=graph_memo,
             )
         except AutoFsmInternalError:
             raise
@@ -4776,6 +4990,159 @@ def _period_du(parser_state):
     return 1000.0 / max(mhz_values) * SYN.DELAY_UNIT_MULT
 
 
+# Version of the persistent search cache's key and file format.
+_SEARCH_CACHE_VERSION = 1
+# sha256 of the compiler's and the Pypeline library's source files, computed
+# once per process: a search result is reused only by the code that searched it.
+_COMPILER_SOURCE_HASH = None
+
+
+def _compiler_source_hash():
+    """sha256 over the Python sources of src/ (tests excluded), src/pipelinec
+    and include/pypeline/."""
+    global _COMPILER_SOURCE_HASH
+    if _COMPILER_SOURCE_HASH is None:
+        src = os.path.dirname(os.path.abspath(__file__))
+        digest = hashlib.sha256()
+        for root in (src, os.path.join(src, "..", "include", "pypeline")):
+            for dirpath, dirnames, filenames in os.walk(root):
+                dirnames[:] = sorted(
+                    d for d in dirnames if d not in ("__pycache__", "tests")
+                )
+                for name in sorted(filenames):
+                    if not (name.endswith(".py") or name == "pipelinec"):
+                        continue
+                    path = os.path.join(dirpath, name)
+                    digest.update(os.path.relpath(path, src).encode() + b"\0")
+                    with open(path, "rb") as f:
+                        digest.update(hashlib.sha256(f.read()).digest())
+        _COMPILER_SOURCE_HASH = digest.hexdigest()
+    return _COMPILER_SOURCE_HASH
+
+
+def _search_parser_inputs(parser_state):
+    """What an area search can read from the parser state besides the FSM's own
+    source: the design's sources, every delay an entity carries and its
+    estimated flag, the measured control-path proxies, the clock goals and
+    target, the delay, area and placement settings and, under DEVICE_MODELS,
+    the leaf area cache. An entity without a delay is left out: a search materializes such
+    entities (candidates' built-in leaves, unit functions) as it goes, so they
+    depend on what searched earlier. What they resolve to from the cache/delay
+    files is checked separately (SYN.CACHED_PATH_DELAY_READS)."""
+    import DEVICE_MODELS
+    import PY_TO_LOGIC
+    import SWEEP
+
+    delays = [
+        (name, logic.delay, bool(logic.delay_is_estimated))
+        for name, logic in sorted(parser_state.FuncLogicLookupTable.items())
+        if logic.delay is not None
+    ]
+    area_files = []
+    if SYN.SYN_TOOL is DEVICE_MODELS:
+        area_dir = SYN.GET_AREA_CACHE_DIR(parser_state)
+        for dirpath, dirnames, filenames in os.walk(area_dir or ""):
+            dirnames.sort()
+            for name in sorted(filenames):
+                stat = os.stat(os.path.join(dirpath, name))
+                area_files.append((name, stat.st_size, stat.st_mtime_ns))
+    return AUTO.fingerprint(
+        [
+            sorted(PY_TO_LOGIC.DESIGN_SOURCE_HASHES().values()),
+            _target_context(parser_state),
+            sorted((main, mhz) for main, mhz in parser_state.main_mhz.items()),
+            [
+                SYN.USE_PRIMITIVE_DELAY_MODEL,
+                SYN._mux_cache_key_is_width_collapsed(),
+                AUTO.FORCE_ABSTRACT_AREA,
+                SWEEP.PIPELINE_MIN_EFFORT,
+            ],
+            _control_snapshot(parser_state),
+            delays,
+            area_files,
+        ]
+    )
+
+
+def _search_cache_paths(parser_state, digest):
+    """Where a search result with this input digest lives: the output
+    directory, then the --syn_cache store when there is one."""
+    paths = []
+    if SYN.SYN_OUTPUT_DIRECTORY is not None:
+        paths.append(
+            os.path.join(SYN.SYN_OUTPUT_DIRECTORY, "auto_fsm_searches", digest + ".pkl.z")
+        )
+    if SYN.SYNTHESIS_STORE_DIR is not None:
+        paths.append(
+            os.path.join(
+                SYN.SYNTHESIS_STORE_DIR,
+                "auto_fsm",
+                f"v{_SEARCH_CACHE_VERSION}",
+                getattr(SYN.SYN_TOOL, "__name__", "none"),
+                SYN.PART_CACHE_DIR_NAME(parser_state.part or "none"),
+                digest + ".pkl.z",
+            )
+        )
+    return paths
+
+
+def _read_cached_search(paths, digest, key):
+    """The schedule an earlier search with these exact inputs selected, its
+    recorded cache/delay reads, and the file it came from; (None, None, None)
+    on a miss. A result is reused only while every cache/delay file the
+    earlier build had read still reads the same. Anything unreadable, stale
+    or malformed is a miss, never a failure."""
+    for path in paths:
+        try:
+            with open(path, "rb") as f:
+                version, cached_digest, cached_key, schedule, reads = pickle.loads(
+                    zlib.decompress(f.read())
+                )
+            if (
+                version != _SEARCH_CACHE_VERSION
+                or cached_digest != digest
+                or cached_key != key
+                or not SCHEDULE_CACHE_USABLE(schedule)
+                or any(
+                    SYN.READ_CACHED_PATH_DELAY_FILE(file_path) != delay_ns
+                    for file_path, delay_ns in reads.items()
+                )
+            ):
+                continue
+        except Exception:
+            continue
+        try:
+            os.utime(path)  # --syn_cache_prune keeps what builds still reuse
+        except OSError:
+            pass
+        return schedule, reads, path
+    return None, None, None
+
+
+def _write_cached_search(paths, digest, key, schedule, reads):
+    """Keep a search result, with the cache/delay reads it rests on, at every
+    path that lacks it; a failed write only costs the next build a search."""
+    blob = zlib.compress(
+        pickle.dumps(
+            (_SEARCH_CACHE_VERSION, digest, key, schedule, reads),
+            pickle.HIGHEST_PROTOCOL,
+        ),
+        1,
+    )
+    for path in paths:
+        if os.path.exists(path):
+            continue
+        try:
+            os.makedirs(os.path.dirname(path), exist_ok=True)
+            temporary = f"{path}.{os.getpid()}.tmp"
+            with open(temporary, "wb") as f:
+                f.write(blob)
+            os.replace(temporary, path)
+        except OSError:
+            pass
+
+
+@SYN.PHASED("AUTO_FSM schedule search")
 def HARVEST_AUTO_FSM_SCHEDULES(
     parser_state,
     budget_scales=None,
@@ -4795,11 +5162,16 @@ def HARVEST_AUTO_FSM_SCHEDULES(
     prev_schedules carries forward the delay snapshot, so a reschedule on a
     later pass (where the pure function is no longer instantiated and therefore
     no longer measured) works from the same numbers as the first one.
+
+    A call site whose search inputs (_search_parser_inputs, its own source,
+    carried schedule and request) match an earlier search reuses that search's
+    result from the output directory or the --syn_cache store.
     """
     budget_scales = budget_scales or {}
     prev_schedules = prev_schedules or {}
     tags = GET_TAGS(parser_state)
     schedules = {}
+    parser_inputs = None
     for key in sorted(COLLECT_AUTO_FSM_KEYS(parser_state)):
         if keys is not None and key not in keys:
             continue
@@ -4811,10 +5183,47 @@ def HARVEST_AUTO_FSM_SCHEDULES(
             )
         budget_scale = budget_scales.get(key, DEFAULT_BUDGET_SCALE)
         prev = prev_schedules.get(key)
+        if parser_inputs is None:
+            parser_inputs = _search_parser_inputs(parser_state)
+        func_entity = AUTO._entity_key_for_callable(parser_state, tag.func)
+        digest = hashlib.sha256(
+            json.dumps(
+                [
+                    _SEARCH_CACHE_VERSION,
+                    SCHEDULE_VERSION,
+                    _compiler_source_hash(),
+                    parser_inputs,
+                    key,
+                    parser_state.pypeline_auto_fsm_source_identities.get(key)
+                    or _source_identity(parser_state, func_entity),
+                    budget_scale,
+                    prev,
+                    area_sweep,
+                    ctl,
+                    sorted(force_open),
+                    sorted(force_unshare),
+                ],
+                sort_keys=True,
+                default=str,
+            ).encode()
+        ).hexdigest()
+        cache_paths = _search_cache_paths(parser_state, digest)
+        cached, reads, cached_path = _read_cached_search(cache_paths, digest, key)
+        if cached is not None:
+            print(
+                f"AUTO_FSM {key}: reusing the schedule an earlier search chose "
+                f"from identical inputs ({cached_path})",
+                flush=True,
+            )
+            _write_cached_search(cache_paths, digest, key, cached, reads)
+            schedules[key] = cached
+            continue
         modes = ("v3", "onehot") if ctl == "auto" else (ctl,)
         # Shared by the encodings below: under `auto` the onehot search
-        # reuses every point the v3 search already scheduled.
+        # reuses every point the v3 search already scheduled under the same
+        # select delay, and every cleaned graph.
         build_memo = {} if len(modes) > 1 else None
+        graph_memo = _AreaSearchMemo()
 
         def build_mode(mode):
             if force_open or force_unshare:
@@ -4842,6 +5251,7 @@ def HARVEST_AUTO_FSM_SCHEDULES(
                     ctl=mode,
                     debug=sweep_debug,
                     build_memo=build_memo,
+                    graph_memo=graph_memo,
                 )
             return BUILD_SCHEDULE(
                 parser_state, key, tag, budget_scale, prev, ctl=mode,
@@ -4864,6 +5274,9 @@ def HARVEST_AUTO_FSM_SCHEDULES(
             selected["ctl_auto_candidates"] = {
                 mode: round(cost, 3) for _bad, cost, mode, _candidate in variants
             }
+        _write_cached_search(
+            cache_paths, digest, key, selected, dict(SYN.CACHED_PATH_DELAY_READS)
+        )
         schedules[key] = selected
     return schedules
 
@@ -4909,11 +5322,17 @@ def _BLAMED_MISS_RATIOS(parser_state, multimain_timing_params, schedules):
     failures = getattr(multimain_timing_params, "sweep_timing_failures", None)
     if not failures:
         return {}
-    entity_to_key = {sched["entity"]: key for key, sched in schedules.items()}
+    # A failure names an FSM entity, or the AUTO_PIPELINE region of one of its
+    # pinned units ("stop(AUTO_FSM owns pipeline placement auto_fsm_pinned_...)"),
+    # which repair and tightening of the owning FSM can address.
+    name_to_key = {sched["entity"]: key for key, sched in schedules.items()}
+    for key, sched in schedules.items():
+        for implementation in sched.get("implementations", {}).values():
+            name_to_key[_pinned_unit_name(implementation)] = key
     ratios = {}
     for main_func_name, goal, achieved, why in failures:
         keys = {
-            entity_to_key[entity] for entity in entity_to_key if entity in (why or "")
+            name_to_key[name] for name in name_to_key if name in (why or "")
         } or _AUTO_FSM_KEYS_UNDER_MAIN(parser_state, main_func_name)
         ratio = achieved / goal if achieved and goal else None
         for key in keys:
@@ -4982,6 +5401,7 @@ _SCHEDULE_NON_HARDWARE_KEYS = frozenset(
         "entity",
         "est_area",
         "est_area_anchor",
+        "area_frontier",
         "sweep_candidates",
         "ctl_auto_candidates",
         "comb_opt_candidates",
@@ -5300,6 +5720,13 @@ def DESCRIBE_SCHEDULE(parser_state, key, schedule) -> str:
             f"opened up, {n_unshared} kind(s) given extra unit(s), "
             f"{schedule.get('sweep_candidates', 0)} candidate schedule(s) tried"
         )
+        frontier = schedule.get("area_frontier")
+        if frontier and len(frontier) > 1:
+            # A max_latency= cap at one of these state counts gets about that
+            # area. Only what the area walk visited, so not exhaustive.
+            line += "\n  area vs states (seen by the area search, not exhaustive): " + ", ".join(
+                f"{states} states {cost:.0f}" for states, cost in frontier
+            )
         if schedule.get("sweep_skipped_dag_nodes"):
             line += (
                 f"\n  area search skipped: the share-everything schedule already "
@@ -5514,6 +5941,19 @@ def _calibrate_controls(parser_state, budget_scales, ctl, previous, keys=None):
     return parser_state, snapshots
 
 
+def _estimate_could_decide(parser_state, entity, budget_du):
+    """Whether measuring an estimated entity could change whether it fits a
+    state. A derived estimate always could. A primitive width estimated from
+    measured widths (SYN.PrimitiveDelayModel) carries an error bound; only one
+    whose delay plus the flat mux allowance lies within that bound of the
+    state budget gets a synthesis run."""
+    logic = parser_state.FuncLogicLookupTable[entity]
+    error = logic.delay_model_error
+    if not logic.delay_is_estimated or error is None or logic.delay is None:
+        return True
+    return abs(logic.delay + AUTO.MUX_PENALTY_DU - budget_du) <= error
+
+
 def _needs_measurement(parser_state, entity):
     """A pure, inspectable entity whose current delay is not a measurement."""
     import SYN
@@ -5612,7 +6052,9 @@ def _measure_schedule_inputs(parser_state, budget_scales, previous, keys=None):
     """
     tried = set()
     while True:
-        descents, bound = set(), set()
+        descents = set()
+        # Bound entity -> the tightest state budget it is scheduled against.
+        bound = {}
         for key, tag in sorted(GET_TAGS(parser_state).items()):
             if keys is not None and key not in keys:
                 continue
@@ -5665,14 +6107,14 @@ def _measure_schedule_inputs(parser_state, budget_scales, previous, keys=None):
             )
             # Bound operations as scheduling sees them: cleanup adds units of
             # its own (balanced selections, constant-multiply factories).
-            cleaned, _stats = _clean_schedule_graph(
+            cleaned, _stats, _identity = _clean_schedule_graph(
                 parser_state, func_entity, delays, budget_du, (), [], (), (), None
             )
-            bound.update(
-                node["entity"]
-                for node in cleaned["nodes"].values()
-                if node["delay_du"] > 0 and node["entity"] not in measured
-            )
+            for node in cleaned["nodes"].values():
+                if node["delay_du"] > 0 and node["entity"] not in measured:
+                    bound[node["entity"]] = min(
+                        budget_du, bound.get(node["entity"], budget_du)
+                    )
         pending = {
             entity
             for entity in descents - tried
@@ -5681,8 +6123,10 @@ def _measure_schedule_inputs(parser_state, budget_scales, previous, keys=None):
         if not pending:
             pending = {
                 entity
-                for entity in bound - tried
-                if _needs_measurement(parser_state, entity)
+                for entity, budget_du in bound.items()
+                if entity not in tried
+                and _needs_measurement(parser_state, entity)
+                and _estimate_could_decide(parser_state, entity, budget_du)
             }
         if not pending:
             return parser_state
@@ -5914,10 +6358,161 @@ def _unit_measurements(observation, schedule, provenance, aliases):
     return result
 
 
+def SCHEDULED_FSM_DELAY_DU(key):
+    """The worst state of a call site's installed schedule, in delay units:
+    the modelled worst state, or a measured stage of one of its pinned units
+    when that is longer. None without an installed schedule.
+
+    SYN uses it as the generated FSM's delay instead of synthesizing the whole
+    module: that run reports an input-to-output figure, not a state's
+    register-to-register delay, and the sweep cannot pipeline an FSM."""
+    import pypeline
+
+    schedule = pypeline.AUTO_FSM_SCHEDULE_CACHE().get(key)
+    if schedule is None:
+        return None
+    stages = [
+        _with_measurements(implementation, schedule.get("unit_measurements"))[
+            "worst_stage_du"
+        ]
+        for implementation in schedule.get("implementations", {}).values()
+    ]
+    return max([schedule["worst_state_du"]] + stages)
+
+
 def _with_measurements(profile, measurements):
     """A built placement's measured stages replace its estimate."""
     measured = (measurements or {}).get(profile["placement_digest"])
     return dict(profile, **measured) if measured else profile
+
+
+def _placement_node(schedule, entity):
+    """The scheduled node a pinned unit of `entity` was bound for."""
+    return next(
+        node
+        for _nid, node in sorted(schedule["nodes"].items())
+        if node.get("fu") and node["entity"] == entity
+    )
+
+
+def _prepare_placement_measurement(parser_state, key, schedule, entity, implementation):
+    """Write one pinned placement's isolated hierarchy for synthesis on its
+    own. Returns (root, isolated parse, timing params)."""
+    import AUTO_PIPELINE
+    import VHDL
+
+    node = _placement_node(schedule, entity)
+    unit = _unit_function(parser_state, key, node, implementation.get("selection_rows"))
+    if unit is None or unit["entity"] != implementation["unit_entity"]:
+        raise AutoFsmInternalError(
+            "AUTO_FSM: selected functional unit is unavailable: " + entity
+        )
+    delays = dict(
+        schedule["entity_delays_snapshot"],
+        **schedule.get("corrected_entity_delays", {}),
+    )
+    isolated, root = _unit_isolated_tree(parser_state, unit["entity"], delays)
+    table = {
+        inst: AUTO_PIPELINE.TimingParams(inst, logic)
+        for inst, logic in isolated.LogicInstLookupTable.items()
+    }
+    RESTORE_UNIT_PLACEMENT(root, implementation, isolated, table)
+    for inst, logic in sorted(isolated.LogicInstLookupTable.items()):
+        if (
+            logic.is_vhdl_func
+            or logic.is_vhdl_expr
+            or logic.func_name == LOGIC.VHDL_FUNC_NAME
+            or logic.is_clock_crossing
+            or logic.is_fsm_clk_func
+        ):
+            continue
+        out_dir = SYN.GET_OUTPUT_DIRECTORY(logic)
+        os.makedirs(out_dir, exist_ok=True)
+        VHDL.WRITE_LOGIC_ENTITY(inst, logic, out_dir, isolated, table)
+    return root, isolated, table
+
+
+def _measured_placement(implementation, report):
+    """A placement's measured worst stage and that path's endpoints, or None
+    when the report has no path."""
+    paths = [
+        path for path in report.path_reports.values() if path.path_delay_ns is not None
+    ]
+    if not paths:
+        return None
+    worst = max(paths, key=lambda path: path.path_delay_ns)
+
+    def depth_free(name):
+        # The isolated root is named per depth (<unit>_5CLK_<hash>/...); the
+        # path below it is what two depths share.
+        return re.sub(r"^[^/]*_\d+CLK_[0-9a-f]+/", "", name or "")
+
+    return dict(
+        evidence="measured on its own",
+        worst_stage_du=max(
+            implementation["worst_stage_du"],
+            math.ceil(worst.path_delay_ns * SYN.DELAY_UNIT_MULT),
+        ),
+        worst_path=[
+            depth_free(worst.start_reg_name),
+            depth_free(worst.end_reg_name),
+            round(worst.path_delay_ns, 3),
+        ],
+        paths=[],
+    )
+
+
+@SYN.PHASED("AUTO_FSM pinned-unit measurement")
+def _synthesize_placements(parser_state, jobs):
+    """Measure pinned placements on their own: [(key, schedule, entity,
+    implementation)] -> [measurement or None]. Hierarchies are written one
+    at a time; the syntheses run in parallel (SYN.GET_NUM_PROCESSES)."""
+    from multiprocessing.pool import ThreadPool
+
+    import VHDL
+
+    if not jobs:
+        return []
+    # The units first: a schedule a forked search built or an earlier build
+    # stored never materialized them in this parser state, and a selected
+    # unit's row array is a type of its own.
+    for key, schedule, entity, implementation in jobs:
+        _unit_function(
+            parser_state,
+            key,
+            _placement_node(schedule, entity),
+            implementation.get("selection_rows"),
+        )
+    # Grow-only: the units' own types join the chunk index, and isolated runs
+    # read a package scoped to what they use.
+    VHDL.WRITE_C_DEFINED_VHDL_STRUCTS_PACKAGE(parser_state)
+    prepared = []
+    for key, schedule, entity, implementation in jobs:
+        print(
+            f"AUTO_FSM {key}: measuring pinned unit {entity} "
+            f"L={implementation['latency']} on its own",
+            flush=True,
+        )
+        prepared.append(
+            _prepare_placement_measurement(
+                parser_state, key, schedule, entity, implementation
+            )
+        )
+    pool = ThreadPool(processes=min(SYN.GET_NUM_PROCESSES(), len(prepared)))
+    try:
+        reports = pool.map(
+            lambda job: SYN.SYN_TOOL.SYN_AND_REPORT_TIMING(
+                job[0], job[1].LogicInstLookupTable[job[0]], job[1], job[2]
+            ),
+            prepared,
+        )
+    finally:
+        pool.close()
+        pool.join()
+    return [
+        _measured_placement(implementation, report)
+        for (_key, _schedule, _entity, implementation), report in zip(jobs, reports)
+    ]
 
 
 def _measure_unit_placements(parser_state, schedules):
@@ -5929,87 +6524,111 @@ def _measure_unit_placements(parser_state, schedules):
     selection included, measures its worst register-to-register stage before
     a whole-design build relies on it. Results land in each schedule's
     unit_measurements (diagnostic data, not hardware). Returns
-    {key: {placement digest, ...}} for chosen placements over their budget.
+    {key: {entity: implementation}} for chosen placements over their budget.
     """
-    import AUTO_PIPELINE
-    import VHDL
-
-    over = {}
-    package_written = False
+    jobs = []
     for key, schedule in sorted(schedules.items()):
         measurements = schedule.setdefault("unit_measurements", {})
         for entity, implementation in sorted(
             schedule.get("implementations", {}).items()
         ):
-            digest = implementation["placement_digest"]
-            if digest not in measurements:
-                node = next(
-                    node
-                    for _nid, node in sorted(schedule["nodes"].items())
-                    if node.get("fu") and node["entity"] == entity
-                )
-                unit = _unit_function(
-                    parser_state, key, node, implementation.get("selection_rows")
-                )
-                if unit is None or unit["entity"] != implementation["unit_entity"]:
-                    raise AutoFsmInternalError(
-                        "AUTO_FSM: selected functional unit is unavailable: " + entity
-                    )
-                delays = dict(
-                    schedule["entity_delays_snapshot"],
-                    **schedule.get("corrected_entity_delays", {}),
-                )
-                isolated, root = _unit_isolated_tree(
-                    parser_state, unit["entity"], delays
-                )
-                table = {
-                    inst: AUTO_PIPELINE.TimingParams(inst, logic)
-                    for inst, logic in isolated.LogicInstLookupTable.items()
-                }
-                RESTORE_UNIT_PLACEMENT(root, implementation, isolated, table)
-                if not package_written:
-                    # Grow-only: the unit's own types join the chunk index, and
-                    # isolated runs read a package scoped to what they use.
-                    VHDL.WRITE_C_DEFINED_VHDL_STRUCTS_PACKAGE(parser_state)
-                    package_written = True
-                for inst, logic in sorted(isolated.LogicInstLookupTable.items()):
-                    if (
-                        logic.is_vhdl_func
-                        or logic.is_vhdl_expr
-                        or logic.func_name == LOGIC.VHDL_FUNC_NAME
-                        or logic.is_clock_crossing
-                        or logic.is_fsm_clk_func
-                    ):
-                        continue
-                    out_dir = SYN.GET_OUTPUT_DIRECTORY(logic)
-                    os.makedirs(out_dir, exist_ok=True)
-                    VHDL.WRITE_LOGIC_ENTITY(inst, logic, out_dir, isolated, table)
-                print(
-                    f"AUTO_FSM {key}: measuring pinned unit {entity} "
-                    f"L={implementation['latency']} on its own",
-                    flush=True,
-                )
-                report = SYN.SYN_TOOL.SYN_AND_REPORT_TIMING(
-                    root, isolated.LogicInstLookupTable[root], isolated, table
-                )
-                delays_ns = [
-                    path.path_delay_ns
-                    for path in report.path_reports.values()
-                    if path.path_delay_ns is not None
-                ]
-                if not delays_ns:
-                    continue
-                measurements[digest] = dict(
-                    evidence="measured on its own",
-                    worst_stage_du=max(
-                        implementation["worst_stage_du"],
-                        math.ceil(max(delays_ns) * SYN.DELAY_UNIT_MULT),
-                    ),
-                    paths=[],
-                )
-            if measurements[digest]["worst_stage_du"] > schedule["budget_du"]:
-                over.setdefault(key, set()).add(digest)
+            if implementation["placement_digest"] not in measurements:
+                jobs.append((key, schedule, entity, implementation))
+    for (key, schedule, _entity, implementation), measured in zip(
+        jobs, _synthesize_placements(parser_state, jobs)
+    ):
+        if measured is not None:
+            schedule["unit_measurements"][implementation["placement_digest"]] = measured
+    over = {}
+    for key, schedule in sorted(schedules.items()):
+        measurements = schedule["unit_measurements"]
+        for entity, implementation in sorted(
+            schedule.get("implementations", {}).items()
+        ):
+            measured = measurements.get(implementation["placement_digest"])
+            if measured and measured["worst_stage_du"] > schedule["budget_du"]:
+                over.setdefault(key, {})[entity] = implementation
     return over
+
+
+def _measure_deeper_placements(parser_state, schedules, over):
+    """Before one reschedule, measure every deeper depth of a recipe whose
+    chosen depth missed: each would otherwise take a round of measurement
+    and a full area search of its own. The depths are the ones
+    _unit_profiles predicts can still improve, below the latency cap."""
+    jobs = []
+    for key in sorted(over):
+        schedule = schedules[key]
+        measurements = schedule["unit_measurements"]
+        max_states = (
+            schedule["max_latency"] - int(schedule.get("register_output", True))
+            if schedule.get("max_latency") is not None
+            else None
+        )
+        for entity, implementation in sorted(over[key].items()):
+            profiles = _unit_profiles(
+                parser_state,
+                key,
+                _placement_node(schedule, entity),
+                schedule["entity_delays_snapshot"],
+                implementation.get("selection_rows"),
+            )
+            jobs.extend(
+                (key, schedule, entity, profile)
+                for profile in profiles
+                if profile["latency"] > implementation["latency"]
+                and (max_states is None or profile["latency"] < max_states)
+                and profile["placement_digest"] not in measurements
+            )
+    for (key, schedule, _entity, profile), measured in zip(
+        jobs, _synthesize_placements(parser_state, jobs)
+    ):
+        if measured is not None:
+            schedule["unit_measurements"][profile["placement_digest"]] = measured
+    for key in sorted(over):
+        schedule = schedules[key]
+        for entity, implementation in sorted(over[key].items()):
+            print(_describe_depth_curve(parser_state, key, schedule, entity, implementation), flush=True)
+
+
+def _describe_depth_curve(parser_state, key, schedule, entity, implementation):
+    """One line per recipe: each measured depth's worst stage, and whether a
+    deeper depth moved the worst path at all."""
+    measurements = schedule["unit_measurements"]
+    profiles = _unit_profiles(
+        parser_state,
+        key,
+        _placement_node(schedule, entity),
+        schedule["entity_delays_snapshot"],
+        implementation.get("selection_rows"),
+    )
+    curve = [
+        (profile["latency"], measurements[profile["placement_digest"]])
+        for profile in profiles
+        if profile["placement_digest"] in measurements
+    ]
+    parts = []
+    previous = None
+    for latency, measured in curve:
+        path = measured.get("worst_path")
+        same = previous is not None and path is not None and path == previous
+        parts.append(
+            f"L={latency} {measured['worst_stage_du'] / 10.0:.2f} ns"
+            + (" (same path)" if same else "")
+        )
+        previous = path
+    paths = {tuple(measured["worst_path"]) for _l, measured in curve if measured.get("worst_path")}
+    verdict = (
+        "; every depth kept the same worst path, so no depth of this recipe can fix it"
+        if len(curve) > 1 and len(paths) == 1
+        else ""
+    )
+    return (
+        f"AUTO_FSM {key}: pinned unit {entity} measured on its own at "
+        + ", ".join(parts)
+        + f" against the {schedule['budget_du'] / 10.0:.2f} ns/state budget"
+        + verdict
+    )
 
 
 def _confirm_unit_placements(parser_state, schedules, harvest):
@@ -6018,15 +6637,22 @@ def _confirm_unit_placements(parser_state, schedules, harvest):
 
     A measured placement is never chosen again, so each round either measures
     something new or ends; a miss that rescheduling cannot avoid is left to
-    the whole-design build and its timing loop.
+    the whole-design build and its timing loop. A recipe whose chosen depth
+    misses has its deeper depths measured too, before the one reschedule
+    (_measure_deeper_placements).
     """
     known = set()
     while True:
         over = _measure_unit_placements(parser_state, schedules)
-        new = {digest for digests in over.values() for digest in digests} - known
+        new = {
+            implementation["placement_digest"]
+            for chosen in over.values()
+            for implementation in chosen.values()
+        } - known
         if not new:
             return schedules
         known |= new
+        _measure_deeper_placements(parser_state, schedules, over)
         for key in sorted(over):
             budget_ns = schedules[key]["budget_du"] / 10.0
             print(
@@ -6341,6 +6967,7 @@ def CHECK_SCHEDULES_APPLIED(parser_state):
         )
 
 
+@SYN.PHASED("re-elaboration")
 def REPARSE(src_file, part, tool=None, schedule_call_sites=None):
     """Re-execute the design inside a pipelined build: DO_SCHEDULE_PASSES' own
     re-parse, AUTO_PIPELINE's pin-and-confirm passes and its RAM plan re-parses.
@@ -6440,6 +7067,9 @@ def DO_SCHEDULE_PASSES(parser_state, args, src_file):
     tightened_from = None
     pending_schedules = None
     attempted_repairs = set()
+    # Call sites the next pass reschedules: the FSMs a tightening blamed. The
+    # others keep their schedules; None (the first pass) schedules every one.
+    reschedule_keys = None
 
     def harvest(state, previous, keys):
         return HARVEST_AUTO_FSM_SCHEDULES(
@@ -6512,7 +7142,11 @@ def DO_SCHEDULE_PASSES(parser_state, args, src_file):
         if pending_schedules is not None:
             schedules, pending_schedules = pending_schedules, None
         else:
-            parser_state, schedules = measure_and_harvest(parser_state, prev_schedules)
+            parser_state, harvested = measure_and_harvest(
+                parser_state, prev_schedules, reschedule_keys
+            )
+            schedules = dict(prev_schedules) if reschedule_keys is not None else {}
+            schedules.update(harvested)
         schedules = confirm_and_report(parser_state, schedules)
         prev_schedules = schedules
 
@@ -6692,8 +7326,10 @@ def DO_SCHEDULE_PASSES(parser_state, args, src_file):
                     flush=True,
                 )
             # Only the blamed FSMs' budgets moved, so only they are
-            # rescheduled; the others keep this pass's schedule. The next
-            # pass reschedules every FSM from its newly measured delays.
+            # rescheduled; the others keep this pass's schedule, in the next
+            # pass too. Rescheduling an FSM whose MAIN met timing can only
+            # change hardware that already passed, at the cost of a full
+            # area search and its pinned-unit rounds.
             parser_state = _measure_schedule_inputs(
                 parser_state, budget_scales, schedules
             )
@@ -6727,6 +7363,7 @@ def DO_SCHEDULE_PASSES(parser_state, args, src_file):
             {key: schedules[key]["n_states"] for key in blamed},
             "tighten",
         )
+        reschedule_keys = set(blamed)
         for key in sorted(blamed):
             print(
                 f"AUTO_FSM {key}: timing missed; tightened per-state budget to "

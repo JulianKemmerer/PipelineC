@@ -40,6 +40,7 @@ same nonzero-exit timing-failure gate as an ordinary pipeline search.
 - [3. The refinement loop](#3-the-refinement-loop)
 - [4. Feature-specific feedback in the loop](#4-feature-specific-feedback-in-the-loop)
 - [5. Latency memory](#5-latency-memory)
+  - [Untimed regions](#untimed-regions)
 - [6. Command line](#6-command-line)
 - [7. Tests](#7-tests)
 - [8. Limitations and future work](#8-limitations-and-future-work)
@@ -49,6 +50,7 @@ same nonzero-exit timing-failure gate as an ordinary pipeline search.
   - [Divider acceptance and the 48-slice intermediate level](#divider-acceptance-and-the-48-slice-intermediate-level)
   - [Hard floors need path evidence](#hard-floors-need-path-evidence)
   - [start_latency regions and mini-sweeps](#start_latency-regions-and-mini-sweeps)
+  - [Locks shared by MAINs at one goal](#locks-shared-by-mains-at-one-goal)
   - [Cross-MAIN handshake paths](#cross-main-handshake-paths)
 
 ---
@@ -80,7 +82,7 @@ frontier and estimated delays are part of the delay model in
 | **floor** (legacy internal name) | estimated minimum stage period, or reciprocal frequency ceiling; never an fmax lower bound |
 | **plan** | per-MAIN sweep state: cut subtrees, landscapes, cuts, learned scale factors, locks |
 | **measurement frontier** | the outermost eligible fully combinational pipeline functions; their measured through-delays calibrate placement geometry. Scoped fallback can measure eligible combinational descendants. AUTO_MCP endpoint reports and AUTO_FSM calibration are separate consumers. |
-| **lock** | a mini-sweep result whose internal slices are frozen onto eligible instances of a func in the blamed MAIN (`params_are_fixed`); optional input/output banks are selected from parent dataflow rather than assumed per instance |
+| **lock** | a mini-sweep result whose internal slices are frozen onto eligible instances of a func in the blamed MAIN and in every MAIN at the same clock goal (`params_are_fixed`, `SHARE_LOCK`); optional input/output banks are selected from each MAIN's parent dataflow rather than assumed per instance |
 | **trim** | post-met iterations that retry with fewer cuts to prove the stage count is minimal |
 
 ## 2. Concepts: cut subtrees, landscapes, and cut planning
@@ -612,6 +614,13 @@ could restore a snapshot that measured well above its target and still exit
 iteration (e.g. one a floor-stop landed on afterward) and never re-checked
 against the snapshot actually written out.
 
+The best and met snapshots copy the timing-params table with
+`AUTO_PIPELINE.COPY_TIMING_PARAMS_LOOKUP`, which copies each instance's
+slices and register flags and shares its `Logic`. A region retry resets its
+instances from the zero table the same way. `copy.deepcopy` would duplicate a
+`Logic` graph per instance, about 30 KB and 14 ms each on the Poly1305 body,
+and a later snapshot would copy those duplicates again.
+
 Confirmation stdout prints one verdict per MAIN using its worst reported path.
 Extra per-MCP paths contribute to that minimum after cycle normalization; they
 are not printed as competing final MAIN frequencies. Their endpoint scope,
@@ -649,8 +658,9 @@ before minimizing and again before matching, so both sides of the key see the
 same model. A carried lock obeys the mini-sweep's own rules
 (`LOCK_BLOCKED_REASON`): only eligible instances in the owning MAIN, never a
 subtree root or MAIN, never inside a constrained AUTO_PIPELINE region, and
-never nested in another lock. Another MAIN never inherits it, so MAIN depths
-stay independent. Only the retained implementation's locks are stored. A MAIN
+never nested in another lock. A MAIN at the same goal that has no lock of its own
+takes it (`SHARE_LOCK`, unless it replays a preserved implementation); a MAIN at
+another goal never inherits it. Only the retained implementation's locks are stored. A MAIN
 preserved from a failed confirmation keeps a carried lock only if its
 preserved snapshot realizes exactly that interior
 (`AUTO_PIPELINE.CONCRETE_PIPELINE_CONTAINS`). Old Logic objects are not
@@ -968,8 +978,15 @@ compact repeated-helper solution before global densification skips past it:
    than exhaustive minimality evidence. Previously measured probe points are reused. A zero-cut isolated pass is deliberately not locked: adding
    IO registers alone would add latency without splitting the hot path.
    `MINISWEEP_LOCK_TARGETS` scopes probing, conflicts, and locks to eligible
-   instances in the blamed MAIN; another MAIN owns its own locks. Ineligible
-   instances stay combinational and are named in the log and trace. No eligible
+   instances in the blamed MAIN. `SHARE_LOCK` then applies the lock to every
+   eligible instance in the plan's `peers`, the MAINs at the same clock goal:
+   an interior that meets the goal in one instance meets it in all, and a
+   region group's members must realize one `.latency`. A peer selects its own
+   boundary banks, replans, and takes no decision of its own for that hotspot
+   in the same iteration (`decided_by_peer`, logged as `minisweep(f) from
+   <MAIN>`). A carried or remembered lock fills a peer that has none. A MAIN at
+   another goal keeps its own locks. Ineligible instances stay combinational
+   and are named in the log and trace. No eligible
    in-MAIN instance makes the hotspot unpipelinable. A hotspot inside an
    uncapped `start_latency=` region takes this step too
    (`REGION_INTERIOR_LOCK_BLOCKER`): the hint is only a starting count, so the
@@ -1257,8 +1274,8 @@ result was reached, such as depth 8 from a mini-sweep of `poly1305_body`.
 
 | Piece | Digest/key | Same goal | Lower goal |
 |---|---|---|---|
-| AUTO_PIPELINE depth | tag key and callee subtree digest | serves `.latency` and region `seed` start | serves and starts at the remembered depth; for a region, also a floor it never realizes below (`LATENCY_MEMORY_AP_FLOORS`, see [AUTO_PIPELINE_DESIGN.md](AUTO_PIPELINE_DESIGN.md)) |
-| AUTO_MULTI_CYCLE count | tag key and capture callee subtree/cone digest | provisional seed, with confirm-down | floor start, never confirmed below the remembered count |
+| AUTO_PIPELINE depth | tag key and callee subtree digest | serves `.latency` and region `seed` start | serves and starts at the remembered depth, or at a deeper hint; for a region, also a floor it never realizes below (`LATENCY_MEMORY_AP_FLOORS`, see [AUTO_PIPELINE_DESIGN.md](AUTO_PIPELINE_DESIGN.md)) |
+| AUTO_MULTI_CYCLE count | tag key and capture callee subtree/cone digest | provisional seed, with confirm-down | floor start (or a deeper hint), never confirmed below the remembered count |
 | mini-sweep lock | MAIN function / locked function and `SUBTREE_MODEL_FINGERPRINT` | loaded through `CARRIED_LOCKS` / `LOAD_CARRIED_LOCKS` | mini-sweep hint: skips the streak wait and starts coarse search at the old depth |
 | MAIN implementation | MAIN function and MAIN subtree digest under the same served values | `CAPTURE_CONCRETE_PIPELINE` / `RESTORE_CONCRETE_PIPELINE`, confirmed by synthesis | never replayed |
 
@@ -1297,7 +1314,9 @@ changing the count/ready controller does not invalidate that datapath piece.
    `start_latency=`; resolve part, tool and goals.
 2. Emit zero-clock VHDL and, in `APPLY_LATENCY_MEMORY`, select each piece: current goal first, otherwise the
    highest lower goal. A digest/part/tool mismatch or higher goal is ignored.
-   Matching memory beats hints; at equal goals the out_dir record beats the store.
+   Matching memory from the current goal beats hints. A lower-goal piece is only a
+   floor at this goal, so a deeper hint starts the tag above it; otherwise the piece
+   serves. At equal goals the out_dir record beats the store.
 3. If selected served values differ, re-parse with them and re-check digests. Drop
    pieces whose digest changed and report the reason. Recompute identities and
    select newly matching dependent pieces: for example, a body depth changes the
@@ -1352,6 +1371,33 @@ and recorded goal; locks also print depth and whether they are locks or hints.
 `PIPELINEC_INTERNAL_NO_LATENCY_MEMORY=1`) skips reading/writing memory but keeps the
 profile and explicit hints. Builds with no usable cache work normally.
 
+### Untimed regions
+
+A met MAIN only vouches for the paths synthesis timed. When synthesis removes a region
+(its inputs are constants, or nothing uses its outputs), or the region sits between
+unconstrained ports, the MAIN meets its goal at any depth and the trim removes the
+region's stages. WireGuard's synthesized perf testbench did this: its decrypt MAC was
+removed (52 LUTs and no DSPs, where encrypt's used 160 DSPs), the build met 80 MHz, and
+the trim took the decrypt regions to 0 stages although their measured delays are 30.7 ns
+and 37.1 ns.
+
+`WARN_UNTIMED_REGIONS` runs in `WRITE_SWEEP_RESULTS`, after the over-capacity failures
+are added. It looks at every AUTO_PIPELINE region, pinned AUTO_FSM units excluded, whose
+MAIN met its goal. When the region's measured delay (not `delay_is_estimated`) divided by
+its built stage count is more than `UNTIMED_REGION_PERIODS` (1.25) clock periods,
+synthesis cannot have timed it. An even split is already the most optimistic placement,
+and the 25% margin leaves room for optimization across the region's boundary. The same
+check catches a depth that came from stale latency memory: one such piece started
+WireGuard's decrypt coefficient region at 2 stages, and its 37.1 ns measured delay is
+1.48 periods per stage at 80 MHz. For each such region, once per key:
+- it prints a warning;
+- `BUILD_LATENCY_PROFILE` records its profile entry as unverified;
+- `BUILD_LATENCY_PIECES` records neither its piece nor a MAIN implementation or lock of a
+  MAIN containing it. A timed region in the same MAIN is still recorded.
+
+`--comb` builds skip the check. The remedy is to build the real top and simulate
+testbenches on it ([Simulating built hardware](SIM_DESIGN.md#simulating-built-hardware)).
+
 ## 6. Command line
 
 | flag | meaning |
@@ -1362,7 +1408,7 @@ profile and explicit hints. Builds with no usable cache work normally.
 | `--start N` / `--stop N` / `--sweep` | coarse sweep controls (start latency, stop latency, +1 stepping) |
 | `--pipeline_min_effort N` | extra full-design syn iterations allowed to reduce stages after timing is met (default 2; 0 = accept the first met result, fastest but possibly over-pipelined); no effect with `--no_sweep` |
 | `--no_sweep` | write the sweep's first planned guess as final VHDL and stop -- zero sweep synthesis iterations, timing NOT verified. Works with both the default planned sweep and `--coarse`. |
-| `--latency_hints FILE` | starting latencies for AUTO_PIPELINE / AUTO_MULTI_CYCLE tags, by tag key (repeatable; a later file wins; the latency memory wins over hints). See [§5](#5-latency-memory) |
+| `--latency_hints FILE` | starting latencies for AUTO_PIPELINE / AUTO_MULTI_CYCLE tags, by tag key (repeatable; a later file wins; latency memory from the current goal wins over hints, and a deeper hint starts above a lower-goal floor). See [§5](#5-latency-memory) |
 | `--no_latency_memory` | neither use nor update the latency memory (§5); `latency_profile.json` is still written |
 
 ## 7. Tests
@@ -1435,7 +1481,10 @@ run on a fake hierarchy.
     could not help.
 - **Regions:**
   - region lock rules (unconstrained and start-only allowed; `latency=`, `max_latency=` and
-    groups shared with another MAIN refused);
+    groups shared with a MAIN at another clock goal refused);
+  - a lock reaches every same-goal peer's instances, not another goal's;
+    region-group decisions cover every same-goal member;
+  - a scripted shared region locked once for both MAINs;
   - the mini-sweep streak;
   - the start bootstrap skipped over existing locks;
   - a scripted start-only region that grows, then mini-sweeps.
@@ -1495,6 +1544,23 @@ Items 2-6 are collected with the other timing-model gaps in [#352](https://githu
    and concave, so minimizing the worst stage at a given stage count means
    equal-width chunks — but the constraint itself has not been revisited
    since.
+7. **A hierarchy measured as a whole is scaled uniformly.** Both the landscape
+   and the coarse slicer place its children in proportion to their standalone
+   delays, shrunk to the whole's measured delay.
+   - **The misprediction.** Inside the Poly1305 body (Vivado,
+     xc7a200tffg1156-2), a 34×34 inferred multiply measured at 8.4 ns on its own
+     sits at 1.85 ns. At 80 MHz (`qor/poly1305/body.py`), region growth needed
+     32–34 cuts (`-D HELPER=0`) and the helper's mini-sweep 10 (`-D HELPER=1`).
+     Every worst path ran from a register through the pre-adds and a leaf into
+     the following subtract.
+   - **A tried fix.** Keeping variable multiplies at their measured delay and
+     shrinking the rest helped the mini-sweep: 81.73 MHz at 4 cuts on its own,
+     but 79.61 MHz in the whole design, after which a locked hotspot stops the
+     sweep. In the landscape it plateaued at 59.7 MHz, because no cut separated
+     the further-compressed pre-adds from the leaf. It was not kept. A deeper
+     relock when a lock's own path misses in context would be needed first.
+   - **Also affected.** AUTO_FSM's pinned-unit placements use the same landscape
+     (`AUTO_FSM_DESIGN.md#6-limitations-and-future-work`).
 
 ## History
 
@@ -1632,6 +1698,24 @@ passing but deeper implementation would discard this improvement.
 
 Fixed and capped regions still never lock inside: their count is the
 constraint's, and a recount resets the interior.
+
+### Locks shared by MAINs at one goal
+
+Locks and region-group decisions used to belong to one MAIN, and a region
+group with members in another MAIN refused interior locks: group members must
+realize one `.latency`, and a lock in one MAIN's member only would split them.
+WireGuard's shared 256-bit top then instantiated one `poly1305_pair_coefficient`
+group from both `encrypt_dataflow` and `decrypt_dataflow`, at 80 MHz on
+xc7a200tffg1156-2 with Vivado 2019.2. With interior locks refused, only
+region-wide growth was left. It took the group from 10 to 18 cuts while both
+MAINs stayed at 59.7 MHz, with the coefficient body holding none of the
+registers. With one group per direction, at the same depths and with per-MAIN
+locks allowed, the encrypt dataflow had met 81.7 MHz.
+
+A module meets a goal with a given interior in every instance at that goal, so
+a lock and a group decision now apply to every same-goal MAIN (`peers`,
+`SHARE_LOCK`, `AUTO_PIPELINE._REGION_GROUP_PLANS`). Only a member at another
+goal still blocks an interior lock.
 
 ### Cross-MAIN handshake paths
 

@@ -17,63 +17,6 @@ import time
 from utilities import GET_SHELL_CMD_OUTPUT
 
 
-ops = {}
-
-
-def part_supported(part_str):
-    # DEVICE_MODELS old use is deprecated for now: soft-operator-library entities
-    # (include/pypeline/operators/) aren't named BIN_OP_*/UNARY_OP_*, so
-    # func_name_to_op_and_widths can't recognize them -- estimation silently
-    # falls back to real per-entity synthesis for those, producing
-    # inconsistent (sometimes-modeled, sometimes-not) delay estimates within
-    # the same design and destabilizing AUTO_PIPELINE/throughput-sweep
-    # planning. Always return False so every function goes through real
-    # synthesis or the cache/delay uniformly until this is revisited.
-    return False
-
-
-def estimate_int_timing(integer_op, widths_vector):
-    timing_model = {  # category, origin, slope
-        "arith": (1.92, 0.04),
-        "comp": (2.49, 0.0),
-        "equal": (1.72, 0.04),
-        "logical": (1.28, 0.0),
-        "shift": (3.42, 0.0),
-    }
-
-    categ = ""
-    if integer_op in ["PLUS", "MINUS", "NEGATE"]:
-        categ = "arith"
-    if integer_op in ["GT", "GTE", "LT", "LTE"]:
-        categ = "comp"
-    if integer_op in ["EQ", "NEQ"]:
-        categ = "equal"
-    if integer_op in ["AND", "OR", "XOR", "NOT"]:
-        categ = "logical"
-    if integer_op in ["SL", "SR"]:
-        categ = "shift"
-    if categ not in timing_model:
-        return None  # unknown operation
-
-    bits = max(widths_vector)
-    origin, slope = timing_model[categ]
-    return origin + bits * slope
-
-
-def func_name_to_op_and_widths(func_name):
-    p = func_name.find("_OP_")
-    if p >= 0:
-        optyp = func_name[:p]
-        _ = func_name.find("_", p + 4)
-        op = func_name[p + 4 : _]
-        widths = re.findall(r"int[0-9]+", func_name[4:])
-        if not len(widths):
-            return None
-        widths = [int(w[3:]) for w in widths]  # cut 'int'
-        return op, widths
-    return None
-
-
 # ═══════════════════════════════════════════════════════════════════════════
 # Section (a): sky130 liberty NLDM data load + delay/setup table lookups.
 #

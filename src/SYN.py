@@ -58,6 +58,43 @@ START_TIME = timer()
 # whole-design synthesis run as (seconds, cache_hit): for ELAPSED_SUMMARY_STR.
 PARSE_DONE_TIME = None
 MULTIMAIN_SYN_RUNS = []
+# Exclusive wall seconds per named build phase (PHASE), for ELAPSED_SUMMARY_STR.
+PHASE_SECONDS = {}
+# Open PHASE blocks, innermost last: [name, start time, seconds in nested phases].
+_PHASE_STACK = []
+
+
+@contextlib.contextmanager
+def PHASE(name):
+    """Charge the wall time spent in this block to a named build phase. A
+    nested phase's time goes to the nested phase only, so the phases add up
+    to the time inside the outermost ones."""
+    entry = [name, timer(), 0.0]
+    _PHASE_STACK.append(entry)
+    try:
+        yield
+    finally:
+        _PHASE_STACK.pop()
+        elapsed = timer() - entry[1]
+        PHASE_SECONDS[name] = PHASE_SECONDS.get(name, 0.0) + elapsed - entry[2]
+        if _PHASE_STACK:
+            _PHASE_STACK[-1][2] += elapsed
+
+
+def PHASED(name):
+    """Decorator: run the whole function as PHASE(name)."""
+
+    def decorate(func):
+        import functools
+
+        @functools.wraps(func)
+        def wrapper(*args, **kwargs):
+            with PHASE(name):
+                return func(*args, **kwargs)
+
+        return wrapper
+
+    return decorate
 
 
 def DURATION_STR(seconds):
@@ -70,6 +107,7 @@ def ELAPSED_STR():
     return DURATION_STR(timer() - START_TIME)
 
 
+@PHASED("whole-design synthesis")
 def RUN_MULTIMAIN_SYN(parser_state, multimain_timing_params):
     """SYN_TOOL.SYN_AND_REPORT_TIMING_MULTIMAIN, then one line saying how long
     that whole-design run took and the build's elapsed time."""
@@ -89,9 +127,10 @@ def RUN_MULTIMAIN_SYN(parser_state, multimain_timing_params):
 
 
 def ELAPSED_SUMMARY_STR():
-    """One line for the end of a build: total wall time, then how much of it
-    was parsing/elaboration and whole-design synthesis (the remainder is
-    per-function characterization, HDL writing, simulation, ...)."""
+    """The end of a build: total wall time, then how much of it was
+    parsing/elaboration and whole-design synthesis (the remainder is
+    per-function characterization, HDL writing, simulation, ...). A second
+    line splits the time inside named build phases (PHASE)."""
     parts = []
     if PARSE_DONE_TIME is not None:
         parts.append(f"parse/elaborate {DURATION_STR(PARSE_DONE_TIME - START_TIME)}")
@@ -104,7 +143,13 @@ def ELAPSED_SUMMARY_STR():
             + (f" ({cached} cached)" if cached else "")
         )
     detail = f" ({', '.join(parts)})" if parts else ""
-    return f"Total elapsed time: {ELAPSED_STR()}{detail}"
+    phases = ""
+    if PHASE_SECONDS:
+        phases = "\nTime by build phase: " + ", ".join(
+            f"{name} {DURATION_STR(seconds)}"
+            for name, seconds in sorted(PHASE_SECONDS.items(), key=lambda item: -item[1])
+        )
+    return f"Total elapsed time: {ELAPSED_STR()}{detail}{phases}"
 
 
 OUTPUT_DIR_NAME = "pipelinec_output"
@@ -2111,17 +2156,140 @@ def GET_CACHED_PATH_DELAY_COMPONENTS_FILE_PATH(logic, parser_state):
     return GET_PATH_DELAY_CACHE_DIR(parser_state) + "/" + key + ".timing.json"
 
 
+# file path -> delay ns (None: no file) of every cached path delay this process
+# read; AUTO_FSM keeps them with a search result and reuses it only while every
+# file still reads the same (READ_CACHED_PATH_DELAY_FILE).
+CACHED_PATH_DELAY_READS = {}
+
+
+def READ_CACHED_PATH_DELAY_FILE(file_path):
+    """The delay ns a .delay cache file holds, or None when there is none."""
+    if os.path.exists(file_path):
+        with open(file_path, "r") as f:
+            return float(f.readlines()[0])
+    return None
+
+
 def GET_CACHED_PATH_DELAY(logic, parser_state):
     if not logic.is_c_built_in and LOGIC.FUNC_IS_OP_OVERLOAD(logic.func_name):
         return None
 
     # Look in cache dir
     file_path = GET_CACHED_PATH_DELAY_FILE_PATH(logic, parser_state)
-    if os.path.exists(file_path):
-        # print "Reading Cached Delay File:", file_path
-        return float(open(file_path, "r").readlines()[0])
+    delay_ns = READ_CACHED_PATH_DELAY_FILE(file_path)
+    CACHED_PATH_DELAY_READS[file_path] = delay_ns
+    return delay_ns
 
-    return None
+
+# Estimate built-in primitive delays from this tool/part's measured widths
+# before synthesizing a new width (--no_primitive_delay_model turns it off).
+USE_PRIMITIVE_DELAY_MODEL = True
+# How each modeled primitive's delay grows: with width, with log2(width), or
+# not at all. Multiplies, compares through soft operators and composites are
+# never modeled.
+PRIMITIVE_DELAY_MODEL_SHAPES = {
+    "PLUS": "width",
+    "MINUS": "width",
+    "EQ": "log2",
+    "NEQ": "log2",
+    "AND": "constant",
+    "OR": "constant",
+    "XOR": "constant",
+    "NOT": "constant",
+}
+# Distinct measured widths a family needs before its fit is used.
+PRIMITIVE_DELAY_MODEL_MIN_WIDTHS = 3
+_PRIMITIVE_NAME = re.compile(
+    r"(?:BIN_OP_([A-Z]+)_(u?int)(\d+)_t_(u?int)(\d+)_t|UNARY_OP_([A-Z]+)_(u?int)(\d+)_t)$"
+)
+
+
+def PRIMITIVE_DELAY_SHAPE(func_name):
+    """(op, signed, width) of a built-in integer primitive the delay model
+    covers, read from its entity name, else None."""
+    match = _PRIMITIVE_NAME.match(func_name)
+    if match is None:
+        return None
+    if match.group(1):
+        op, kinds = match.group(1), (match.group(2), match.group(4))
+        widths = (int(match.group(3)), int(match.group(5)))
+    else:
+        op, kinds, widths = match.group(6), (match.group(7),), (int(match.group(8)),)
+    if op not in PRIMITIVE_DELAY_MODEL_SHAPES:
+        return None
+    return op, any(kind == "int" for kind in kinds), max(widths)
+
+
+class PrimitiveDelayModel:
+    """Least-squares fits of measured primitive delays against width, per
+    (op, signed) family, from one tool/part delay cache directory. A family
+    predicts only inside its measured width range, from at least
+    PRIMITIVE_DELAY_MODEL_MIN_WIDTHS widths. Its error bound is the largest
+    leave-one-out error, so a caller can tell a decision the estimate cannot
+    change from one it might."""
+
+    def __init__(self, cache_dir):
+        points = {}
+        try:
+            names = sorted(os.listdir(cache_dir))
+        except OSError:
+            names = []
+        for name in names:
+            if not name.endswith(".delay"):
+                continue
+            shape = PRIMITIVE_DELAY_SHAPE(name[: -len(".delay")])
+            if shape is None:
+                continue
+            try:
+                with open(os.path.join(cache_dir, name)) as f:
+                    delay_ns = float(f.readline())
+            except (OSError, ValueError):
+                continue
+            op, signed, width = shape
+            # Keep the slowest of operand-width variants at one width.
+            family = points.setdefault((op, signed), {})
+            family[width] = max(delay_ns, family.get(width, delay_ns))
+        self.fits = {}  # (op, signed) -> (intercept, slope, low, high, error_ns)
+        for (op, signed), by_width in points.items():
+            if len(by_width) < PRIMITIVE_DELAY_MODEL_MIN_WIDTHS:
+                continue
+            xs = [self._x(op, w) for w in sorted(by_width)]
+            ys = [by_width[w] for w in sorted(by_width)]
+            intercept, slope = self._fit(op, xs, ys)
+            error = 0.0
+            for i in range(len(xs)):
+                a, b = self._fit(op, xs[:i] + xs[i + 1 :], ys[:i] + ys[i + 1 :])
+                error = max(error, abs(a + b * xs[i] - ys[i]))
+            self.fits[(op, signed)] = (intercept, slope, min(by_width), max(by_width), error)
+
+    @staticmethod
+    def _x(op, width):
+        shape = PRIMITIVE_DELAY_MODEL_SHAPES[op]
+        return 0.0 if shape == "constant" else math.log2(width) if shape == "log2" else float(width)
+
+    @staticmethod
+    def _fit(op, xs, ys):
+        mean_x, mean_y = sum(xs) / len(xs), sum(ys) / len(ys)
+        spread = sum((x - mean_x) ** 2 for x in xs)
+        if PRIMITIVE_DELAY_MODEL_SHAPES[op] == "constant" or spread == 0.0:
+            return mean_y, 0.0
+        slope = sum((x - mean_x) * (y - mean_y) for x, y in zip(xs, ys)) / spread
+        return mean_y - slope * mean_x, slope
+
+    def estimate(self, func_name):
+        """(delay ns, error bound ns) inside a fitted family's measured width
+        range, else None."""
+        shape = PRIMITIVE_DELAY_SHAPE(func_name)
+        if shape is None:
+            return None
+        op, signed, width = shape
+        fit = self.fits.get((op, signed))
+        if fit is None:
+            return None
+        intercept, slope, low, high, error = fit
+        if not low <= width <= high:
+            return None
+        return intercept + slope * self._x(op, width), error
 
 
 def GET_CACHED_PATH_DELAY_COMPONENTS(logic, parser_state, expected_delay_ns=None):
@@ -2648,10 +2816,12 @@ def SYNTHESIS_STORE_PRUNE(days):
             if stale:
                 shutil.rmtree(dirpath, ignore_errors=True)
                 removed += 1
-    # Latency v2: bounded variants per library piece, touched on reuse/write.
-    # Also prune obsolete v1 files; they are never loaded by current builds.
-    for dirpath, _dirnames, filenames in os.walk(
-        os.path.join(SYNTHESIS_STORE_DIR, "latency")
+    # Latency v2 pieces and AUTO_FSM search results, touched on reuse/write.
+    # Also prune obsolete latency v1 files; current builds never load them.
+    for dirpath, _dirnames, filenames in (
+        walked
+        for kind in ("latency", "auto_fsm")
+        for walked in os.walk(os.path.join(SYNTHESIS_STORE_DIR, kind))
     ):
         for filename in filenames:
             path = os.path.join(dirpath, filename)
@@ -2742,7 +2912,8 @@ def COLLECT_PATH_DELAY_REQUIREMENTS(parser_state, root_func_names=None):
     Returns ordered dependencies and the two eligibility/frontier sets without
     mutating ParserState. ADD_PATH_DELAY_TO_LOOKUP owns the full-parse scope.
     AUTO_FSM's bootstrap operations and operand muxes are independent timing
-    consumers; a scheduled (stateful) FSM is one measured atomic span.
+    consumers; a scheduled (stateful) FSM is one atomic span, measured only
+    when it has no installed schedule (SCHEDULED_FSM_DELAYS).
     """
     import AUTO_FSM
     import AUTO_PIPELINE
@@ -2754,14 +2925,16 @@ def COLLECT_PATH_DELAY_REQUIREMENTS(parser_state, root_func_names=None):
     if root_func_names is None:
         extra_roots = set(AUTO_FSM.AUTO_FSM_MUX_ENTITIES(parser_state))
         for logic in list(parser_state.FuncLogicLookupTable.values()):
-            for local in getattr(logic, "sub_inst_to_auto_fsm_key", {}):
+            for local, key in getattr(logic, "sub_inst_to_auto_fsm_key", {}).items():
                 func = logic.submodule_instances[local]
-                # A scheduled FSM holds state: one whole-module synthesis gives
-                # its worst state's delay. Nothing inside it is collected, so
-                # rescheduling keeps the operation delays carried from the
-                # bootstrap pass (AUTO_FSM._schedule_delays).
+                # A scheduled FSM holds state. Nothing inside it is collected,
+                # so rescheduling keeps the operation delays carried from the
+                # bootstrap pass (AUTO_FSM._schedule_delays). With an installed
+                # schedule its delay comes from that (SCHEDULED_FSM_DELAYS);
+                # otherwise one whole-module synthesis measures it.
                 if HIER_SYN_MODE != "prim" and FUNC_SUBTREE_HAS_STATE(func, parser_state):
-                    atomic_fsms.add(func)
+                    if AUTO_FSM.SCHEDULED_FSM_DELAY_DU(key) is None:
+                        atomic_fsms.add(func)
                 else:
                     extra_roots.add(func)
         needed.update(atomic_fsms)
@@ -3121,6 +3294,7 @@ def MEASURED_AREA(logic, parser_state):
     return measured
 
 
+@PHASED("per-function delay measurement")
 def MEASURE_DELAYS(func_names, parser_state, refine_opaque=False):
     # Fallback from estimated to measured delays: really synthesize the given
     # funcs (estimates only guide slice placement - when they prove inaccurate,
@@ -3186,6 +3360,36 @@ def MEASURE_DELAYS(func_names, parser_state, refine_opaque=False):
     return set(funcs_to_measure)
 
 
+def SCHEDULED_FSM_DELAYS(parser_state):
+    """Give each generated FSM with an installed schedule its schedule's worst
+    state as an estimated delay (AUTO_FSM.SCHEDULED_FSM_DELAY_DU). A
+    whole-module synthesis took minutes per FSM and reported an input-to-output
+    figure, not a state's register-to-register delay; the sweep cannot
+    pipeline an FSM, and AUTO_FSM's own loop attributes in-context paths."""
+    import AUTO_FSM
+
+    if HIER_SYN_MODE == "prim":
+        return
+    for logic in list(parser_state.FuncLogicLookupTable.values()):
+        for local, key in sorted(getattr(logic, "sub_inst_to_auto_fsm_key", {}).items()):
+            func = logic.submodule_instances[local]
+            scheduled = AUTO_FSM.SCHEDULED_FSM_DELAY_DU(key)
+            if scheduled is None or not FUNC_SUBTREE_HAS_STATE(func, parser_state):
+                continue
+            fsm = parser_state.FuncLogicLookupTable[func]
+            if fsm.delay == scheduled and fsm.delay_is_estimated:
+                continue
+            fsm.delay = scheduled
+            fsm.delay_is_estimated = True
+            _SET_LOGIC_DELAY_COMPONENTS(fsm, None)
+            print(
+                f"Function: {func} delay from its AUTO_FSM schedule's worst state: "
+                f"{scheduled / DELAY_UNIT_MULT:.3f} ns",
+                flush=True,
+            )
+
+
+@PHASED("per-function delay measurement")
 def ADD_PATH_DELAY_TO_LOOKUP(parser_state, root_func_names=None):
     # root_func_names: measure only the subtrees of these funcs instead of the
     # whole design's mains (+ AUTO_FSM muxes) -- used by builds that never sweep
@@ -3216,6 +3420,7 @@ def ADD_PATH_DELAY_TO_LOOKUP(parser_state, root_func_names=None):
     if root_func_names is None:
         (parser_state.path_delay_funcs, parser_state.path_delay_measure_funcs,
          parser_state.path_delay_frontier_funcs) = requirements
+        SCHEDULED_FSM_DELAYS(parser_state)
     if HIER_SYN_MODE != "full":
         funcs_to_synth = requirements[0]
         _auto_fsm_muxes = []
@@ -3246,6 +3451,12 @@ def ADD_PATH_DELAY_TO_LOOKUP(parser_state, root_func_names=None):
     main_to_min_mhz = {}
     main_to_min_mhz_func_name = {}
 
+    # Primitive widths this tool/part has measured, fitted once per call
+    delay_model = (
+        PrimitiveDelayModel(GET_PATH_DELAY_CACHE_DIR(parser_state))
+        if USE_PRIMITIVE_DELAY_MODEL
+        else None
+    )
     # Run multiple syn runs in parallel
     my_thread_pool = ThreadPool(processes=GET_NUM_PROCESSES())
     func_name_to_async_result = {}
@@ -3278,13 +3489,14 @@ def ADD_PATH_DELAY_TO_LOOKUP(parser_state, root_func_names=None):
             func_names_done_so_far.add(logic_func_name)
             continue
 
-        # Try to model the path delay
+        # Estimate a built-in primitive at a new width from measured widths
+        # (PrimitiveDelayModel); exact cache and store entries still win
         modeled_path_delay = None
-        if DEVICE_MODELS.part_supported(parser_state.part):
-            op_and_widths = DEVICE_MODELS.func_name_to_op_and_widths(logic.func_name)
-            if op_and_widths is not None:
-                op, widths = op_and_widths
-                modeled_path_delay = DEVICE_MODELS.estimate_int_timing(op, widths)
+        modeled_error_ns = None
+        if delay_model is not None and logic.is_c_built_in:
+            modeled = delay_model.estimate(logic.func_name)
+            if modeled is not None:
+                modeled_path_delay, modeled_error_ns = modeled
         # Try to get cached path delay
         cached_path_delay = GET_CACHED_PATH_DELAY(logic, parser_state)
         if not STORED_DELAY_IS_USABLE(logic, parser_state):
@@ -3335,16 +3547,23 @@ def ADD_PATH_DELAY_TO_LOOKUP(parser_state, root_func_names=None):
                     "which is to small to represent. Increase delay multiplier?",
                 )
                 logic.delay = 1  # Set to smallest non zero for now?
-        elif modeled_path_delay is not None:
-            logic.delay = int(modeled_path_delay * DELAY_UNIT_MULT)
-            _SET_LOGIC_DELAY_COMPONENTS(logic, None)
-            print(
-                f"Function: {logic.func_name} modeled path delay: {modeled_path_delay:.3f} ns"
-            )
         # Then check for known delays
         elif LOGIC_IS_ZERO_DELAY(logic, parser_state, allow_none_delay=True):
             logic.delay = 0
             _SET_LOGIC_DELAY_COMPONENTS(logic, None)
+        elif modeled_path_delay is not None and not (
+            # An earlier run of these exact inputs is a measurement
+            STORED_DELAY_IS_USABLE(logic, parser_state)
+            and SET_STORED_DELAY(logic, parser_state, inst_name, TimingParamsLookupTable)
+        ):
+            logic.delay = max(1, int(modeled_path_delay * DELAY_UNIT_MULT))
+            logic.delay_is_estimated = True
+            logic.delay_model_error = int(math.ceil(modeled_error_ns * DELAY_UNIT_MULT))
+            _SET_LOGIC_DELAY_COMPONENTS(logic, None)
+            print(
+                f"Function: {logic.func_name} modeled path delay: {modeled_path_delay:.3f} ns "
+                f"(within {modeled_error_ns:.2f} ns, from measured widths)"
+            )
 
         # Prepare for syn to determine
         if logic.delay is None:

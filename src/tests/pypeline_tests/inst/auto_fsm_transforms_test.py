@@ -215,6 +215,61 @@ def top(x: uint8_t, valid: uint1_t) -> uint8_t:
             assert retrimmed.wire_driven_by == logic.wire_driven_by, name
 
 
+def test_width_decided_comparison_has_no_measured_wrapper():
+    """`lane > 1` on a uint1 lane is always 0. The default soft comparator
+    keeps the operator's meaning, so cleanup folds the call instead of
+    measuring a constant wrapper that synthesizes to flip-flops only: Vivado
+    reports no timing path for it and the build stops (issue #288)."""
+    import PY_TO_LOGIC
+
+    source = """
+from pypeline import AUTO_FSM, MAIN, NamedTuple, hw_func, struct, uint1_t, uint8_t
+@struct
+class input_t(NamedTuple):
+    lane: uint1_t
+    value: uint8_t
+@hw_func
+def work(x: input_t) -> uint8_t:
+    result: uint8_t = x.value
+    if x.lane > 1:
+        result = x.value + 3
+    if x.lane > 0:
+        result = result + 5
+    return result
+FSM = AUTO_FSM(work)
+@MAIN(5.0)
+def top(x: input_t, valid: uint1_t) -> uint8_t:
+    request: FSM.in_stream_t
+    request.data = x
+    request.valid = valid
+    response = FSM(request)
+    return response.data
+"""
+    with tempfile.TemporaryDirectory() as tmp:
+        path = Path(tmp) / "width_decided_comparison.py"
+        path.write_text(source)
+        parser = PY_TO_LOGIC.PARSE_FILE(str(path))
+        ((comparator, ops),) = parser.pypeline_compare_impl_ops.items()
+        assert ops == {"GT"}, ops
+        wrapped = sorted(
+            shape["values"]
+            for shape in parser.pypeline_auto_fsm_specialization_shapes.values()
+            if shape["base"] == comparator
+        )
+        # `lane > 0` is a real comparison and keeps its wrapper.
+        assert wrapped == [[None, 0]], wrapped
+        ((key, tag),) = AUTO_FSM.GET_TAGS(parser).items()
+        schedule = AUTO_FSM.BUILD_SCHEDULE(parser, key, tag, 0.9)
+        compared = [
+            nid
+            for nid, n in schedule["nodes"].items()
+            if comparator in parser.pypeline_auto_fsm_specialization_shapes.get(
+                n["entity"], {"base": n["entity"]}
+            )["base"]
+        ]
+        assert len(compared) == 1, compared
+
+
 def test_unsigned_adapters_preserve_original_result_width():
     for op, name, result in (
         ("+", "PLUS", "uint8_t"),

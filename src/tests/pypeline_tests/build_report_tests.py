@@ -89,6 +89,19 @@ def get_tests() -> list:
             requires=["yosys", "ghdl"],
         )
     )
+    # A native testbench simulated on the hardware built for another top in
+    # its --out_dir: no build, built latencies, the value the build read for a
+    # tag it never built, and the refusals (an undecided tag, a call of a tag
+    # the build only read, a changed parameter or source); a new build removes
+    # the record. One sky130 build, six native runs and a --no_synth build.
+    tests.append(
+        Test(
+            name="built_hardware_sim_test",
+            category=DM,
+            cmd=[INST_DIR / "built_hardware_sim_test.py"],
+            needs_out_dir=True,
+        )
+    )
     tests.append(
         Test(
             name="generated_naming_build_test",

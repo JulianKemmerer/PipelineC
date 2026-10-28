@@ -241,6 +241,11 @@ parser.add_argument(
     action="store_true",
 )
 parser.add_argument(
+    "--no_primitive_delay_model",
+    help="Synthesize every built-in add, subtract, equality and bitwise operator at a width this tool/part has not measured. By default such a width is estimated from the widths already measured, and AUTO_FSM measures only an estimate close enough to its state budget to change a decision.",
+    action="store_true",
+)
+parser.add_argument(
     "--pipeline_min_effort",
     type=int,
     default=2,
@@ -464,6 +469,7 @@ SYN.HIER_SYN_MODE = (
     "full" if args.full_hier_syn else ("prim" if args.no_hier_syn else "leaf")
 )
 SYN.USE_STORED_MEASUREMENTS = not args.no_stored_measurements
+SYN.USE_PRIMITIVE_DELAY_MODEL = not args.no_primitive_delay_model
 # Post-met pipeline stage reduction effort
 SWEEP.PIPELINE_MIN_EFFORT = args.pipeline_min_effort
 SWEEP.STOP_ON_OVER_CAPACITY = args.stop_on_over_capacity
@@ -482,6 +488,11 @@ if SIM.NATIVE_SIM_SKIPS_BUILD(args):
         SIM.DO_OPTIONAL_SIM(True, None, args, source_file=src_file)
     except pypeline.DesignParamError as e:
         sys.exit(f"ERROR: {e}")
+    sys.exit(0)
+# A native --sim of another top on the hardware already built in --out_dir needs
+# no build either; any build first forgets that record -- see
+# SIM.SIMULATE_BUILT_HARDWARE.
+if SIM.SIMULATE_BUILT_HARDWARE(args, src_file):
     sys.exit(0)
 # AXIS XO file switch
 SYN.WRITE_AXIS_XO_FILE = args.xo_axis
@@ -590,6 +601,8 @@ if not args.no_synth:
     # generation are skipped and the exit code is non zero
     if SWEEP.PRINT_TIMING_FAILURES(parser_state, multimain_timing_params):
         sys.exit(1)
+    # What native simulation of another top takes from this build
+    SIM.WRITE_BUILT_HARDWARE(parser_state, multimain_timing_params, src_file)
 
     if SYN.PIN_CONSTRAINTS_FILE:
         SYN.GENERATE_FINAL_BITSTREAM(parser_state, multimain_timing_params)

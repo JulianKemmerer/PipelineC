@@ -293,9 +293,20 @@ function's input, or a constant.
 
 Before scheduling, typed constant cleanup removes constant-only work and
 built-in identities, preserves narrowing and signed assignments, and performs
-pruning and typed common-expression elimination. Bootstrap preparation registers
+pruning and typed common-expression elimination. A range proof folds a
+comparison whose operand intervals decide it (`AUTO._comparison_result`). An
+operand with no known interval, such as a function input, holds some value of
+the first type its cast chain applies, so `uint1 > 1` folds to 0 by widths alone.
+The proof covers built-in comparisons and calls to the implementation a
+comparison was dispatched to, such as the default soft comparator: elaboration
+records those in `parser_state.pypeline_compare_impl_ops`, and the call keeps
+the operator's meaning. Bootstrap preparation registers
 constant-operand primitive wrappers for independent characterization; their
-measured delay includes the constant. Unsigned constant multiplication uses the
+measured delay includes the constant. A comparison the range proof decides gets
+no wrapper: it would synthesize to flip-flops only, and a backend reports no
+timing path for that ([#288](https://github.com/JulianKemmerer/PipelineC/issues/288)).
+`AUTO.delay_implementation_seeds` likewise offers no soft-comparator
+alternative for one. Unsigned constant multiplication uses the
 existing shift/add implementation factory. Scoped user implementations remain
 intact. `DESCRIBE_SCHEDULE` reports the cleanup counts, the dependency floor
 (`_chain_floor`: states with one unit per operation and no operand muxes at the
@@ -451,7 +462,15 @@ each chosen placement without a measurement on its own
 (`_measure_unit_placements`: the recipe applied to an isolated copy of the
 unit, operand selection included, through the backend's ordinary per-instance
 run and synthesis store). A call site whose chosen placement measures over its
-budget is rescheduled at once (`_confirm_unit_placements`). Each round
+budget is rescheduled at once (`_confirm_unit_placements`). The deeper depths
+of that recipe are measured first, in parallel up to `-j`
+(`_measure_deeper_placements`): every depth `_unit_profiles` predicts can still
+improve, below the latency cap. One reschedule then sees them all. Measuring
+one depth per round costs a full area search per depth. On WireGuard's Poly1305
+epilogue at 80 MHz, `residue_mul_mod` at L=5, 6, 7 and 8 all kept the same
+17.9 ns path from the input register through a 34×34 leaf, and the four rounds
+took about two hours. One line per recipe reports the measured depth curve and
+says when every depth kept the same worst path. Each round
 measures a placement the search will not choose again, or ends; a miss the
 search cannot avoid is left to the build and its timing loop. The isolated run
 does not include the state register's decode in front of the selection, which
@@ -875,9 +894,11 @@ loop wraps `AUTO_PIPELINE.DO_SWEEP_AND_AUTO_PIPELINE` (the
 bootstrap parse (AUTO_FSM call sites are combinational passthroughs)
 for each schedule pass:
     SYN.ADD_PATH_DELAY_TO_LOOKUP                  <- measure the operations, do NOT sweep
-    schedule + bind each AUTO_FSM                 <- the minimum-area search (§3.7)
+    schedule + bind each AUTO_FSM                 <- the minimum-area search (§3.7); after
+                                                     a tightening, only the blamed ones
     synthesize each new pinned unit placement     <- reschedule a call site whose
-                                                     placement misses its budget
+                                                     placement misses its budget, after
+                                                     measuring that recipe's deeper depths
     install schedules, REPARSE                    <- call sites become the generated FSMs;
                                                      one new to the build is scheduled first
     AUTO_PIPELINE.DO_SWEEP_AND_AUTO_PIPELINE      <- sweep + AUTO_PIPELINE loop (its
@@ -954,8 +975,8 @@ repair. Exact isolated unit-stage paths update carried pipeline timing evidence.
 
 **Why a generated FSM needs no sweep support.** It holds non-volatile `Reg`
 state, so `CAN_HAVE_ADDED_LATENCY` is already False: the sweep treats it as an
-unsliceable atomic block whose measured delay is a soft floor (the
-`state_regs` reason in [`SWEEP_DESIGN.md`](SWEEP_DESIGN.md#floor)), and
+unsliceable atomic block whose delay, its schedule's worst state (§3.5), is a
+soft floor (the `state_regs` reason in [`SWEEP_DESIGN.md`](SWEEP_DESIGN.md#floor)), and
 `CALC_TOTAL_LATENCY` reports 0 added latency to its container.
 
 **Scheduling inside the pass loop.** Each pass runs the minimum-area search
@@ -996,8 +1017,12 @@ fourth pass and 3 states (128.6 MHz).
 Each tightening trial reschedules only the blamed FSMs, whose budgets moved;
 the others keep their schedule, so "changed" means a blamed FSM changed. Each
 trial is a full area search, so an unblamed FSM rescheduled there would cost
-as much as a blamed one. The next pass reschedules every FSM from its newly
-measured delays as before.
+as much as a blamed one. The next pass reschedules the blamed FSMs, and only
+them (`reschedule_keys`). An FSM nothing blamed keeps its installed schedule:
+its MAIN met timing or its paths pointed elsewhere, so a new schedule could
+only change hardware that is not the problem. On WireGuard, a full
+reschedule after one MAIN missed rebuilt the passing decrypt epilogue
+(37 to 44 states) and repeated its pinned-unit rounds.
 The loop stops when:
 
 - timing is met;
@@ -1037,9 +1062,11 @@ receive operation delays.
   scheduler composes measured primitive delays and estimates of the
   hierarchical operations above them.
 - **Scheduled FSMs:** once the call points at a generated stateful FSM, that
-  FSM is one atomic span: a single whole-module synthesis whose
-  register-to-register path is its worst state's delay. Nothing inside it is
-  collected. Rescheduling therefore keeps the operation delays carried from the
+  FSM is one atomic span whose delay is its installed schedule's worst state,
+  or a longer measured stage of a pinned unit (`SCHEDULED_FSM_DELAY_DU`, as an
+  estimate). A whole-module synthesis of it reports an input-to-output figure
+  rather than a state's delay, and costs minutes per FSM; only an FSM with no
+  installed schedule gets one. Nothing inside it is collected. Rescheduling therefore keeps the operation delays carried from the
   bootstrap pass (`_schedule_delays`). Measuring the units inside a scheduled
   FSM replaced those carried delays with whichever units the current schedule
   happened to instantiate. A tightening trial and the rebuilt schedule then
@@ -1053,7 +1080,13 @@ receive operation delays.
   a combinational frontier but must stay estimated. Synthesizing the giant
   parallel body would measure hardware the scheduler was asked to share.
   Its operation dependencies still receive calibration.
-- **Decisions rest on measurements (`_measure_schedule_inputs`).** A helper
+- **Decisions rest on measurements (`_measure_schedule_inputs`).** A primitive
+  width estimated from measured widths (`SYN.PrimitiveDelayModel`,
+  [SYN_DESIGN.md](SYN_DESIGN.md#shared-operator-cache-cache)) is the one estimate
+  that can stand. It is measured only when its delay plus the flat mux
+  allowance lies within its error bound of the state budget
+  (`_estimate_could_decide`), the only case where a measurement could change
+  whether it fits a state. A helper
   inside the passthrough is eligible but not a frontier, so its delay is
   derived from its submodules: standalone leaves, each with its own registers
   and routing, summed along the deepest chain. Before each pass's search and
@@ -1260,18 +1293,80 @@ repeat up to MAX_SWEEP_MOVES times:
 return the best
 ```
 
+Every feasible candidate also records its state count and estimated area. The
+cheapest area at each state count, kept where no schedule with fewer states is
+cheaper (`_pareto_frontier`), is the schedule's `area_frontier`, a diagnostic
+key outside the hardware identity. `DESCRIBE_SCHEDULE` prints it as
+`area vs states`. A single-flight stream FSM's latency is its throughput, and
+area-minimal schedules tend to fill a `max_latency=` cap, so this lets a caller
+pick a cap from the trade the search already saw, without synthesis. It holds
+only what the area walk visited. There is no latency-weighted objective: the
+cap is the latency control.
+
 **An oversized anchor keeps coarsening available.** Expansion and unsharing
 stop at `MAX_SWEEP_DAG_NODES`, while a pipelined helper can replace an opened
 body by one atomic node. Those candidates remain eligible, subject to the same
 per-trial graph-size check. The report identifies the skipped expansion work.
 
-Within one area search, bindings with the same typed graph reuse a compressed
-cleaned-graph cache. Its key includes delays, state budget, opened and preserved
-boundaries, adapters and fused groups. The graph before adapters and fused
-groups is kept too, so MERGE and FUSE moves rebind it without repeating descent
-and cleanup. Each candidate receives an independent decoded graph; scheduling
-and costing still run for every distinct binding.
-This cache does not persist between parses and adds no search cutoff.
+Within one call site's searches, bindings with the same typed graph reuse a
+compressed cleaned-graph cache (`_AreaSearchMemo`). Its key includes delays,
+state budget, opened and preserved boundaries, adapters and fused groups. The
+graph before adapters and fused groups is kept too, so MERGE and FUSE moves
+rebind it without repeating descent and cleanup. Each candidate receives an
+independent decoded graph. The same memo keeps `SCHEDULE_DAG` plans, keyed by
+the graph, the encoding's select delay, the unit implementations and the unit
+counts. A `max_latency` cap's bisection (`_replicate_to_cap`) schedules each
+candidate at several counts, and its one-unit-per-operation trial is the same
+plan for every binding of a graph, so UNSHARE and depth moves mostly reuse
+plans. A reused plan also records the operand-mux snapshot entries its
+scheduling priced, so the schedule is byte-identical to scheduling again. The
+memo is shared by both encodings under `auto`: graphs do not depend on the
+encoding, and plans only reuse under an equal select delay. Register
+allocation and costing still run for every distinct binding.
+This cache does not persist between parses and adds no search cutoff; the
+selected result does (see [below](#search-results-persist-across-builds)).
+
+Each step's moves are collected first, then built, then judged in move order.
+The builds are independent, so with `-j` above one they run in forked worker
+processes (`_map_forked`); cache entries a worker adds are merged back, and
+the trace, the visited set and the choice are the parent's. PIPELINE moves
+characterize each unit's depths the same way, one unit per worker. A
+characterization resumes from its cached state, which advances as a new object
+rather than in place, so a worker's progress merges back like a new entry. The
+result is the same at any `-j`. A platform that cannot fork builds serially.
+What a worker materializes in its own parser state (a unit function and its
+types) does not come back. Later steps create it again when they need it:
+pinned-unit measurement creates its units before it writes the type package,
+which a reused result needs too.
+
+#### Search results persist across builds
+
+`HARVEST_AUTO_FSM_SCHEDULES` keeps each call site's selected schedule in the
+output directory (`auto_fsm_searches/<digest>.pkl.z`) and, with `--syn_cache`,
+in the store (`auto_fsm/v1/<tool>/<part>/<digest>.pkl.z`). A later harvest
+with the same digest reuses it instead of searching, prints that it did, and
+copies a store hit into its own output directory. The digest covers what the
+search reads:
+- the call site's key and source identity, the budget scale, the encoding
+  request, the area-sweep and force flags, and the whole carried schedule;
+- the design's source hashes and a hash of the compiler's and the Pypeline
+  library's own sources (`_compiler_source_hash`), so any code change searches
+  again;
+- `_search_parser_inputs`: every delay an entity carries and its estimated
+  flag, the control-path proxies, the clock goals, the target, the delay,
+  area and placement settings, and under DEVICE_MODELS the leaf area cache.
+
+An entity without a delay is left out of the digest. A search materializes
+such entities as it goes (a candidate's built-in leaves, unit functions), so
+leaving them in would make the next harvest's digest depend on whether the
+previous one searched or reused. What those entities resolve to on disk is
+checked instead. `SYN.GET_CACHED_PATH_DELAY` records every cache/delay file the
+process reads (`SYN.CACHED_PATH_DELAY_READS`, merged back from forked
+workers), a stored result keeps that record, and a result is reused only while
+every recorded file still reads the same, a missing file included. An
+unreadable, foreign or stale entry is a miss, never a failure. A reuse
+refreshes the stored file's time, and `--syn_cache_prune` removes results no
+build has used for that long.
 Area contributions use compensated summation so equal modeled costs do not
 acquire a different rank merely from their accumulation order. The terms,
 weights, confidence margins and existing deterministic tie-break stay the same.
@@ -1783,8 +1878,10 @@ Priorities are discussed in [#347](https://github.com/JulianKemmerer/PipelineC/d
 - Pinned unit stages are predicted from AUTO_PIPELINE's landscape, whose cut
   positions a nested parallel hierarchy may not realize. A pipelined Poly1305
   modular multiply was predicted at 10.9 ns per stage and measured 20.2 ns
-  (§3.2, "Measured stages"). Each mispredicted placement now costs one
-  synthesis of the unit on its own, and one reschedule, before a build uses it.
+  (§3.2, "Measured stages"). A recipe whose chosen depth is mispredicted costs
+  one synthesis per remaining depth, and one reschedule, before a build uses it.
+  When every depth keeps the same worst path, the report says so: no depth of
+  that recipe can fix it, and the search moves to another recipe.
 - Control overhead grows with the number of folded operations, because the
   operand multiplexers do. At tens of operations this is a clear win; at
   thousands the multiplexers would dominate (see "loop-preserving FSMs" below).
@@ -1862,16 +1959,26 @@ Priorities are discussed in [#347](https://github.com/JulianKemmerer/PipelineC/d
   Both the notice and the descend-cap report are advisory —
   neither raises, and there is still no hard cap — because a legitimate
   large design should still build, just no longer in silence.
-- **A capped search reschedules hundreds of candidates, and every timing
-  miss pays it again.** One `auto` harvest of the WireGuard Poly1305 kernels
-  (`max_latency=64`, 11.2 ns per state, measured delays, no synthesis) builds
-  311 schedules per encoding for the prologue and 626 for the epilogue.
-  It takes 467 s and 878 s of CPU, down from 2,944 s and 4,800 s before the
-  encoding memo, the one-sided cycle check, per-schedule mux-plan inputs and
-  per-type register search, with byte-identical schedules and estimates.
-  What remains is spread out: `SCHEDULE_DAG` with the cap's bisection about
-  40%, operand-mux planning, register allocation and schedule hashing about
-  10–15% each. Two cuts were measured and rejected.
+- **A capped search reschedules thousands of candidates, and every timing
+  miss pays it again.** On the Poly1305 epilogue fixture
+  (`qor/poly1305/auto_fsm.py`, `CAPACITY=5`, `max_latency=64`, 80 MHz,
+  harvested Vivado xc7a200tffg1156-2 delays, no synthesis during the search),
+  one `auto` harvest builds 2,179 schedules per encoding and took 92 minutes
+  of wall time serially on a loaded four-core machine. PIPELINE moves, with
+  their depth characterization, were 44% of a profiled v3 search. (Before
+  PIPELINE, MERGE and FUSE moves, WireGuard's epilogue at 11.2 ns per state
+  built 626 per encoding.) The encodings' measured
+  select delays differ there (1.4 ns for v3, 2.4 ns for onehot), so the onehot
+  search reuses no v3 schedule, only cleaned graphs. On the first three steps
+  of the v3 search on that fixture, the plan memo and the inner-loop changes
+  took the search from 1,839 s to 1,257 s serially, and forked builds to
+  617 s at `-j 3`, with byte-identical schedules and trace. In a serial
+  search, the largest parts are each candidate's `SCHEDULE_DAG` runs,
+  including the cap's bisection, and graph cleanup. A later build with the
+  same inputs reuses the result instead
+  ([search results persist across builds](#search-results-persist-across-builds)),
+  but a changed input, such as a tightened budget, searches again. Two cuts
+  were measured and rejected.
   - Skipping OPEN moves when the anchor is at the cap would have lost the
     epilogue's result (64 → 56 states, −31% estimated area from two OPENs).
   - A schedule-free lower bound (units plus glue) is about half an estimate

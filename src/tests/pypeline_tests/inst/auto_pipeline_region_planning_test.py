@@ -6,6 +6,7 @@
     the tightest stages, and refuses (strict) or clamps more cuts than there
     are legal register positions;
   - _TRIM_PLACEMENT_PLAN_TO_COUNT reduces a larger plan to K;
+  - an unreachable K returns the largest budget giving the most cuts short of it;
   - AutoPipelineRegion cap bookkeeping and REGION_FOR_HOTSPOT attribution.
 
 Synthetic SliceLandscape fixtures (the typed_pipeline_placement_test.py
@@ -86,6 +87,24 @@ def test_trim_plan_to_count():
     assert all(p.axis_unit in cuts for p in placements)
 
 
+def test_unreachable_count_returns_a_usable_budget():
+    """The chain's last legal position is a trailing cut the planner drops, so
+    six cuts are unreachable. The bisection then only shrinks its budget with
+    the same five cuts; returning its last, ~1e-6, made the region scale that
+    _ENFORCE_ONE_AUTO_PIPELINE_REGION calibrates from it about 1e8
+    (WireGuard's grow_auto_pipeline(... x256304011.09)). The largest budget
+    giving those five cuts reproduces them at a sane scale."""
+    landscape = _chain_landscape()
+    n_legal = sum(1 for legal in landscape.legal if legal)
+    cuts, _, budget = AUTO_PIPELINE.COUNT_TARGETED_PLACEMENTS(
+        landscape, n_legal, strict=False
+    )
+    assert len(cuts) == n_legal - 1, cuts
+    assert budget > 1.0, budget
+    replanned, _ = SWEEP.PLAN_PIPELINE_PLACEMENTS(landscape, budget)
+    assert len(replanned) == len(cuts), (budget, replanned)
+
+
 class _FakePlan:
     def __init__(self, main_inst, regions):
         self.main_inst = main_inst
@@ -130,5 +149,6 @@ if __name__ == "__main__":
     test_exact_counts()
     test_more_cuts_than_positions()
     test_trim_plan_to_count()
+    test_unreachable_count_returns_a_usable_budget()
     test_region_caps_and_hotspot_attribution()
     print("All AUTO_PIPELINE region planning unit tests passed.")

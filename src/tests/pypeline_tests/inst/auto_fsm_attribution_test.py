@@ -209,13 +209,17 @@ def test_placements_measured_over_budget_are_rescheduled_before_building():
     # Each chosen pinned placement is synthesized on its own before a
     # whole-design build; one over budget is rescheduled away, and a miss the
     # search cannot avoid ends the rounds instead of repeating them.
+    from unittest.mock import patch
+
     worst_du = {"5c58": 202, "e53a": 184, "b0": 100}
 
     def measure(_parser_state, schedules):
         over = {}
         for key, schedule in schedules.items():
             if worst_du[schedule["placement"]] > schedule["budget_du"]:
-                over.setdefault(key, set()).add(schedule["placement"])
+                over.setdefault(key, {})["unit"] = dict(
+                    placement_digest=schedule["placement"]
+                )
         return over
 
     later = iter(["e53a", "b0"])
@@ -223,9 +227,9 @@ def test_placements_measured_over_budget_are_rescheduled_before_building():
     def harvest(_parser_state, previous, keys):
         return {key: dict(previous[key], placement=next(later)) for key in keys}
 
-    original = AUTO_FSM._measure_unit_placements
-    AUTO_FSM._measure_unit_placements = measure
-    try:
+    with patch.object(AUTO_FSM, "_measure_unit_placements", measure), patch.object(
+        AUTO_FSM, "_measure_deeper_placements", lambda *args: None
+    ):
         chosen = AUTO_FSM._confirm_unit_placements(
             None, {"k": dict(placement="5c58", budget_du=112)}, harvest
         )
@@ -236,8 +240,96 @@ def test_placements_measured_over_budget_are_rescheduled_before_building():
             lambda _state, previous, keys: {key: dict(previous[key]) for key in keys},
         )
         assert stuck["k"]["placement"] == "5c58", stuck
-    finally:
-        AUTO_FSM._measure_unit_placements = original
+
+
+def test_measured_placement_paths_compare_across_depths():
+    # Each depth's isolated root is named <unit>_<N>CLK_<hash>; the same
+    # path below it is the same path (WireGuard: L=5..8 all 18.2 ns from
+    # rows0_input_reg into the Karatsuba subtract).
+    from types import SimpleNamespace
+
+    def report(depth):
+        path = SimpleNamespace(
+            path_delay_ns=18.2,
+            start_reg_name="rows0_input_reg_reg[3][33]/C",
+            end_reg_name=f"unit_{depth}CLK_522cc6d{depth}/v_af_unit5/REG_STAGE0_right_reg[65]/D",
+        )
+        return SimpleNamespace(path_reports={"clk": path})
+
+    implementation = dict(worst_stage_du=100)
+    five = AUTO_FSM._measured_placement(implementation, report(5))
+    six = AUTO_FSM._measured_placement(implementation, report(6))
+    assert five["worst_path"] == six["worst_path"], (five, six)
+    assert five["worst_stage_du"] == 182
+
+
+def test_deeper_pinned_depths_are_measured_before_one_reschedule():
+    # WireGuard measured residue_mul_mod at L=5, 6, 7 and 8, one depth per
+    # round, each followed by a full area search: the same 17.9 ns path every
+    # time. Measuring the deeper depths with the first miss leaves one
+    # reschedule, which then picks a different recipe.
+    from unittest.mock import patch
+
+    profiles = [
+        dict(latency=latency, placement_digest=f"d{latency}", worst_stage_du=100)
+        for latency in (5, 6, 7, 8)
+    ]
+    worst_ns = {"d5": 17.9, "d6": 17.9, "d7": 17.9, "d8": 17.9, "b0": 10.0}
+    syntheses = []
+
+    def synthesize(_parser_state, jobs):
+        syntheses.append([job[3]["placement_digest"] for job in jobs])
+        return [
+            dict(
+                evidence="measured on its own",
+                worst_stage_du=int(worst_ns[job[3]["placement_digest"]] * 10),
+                worst_path=["input_reg", "stage0_reg", worst_ns[job[3]["placement_digest"]]],
+                paths=[],
+            )
+            for job in jobs
+        ]
+
+    harvests = []
+
+    def harvest(_parser_state, previous, keys):
+        harvests.append(sorted(keys))
+        result = {}
+        for key in keys:
+            schedule = previous[key]
+            measured = schedule["unit_measurements"]
+            choice = next(
+                (
+                    profile
+                    for profile in profiles
+                    if profile["placement_digest"] not in measured
+                    or measured[profile["placement_digest"]]["worst_stage_du"]
+                    <= schedule["budget_du"]
+                ),
+                dict(latency=1, placement_digest="b0", worst_stage_du=100),
+            )
+            result[key] = dict(schedule, implementations={"unit": dict(choice)})
+        return result
+
+    schedule = dict(
+        budget_du=112,
+        max_latency=64,
+        register_output=True,
+        entity_delays_snapshot={},
+        nodes={},
+        implementations={"unit": dict(profiles[0])},
+        unit_measurements={},
+    )
+    with patch.object(AUTO_FSM, "_synthesize_placements", synthesize), patch.object(
+        AUTO_FSM, "_unit_profiles", lambda *args, **kwargs: profiles
+    ), patch.object(AUTO_FSM, "_placement_node", lambda schedule, entity: {}):
+        chosen = AUTO_FSM._confirm_unit_placements(None, {"k": schedule}, harvest)
+        curve = AUTO_FSM._describe_depth_curve(
+            None, "k", chosen["k"], "unit", profiles[0]
+        )
+    assert harvests == [["k"]], harvests
+    assert syntheses == [["d5"], ["d6", "d7", "d8"], ["b0"]], syntheses
+    assert chosen["k"]["implementations"]["unit"]["placement_digest"] == "b0"
+    assert "L=6 17.90 ns (same path)" in curve and "no depth of this recipe" in curve, curve
 
 
 def test_endpoint_only_sky130_path_and_unattributed_evidence():

@@ -574,6 +574,9 @@ class Logic:
         # True when delay was derived from the zero clock pipeline map
         # (submodule delays) instead of measured by a real synthesis run
         self.delay_is_estimated = False
+        # Error bound (delay units) of a SYN.PrimitiveDelayModel estimate;
+        # meaningful only while delay_is_estimated
+        self.delay_model_error = None
         # Optional measured path decomposition supplied by timing backends
         # that can distinguish launch clock-to-Q, combinational, and setup
         # delay. ``planner_delay`` is the combinational component in the same
@@ -692,6 +695,7 @@ class Logic:
         rv.wire_to_c_type = dict(self.wire_to_c_type)  # IMMUTABLE
         rv.delay = self.delay
         rv.delay_is_estimated = self.delay_is_estimated
+        rv.delay_model_error = self.delay_model_error
         rv.delay_components = (
             dict(self.delay_components) if self.delay_components is not None else None
         )

@@ -4,7 +4,7 @@ This lists every open [PipelineC issue][issues], most serious first, for contrib
 
 Feature ideas and design questions live in [Discussions][discussions]. Before starting on code, read [`CONTRIBUTING.md`](../CONTRIBUTING.md): changes usually start with a discussion.
 
-- **Baseline:** commit `5d2a9ca62616932aa401c8a3b07973afbb357ce5`. Every `file:line` reference points into that commit. The entries for [#369][i369], [#370][i370], [#371][i371], [#372][i372], [#379][i379], [#380][i380], [#381][i381] and [#382][i382] to [#387][i387] cite code newer than that commit, so they name functions instead.
+- **Baseline:** commit `5d2a9ca62616932aa401c8a3b07973afbb357ce5`. Every `file:line` reference points into that commit. The entries for [#369][i369], [#370][i370], [#371][i371], [#372][i372], [#379][i379], [#380][i380], [#381][i381] and [#382][i382] to [#387][i387], and entry 46, cite code newer than that commit, so they name functions instead. Entry 46 was verified on commit `16f70fd2`.
 - **Verified** means reproduced on that commit, in some cases by simulating the generated VHDL in GHDL. Unverified entries come from reading the code or from the issue thread.
 
 ## Before you start
@@ -123,6 +123,7 @@ Within each group, bugs that affect both front ends come first, problems in the 
 | 43 | [#387][i387] | Python | `AUTO_PIPELINE(f)` on an imported function sweeps worse than tagging a local wrapper | Yes, in process |
 | 44 | [#380][i380] | Both | The top level's global-wire connections come out in a hash-dependent order, so `top.vhd` changes between builds | Yes |
 | 45 | [#381][i381] | Both | After the sweep meets timing, a failed trim trial is kept and the build ends TIMING NOT MET | Yes |
+| 46 | TBD | Both | A hierarchy with inferred multiplies is sliced as if its DSP leaves shrank with it: a Karatsuba body needs 10–34 stages where ~5 would do | Yes, Vivado |
 
 ## Wrong hardware, or simulation disagrees with hardware
 
@@ -476,7 +477,8 @@ Within each group, bugs that affect both front ends come first, problems in the 
 - **Front ends:** both.
 - **What happens:** when a function synthesizes to a netlist with no timing path, vendor-tool builds stop with `No timing paths reported!`. The PyRTL and sky130 backends already fail with a clear message that suggests marking the function as wires.
 - **Fixed for constant-only functions:** `SYN.LOGIC_IS_ZERO_DELAY` does not time a stateless user function with no submodules, so a function that only returns a constant (the case in the issue) or only casts or slices its inputs is never synthesized on its own. Verified with Gowin in both front ends. A function that has operators but still synthesizes away was not re-run.
-- **Where to look:** `src/SYN.py:2197` stops the build. The clearer message is `PYRTL.NO_TIMING_PATHS_ERROR_TEXT` (`src/PYRTL.py:30`). `SYN.LOGIC_IS_ZERO_DELAY` decides which functions are never timed; merged [PR #310][p310] and [PR #374][p374] widened it.
+- **AUTO_FSM-generated wrappers:** AUTO_FSM measures a generated wrapper for each operation with a constant operand. A comparison that the operand widths decide (WireGuard's `next_lane > 1` on a `uint1_t` lane, through the default soft comparator) synthesized to flip-flops only. Vivado reported `Worst Slack NA` and `VIVADO.ParsedTimingReport` stopped the build with `Bad synthesis log?`. AUTO's range proof folds such comparisons, built-in or dispatched to a registered implementation, so no wrapper is built (`auto_fsm_transforms_test.py::test_width_decided_comparison_has_no_measured_wrapper`). Any other generated wrapper that synthesizes away would still stop the build, and the user-level `@wires` workaround cannot reach a generated function.
+- **Where to look:** `src/SYN.py` `SET_MEASURED_DELAY_FROM_REPORT` stops the build with `No timing paths reported!`; Vivado stops earlier, in `VIVADO.ParsedTimingReport` (`Bad synthesis log?`). The clearer message is `PYRTL.NO_TIMING_PATHS_ERROR_TEXT` (`src/PYRTL.py`). `SYN.LOGIC_IS_ZERO_DELAY` decides which functions are never timed; merged [PR #310][p310] and [PR #374][p374] widened it.
 - **Workaround:** `#pragma FUNC_WIRES <function>` in C, `@wires` in Python.
 
 ### 22. [#137][i137]: internal user clocks are left unconstrained in Quartus
@@ -717,6 +719,27 @@ Within each group, bugs that affect both front ends come first, problems in the 
 - **Where to look:** the trim step in `SWEEP.DO_PLANNED_THROUGHPUT_SWEEP` ("Trimming stages", `PLAN_TRIMMABLE_CUTS`), and how a failing trim is restored when the failing path's MAINs report `nothing_auto_pipelinable`.
 - **Reproduce:** `python3 src/tests/pypeline_tests/run_all.py --category known_issues -k sweep_failed_trim` (about 75 seconds, XFAIL while the bug is present).
 - **Workaround:** none verified. The sweep log's `action=met` lines show the passing cut counts.
+
+### 46. TBD: a hierarchy with inferred multiplies is sliced as if its DSP leaves shrank with it
+
+- **Front ends:** both (the landscape and the coarse slicer are shared). Seen with Python.
+- **What happens:** a hierarchy measured as a whole is shorter than its children chained, and
+  both slicers shrink every child uniformly to fit. Chained adders do overlap in hardware; a DSP
+  multiply does not. In WireGuard's Poly1305 body (130-bit Karatsuba with 34×34 inferred leaves,
+  Vivado, xc7a200tffg1156-2), a leaf measured at 8.4 ns on its own is laid out at 1.85 ns. Cuts
+  then land inside the subtract after a leaf, never at its output, where Vivado could absorb the
+  register into the DSP. At 80 MHz the helper's mini-sweep locks at 10 cuts and region growth at
+  32–34. A prototype keeping variable multiplies at their measured delay locked the mini-sweep at
+  4 cuts, but missed by 0.06 ns in context, and the landscape plateaued; it was not kept. See
+  [`SWEEP_DESIGN.md`](SWEEP_DESIGN.md#8-limitations-and-future-work) item 7.
+- **Where to look:** `SWEEP.BUILD_SLICE_LANDSCAPE` (`rec`, the `unit_scale` of a hierarchical
+  child), `AUTO_PIPELINE.SLICE_DOWN_HIERARCHY_WRITE_VHDL_PACKAGES`, and the locked-hotspot stop in
+  `SWEEP.DO_PLANNED_THROUGHPUT_SWEEP`. A lock whose own path misses in context isn't relocked deeper.
+- **Reproduce:** the manual Vivado probe `src/tests/pypeline_tests/qor/poly1305/body.py`
+  (`-D MHZ=80`, `-D HELPER=1` for the mini-sweep, `0` for region growth); about 25–45 minutes
+  each. Not in `known_issues_tests.py`: only vendor synthesis shows the stage count.
+- **Workaround:** a single inferred product (`make_inferred_mult`) for a body whose depth matters.
+  WireGuard's `inferred_body` choice takes the feedback body from 10 stages to 3, at more DSPs.
 
 [issues]: https://github.com/JulianKemmerer/PipelineC/issues
 [discussions]: https://github.com/JulianKemmerer/PipelineC/discussions

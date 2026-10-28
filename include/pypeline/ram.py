@@ -1253,6 +1253,12 @@ def make_auto_pipeline_ram(
     )
     plan = py.AUTO_PIPELINE_RAM_PLAN_CACHE().get(key)
     from_cache = plan is not None
+    if plan is None and py.BUILT_HARDWARE_SOURCE() is not None:
+        raise py.BuiltHardwareError(
+            f"auto-pipelined RAM {cfg.key!r} is not part of the hardware built in "
+            f"{py.BUILT_HARDWARE_SOURCE()}: that build never decided it. Simulate a "
+            "testbench whose hardware that build contains, or rebuild it."
+        )
     if plan is None:
         native_options = dict(options)
         if py.AUTO_PIPELINE_BUILD_MODE() != "sweep":

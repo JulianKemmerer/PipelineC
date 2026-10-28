@@ -410,65 +410,9 @@ def _cleanup_once(dag, parser_state, entity):
     ranges = value_ranges(dag, parser_state, entity)
     for nid in order(dag):
         node = dag["nodes"][nid]
-        if node["kind"] != "binop" or node["op"].get("op") not in (
-            "<",
-            "<=",
-            ">",
-            ">=",
-            "==",
-            "!=",
-        ):
-            continue
-        bounds = []
-        for i, ref in enumerate(node["operands"]):
-            value = _constant_operand(node, i, parser_state, entity)
-            bound = (
-                (value, value)
-                if value is not None
-                else ranges.get(ref[1])
-                if ref[0] == "node"
-                else None
-            )
-            if bound is None or any(not integer(t) for t in node["casts"][i]):
-                break
-            for t in node["casts"][i] + [node["port_types"][i]]:
-                lo = _typed_integer(bound[0], t)
-                hi = _typed_integer(bound[1], t)
-                # Endpoint conversion alone cannot prove an interval survives
-                # truncation: require containment in the destination's range.
-                bits = width(t)
-                limit = (
-                    (0, (1 << bits) - 1)
-                    if _unsigned(t)
-                    else (-(1 << (bits - 1)), (1 << (bits - 1)) - 1)
-                )
-                if not limit[0] <= bound[0] <= bound[1] <= limit[1]:
-                    bound = limit
-                else:
-                    bound = lo, hi
-            bounds.append(bound)
-        if len(bounds) != 2:
-            continue
-        a, b = bounds
-        op = node["op"]["op"]
-        yes = {
-            "<": a[1] < b[0],
-            "<=": a[1] <= b[0],
-            ">": a[0] > b[1],
-            ">=": a[0] >= b[1],
-            "==": a[0] == a[1] == b[0] == b[1],
-            "!=": a[1] < b[0] or b[1] < a[0],
-        }[op]
-        no = {
-            "<": a[0] >= b[1],
-            "<=": a[0] > b[1],
-            ">": a[1] <= b[0],
-            ">=": a[1] < b[0],
-            "==": a[1] < b[0] or b[1] < a[0],
-            "!=": a[0] == a[1] == b[0] == b[1],
-        }[op]
-        if yes or no:
-            replace(dag, nid, ["lit", int(yes), node["out_type"]])
+        result = _comparison_result(node, ranges, parser_state, entity)
+        if result is not None:
+            replace(dag, nid, ["lit", result, node["out_type"]])
             stats["folded"] += 1
     prune(dag)
     unmerged = len(dag["nodes"])
@@ -478,20 +422,94 @@ def _cleanup_once(dag, parser_state, entity):
     return dag, stats
 
 
+def _type_range(t):
+    """Every value an integer type can hold, as an inclusive interval."""
+    bits = width(t)
+    return (
+        (0, (1 << bits) - 1)
+        if _unsigned(t)
+        else (-(1 << (bits - 1)), (1 << (bits - 1)) - 1)
+    )
+
+
+def _comparison_op(node, parser_state):
+    """The comparison a node computes: a built-in one, or a call to the
+    implementation elaboration dispatched a comparison to (a soft comparator
+    keeps the operator's meaning). None for anything else."""
+    if node["kind"] == "binop":
+        op = node["op"].get("op")
+    elif node["kind"] == "call":
+        ops = getattr(parser_state, "pypeline_compare_impl_ops", {}).get(
+            node["entity"], ()
+        )
+        op = _BIN_OP_SRC.get(next(iter(ops))) if len(ops) == 1 else None
+    else:
+        op = None
+    return op if op in ("<", "<=", ">", ">=", "==", "!=") else None
+
+
+def _comparison_result(node, ranges, parser_state, entity):
+    """1 or 0 when operand ranges decide a comparison, else None.
+
+    An operand with no known interval (a function input, or a producer with no
+    range) holds some value of the first type its cast chain applies, so a
+    comparison such as uint1 > 1 is decided by widths alone.
+    """
+    op = _comparison_op(node, parser_state)
+    if op is None or len(node["operands"]) != 2:
+        return None
+    bounds = []
+    for i, ref in enumerate(node["operands"]):
+        chain = node["casts"][i] + [node["port_types"][i]]
+        if any(not integer(t) for t in chain):
+            return None
+        value = _constant_operand(node, i, parser_state, entity)
+        bound = (
+            (value, value)
+            if value is not None
+            else ranges.get(ref[1])
+            if ref[0] == "node"
+            else None
+        )
+        if bound is None:
+            bound = _type_range(chain[0])
+        for t in chain:
+            # Endpoint conversion alone cannot prove an interval survives
+            # truncation: require containment in the destination's range.
+            limit = _type_range(t)
+            if not limit[0] <= bound[0] <= bound[1] <= limit[1]:
+                bound = limit
+            else:
+                bound = _typed_integer(bound[0], t), _typed_integer(bound[1], t)
+        bounds.append(bound)
+    a, b = bounds
+    yes = {
+        "<": a[1] < b[0],
+        "<=": a[1] <= b[0],
+        ">": a[0] > b[1],
+        ">=": a[0] >= b[1],
+        "==": a[0] == a[1] == b[0] == b[1],
+        "!=": a[1] < b[0] or b[1] < a[0],
+    }[op]
+    no = {
+        "<": a[0] >= b[1],
+        "<=": a[0] > b[1],
+        ">": a[1] <= b[0],
+        ">=": a[1] < b[0],
+        "==": a[1] < b[0] or b[1] < a[0],
+        "!=": a[0] == a[1] == b[0] == b[1],
+    }[op]
+    if yes or no:
+        return int(yes)
+    return None
+
+
 def value_ranges(dag, parser_state, entity):
     """Conservative integer intervals; wrap/truncation widens to the type range."""
     ranges = {}
 
-    def full(t):
-        bits = width(t)
-        return (
-            (0, (1 << bits) - 1)
-            if _unsigned(t)
-            else (-(1 << (bits - 1)), (1 << (bits - 1)) - 1)
-        )
-
     def assign(interval, t):
-        lo, hi = full(t)
+        lo, hi = _type_range(t)
         if interval[0] == interval[1]:
             v = _typed_integer(interval[0], t)
             return v, v
@@ -514,12 +532,12 @@ def value_ranges(dag, parser_state, entity):
                 if ref[0] == "node"
                 else None
             )
-            interval = interval or full(node["port_types"][i])
+            interval = interval or _type_range(node["port_types"][i])
             for t in node["casts"][i] + [node["port_types"][i]]:
                 interval = assign(interval, t)
             args.append(interval)
         op = node["op"].get("op")
-        interval = full(node["out_type"])
+        interval = _type_range(node["out_type"])
         if node["kind"] == "binop" and op == "+":
             interval = args[0][0] + args[1][0], args[0][1] + args[1][1]
         elif node["kind"] == "binop" and op == "*":
@@ -632,6 +650,10 @@ def PREPARE_CONSTANT_SPECIALIZATIONS(tag, parser_state, elaborator):
                 continue
             key, values = _constant_shape(node, parser_state, parent)
             if key is None or key in parser_state.pypeline_auto_fsm_specializations:
+                continue
+            if _comparison_result(node, {}, parser_state, parent) is not None:
+                # Cleanup folds a comparison the operand widths decide; a
+                # wrapper for it would synthesize to no timing path.
                 continue
             if primitive:
                 trial_node = dict(
@@ -1099,7 +1121,7 @@ def _demanded_bits(dag):
 # Delay-oriented candidates (AUTO_COMB_DELAY_OPT and the FSM's delay finalists)
 
 
-def delay_implementation_seeds(func, dag, parser_state, elaborator):
+def delay_implementation_seeds(func, entity, dag, parser_state, elaborator):
     """Reuse exact library implementations; timing decides, not their names."""
     from operators.comb_opt import _primitive_math, make_carry_save_sum3
     from operators.soft_add import make_soft_add_carry_select
@@ -1109,12 +1131,17 @@ def delay_implementation_seeds(func, dag, parser_state, elaborator):
     types = _TypeResolver()
     types.seed_callable(func)
     seeds, replacements = [], {}
+    ranges = value_ranges(dag, parser_state, entity)
     for nid in order(dag):
         n = dag["nodes"][nid]
         op = n["op"].get("op")
         if (n["op"]["kind"] != "binop" or op not in ("+", "*", "<", "<=", ">", ">=")
                 or not all(integer(t) and t.startswith("uint") for t in n["port_types"])
                 or max(width(t) for t in n["port_types"]) > 64):
+            continue
+        if _comparison_result(n, ranges, parser_state, entity) is not None:
+            # Widths decide it: cleanup folds the comparison, while an opaque
+            # soft comparator would keep it and synthesize to no timing path.
             continue
         key = (op, tuple(n["port_types"]), n["out_type"])
         if key not in replacements:

@@ -4956,6 +4956,10 @@ class FuncElaborator:
             _gen_impl = None
         if _gen_impl is not None:
             _callee = self._resolve_registered_impl(_gen_impl, expr)
+            # See the pypeline_compare_impl_ops note in PARSE_FILE.
+            self.parser_state.pypeline_compare_impl_ops.setdefault(
+                _callee.func_name, set()
+            ).add(op_name)
             _inst = self._inst(
                 _gen_impl if isinstance(_gen_impl, str) else _gen_impl.__name__, expr
             )
@@ -8905,18 +8909,25 @@ def FREEZE_DESIGN_SOURCES(output_dir):
     WRITE_SOURCE_PROVENANCE()
 
 
+def DESIGN_SOURCE_HASHES():
+    """{path: sha256} of every design source this build read (frozen)."""
+    return {
+        path: hashlib.sha256(data).hexdigest()
+        for path, data in sorted(_frozen_sources.items())
+    }
+
+
 def WRITE_SOURCE_PROVENANCE():
     if _freeze_output_dir is None:
         return
     sources = {}
+    hashes = DESIGN_SOURCE_HASHES()
     for path, data in sorted(_frozen_sources.items()):
         try:
             drift = open(path, "rb").read() != data
         except OSError:
             drift = True
-        sources[path] = dict(
-            sha256=hashlib.sha256(data).hexdigest(), bytes=len(data), disk_drift=drift
-        )
+        sources[path] = dict(sha256=hashes[path], bytes=len(data), disk_drift=drift)
     os.makedirs(_freeze_output_dir, exist_ok=True)
     with open(os.path.join(_freeze_output_dir, "source_provenance.json"), "w") as f:
         json.dump(
@@ -8953,6 +8964,11 @@ def _new_parser_state(module_globals):
     #     that it can, which is what lets the area search descend past the
     #     operator level. Recorded rather than parsed back out of the entity
     #     name: the name is a formatting decision, this is the actual semantics.
+    #   pypeline_compare_impl_ops: registered comparison implementation entity
+    #     (a soft comparator, say) -> the comparison op names it was dispatched
+    #     for. The call keeps the operator's meaning, so AUTO's range proof can
+    #     fold one the operand widths decide (uint1 > 1) instead of measuring a
+    #     wrapper that synthesizes to no timing path.
     #   pypeline_bit_manip_info: bit-manip entity -> (builtin name, trailing
     #     constant args), so AUTO_FSM can re-emit e.g. bit_assign(base, x, 5).
     #     Without it a soft adder's body -- which is mostly bit_assign -- could
@@ -8968,6 +8984,7 @@ def _new_parser_state(module_globals):
     parser_state.pypeline_entity_callables = {}
     parser_state.pypeline_const_wire_values = {}
     parser_state.pypeline_builtin_op_info = {}
+    parser_state.pypeline_compare_impl_ops = {}
     parser_state.pypeline_bit_manip_info = {}
     parser_state.pypeline_canonical_name_owner = {}
     parser_state.pypeline_specialization_identities = {}

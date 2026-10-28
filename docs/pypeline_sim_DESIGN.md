@@ -2185,6 +2185,42 @@ latency the VHDL was built with:
   `.latency`-derived constant baked into it — and desync this emulation. An extra pass (typically
   pass 3) re-elaborates with the realized numbers and converges.
 
+#### Simulating another top's built hardware
+
+A testbench runs on the hardware built for the design's real top, recorded in that build's
+`built_hardware.json` ([Simulating built hardware](SIM_DESIGN.md#simulating-built-hardware)).
+`SIM.SIMULATE_BUILT_HARDWARE` calls `run_sim` with the recorded arguments plus
+`built_hardware_from=` (the build directory), `design_params=` and
+`unbuilt_latency_reads=`. Nothing is elaborated, so
+the testbench's tags must find the build's decisions by key alone, and `run_sim` refuses
+what the build did not decide:
+
+- **Every cache is installed, even an empty one.** No earlier in-process run's results can
+  stand in for a decision this build never made.
+- **`pypeline.SET_BUILT_HARDWARE_SOURCE`** turns on `_require_built`. An AUTO_PIPELINE,
+  AUTO_FSM or AUTO_MULTI_CYCLE whose key the build did not harvest (`_built_decided`)
+  raises `BuiltHardwareError` when its `.latency` is read or, in simulation, when it is
+  called. The tag computes its key even with an empty cache. Checking on use rather than
+  at construction lets a module construct a tag its MAINs never use. `ram.py` refuses an
+  auto-pipelined RAM with no recorded plan the same way.
+- **Tags the build only read.** `SET_BUILT_HARDWARE_SOURCE` also installs the build's
+  `unbuilt_latency_reads` as `_built_unbuilt_reads`. An AUTO_PIPELINE or AUTO_MULTI_CYCLE
+  listed there takes the recorded value at construction, and `_require_built(...,
+  read=True)` lets its `.latency` through, so the testbench computes what the built
+  design computed from it. Calling it is still an error: the build has no hardware for
+  it.
+- **Design parameters.** After the import, `_check_built_design_params` compares every
+  parameter both runs declare with the build's value.
+- **MAINs.** `_check_built_mains` refuses a `@MAIN` the build never built when the sweep
+  could have pipelined it: not `@wires`, not stateful and without `@pipeline_latency`
+  (`_main_needs_build`). A built MAIN the testbench does not run, such as the top's port
+  wiring, is skipped.
+
+Keys match across the two tops because they never name the top: a named tag's key is its
+name, and an unnamed tag's is `CANONICAL_CALLABLE_KEY` of its function. `SIM.SIMULATE_BUILT_HARDWARE`
+resets the source to `None` afterwards; every `run_sim` call also sets it from its own
+argument.
+
 ## Fixed User Pipelines
 
 `@pipeline_latency(N)` declares that the function's implementation already supplies

@@ -5326,12 +5326,13 @@ elaboration and initialized in `PARSE_FILE`:
 | `pypeline_const_wire_values` | func name → {constant wire → Python value} | reserved for constants that cannot be recovered from the wire name |
 | `pypeline_builtin_op_info` | built-in operator entity → (op name, operand c types) | `_bin_func_name`, at the two `_elab_binop` / `_elab_compare` sites that build a built-in operator instance |
 | `pypeline_bit_manip_info` | bit-manipulation entity → (which builtin produced it, its constant arguments) | `_record_bit_manip_render`, beside every `_register_bit_manip_logic` call |
+| `pypeline_compare_impl_ops` | registered comparison implementation entity → the comparison op names dispatched to it | `_elab_compare`, at its registered-operator site |
 | `pypeline_name_full` | collapsed canonical func name → full, uncollapsed name | `_elaborate_live_func`, only when a name actually collapsed |
 | `pypeline_type_canonical` | collapsed `@struct`/`@enum` canonical name → full, uncollapsed name | `_register_struct_recursive` / `_register_enum`, only when a name actually collapsed |
 | `pypeline_canonical_name_owner` | canonical func name → `(module, qualname, src_file, line)` of the closure that first produced it | `_elaborate_live_func`; also the collision guard (see below) |
 
-The last two exist because AUTO_FSM's area search decomposes operations, and both
-answer a question the entity NAME cannot be trusted for:
+Three of them exist because AUTO's graph work needs what an operation means, and
+each answers a question the entity NAME cannot be trusted for:
 
 - **`pypeline_builtin_op_info`.** A built-in operator has no Python source, so
   AUTO_FSM cannot take it apart — but the soft-operator library can supply an
@@ -5346,6 +5347,13 @@ answer a question the entity NAME cannot be trusted for:
   something, and a soft adder's body is almost entirely bit reads and
   `bit_assign`s: without this table, descending into one would fail to
   regenerate and silently fall back to keeping the operation atomic.
+- **`pypeline_compare_impl_ops`.** A comparison dispatched to a registered
+  implementation, such as the default soft comparator, elaborates as an ordinary
+  call. The call keeps the operator's meaning, and this table tells AUTO's
+  cleanup which comparison it computes, so the range proof can fold one the
+  operand widths decide, such as `uint1 > 1`
+  ([AUTO_FSM_DESIGN.md](AUTO_FSM_DESIGN.md#31-building-the-dag)). It collects a set
+  of op names; the proof uses an entity only when exactly one was dispatched to it.
 
 `setdefault` in every writer: first writer wins, matching
 `_elaborate_live_func`'s own dedup. Live callables are kept off `Logic` entirely
@@ -5406,6 +5414,9 @@ being called more than once per process:
   `<out_dir>/source_provenance.json` lists each frozen file's sha256 and size,
   plus `disk_drift`: whether it changed on disk by exit, meaning an edit the
   build did not use. It is evidence only, never part of a synthesis cache key.
+  `DESIGN_SOURCE_HASHES()` gives the same hashes to `SIM.WRITE_BUILT_HARDWARE`,
+  whose record a testbench simulation refuses once any of them changes
+  ([Simulating built hardware](SIM_DESIGN.md#simulating-built-hardware)).
   Library callers of `PARSE_FILE` don't freeze anything.
 - **Per-parse compiler cache cleanup**: the re-parse branch runs
   `LOGIC.DEL_ALL_CACHES()` + `SYN.DEL_ALL_CACHES()` (the shared part of the cleanup the C
@@ -6307,9 +6318,9 @@ follow the `BIN_OP_*`/`UNARY_OP_*`/`MUX_*` naming convention above — its entit
 whatever `_canonical_func_name` derives from the factory (e.g.
 `soft_cmp_sub_greater_True_l_t_uint8_t_r_t_uint8_t_..._1CLK_<hash>`). Two integration points
 key off the built-in naming convention and were not updated as part of this library:
-`DEVICE_MODELS.func_name_to_op_and_widths` (delay estimation falls back to per-entity
-synthesis instead of a fast model lookup for soft-op entities — slower sweeps, not incorrect
-ones) and the `cache/delay` (new entries accumulate under the new names; old
+`SYN.PRIMITIVE_DELAY_SHAPE` (the primitive delay model estimates only built-in entities, so
+a soft-op entity at a new width gets a synthesis run instead of an estimate: slower builds,
+not incorrect ones) and the `cache/delay` (new entries accumulate under the new names; old
 `BIN_OP_LT*`/`GT*`/etc. entries for int types simply stop being hit once a soft comparator is
 registered for that scope). `AUTO.DECODE_OP` does **not** need updating — it already falls
 back to `parser_state.pypeline_entity_callables` for any entity name it doesn't recognize as

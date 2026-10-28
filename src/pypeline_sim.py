@@ -84,6 +84,9 @@ def run_sim(
     auto_pipeline_ram_plans=None,
     part=None,
     syn_tool=None,
+    built_hardware_from=None,
+    design_params=None,
+    unbuilt_latency_reads=None,
 ) -> None:
     """Run the native simulation.
 
@@ -104,6 +107,15 @@ def run_sim(
     source/CLI part and tool declarations settle fixed RAM geometry after import,
     before hooks or clocks, while flexible RAMs retain their one-cycle default.
     Each run starts with fresh RAM plans unless plans are explicitly replayed.
+
+    built_hardware_from names the build directory these arguments came from when
+    simulating a top other than the one built there (SIM.SIMULATE_BUILT_HARDWARE).
+    Then the build's decisions must cover the design: an AUTO tag or RAM it never
+    decided, or a pipelinable @MAIN it never built, is an error, and so is a
+    design parameter (design_params, {name: value}) whose value differs.
+    unbuilt_latency_reads ({kind: {canonical_key: value}}) are the .latency
+    values that build read for tags it never instantiated; reading one returns
+    the same value, and only calling it is an error.
     """
     # Apply sim mode before importing the design: @hw_func decorators read these
     # flags at decoration time, so they must be set before import_design runs.
@@ -120,21 +132,25 @@ def run_sim(
         raise ValueError(
             f"Unknown sim_mode {sim_mode!r}; expected strict, loose, or raw"
         )
+    pypeline.SET_BUILT_HARDWARE_SOURCE(built_hardware_from, unbuilt_latency_reads)
     # Install harvested AUTO_PIPELINE latencies BEFORE importing the design:
     # AUTO_PIPELINE objects capture ._latency at construction (import time),
     # and .latency-derived structure (e.g. make_stream_auto_pipeline FIFO depths)
     # must elaborate identically to the VHDL build's pin-and-confirm pass.
     pypeline.SET_AUTO_PIPELINE_RAM_PLAN_CACHE(auto_pipeline_ram_plans or {})
-    if auto_pipeline_latencies:
-        pypeline.SET_AUTO_PIPELINE_LATENCY_CACHE(auto_pipeline_latencies)
+    # Simulating built hardware installs even empty caches: an earlier run's
+    # results must not stand in for decisions this build never made
+    replaying = built_hardware_from is not None
+    if auto_pipeline_latencies or replaying:
+        pypeline.SET_AUTO_PIPELINE_LATENCY_CACHE(auto_pipeline_latencies or {})
     # Same reasoning for AUTO_FSM: the tag captures ._schedule/._latency at
     # construction, and .latency-derived Python sizing must match the build's.
-    if auto_fsm_schedules:
-        pypeline.SET_AUTO_FSM_SCHEDULE_CACHE(auto_fsm_schedules)
+    if auto_fsm_schedules or replaying:
+        pypeline.SET_AUTO_FSM_SCHEDULE_CACHE(auto_fsm_schedules or {})
     # And for AUTO_MULTI_CYCLE: the tag resolves .latency at construction, and the
     # handshake it drives must count the cycles the build constrained.
-    if auto_multi_cycle_latencies:
-        pypeline.SET_AUTO_MULTI_CYCLE_LATENCY_CACHE(auto_multi_cycle_latencies)
+    if auto_multi_cycle_latencies or replaying:
+        pypeline.SET_AUTO_MULTI_CYCLE_LATENCY_CACHE(auto_multi_cycle_latencies or {})
     # Construction ordinals (part of each AUTO_MULTI_CYCLE's cache key) restart with
     # the design's re-import, exactly as they did for each build pass.
     pypeline.RESET_AUTO_MULTI_CYCLE_TRACKING()
@@ -152,6 +168,9 @@ def run_sim(
                 del sys.modules[name]
             pypeline.RESET_AUTO_MULTI_CYCLE_TRACKING()
             module = import_design(design_file)
+
+    if design_params:
+        _check_built_design_params(design_params, built_hardware_from)
 
     wire_info, inst_decls = _discover_wire_names(module)
 
@@ -220,6 +239,8 @@ def run_sim(
 
     # Wire up write-side latency emulation for naturally-pipelined pure MAINs.
     pypeline._sim_pipelined_main_info.clear()
+    if built_hardware_from is not None:
+        _check_built_mains(mains, main_latencies or {}, built_hardware_from)
     if main_latencies:
         # Only reachable from the pipelinec driver flow: the build's MAIN
         # names, which the design's re-import gives its MAINs again
@@ -228,6 +249,9 @@ def run_sim(
             if latency <= 0:
                 continue
             fn = hw_name_to_fn.get(hw_name)
+            if fn is None and built_hardware_from is not None:
+                # Another top's MAIN this testbench does not run
+                continue
             if fn is None:
                 raise RuntimeError(
                     f"Pipelined MAIN {hw_name!r} (latency {latency}) has no "
@@ -353,6 +377,51 @@ def _mains_by_name(mains) -> dict:
     """MAIN name -> @MAIN wrapper: how build results keyed by the build's MAIN
     names (main_latencies) find the re-imported design's MAINs."""
     return {fn._pypeline_main.name: fn for fn in mains}
+
+
+def _check_built_design_params(design_params, built_hardware_from) -> None:
+    """A design parameter the build and this simulation both declare must have
+    the value the build used: it may shape the hardware."""
+    current = {entry["name"]: entry["value"] for entry in pypeline.DESIGN_PARAM_REPORT()}
+    differ = [
+        f"{name}={current[name]!r} (built with {value!r})"
+        for name, value in sorted(design_params.items())
+        if name in current and current[name] != value
+    ]
+    if differ:
+        raise pypeline.BuiltHardwareError(
+            f"design parameters differ from the hardware built in "
+            f"{built_hardware_from}: {', '.join(differ)}"
+        )
+
+
+def _main_needs_build(fn) -> bool:
+    """A @MAIN the sweep could pipeline: not @wires, not stateful (stateful
+    MAINs are self-timed) and without @pipeline_latency."""
+    if getattr(fn, "_pypeline_has_state", False) or getattr(fn, "_pipeline_latency", None) is not None:
+        return False
+    layer = fn
+    while layer is not None:
+        if getattr(layer, "_is_func_wires_pragma", False):
+            return False
+        layer = getattr(layer, "__wrapped__", None)
+    return True
+
+
+def _check_built_mains(mains, main_latencies, built_hardware_from) -> None:
+    """Simulating another top on built hardware: a pipelinable @MAIN of this
+    design that the build never built has an unknown latency."""
+    unbuilt = sorted(
+        fn._pypeline_main.name
+        for fn in mains
+        if fn._pypeline_main.name not in main_latencies and _main_needs_build(fn)
+    )
+    if unbuilt:
+        raise pypeline.BuiltHardwareError(
+            f"@MAIN {', '.join(unbuilt)} is not part of the hardware built in "
+            f"{built_hardware_from}, so its pipeline latency is unknown. Make it "
+            "@wires or stateful, or build it as part of that top."
+        )
 
 
 def _call_main(main_fn, arg_types: tuple) -> None:

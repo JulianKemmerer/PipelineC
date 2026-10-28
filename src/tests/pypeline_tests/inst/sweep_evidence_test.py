@@ -1353,6 +1353,10 @@ def _run_trim_sweep(stage_delays_by_cuts, effort=2, uncut_delay=None, initial_cu
     retained_cuts = len(result.TimingParamsLookupTable[pipe]._slices)
     # Restoration must use the actual passing implementation, not just its count.
     assert signature in [sig for n, sig in zip(observed_cuts, backend.calls) if n == retained_cuts]
+    # Snapshots share the parse's Logic rather than copying a Logic graph per
+    # instance (SWEEP_DESIGN.md#floor, restoring the best-seen result).
+    for inst, timing_params in result.TimingParamsLookupTable.items():
+        assert timing_params.logic is ps.LogicInstLookupTable[inst], inst
     return observed_cuts, retained_cuts
 
 
@@ -1588,6 +1592,69 @@ def test_fresh_concrete_candidate_is_tried_before_measured_fallback():
     # The fresh lock met: the broad fallback was never needed.
     assert measured == [], measured
     assert len(backend.calls) == 2, backend.calls
+
+
+def test_untimed_region_warning_names_regions_their_depth_cannot_meet():
+    """WireGuard's perf testbench: synthesis removed a region fed by constants,
+    the design met 80 MHz, and the sweep trimmed the region to 0 stages though
+    its own 30.7 ns delay needs about 3. A stale latency-memory piece later
+    started WireGuard's decrypt coefficient region at 2 stages: 37.1 ns is
+    1.48 periods per stage at 80 MHz, which must be flagged too."""
+    import pypeline
+
+    marker = LOGIC.SUBMODULE_MARKER
+    main = FakeLogic("main")
+    timed, untimed = FakeLogic("timed"), FakeLogic("untimed")
+    near, stale = FakeLogic("near"), FakeLogic("stale")
+    main.submodule_instances = {"t": "timed", "u": "untimed", "n": "near", "s": "stale"}
+    main.sub_inst_to_auto_pipeline_key = {
+        "t": "timed_key", "u": "untimed_key", "n": "near_key", "s": "stale_key"
+    }
+    for region, delay_ns in ((timed, 30.7), (untimed, 30.7), (near, 30.7), (stale, 37.1)):
+        region.sub_inst_to_auto_pipeline_key = {}
+        region.delay = int(delay_ns * SYN.DELAY_UNIT_MULT)
+        region.delay_is_estimated = False
+    ps = FakeParserState(
+        {
+            "main": main,
+            "main" + marker + "t": timed,
+            "main" + marker + "u": untimed,
+            "main" + marker + "n": near,
+            "main" + marker + "s": stale,
+        }
+    )
+    ps.main_mhz = {"main": 80.0}
+    table = {
+        i: AUTO_PIPELINE.TimingParams(i, l) for i, l in ps.LogicInstLookupTable.items()
+    }
+    # 4 stages of ~7.7 ns meet 12.5 ns; 1 stage of 30.7 ns cannot. 2 stages of
+    # 15.35 ns (1.23 periods) can, with optimization across the boundary;
+    # 2 stages of 18.55 ns (1.48 periods) cannot.
+    table["main" + marker + "t"].SET_SLICES([0.25, 0.5, 0.75])
+    table["main" + marker + "n"].SET_SLICES([0.5])
+    table["main" + marker + "s"].SET_SLICES([0.5])
+    timing = SimpleNamespace(TimingParamsLookupTable=table, sweep_timing_failures=[])
+    mode = pypeline.AUTO_PIPELINE_BUILD_MODE()
+    try:
+        pypeline.SET_AUTO_PIPELINE_BUILD_MODE("sweep")
+        assert SWEEP.WARN_UNTIMED_REGIONS(ps, timing) == {
+            "untimed_key": "main", "stale_key": "main"
+        }
+        # A failing MAIN already reports its problem
+        timing.sweep_timing_failures = [("main", 80.0, 32.6, "timing")]
+        assert SWEEP.WARN_UNTIMED_REGIONS(ps, timing) == {}
+        timing.sweep_timing_failures = []
+        # An estimate is not evidence that the region cannot meet the goal
+        untimed.delay_is_estimated = True
+        stale.delay_is_estimated = True
+        assert SWEEP.WARN_UNTIMED_REGIONS(ps, timing) == {}
+        untimed.delay_is_estimated = False
+        stale.delay_is_estimated = False
+        # A --comb build leaves regions unpipelined on purpose
+        pypeline.SET_AUTO_PIPELINE_BUILD_MODE("fixed_only")
+        assert SWEEP.WARN_UNTIMED_REGIONS(ps, timing) == {}
+    finally:
+        pypeline.SET_AUTO_PIPELINE_BUILD_MODE(mode)
 
 
 if __name__ == "__main__":

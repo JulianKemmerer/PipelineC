@@ -191,8 +191,9 @@ def get_tests() -> list:
             cmd=[INST_DIR / "auto_fsm_transforms_test.py"],
         )
     )
-    # Stale source/target schedules, applied forced schedules, provenance and
-    # serial unit characterization; measured 15.4 s.
+    # Stale source/target schedules, applied forced schedules, provenance,
+    # serial unit characterization and search results reused across builds
+    # (identical inputs only; stale delay files, pruning); measured 74 s.
     tests.append(
         Test(
             name="auto_fsm_cache_test",
@@ -393,6 +394,24 @@ def get_tests() -> list:
             name="sweep_plateau_unit_test",
             category="unit",
             cmd=[INST_DIR / "sweep_plateau_unit_test.py"],
+        )
+    )
+    # SYN.PrimitiveDelayModel width fits, refusals and AUTO_FSM's rule to
+    # measure only estimates near a state budget.
+    tests.append(
+        Test(
+            name="primitive_delay_model_test",
+            category="unit",
+            cmd=[INST_DIR / "primitive_delay_model_test.py"],
+        )
+    )
+    # SYN.PHASE build-phase timers: nested phases charge exclusive time, and
+    # the end-of-build summary lists them.
+    tests.append(
+        Test(
+            name="build_phase_timer_test",
+            category="unit",
+            cmd=[INST_DIR / "build_phase_timer_test.py"],
         )
     )
     # Typed operation-boundary/bit-internal placement and direct lowering.

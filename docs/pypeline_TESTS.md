@@ -338,7 +338,9 @@ calls. Further cases cover a real two-pass re-elaboration (locks carried to new
 lane instances, never to another MAIN), failing-before-passing evidence,
 bounded MCP confirmation repair, confirm-down reuse, pipelined confirmation
 failures that preserve unaffected MAINs, optional-report Tcl robustness and
-header-based utilization parsing. The suite registers it under two pinned
+header-based utilization parsing, and the untimed-region warning (a region whose own
+measured delay rules out its built depth in a MAIN that met timing; never for a failing
+MAIN, an estimated delay or a `--comb` build). The suite registers it under two pinned
 `PYTHONHASHSEED` values (`sweep_evidence_test`, `sweep_evidence_test_seed777`),
 so no decision may depend on set iteration order. Real Vivado MCP tests
 additionally check the report recipe, endpoint constraints, stream handshake
@@ -375,8 +377,22 @@ scoped fallback and no-op fallback, estimated atomic floors, separate automatic
 MCP endpoint evidence, and explicit primitive-only/full-hierarchy modes.
 It also checks declared scope initialization, an error before initialization,
 rooted fixed-latency characterization preserving full-parse scope, and independent
-scope collections in a copied ParserState. A scheduled (stateful) AUTO_FSM is
-measured once as a whole, and nothing inside it is collected.
+scope collections in a copied ParserState. A scheduled (stateful) AUTO_FSM
+without an installed schedule is measured once as a whole; with one, its delay
+is the schedule's worst state and nothing is synthesized. Nothing inside it is
+collected either way. With a primitive delay model, modeled widths get estimated
+delays and their error bounds instead of synthesis runs.
+
+`primitive_delay_model_test.py` (`unit`) checks `SYN.PrimitiveDelayModel`:
+- entity-name parsing;
+- exact linear, log2 and constant fits;
+- refusals outside the measured widths, for too few widths, or an unseen
+  signedness;
+- the committed xc7a200tffg1156-2 Vivado cache's leave-one-out bounds;
+- AUTO_FSM measuring only an estimate near its state budget.
+
+`build_phase_timer_test.py` (`unit`) checks `SYN.PHASE`'s exclusive
+nested-phase accounting and the end-of-build `Time by build phase` line.
 
 `sweep_refinement_recovery_test.py` (`unit`) uses the real sweep feedback and
 fallback loop with scripted timing. A failed zero-cut trim concurrent with MCP
@@ -649,6 +665,8 @@ The latency memory and `--latency_hints` (see
     goal, another part or tool, or another digest never matches;
   - recording per piece (a failing MAIN records nothing, a met one its pieces),
     bounded variants, the store layout and its prune, v1 files ignored;
+  - an untimed region is not recorded, nor is the whole-MAIN piece containing it, while
+    a timed region in that MAIN is;
   - a mini-sweep lock survives a JSON round trip (`NORMALIZE_CONCRETE_PIPELINE`),
     and malformed parameters are rejected;
   - `latency_memory_constraints_design.py`:
@@ -656,9 +674,12 @@ The latency memory and `--latency_hints` (see
       still replays with a declared-clock `@wires` MAIN present;
     - real placement and lowering enforce a lower-goal floor even when the
       proposed count is zero, and replay rejects an implementation below it;
+      the floor's region retry keeps every instance's own `Logic`;
     - an entity's VHDL is the same whether or not the planner marked it fixed;
   - a lower-goal floor goes only to a region: a seeded tag holding another
     AUTO_PIPELINE gets none, and the final-table check never reports floors;
+  - a hint deeper than a lower-goal depth starts the tag above that floor, one
+    shallower starts at the floor, and same-goal memory still beats a hint;
   - an AUTO_MULTI_CYCLE whose datapath size depends on an AUTO_PIPELINE depth
     resolves in two memory re-parses.
 - **`latency_memory_build_test.py` (build_report_device_models, sky130):**
@@ -726,6 +747,23 @@ any rate, so these tests check the rate itself.
 - `self_check_stream_auto_pipeline_test.py` (`native_pipelined_sim_test`,
   synth_device_models): the same no-stall and no-bubble asserts at the latency a full
   build discovers.
+- `built_hardware_sim_test.py` (build_report_device_models): one sky130 build of
+  `built_hardware_top_design.py`, whose real ports keep all of
+  `built_hardware_core_design.py` (an AUTO_PIPELINE region, an AUTO_FSM, and an
+  AUTO_PIPELINE whose `.latency` is read but which is never instantiated), then native
+  `--sim` runs of `built_hardware_tb_design.py` in that output directory. The fixtures are
+  built from a copy, so one case can edit a source. It checks that:
+  - the testbench run parses and synthesizes nothing and leaves the directory unchanged,
+    and results arrive after the recorded AUTO_PIPELINE depth and AUTO_FSM latency;
+  - the testbench reads the value the build read for the unbuilt tag, which a
+    `--latency_hints` file seeds to a nonzero depth;
+  - a tag the build never decided (`-D EXTRA_TAG=1`), a call of the tag the build only
+    read (`-D CALL_SPARE=1`), a changed design parameter and an edited source are each
+    refused;
+  - a `--no_synth` build in the directory removes `built_hardware.json`.
+
+  The build passes `--pipeline_min_effort 0`: a trim trial of this design hits issue 45
+  of the [issues inventory](issues_inventory.md) ([#381](https://github.com/JulianKemmerer/PipelineC/issues/381)).
 
 ## Stream performance measurement coverage
 

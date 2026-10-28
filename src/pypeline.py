@@ -3266,6 +3266,56 @@ def _latency_seed(kind, key, max_latency):
     return value
 
 
+# The --out_dir whose built hardware the installed caches hold, while native
+# simulation runs another top on it (pypeline_sim.run_sim built_hardware_from=);
+# None otherwise. While set, using an AUTO_PIPELINE / AUTO_FSM / AUTO_MULTI_CYCLE
+# or auto-pipelined RAM that build never decided is an error.
+_built_hardware_source = None
+# (kind, canonical_key) -> the .latency value that build's design read for an
+# AUTO_PIPELINE / AUTO_MULTI_CYCLE it never instantiated; set with
+# _built_hardware_source
+_built_unbuilt_reads = {}
+
+
+class BuiltHardwareError(RuntimeError):
+    """Native simulation of a built top's hardware met hardware that build did
+    not decide (see SET_BUILT_HARDWARE_SOURCE)."""
+
+
+def SET_BUILT_HARDWARE_SOURCE(source, unbuilt_reads=None) -> None:
+    """pypeline_sim hook: the build directory whose decisions the installed
+    caches hold, or None for an ordinary simulation. unbuilt_reads is that
+    build's {kind: {canonical_key: value}} of .latency values read for tags it
+    never instantiated (SIM.WRITE_BUILT_HARDWARE)."""
+    global _built_hardware_source
+    _built_hardware_source = source
+    _built_unbuilt_reads.clear()
+    for kind, reads in (unbuilt_reads or {}).items():
+        for key, value in reads.items():
+            _built_unbuilt_reads[(kind, key)] = value
+
+
+def BUILT_HARDWARE_SOURCE():
+    return _built_hardware_source
+
+
+def _require_built(kind, tag, read=False):
+    """While simulating built hardware, refuse a tag that build never decided
+    (tag._built_decided): its latency, and so the simulated timing, would be a
+    guess. A .latency read (read=True) of a tag the build read too but never
+    instantiated is allowed: the tag returns the value that build read
+    (_built_unbuilt_reads). Reads canonical_key only then, so plain simulation
+    never imports the compiler."""
+    if _built_hardware_source is not None and not tag._built_decided:
+        if read and (kind, tag.canonical_key) in _built_unbuilt_reads:
+            return
+        raise BuiltHardwareError(
+            f"{kind} {tag.canonical_key} is not part of the hardware built in "
+            f"{_built_hardware_source}: that build never decided it. Simulate a "
+            "testbench whose hardware that build contains, or rebuild it."
+        )
+
+
 def SET_AUTO_PIPELINE_LATENCY_CACHE(cache: dict) -> None:
     """pipelinec-driver hook: install the previous pass's harvested
     AUTO_PIPELINE latencies (canonical_key -> stage count) so the next
@@ -3636,11 +3686,14 @@ class AUTO_PIPELINE:
             self.seed = _latency_seed("AUTO_PIPELINE", self.canonical_key, max_latency)
             if self.seed is not None:
                 self._latency = self.seed
+        # Whether the installed build harvest has this tag (_require_built)
+        self._built_decided = False
         # Skip key computation entirely when the cache is empty (native sim,
         # comb builds, bootstrap pass): keeps pure-sim runs from importing
         # the compiler (see canonical_key).
-        if _auto_pipeline_latency_cache:
+        if _auto_pipeline_latency_cache or _built_hardware_source is not None:
             cached = _auto_pipeline_latency_cache.get(self.canonical_key)
+            self._built_decided = cached is not None
             if cached is not None:
                 if latency is not None and cached != latency:
                     raise ValueError(
@@ -3649,6 +3702,9 @@ class AUTO_PIPELINE:
                     )
                 self._latency = cached
                 self.seed = None  # the build's own result supersedes it
+            elif ("AUTO_PIPELINE", self.canonical_key) in _built_unbuilt_reads:
+                # The simulated build read this tag but never built it
+                self._latency = _built_unbuilt_reads[("AUTO_PIPELINE", self.canonical_key)]
 
     def latency_suffix(self) -> str:
         # A named tag's start_latency is a starting count, not identity
@@ -3661,6 +3717,7 @@ class AUTO_PIPELINE:
     @property
     def latency(self) -> int:
         global _auto_pipeline_latency_was_read
+        _require_built("AUTO_PIPELINE", self, read=True)
         _auto_pipeline_latency_was_read = True
         if _auto_pipeline_build_mode is not None:
             _auto_pipeline_served.append((self, self._latency))
@@ -3705,6 +3762,8 @@ class AUTO_PIPELINE:
         return self._sim_key_str
 
     def __call__(self, *args, **kwargs):
+        if _sim_active:
+            _require_built("AUTO_PIPELINE", self)
         pipeline_model = False
         if _sim_active and _pipeline_latency_declared:
             model = getattr(self.func, "_sim_model_cell", [None])[0]
@@ -3930,6 +3989,11 @@ def _auto_pipeline_with_io_regs(
 #    "fu_order", "descended", "entity_delays_snapshot", ...}
 # Shared schema identity; native simulation checks it without compiler imports.
 _AUTO_FSM_SCHEDULE_VERSION = 15
+# The schedule fields native simulation reads (AUTO_FSM.__init__ and _sim_fsm);
+# a build's hardware record keeps only these (SIM.WRITE_BUILT_HARDWARE)
+AUTO_FSM_SIM_SCHEDULE_FIELDS = (
+    "version", "n_states", "latency", "max_latency", "register_output"
+)
 _auto_fsm_schedule_cache: dict = {}
 
 
@@ -4120,7 +4184,7 @@ class AUTO_FSM:
         # consistent view. Skip key computation entirely when the cache is empty
         # (native sim, comb builds, bootstrap pass) so pure-sim runs never import
         # the compiler.
-        if _auto_fsm_schedule_cache:
+        if _auto_fsm_schedule_cache or _built_hardware_source is not None:
             self._schedule = _auto_fsm_schedule_cache.get(self.canonical_key)
             # Native simulation consumes latency/state count and evaluates the
             # original pure function. Deep graph/recipe validation belongs to
@@ -4152,7 +4216,14 @@ class AUTO_FSM:
         self._latency = self._schedule["latency"] if self._schedule else 0
 
     @property
+    def _built_decided(self) -> bool:
+        """Whether the installed build harvest has this call site's schedule
+        (_require_built)."""
+        return self._schedule is not None
+
+    @property
     def latency(self) -> int:
+        _require_built("AUTO_FSM", self)
         return self._latency
 
     @property
@@ -4184,6 +4255,8 @@ class AUTO_FSM:
                 f"AUTO_FSM call argument must be a {{data, valid}} struct (e.g. "
                 f"MY_FSM.in_stream_t), got {type(s).__name__}"
             )
+        if _sim_active:
+            _require_built("AUTO_FSM", self)
         if _sim_active and self._schedule is not None:
             # Native sim with a pinned schedule (pipelinec non---comb --sim builds
             # install the harvested schedules before the sim's design import):
@@ -5537,6 +5610,8 @@ class AUTO_MULTI_CYCLE:
             if seed is not None and seed >= 1:
                 self.seed = ncycles = seed
         cached = _auto_multi_cycle_latency_cache.get(self.canonical_key)
+        # Whether the installed build harvest has this tag (_require_built)
+        self._built_decided = cached is not None
         if cached is not None:
             if latency is not None and cached != latency:
                 raise ValueError(
@@ -5550,6 +5625,9 @@ class AUTO_MULTI_CYCLE:
                 )
             ncycles = cached
             self.seed = None  # the build's own result supersedes it
+        elif ("AUTO_MULTI_CYCLE", self.canonical_key) in _built_unbuilt_reads:
+            # The simulated build read this tag but never built it
+            ncycles = _built_unbuilt_reads[("AUTO_MULTI_CYCLE", self.canonical_key)]
         self._ncycles = ncycles
         _auto_multi_cycle_constructed[self.canonical_key] = self
 
@@ -5559,6 +5637,7 @@ class AUTO_MULTI_CYCLE:
 
     @property
     def latency(self) -> int:
+        _require_built("AUTO_MULTI_CYCLE", self, read=True)
         _auto_multi_cycle_served.setdefault(self.canonical_key, set()).add(self._ncycles)
         sites = _auto_multi_cycle_read_sites.setdefault(self.canonical_key, [])
         site = _latency_read_site()

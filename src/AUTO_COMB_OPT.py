@@ -284,7 +284,7 @@ def prepare(func, parser_state, elaborator, strict=True, objective="area"):
         seed_cache[entity] = _implementation_seeds(func, entity, dag, parser_state, elaborator)
     seeds = list(seed_cache[entity])
     if objective == "delay":
-        seeds.extend(AUTO.delay_implementation_seeds(func, dag, parser_state, elaborator))
+        seeds.extend(AUTO.delay_implementation_seeds(func, entity, dag, parser_state, elaborator))
     dependencies = set(AUTO._subtree_entities(parser_state, entity))
     for seed, _moves in seeds:
         for node in seed["nodes"].values():

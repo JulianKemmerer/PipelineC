@@ -126,85 +126,251 @@ def _DO_OPTIONAL_SIM(
             VERILATOR.DO_SIM(multimain_timing_params, parser_state, args)
     elif SIM_TOOL is pypeline_sim:
         if do_sim:
-            # After a real (non---comb) build, hand the native sim the final
-            # per-MAIN latencies and the converged AUTO_PIPELINE harvest so it
-            # emulates the built pipeline latencies. Harvesting here (not
-            # reusing pypeline's cache) also covers designs whose AP .latency
-            # was never read -- the pin-and-confirm loop never ran for those,
-            # so the cache is still empty. Harvest divergences are already a
-            # fatal driver error for every non---comb .py build
-            # (AUTO_PIPELINE.AUTO_PIPELINE_DIVERGENCE_EXIT), so ignore them here.
-            main_latencies = None
-            ap_latencies = None
-            auto_multi_cycle_latencies = None
-            auto_fsm_schedules = None
-            pipeline_timing = None
+            hardware = {}
             if parser_state is not None:
-                main_latencies = GET_MAIN_FUNC_LATENCIES(
-                    parser_state, multimain_timing_params
-                )
-                if multimain_timing_params is not None and any(
-                    parser_state.func_fixed_latency.get(logic.func_name, 0)
-                    for logic in parser_state.LogicInstLookupTable.values()
-                ):
-                    # Plain placement data crosses the normal design reimport.
-                    # Only run_sim's reachability gate may import the evaluator.
-                    pipeline_timing = {
-                        name: (
-                            list(tp._slices),
-                            tp._has_input_regs,
-                            tp._has_output_regs,
-                            tp._exact_bit_boundaries,
-                            tp.logic.delay,
-                        )
-                        for name, tp in multimain_timing_params.TimingParamsLookupTable.items()
-                    }
-                if multimain_timing_params is not None:
-                    ap_latencies, _divergences = (
-                        AUTO_PIPELINE.HARVEST_AUTO_PIPELINE_LATENCIES(
-                            parser_state,
-                            multimain_timing_params.TimingParamsLookupTable,
-                        )
-                    )
+                hardware = NATIVE_SIM_HARDWARE(parser_state, multimain_timing_params)
                 # Fail loudly (rather than silently mis-model) if the design
                 # uses a pipelined-native-sim construct the emulation can't
                 # represent accurately -- see CHECK_PIPELINED_NATIVE_SIM_SUPPORTED.
                 CHECK_PIPELINED_NATIVE_SIM_SUPPORTED(
-                    parser_state, main_latencies, ap_latencies
+                    parser_state,
+                    hardware["main_latencies"],
+                    hardware["auto_pipeline_latencies"],
                 )
-                if multimain_timing_params is not None:
-                    # The multi-cycle counts actually constrained, so AUTO_MULTI_CYCLE
-                    # handshakes count the same cycles as the built VHDL
-                    auto_multi_cycle_latencies = (
-                        AUTO_MULTI_CYCLE.HARVEST_AUTO_MULTI_CYCLE_NCYCLES(
-                            parser_state, multimain_timing_params
-                        )
-                    )
-                # The AUTO_FSM schedules the build actually used. Taken from
-                # pypeline's installed cache rather than re-derived: the schedule
-                # in force is by definition the one the final elaboration read,
-                # and re-scheduling here could disagree with what was built.
-                import pypeline
-
-                auto_fsm_schedules = pypeline.AUTO_FSM_SCHEDULE_CACHE() or None
             pypeline_sim.run_sim(
                 source_file,
                 args.run,
-                main_latencies=main_latencies,
-                auto_pipeline_latencies=ap_latencies,
-                auto_pipeline_ram_plans=(
-                    AUTO_PIPELINE.RAM_PLANS_FROM_STATE(parser_state)
-                    if parser_state is not None
-                    else None
-                ),
-                auto_fsm_schedules=auto_fsm_schedules,
-                pipeline_timing=pipeline_timing,
-                auto_multi_cycle_latencies=auto_multi_cycle_latencies,
                 part=getattr(args, "part", None),
                 syn_tool=getattr(args, "syn_tool", None),
+                **hardware,
             )
     else:
         print("WARNING: Unknown simulation tool:", SIM_TOOL.__name__)
+
+
+def NATIVE_SIM_HARDWARE(parser_state, multimain_timing_params):
+    """pypeline_sim.run_sim's keyword arguments for the hardware a build made,
+    so the native sim emulates the built latencies. With no final timing params
+    (the comb path) only the RAM plans and installed AUTO_FSM schedules exist,
+    and every MAIN latency is zero. Harvesting here (not reusing pypeline's
+    cache) also covers designs whose AP .latency was never read -- the
+    pin-and-confirm loop never ran for those, so the cache is still empty.
+    Harvest divergences are already a fatal driver error for every non---comb
+    .py build (AUTO_PIPELINE.AUTO_PIPELINE_DIVERGENCE_EXIT), so they are
+    ignored here."""
+    import pypeline
+
+    pipeline_timing = None
+    if multimain_timing_params is not None and any(
+        parser_state.func_fixed_latency.get(logic.func_name, 0)
+        for logic in parser_state.LogicInstLookupTable.values()
+    ):
+        # Plain placement data crosses the normal design reimport.
+        # Only run_sim's reachability gate may import the evaluator.
+        pipeline_timing = {
+            name: (
+                list(tp._slices),
+                tp._has_input_regs,
+                tp._has_output_regs,
+                tp._exact_bit_boundaries,
+                tp.logic.delay,
+            )
+            for name, tp in multimain_timing_params.TimingParamsLookupTable.items()
+        }
+    ap_latencies = None
+    auto_multi_cycle_latencies = None
+    if multimain_timing_params is not None:
+        ap_latencies, _divergences = AUTO_PIPELINE.HARVEST_AUTO_PIPELINE_LATENCIES(
+            parser_state, multimain_timing_params.TimingParamsLookupTable
+        )
+        # The multi-cycle counts actually constrained, so AUTO_MULTI_CYCLE
+        # handshakes count the same cycles as the built VHDL
+        auto_multi_cycle_latencies = AUTO_MULTI_CYCLE.HARVEST_AUTO_MULTI_CYCLE_NCYCLES(
+            parser_state, multimain_timing_params
+        )
+    return dict(
+        main_latencies=GET_MAIN_FUNC_LATENCIES(parser_state, multimain_timing_params),
+        auto_pipeline_latencies=ap_latencies,
+        auto_pipeline_ram_plans=AUTO_PIPELINE.RAM_PLANS_FROM_STATE(parser_state),
+        # The AUTO_FSM schedules the build actually used. Taken from pypeline's
+        # installed cache rather than re-derived: the schedule in force is by
+        # definition the one the final elaboration read, and re-scheduling
+        # here could disagree with what was built.
+        auto_fsm_schedules=pypeline.AUTO_FSM_SCHEDULE_CACHE() or None,
+        pipeline_timing=pipeline_timing,
+        auto_multi_cycle_latencies=auto_multi_cycle_latencies,
+    )
+
+
+# File in a build's --out_dir holding what native simulation of another top
+# needs from that build (WRITE_BUILT_HARDWARE); present only once it met timing
+BUILT_HARDWARE_FILE = "built_hardware.json"
+# Format of BUILT_HARDWARE_FILE; a record of another version is not used
+BUILT_HARDWARE_VERSION = 1
+
+
+def WRITE_BUILT_HARDWARE(parser_state, multimain_timing_params, src_file):
+    """After a synthesizing build of a Pypeline design met timing: record in
+    BUILT_HARDWARE_FILE everything native simulation takes from a build
+    (NATIVE_SIM_HARDWARE), with the top it built, the hashes of the sources it
+    read and its design parameters, so another top (a testbench) can be
+    simulated on this hardware without building (SIMULATE_BUILT_HARDWARE)."""
+    if not src_file.endswith(".py"):
+        return
+    import dataclasses
+    import pypeline
+    import PY_TO_LOGIC
+
+    hardware = NATIVE_SIM_HARDWARE(parser_state, multimain_timing_params)
+    record = dict(
+        version=BUILT_HARDWARE_VERSION,
+        top=os.path.abspath(src_file),
+        sources=PY_TO_LOGIC.DESIGN_SOURCE_HASHES(),
+        design_params={
+            entry["name"]: entry["value"] for entry in pypeline.DESIGN_PARAM_REPORT()
+        },
+        # Native simulation cannot model these uses (PIPELINED_NATIVE_SIM_PROBLEMS)
+        native_sim_problems=PIPELINED_NATIVE_SIM_PROBLEMS(
+            parser_state,
+            hardware["main_latencies"],
+            hardware["auto_pipeline_latencies"],
+        ),
+        main_latencies=hardware["main_latencies"],
+        auto_pipeline_latencies=hardware["auto_pipeline_latencies"] or {},
+        auto_multi_cycle_latencies=hardware["auto_multi_cycle_latencies"] or {},
+        auto_fsm_schedules={
+            key: {f: schedule.get(f) for f in pypeline.AUTO_FSM_SIM_SCHEDULE_FIELDS}
+            for key, schedule in sorted((hardware["auto_fsm_schedules"] or {}).items())
+        },
+        auto_pipeline_ram_plans={
+            key: dataclasses.asdict(plan)
+            for key, plan in sorted(hardware["auto_pipeline_ram_plans"].items())
+        },
+        pipeline_timing=hardware["pipeline_timing"],
+        unbuilt_latency_reads=_unbuilt_latency_reads(
+            hardware["auto_pipeline_latencies"] or {},
+            hardware["auto_multi_cycle_latencies"] or {},
+        ),
+    )
+    path = os.path.join(SYN.SYN_OUTPUT_DIRECTORY, BUILT_HARDWARE_FILE)
+    SYN._write_json_atomic(path, record)
+    print(f"Built hardware for native simulation of other tops: {path}", flush=True)
+
+
+def _unbuilt_latency_reads(auto_pipeline_latencies, auto_multi_cycle_latencies):
+    """{kind: {canonical_key: value}}: the .latency value the final
+    elaboration read for each AUTO_PIPELINE / AUTO_MULTI_CYCLE it never
+    instantiated (a factory's unused alternative, say). A simulation of this
+    build serves the same value (pypeline._require_built). A tag read with two
+    different values is left out, so such a read stays an error there."""
+    import pypeline
+
+    reads = {}
+    for kind, served, built in (
+        ("AUTO_PIPELINE", pypeline.AUTO_PIPELINE_SERVED_LATENCIES(), auto_pipeline_latencies),
+        (
+            "AUTO_MULTI_CYCLE",
+            pypeline.AUTO_MULTI_CYCLE_SERVED_LATENCIES(),
+            auto_multi_cycle_latencies,
+        ),
+    ):
+        for key, values in sorted(served.items()):
+            if key not in built and len(values) == 1:
+                reads.setdefault(kind, {})[key] = next(iter(values))
+    return reads
+
+
+def _read_built_hardware(path):
+    """The BUILT_HARDWARE_FILE record at path, or None."""
+    import json
+
+    try:
+        with open(path) as f:
+            record = json.load(f)
+    except (OSError, ValueError):
+        return None
+    if not isinstance(record, dict) or record.get("version") != BUILT_HARDWARE_VERSION:
+        return None
+    return record
+
+
+def _changed_sources(sources):
+    """Paths among {path: sha256} whose current contents differ, sorted."""
+    import hashlib
+
+    changed = []
+    for path, sha in sorted(sources.items()):
+        try:
+            with open(path, "rb") as f:
+                same = hashlib.sha256(f.read()).hexdigest() == sha
+        except OSError:
+            same = False
+        if not same:
+            changed.append(path)
+    return changed
+
+
+def SIMULATE_BUILT_HARDWARE(args, src_file) -> bool:
+    """Called before any build. An --out_dir belongs to the top built in it:
+    a native, non---comb --sim of another .py file there (a testbench of that
+    hardware) simulates the recorded hardware (BUILT_HARDWARE_FILE) with no
+    elaboration, search or synthesis, and returns True. Its sources must be
+    unchanged since that build, and the simulation refuses hardware the build
+    never decided (pypeline_sim.run_sim built_hardware_from=). Otherwise a
+    build follows and replaces the --out_dir's contents, so the record goes
+    first: it is rewritten only if that build meets timing."""
+    import pypeline
+
+    out_dir = SYN.SYN_OUTPUT_DIRECTORY
+    path = os.path.join(out_dir, BUILT_HARDWARE_FILE)
+    record = _read_built_hardware(path)
+    if (
+        record is not None
+        and record["top"] != os.path.abspath(src_file)
+        and SIM_TOOL is pypeline_sim
+        and args.sim
+    ):
+        top = record["top"]
+        changed = _changed_sources(record["sources"])
+        if changed:
+            sys.exit(
+                f"ERROR: --out_dir {out_dir} holds the hardware built from {top}, "
+                f"but these sources changed since that build:\n  "
+                + "\n  ".join(changed)
+                + f"\nRebuild {top} there first, or simulate in another --out_dir."
+            )
+        if record["native_sim_problems"]:
+            sys.exit(_PIPELINED_NATIVE_SIM_ERROR(record["native_sim_problems"]))
+        print(
+            f"Native sim: simulating the hardware built from {top} in {out_dir} "
+            "(no elaboration or synthesis)",
+            flush=True,
+        )
+        try:
+            pypeline_sim.run_sim(
+                src_file,
+                args.run,
+                main_latencies=record["main_latencies"],
+                auto_pipeline_latencies=record["auto_pipeline_latencies"],
+                auto_pipeline_ram_plans={
+                    key: AUTO_PIPELINE.RamPlan(**plan)
+                    for key, plan in record["auto_pipeline_ram_plans"].items()
+                },
+                auto_fsm_schedules=record["auto_fsm_schedules"],
+                pipeline_timing=record["pipeline_timing"],
+                auto_multi_cycle_latencies=record["auto_multi_cycle_latencies"],
+                built_hardware_from=out_dir,
+                design_params=record["design_params"],
+                unbuilt_latency_reads=record.get("unbuilt_latency_reads"),
+            )
+        except pypeline.BuiltHardwareError as e:
+            sys.exit(f"ERROR: {e}")
+        finally:
+            pypeline.SET_BUILT_HARDWARE_SOURCE(None)
+        return True
+    if os.path.exists(path):
+        os.remove(path)
+    return False
 
 
 def GET_SIM_FILES(latency=0):
@@ -298,7 +464,15 @@ def CHECK_PIPELINED_NATIVE_SIM_SUPPORTED(parser_state, main_latencies, ap_latenc
     """Fail loudly (sys.exit) before native sim starts if a pipelined region
     uses global wires in a way the emulation cannot model, rather than
     silently producing cycle-wrong results (see pypeline_sim_DESIGN.md's
-    "Pipelined native sim" Limitations).
+    "Pipelined native sim" Limitations, and PIPELINED_NATIVE_SIM_PROBLEMS)."""
+    problems = PIPELINED_NATIVE_SIM_PROBLEMS(parser_state, main_latencies, ap_latencies)
+    if problems:
+        sys.exit(_PIPELINED_NATIVE_SIM_ERROR(problems))
+
+
+def PIPELINED_NATIVE_SIM_PROBLEMS(parser_state, main_latencies, ap_latencies=None):
+    """The global wire uses inside pipelined logic native sim cannot model,
+    as messages (empty when it can model the build).
 
     A pipelined region is a naturally pipelined pure @MAIN (total latency > 0)
     or an AUTO_PIPELINE call site with latency > 0. Hardware aligns a global
@@ -347,18 +521,21 @@ def CHECK_PIPELINED_NATIVE_SIM_SUPPORTED(parser_state, main_latencies, ap_latenc
                     f"'{ent}' (instance {LOGIC.SUBMODULE_MARKER.join(path)} "
                     f"inside pipelined '{root}') uses global wire(s) {', '.join(detail)}"
                 )
-    if problems:
-        sys.exit(
-            "ERROR: native sim cannot model these global wire uses inside "
-            "pipelined logic:\n  "
-            + "\n  ".join(problems)
-            + "\nHardware wires a global directly to the function that uses it "
-            "and aligns it with that function's own arguments/return at the "
-            "pipeline stage the function is placed (VOLATILE: per consumer "
-            "stage). Native sim only models non-VOLATILE global wires used "
-            "directly in the body of the pipelined @MAIN or AUTO_PIPELINE-tagged "
-            "function itself. Simulate the generated hardware instead "
-            "(--cocotb --ghdl), or move the wire access into the pipelined "
-            "function and pass values as arguments/return values. See "
-            "pypeline_guide.md 'Global wires in pipelined code'."
-        )
+    return problems
+
+
+def _PIPELINED_NATIVE_SIM_ERROR(problems):
+    return (
+        "ERROR: native sim cannot model these global wire uses inside "
+        "pipelined logic:\n  "
+        + "\n  ".join(problems)
+        + "\nHardware wires a global directly to the function that uses it "
+        "and aligns it with that function's own arguments/return at the "
+        "pipeline stage the function is placed (VOLATILE: per consumer "
+        "stage). Native sim only models non-VOLATILE global wires used "
+        "directly in the body of the pipelined @MAIN or AUTO_PIPELINE-tagged "
+        "function itself. Simulate the generated hardware instead "
+        "(--cocotb --ghdl), or move the wire access into the pipelined "
+        "function and pass values as arguments/return values. See "
+        "pypeline_guide.md 'Global wires in pipelined code'."
+    )

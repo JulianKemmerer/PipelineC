@@ -296,6 +296,28 @@ def test_recording_per_piece_and_lock_roundtrip(tmp):
     AUTO_PIPELINE.RESTORE_CONCRETE_PIPELINE(inst, normalized, table, ps)
 
 
+def test_untimed_regions_are_not_remembered(tmp):
+    """WireGuard's perf testbench met 80 MHz with its decrypt MAC removed by
+    synthesis: those regions (SWEEP.WARN_UNTIMED_REGIONS) and the whole-MAIN
+    pieces containing them are not remembered; a timed region in the same MAIN is."""
+    ps = SimpleNamespace(part="xc7a200tffg1156-2", main_mhz={"m": 80},
+                         LogicInstLookupTable={"m": SimpleNamespace(func_name="m")})
+    identities = {(AP, "timed"): dict(digest="d", mains={"m"}, goal_mhz=80),
+                  (AP, "untimed"): dict(digest="e", mains={"m"}, goal_mhz=80),
+                  ("main", "m"): dict(digest="f", mains={"m"}, goal_mhz=80)}
+    profile = {"entries": [dict(kind=AP, key=k, latency=1, achieved_mhz=91.9)
+                           for k in ("timed", "untimed")]}
+    history = {"mains": {"m": {"final": dict(met=True, met_basis="measured")}}}
+    params = SimpleNamespace(TimingParamsLookupTable={})
+    with patch.object(SWEEP, "_latency_piece_identities", lambda _: identities), patch.dict(
+            SWEEP.CARRIED_LOCKS, {}, clear=True), patch.object(
+            AUTO_PIPELINE, "CAPTURE_CONCRETE_PIPELINE", lambda *_: {}):
+        pieces = SWEEP.BUILD_LATENCY_PIECES(ps, params, history, profile)
+        assert sorted(e["key"] for e in pieces) == ["m", "timed", "untimed"]
+        pieces = SWEEP.BUILD_LATENCY_PIECES(ps, params, history, profile, {"untimed": "m"})
+        assert [e["key"] for e in pieces] == ["timed"]
+
+
 _DEPENDENT_SRC = """
 import sys
 sys.path.insert(0, {src!r})
@@ -388,6 +410,10 @@ def test_replay_bounds_and_lower_goal_floor(tmp):
                 built = table[region.inst].GET_TOTAL_LATENCY(ps, table)
                 assert built == floor, (floor, built)
                 assert not AUTO_PIPELINE.AUTO_PIPELINE_CONSTRAINTS_REALIZED_PROBLEMS(ps, table)
+                # The floor's retry resets the region from the zero table
+                # without copying each instance's Logic.
+                for inst, timing_params in table.items():
+                    assert timing_params.logic is ps.LogicInstLookupTable[inst], inst
         # A mini-sweep writes its winner before the lock sets the planner's
         # fixed flag, and a replay renders it already fixed. The entity's text
         # must not depend on that flag, so the replay's synthesis inputs match.
@@ -415,6 +441,61 @@ def test_replay_bounds_and_lower_goal_floor(tmp):
         pypeline.SET_LATENCY_SEEDS({})
         pypeline.SET_AUTO_PIPELINE_BUILD_MODE(None)
         SWEEP.LATENCY_MEMORY_MAIN_REPLAYS.clear()
+        SYN.SYN_TOOL = original_tool
+
+
+def test_hint_beats_lower_goal_memory(tmp):
+    """A depth remembered at a lower goal is a floor here, not this goal's
+    answer: a deeper explicit hint starts the tag, above that floor. Memory
+    from the same goal still beats a hint. WireGuard's 80 MHz build started
+    its coefficient bodies at a 40 MHz depth of 1 instead of the hinted 8."""
+    import PY_TO_LOGIC
+
+    design = os.path.join(tmp, "hint_regions.py")
+    with open(design, "w") as f:
+        f.write(_NESTED_SRC.format(src=os.path.join(THIS_DIR, "..", "..", ".."))
+                .replace("@MAIN\ndef nested_main", "@MAIN(50.0)\ndef nested_main"))
+    out_dir = os.path.join(tmp, "hint_regions_out")
+    os.makedirs(out_dir)
+    SYN.SYN_OUTPUT_DIRECTORY = out_dir
+    SYN.TOP_LEVEL_MODULE = "top"
+    original_tool = SYN.SYN_TOOL
+    SYN.SYN_TOOL = SYN.TOOL_MODULES["vivado"]
+
+    def parse(seeds):
+        pypeline.SET_LATENCY_SEEDS(seeds)
+        state = PY_TO_LOGIC.PARSE_FILE(design)
+        state.part = "xc7a35ticsg324-1l"
+        AUTO_PIPELINE.WRITE_0_ADDED_CLKS_INIT_FILES(state)
+        return state
+
+    def resolve(hint_depths):
+        SWEEP.LOAD_LATENCY_SEEDS(out_dir, [])
+        hints = {(AP, key): (depth, "hints fixture.json")
+                 for key, depth in hint_depths.items()}
+        SWEEP.RESOLVE_LATENCY_MEMORY(parse(hints), hints, parse)
+        return {key: pypeline._latency_seeds_applied[(AP, key)] for key in hint_depths}
+
+    try:
+        pypeline.SET_AUTO_PIPELINE_BUILD_MODE("sweep")
+        first = parse({})
+        identities = SWEEP._latency_piece_identities(first)
+        write(os.path.join(out_dir, "latency_memory.json"), {"schema_version": 2, "pieces": [
+            dict(kind=AP, key=key, digest=identities[(AP, key)]["digest"], goal_mhz=goal,
+                 part=first.part, tool="vivado", latency=latency)
+            for key, goal, latency in (("inner", 40.0, 2), ("outer", 50.0, 3))]})
+        applied = resolve({"inner": 5, "outer": 7})
+        assert applied["inner"][0] == 5 and "floor 2" in applied["inner"][1], applied
+        assert applied["outer"][0] == 3 and "latency memory" in applied["outer"][1], applied
+        assert SWEEP.LATENCY_MEMORY_AP_FLOORS == {"inner": 2}, SWEEP.LATENCY_MEMORY_AP_FLOORS
+        # A hint below the lower-goal floor starts at the floor.
+        applied = resolve({"inner": 1})
+        assert applied["inner"][0] == 2 and "latency memory" in applied["inner"][1], applied
+        print("test_hint_beats_lower_goal_memory PASS")
+    finally:
+        pypeline.SET_LATENCY_SEEDS({})
+        pypeline.SET_AUTO_PIPELINE_BUILD_MODE(None)
+        SWEEP.LOAD_LATENCY_SEEDS(out_dir, [])
         SYN.SYN_TOOL = original_tool
 
 
@@ -530,7 +611,9 @@ if __name__ == "__main__":
         test_selection_and_store(tmp)
         test_digest_changes_only_ancestors(tmp)
         test_recording_per_piece_and_lock_roundtrip(tmp)
+        test_untimed_regions_are_not_remembered(tmp)
         test_replay_bounds_and_lower_goal_floor(tmp)
+        test_hint_beats_lower_goal_memory(tmp)
         test_lower_goal_floor_only_for_regions(tmp)
         test_dependent_piece_resolution(tmp)
     print("All latency memory unit tests passed.")

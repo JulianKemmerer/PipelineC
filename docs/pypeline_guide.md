@@ -390,6 +390,14 @@ simulation feature set — `@sim_output`/`@sim_input`, `sim_print`/`sim_assert`/
 material covered in
 [Simulation Reference](#simulation-reference) in Part VI, once you've got the basics down.
 
+**Testbenches run on the built design.** Keep the hardware top, with its real input and
+output ports, in its own file, and import its modules from the testbench. Build the top,
+then simulate the testbench in the top's output directory
+(`pypelinec tb.py --sim --run all --out_dir <the top's>`): the testbench runs natively with
+the latencies that build chose, and builds nothing itself. Building a testbench top would
+time hardware that synthesis may have cut down around constant or `@sim_input` stimulus.
+See [Simulating a testbench on built hardware](README.md#simulating-a-testbench-on-built-hardware).
+
 ### `@hw_func`
 
 Decorate hardware helper functions with `@hw_func`.
@@ -3343,6 +3351,10 @@ matches even after you edit part of the design or change a clock goal:
 - A piece is remembered in `<out_dir>/latency_memory.json` when every `@MAIN` using it
   met timing. A `@MAIN` that misses keeps its earlier pieces, and the others still
   record theirs.
+- An AUTO_PIPELINE region whose own measured delay could not meet the clock at the
+  depth it was built is not remembered, even though its `@MAIN` met timing, and neither
+  is a whole `@MAIN` containing it. Synthesis never timed such a region, usually because
+  a testbench's constant stimulus let it remove the logic; the build warns about it.
 - With `--syn_cache DIR`, pieces also go into the store. The store isn't tied to an
   output directory, so a 60 MHz build directory can start an 85 MHz one.
 
@@ -3380,8 +3392,10 @@ with no memory yet (a fresh clone, a new machine). The file is a
   hints file readable and robust to refactoring.
 - **A hint is a start, exactly like `start_latency=`.** A hinted tag needs no
   `start_latency=` of its own.
-- **Precedence.** The flag is repeatable, and a later file wins. Matching remembered
-  pieces win over hints, and hints win over `start_latency=`.
+- **Precedence.** The flag is repeatable, and a later file wins. A piece remembered at
+  this clock goal wins over a hint. A piece remembered at a lower goal is only a floor
+  here: a deeper hint starts above it, a shallower one starts at the floor. Hints win
+  over `start_latency=`.
 - **What the build reports.** One line per starting latency it used, naming its source
   and recorded goal; locks also show their depth. One note names every hint no tag
   took: a renamed or removed tag, or one that isn't part of this configuration (one
@@ -3923,6 +3937,14 @@ UPDATE = AUTO_FSM(next_state, max_latency=8)
 It is a hard constraint. The tool compares additional unit copies, pipelined
 arithmetic and different sharing choices. If the considered implementations
 cannot fit N, the build fails and reports the latency found by scheduling.
+
+The area search prefers the smallest schedule within the cap, so it often uses
+most of the cap. For an FSM that serves one request at a time, latency is
+throughput, so the build log reports the trade it saw: an `area vs states` line
+lists estimated area at each state count, for example
+`45 states 28715, 50 states 26100, 64 states 23388`. Picking a cap from it
+needs no synthesis. The list holds only the points the search visited, so it is
+not exhaustive.
 
 Sharing is not free: every shared unit needs a multiplexer picking its operands
 per state, and more states means more registers holding values in between. For

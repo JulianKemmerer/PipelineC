@@ -22,7 +22,7 @@ DESIGN = Path(__file__).with_name("synthesis_scope_design.py")
 
 
 @contextlib.contextmanager
-def characterized(mode="leaf", cached_delay=None, prepare=None):
+def characterized(mode="leaf", cached_delay=None, prepare=None, delay_model=None):
     calls = []
 
     def synth(inst, logic, *args, **kwargs):
@@ -47,7 +47,8 @@ def characterized(mode="leaf", cached_delay=None, prepare=None):
             (SYN, "WRITE_BLACK_BOX_FILES", lambda *a: None),
             (SYN, "SET_MEASURED_DELAY_FROM_REPORT", measured),
             (SYN, "GET_NUM_PROCESSES", lambda: 1),
-            (SYN.DEVICE_MODELS, "part_supported", lambda *a: False),
+            (SYN, "USE_PRIMITIVE_DELAY_MODEL", delay_model is not None),
+            (SYN, "PrimitiveDelayModel", lambda _cache_dir: delay_model),
             (MCP, "ISOLATED_MCP_EVIDENCE", {}),
         ]:
             stack.enter_context(patch.object(obj, name, value))
@@ -167,6 +168,51 @@ def test_scheduled_fsm_is_one_measured_atomic_span():
             inside.intersection(ps.path_delay_funcs)
         )
         assert not any(f == "fsm_main" for _, f in calls)
+
+
+def test_scheduled_fsm_takes_its_delay_from_the_installed_schedule():
+    # A whole-module run of each generated FSM took 8 minutes on WireGuard and
+    # reported an input-to-output figure. With a schedule installed, its worst
+    # state (or a longer measured pinned-unit stage) is the delay instead.
+    import pypeline
+
+    pypeline.SET_AUTO_FSM_SCHEDULE_CACHE({"scope_fsm": dict(
+        worst_state_du=95,
+        implementations={"unit": dict(placement_digest="d3", worst_stage_du=90)},
+        unit_measurements={"d3": dict(worst_stage_du=104)},
+    )})
+    try:
+        with characterized(prepare=_mark_scheduled_fsm) as (ps, calls):
+            fsm = ps.FuncLogicLookupTable["fsm_stand_in"]
+            assert not any(f == "fsm_stand_in" for _, f in calls), calls
+            assert fsm.delay == 104 and fsm.delay_is_estimated, fsm.delay
+            inside = set(fsm.submodule_instances.values())
+            assert not inside.intersection(ps.path_delay_funcs)
+    finally:
+        pypeline.SET_AUTO_FSM_SCHEDULE_CACHE({})
+
+
+def test_primitive_widths_are_estimated_instead_of_synthesized():
+    # A width the tool has not measured is estimated from measured widths
+    # (SYN.PrimitiveDelayModel), marked as an estimate with its error bound.
+    # Primitives the model does not cover are still synthesized.
+    class Model:
+        def estimate(self, func_name):
+            return (2.5, 0.3) if func_name.startswith("BIN_OP_PLUS_") else None
+
+    with characterized(delay_model=Model()) as (ps, calls):
+        plus = [
+            l
+            for f, l in ps.FuncLogicLookupTable.items()
+            if f.startswith("BIN_OP_PLUS_") and f in ps.path_delay_funcs
+        ]
+        assert plus
+        assert not any(f.startswith("BIN_OP_PLUS_") for _, f in calls), calls
+        assert all(
+            l.delay == 25 and l.delay_is_estimated and l.delay_model_error == 3
+            for l in plus
+        ), [(l.func_name, l.delay, l.delay_model_error) for l in plus]
+        assert any(f.startswith("MUX_") for _, f in calls), calls
 
 
 def test_unmarked_stateful_function_without_consumer_has_no_jobs():

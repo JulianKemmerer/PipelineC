@@ -292,7 +292,7 @@ def test_holder_rebuilt_for_a_new_count_reuses_its_datapath_evidence():
                     patch.object(SYN, "GET_CACHED_PATH_DELAY", lambda *a: None), \
                     patch.object(SYN, "GET_NUM_PROCESSES", lambda: 1), \
                     patch.object(SYN, "SET_MEASURED_DELAY_FROM_REPORT", fake_measured), \
-                    patch.object(SYN.DEVICE_MODELS, "part_supported", lambda part: False):
+                    patch.object(SYN, "USE_PRIMITIVE_DELAY_MODEL", False):
                 SYN.ADD_PATH_DELAY_TO_LOOKUP(ps)
         holder = next(l for l in ps.FuncLogicLookupTable.values() if l.auto_multi_cycle_tuples)
         group = MCP.COLLECT_AUTO_MULTI_CYCLE_GROUPS(ps)[key]
@@ -359,7 +359,7 @@ def test_jobs_cap_covers_mcp_characterization():
                     patch.object(SYN, "GET_CACHED_PATH_DELAY", lambda *a: None), \
                     patch.object(SYN, "NUM_PROCESSES", jobs), \
                     patch.object(SYN, "SET_MEASURED_DELAY_FROM_REPORT", fake_measured), \
-                    patch.object(SYN.DEVICE_MODELS, "part_supported", lambda part: False):
+                    patch.object(SYN, "USE_PRIMITIVE_DELAY_MODEL", False):
                 SYN.ADD_PATH_DELAY_TO_LOOKUP(ps)
         return ps
 

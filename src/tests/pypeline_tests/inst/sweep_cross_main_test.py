@@ -619,16 +619,20 @@ def _region_state(constraint, other_main_member=False):
 
 def test_lock_rules_for_regions():
     start_only = LOGIC.AutoPipelineLatency(start_latency=1)
-    for constraint, member, expected in [
-        (start_only, False, None),
-        (LOGIC.AutoPipelineLatency(latency=2), False, "constrained AUTO_PIPELINE region"),
-        (LOGIC.AutoPipelineLatency(max_latency=3), False, "constrained AUTO_PIPELINE region"),
-        (LOGIC.AutoPipelineLatency(start_latency=1, max_latency=3), False, "constrained AUTO_PIPELINE region"),
-        (start_only, True, "AUTO_PIPELINE region shared with another MAIN"),
+    for constraint, member, peer, expected in [
+        (start_only, False, False, None),
+        (LOGIC.AutoPipelineLatency(latency=2), False, False, "constrained AUTO_PIPELINE region"),
+        (LOGIC.AutoPipelineLatency(max_latency=3), False, False, "constrained AUTO_PIPELINE region"),
+        (LOGIC.AutoPipelineLatency(start_latency=1, max_latency=3), False, False, "constrained AUTO_PIPELINE region"),
+        # The other member's MAIN is a peer (same goal): the lock goes into both
+        (start_only, True, True, None),
+        (start_only, True, False, "AUTO_PIPELINE region shared with a MAIN at another clock goal"),
     ]:
         ps = _region_state(constraint, member)
         plan = SWEEP.MainSweepPlan("a", 100)
         plan.subtrees = ["a"]
+        if peer:
+            plan.peers = [SWEEP.MainSweepPlan("z", 100)]
         plan.regions = [
             r for r in AUTO_PIPELINE.COLLECT_AUTO_PIPELINE_REGIONS(ps) if r.inst.startswith("a" + M)
         ]
@@ -636,8 +640,85 @@ def test_lock_rules_for_regions():
             got = SWEEP.LOCK_BLOCKED_REASON("h", plan, ["a" + M + "r" + M + "h"], ps)
             # Locking the region root itself is never allowed
             root = SWEEP.LOCK_BLOCKED_REASON("region_func", plan, ["a" + M + "r"], ps)
-        assert got == expected, (constraint.describe(), member, got)
+        assert got == expected, (constraint.describe(), member, peer, got)
         assert root == "constrained AUTO_PIPELINE region", root
+
+
+def _peer_plans(goals):
+    """MAINs with a start_latency= region 'r' around helper 'h', one plan
+    each, linked to their same-goal peers as the sweep links them. The
+    regions of MAINs at one goal share one group."""
+    tree = {}
+    for m in goals:
+        tree[m] = (m, False)
+        tree[m + M + "r"] = ("region_func", False)
+        tree[m + M + "r" + M + "h"] = ("h", False)
+    ps = _state(tree, goals)
+    for m in goals:
+        ps.LogicInstLookupTable[m].sub_inst_to_auto_pipeline_latency = {
+            "r": LOGIC.AutoPipelineLatency(start_latency=1)
+        }
+        ps.LogicInstLookupTable[m].sub_inst_to_auto_pipeline_key = {
+            "r": f"region_key_{goals[m]}"
+        }
+    regions = AUTO_PIPELINE.COLLECT_AUTO_PIPELINE_REGIONS(ps)
+    plans = {}
+    for m, goal in goals.items():
+        plans[m] = SWEEP.MainSweepPlan(m, goal)
+        plans[m].subtrees = [m]
+        plans[m].regions = [r for r in regions if r.inst.startswith(m + M)]
+    SWEEP.LINK_PEER_PLANS(plans)
+    return ps, plans
+
+
+def _lock(ps, inst, slices):
+    table = {i: AUTO_PIPELINE.TimingParams(i, l) for i, l in ps.LogicInstLookupTable.items()}
+    table[inst].SET_SLICES(slices)
+    return SWEEP.MiniSweepLock(
+        slices,
+        concrete=AUTO_PIPELINE.CAPTURE_CONCRETE_PIPELINE(inst, table, ps),
+        model_fingerprint=SWEEP.SUBTREE_MODEL_FINGERPRINT(inst, ps),
+    )
+
+
+def test_lock_applies_to_every_instance_at_the_same_clock_goal():
+    """A lock a mini-sweep finds holds for every instance of its module at the
+    same clock goal: the peer MAIN's instance in the shared region takes it
+    and replans, a MAIN at another goal does not. A carried lock only fills
+    a peer that has none."""
+    ps, plans = _peer_plans({"a": 100, "z": 100, "y": 50})
+    assert plans["a"].peers == [plans["z"]] and plans["y"].peers == []
+    helper = lambda m: m + M + "r" + M + "h"
+    plans["a"].locked[helper("a")] = _lock(ps, helper("a"), [0.5])
+    with patch.object(AUTO_PIPELINE, "FUNC_HAS_HIER_ALLOWING_ADDED_LATENCY_TO_RAW_VHDL", lambda *a: True), \
+            patch.object(SWEEP, "SET_MINISWEEP_BOUNDARY_STRATEGY", lambda *a: None):
+        took = SWEEP.SHARE_LOCK(plans["a"], "h", ps)
+        assert took == [plans["z"]], took
+        shared = plans["z"].locked[helper("z")]
+        assert shared.slices == [0.5] and shared.concrete == plans["a"].locked[helper("a")].concrete
+        assert plans["z"].needs_replan and not plans["y"].locked
+        # Carried locks fill only a peer without one of its own
+        plans["z"].locked[helper("z")] = _lock(ps, helper("z"), [0.25, 0.75])
+        assert SWEEP.SHARE_LOCK(plans["a"], "h", ps, only_unlocked=True) == []
+        assert plans["z"].locked[helper("z")].slices == [0.25, 0.75]
+
+
+def test_region_group_decisions_cover_every_same_goal_member():
+    """Growing, rebalancing and recalibrating a region group changes every
+    member at the same clock goal, so the group keeps one .latency."""
+    ps, plans = _peer_plans({"a": 100, "z": 100, "y": 50})
+    region = plans["a"].regions[0]
+    action, changed = AUTO_PIPELINE.AUTO_PIPELINE_REGION_FEEDBACK(
+        plans["a"], region, "h", 100.0, 50.0, ps
+    )
+    assert changed and action.startswith("grow_auto_pipeline"), action
+    grown = region.scale
+    assert grown > 1.0 and plans["z"].regions[0].scale == grown
+    assert plans["z"].func_delay_scale["h"] == plans["a"].func_delay_scale["h"]
+    assert plans["z"].needs_replan
+    assert plans["y"].regions[0].scale == 1.0 and "h" not in plans["y"].func_delay_scale
+    AUTO_PIPELINE.RESET_REGION_CALIBRATION_AFTER_LOCK(plans["a"], region)
+    assert region.scale == plans["z"].regions[0].scale == 1.0
 
 
 def test_try_minisweep_streak_and_budget():
@@ -741,6 +822,80 @@ def test_start_latency_region_hotspot_takes_the_minisweep():
     assert actions[-1] == "met", actions
     assert not result.sweep_timing_failures, result.sweep_timing_failures
     assert region.scale == 1.0, region.scale  # recalibrated on the lock
+
+
+def test_shared_region_is_locked_once_for_every_same_goal_main():
+    """Two MAINs at one goal instantiate one start_latency= region group. The
+    first to blame its helper mini-sweeps it, the lock goes into both
+    instances, and the other MAIN takes no decision of its own that
+    iteration. Both meet with one shared interior."""
+    ps = _region_state(LOGIC.AutoPipelineLatency(start_latency=1), other_main_member=True)
+    regions = AUTO_PIPELINE.COLLECT_AUTO_PIPELINE_REGIONS(ps)
+    helpers = ["a" + M + "r" + M + "h", "z" + M + "r" + M + "h"]
+
+    def fresh(_):
+        return {i: AUTO_PIPELINE.TimingParams(i, l) for i, l in ps.LogicInstLookupTable.items()}
+
+    params = SimpleNamespace(TimingParamsLookupTable=fresh(ps), auto_multi_cycle_ncycles={})
+    minis = []
+
+    def mini(func, plan, ps_):
+        minis.append(plan.main_inst)
+        helper = plan.main_inst + M + "r" + M + "h"
+        table = fresh(ps_)
+        table[helper].SET_SLICES([0.5])
+        plan.locked[helper] = SWEEP.MiniSweepLock(
+            [0.5],
+            concrete=AUTO_PIPELINE.CAPTURE_CONCRETE_PIPELINE(helper, table, ps_),
+            model_fingerprint=SWEEP.SUBTREE_MODEL_FINGERPRINT(helper, ps_),
+        )
+        return True
+
+    def rule(ps_, p):
+        return [
+            path(h.split(M)[0], 5.0 if p.TimingParamsLookupTable[h]._slices else 12.0)
+            for h in helpers
+        ]
+
+    def stages(table, main):
+        return len(table[main + M + "r" + M + "h"]._slices)
+
+    backend = ScriptedBackend(rule, True)
+    history = {}
+    with tempfile.TemporaryDirectory() as out, ExitStack() as stack:
+        for obj, key, value in _scripted_sweep_patches(
+            backend,
+            fresh,
+            [
+                (SYN, "SYN_OUTPUT_DIRECTORY", out),
+                (SWEEP, "SWEEP_HISTORY", history),
+                (AUTO_PIPELINE, "COLLECT_AUTO_PIPELINE_REGIONS", lambda *a, **k: regions),
+                (SWEEP, "RESOLVE_PIPELINABLE_HOTSPOT", lambda p, plan, ps_: ("h", None, "")),
+                (SWEEP, "RUN_HOTSPOT_MINISWEEP", mini),
+                (SWEEP, "SET_MINISWEEP_BOUNDARY_STRATEGY", lambda *a: None),
+                (SWEEP, "SUMMARIZE_SUBTREE_PIPELINE", lambda m, st, t, p: (False, [], stages(t, m))),
+                (SWEEP, "GET_SUBTREE_PIPELINE_STAGES", lambda plan, t, p: stages(t, plan.main_inst)),
+                (
+                    AUTO_PIPELINE.TimingParams,
+                    "GET_TOTAL_LATENCY",
+                    lambda self, _ps, t: sum(
+                        len(t[i]._slices) for i in t
+                        if i == self.inst_name or i.startswith(self.inst_name + M)
+                    ),
+                ),
+                (AUTO_PIPELINE, "FUNC_HAS_HIER_ALLOWING_ADDED_LATENCY_TO_RAW_VHDL", lambda *a: True),
+            ],
+        ):
+            stack.enter_context(patch.object(obj, key, value))
+        result = SWEEP.DO_PLANNED_THROUGHPUT_SWEEP(ps, params)
+    actions = {m: [r["action"] for r in history[m]["iterations"]] for m in ("a", "z")}
+    assert minis == ["a"], (minis, actions)
+    assert actions["a"][1] == "minisweep(h)", actions
+    assert actions["z"][1] == "minisweep(h) from a", actions
+    assert actions["a"][-1] == actions["z"][-1] == "met", actions
+    assert not result.sweep_timing_failures, result.sweep_timing_failures
+    table = result.TimingParamsLookupTable
+    assert [table[h]._slices for h in helpers] == [[0.5], [0.5]], actions
 
 
 def test_capped_region_never_locks_inside():
