@@ -12,9 +12,12 @@ their defaults or an assertion that their reset systems solve Pypeline's
 automatic-pipeline semantics.
 
 Scope is the Python HDL, its native and generated-HDL simulation, the shared
-compiler/backend paths it uses, and Pypeline libraries and examples. The legacy
-C front end is outside scope. Findings describe the current source; they do not
-claim new synthesis measurements or executed reset regressions.
+compiler/backend paths it uses, and Pypeline libraries and examples. Legacy
+StreamSoC source supplies application requirements for a future Pypeline port;
+implementing reset in the C front end remains outside scope. The external
+WireGuard Pypeline design also supplies concrete integration requirements.
+Findings describe inspected source, not new synthesis measurements or executed
+reset regressions.
 
 ## Table of Contents
 
@@ -66,8 +69,9 @@ claim new synthesis measurements or executed reset regressions.
    synchronization and restart readiness.
 8. Audit Pypeline libraries and examples for reset compatibility, without enabling
    reset throughout existing code. PDW and the external WireGuard design are the
-   first large adopters, alongside new examples. Resettable FIFOs should remove
-   reset-only drain/flush workarounds; preserve normal packet/algorithm flushing.
+   first large adopters, alongside new examples; a future Pypeline StreamSoC
+   should preserve the simple reset usage of the C design. Resettable FIFOs
+   should remove reset-only drain/flush workarounds; preserve normal packet/algorithm flushing.
 9. Allow register initial values without a reset only on FPGA targets that
    support the requested power-up initialization. On ASIC targets, a
    user-specified register initial value requires an effective reset.
@@ -80,11 +84,24 @@ claim new synthesis measurements or executed reset regressions.
 12. Review CE semantics together with reset, especially delayed internal CE and
     freely clocked IO banks; existing CE implementation details are not fixed
     requirements for the new API.
+13. WireGuard will use **one reset for the entire selected design**, including
+    both directions and all shared resources in the shared design. Its FPGA
+    prototype will opt into an ASIC-compatible reset policy covering almost all
+    register state, including omitted-initializer `Reg[T]` declarations, nested
+    library state and generated pipeline/FSM state.
+    This is broader than checking explicit initializers or clearing only valid
+    bits. Memory contents remain subject to the separate no-reset rule.
+14. **Reset overrides a ready/valid handshake:** a transfer at a reset edge is
+    dropped, even if valid and ready would otherwise both be high. Stream outputs
+    must have valid low during reset; ready should preferably be low too. For
+    synchronous reset without combinational status gating, registered outputs
+    take these values after the reset edge, and the edge itself cancels transfers
+    despite any old high ready/valid values.
 
 Active-low and asynchronous reset support, including their first-release scope,
-remain to be decided. FIFO transfer suppression and recovery details also remain
-open; the preferred synchronous interface avoids combinational reset-to-ready/
-valid paths.
+remain to be decided. Exact FIFO ready/release timing also remains open within
+the transfer-drop and low-valid contract; the preferred synchronous interface
+avoids combinational reset-to-ready/valid paths.
 
 ## Existing mechanisms
 
@@ -177,6 +194,13 @@ than depending on statement order or recognizing a variable named `rst`.
 Also define whether a parent override affects children and automatically inserted
 registers; a manual branch must not silently disable their inherited reset.
 
+StreamSoC supplies a concrete nonconstant manual reset case: the legacy
+[I2S receiver/transmitter](../include/i2s/i2s_mac.c) assigns `last_lr = lr` while
+reset is active, alongside constant resets of its phase/count/valid state.
+A fixed register reset value cannot replace that sampling behavior unchanged.
+The Pypeline port needs explicit ownership/composition for such fields; treating
+this code as an asynchronous constant reset would change its meaning.
+
 Useful precedents separate context from per-register participation. Chisel has
 scoped `withReset`/`withClockAndReset` contexts; Amaranth offers per-signal
 `reset_less` and scoped `ResetInserter`; SpinalHDL's `ResetArea` can replace or
@@ -192,9 +216,12 @@ obligation: a manual branch might leave some initialized bits untouched or be
 unreachable while disabled. See [target rules](#fpga-initialization-and-asic-targets).
 
 A register reset does not inherently suppress combinational outputs or external
-side effects. State whether ready/valid, RAM write enables, global writes,
-assertions and simulation output are gated during reset, at the reset edge, or
-by the owning library/testbench. Preserve access to reset for those decisions.
+side effects. Stream libraries must implement the reset-edge transfer-drop rule,
+valid low and preferably ready low; resetting a counter alone does not establish
+that behavior. Keep these as ordinary register/protocol rules, without requiring
+special `.valid` compiler hooks. Define suppression of RAM write enables, global
+writes, assertions and simulation output at the appropriate phase, and preserve
+access to reset for the owning library/testbench.
 
 ## Clock inference, names and reset sources
 
@@ -298,6 +325,13 @@ instantiated in multiple domains. Apply effective policy per instance rather
 than mutating a shared function definition according to whichever caller is
 visited first. See [global instances](PY_TO_LOGIC_DESIGN.md#global-instances-instf-fifot).
 
+Sharing can also impose a reset boundary larger than one caller. WireGuard's
+encrypt/decrypt graphs share compute MAINs through global wires while retaining
+private packet state. Its single design-wide reset must reach both the private
+state and independently declared shared MAINs. Reset inference must preserve
+that common binding across the global-wire boundaries. See the
+[WireGuard review](#wireguard-fpga-prototype-and-asic-reset-coverage).
+
 ### External and internal sources
 
 Mirror clock binding where appropriate: one externally driven input or one
@@ -328,6 +362,52 @@ clock-stopped behavior. A reusable reset conditioner can expose any hold/release
 latency, rather than callers guessing a fixed number of cycles. Check the board
 PLL-lock use in [Arty](../examples/pypeline/arty/top.py) and
 [pico-ice](../examples/pypeline/pico_ice/top.py).
+
+Reset sources can be outputs of opaque IP as well as ordinary user logic.
+StreamSoC's Ethernet MAC exports distinct RX/TX clocks and resets; its DDR
+interface exports UI reset and calibration status. Support representing those
+existing connections and polarities. Preserve the distinction between a reset
+signal and the DDR interface's existing reset-done/calibration status; this does
+not require a new readiness supervisor or restart sequence for StreamSoC.
+See the [StreamSoC review](#legacy-streamsoc-requirements-for-a-pypeline-port).
+
+### Optional reset synchronization diagnostic
+
+It would be useful to diagnose an asynchronous reset source used without
+appropriate synchronization/conditioning for its receiving clock. This is a
+**desirable diagnostic, not a prerequisite for the first reset implementation**.
+Distinguish source timing from register reset style: selecting synchronous reset
+does not make an external signal synchronous, while asynchronous assertion can
+be intentional. For asynchronous register reset, the useful check is normally
+whether release is synchronized separately to each receiving domain, as in the
+[Amaranth reset synchronizer](https://amaranth-lang.org/docs/amaranth/v0.5.4/stdlib/cdc.html#amaranth.lib.cdc.ResetSynchronizer).
+
+The current `_check_clock_crossings` checks global-wire/pin clock associations
+and records explicitly permitted crossings. For an `ASYNC` wire or pin,
+`_crossing_hardware` reports `none`; it does not prove a reset synchronizer exists
+downstream. See [the existing crossing report](PY_TO_LOGIC_DESIGN.md#the-crossing-report).
+A reset check therefore needs some new reset-specific metadata, even if it
+reuses that report rather than introducing another analysis subsystem.
+
+A limited first check could use the resolved reset source, receiving domain and
+recognized library/IP conditioning contract:
+
+- Flag a known asynchronous or cross-domain source that directly controls reset
+  without a recognized conditioner for that receiving domain. Report source and
+  consumer locations; `ASYNC` permission alone is not synchronization evidence.
+- Accept a known same-domain source or a declared, appropriate synchronizer/IP
+  output. A release synchronized to clock A is not evidence for clock B, even
+  when both clocks have the same frequency.
+- Keep unknown/opaque implementations distinct from known unconditioned paths.
+  Allow an explicit contract for raw VHDL or external conditioning; do not claim
+  to recognize arbitrary manual synchronizer logic or prove physical CDC safety.
+
+Exact metadata and warning/error policy remain open. Avoid automatically adding
+synchronizer latency or changing a user's chosen assertion behavior. General
+reset-domain-crossing analysis, arbitrary logic recognition and physical
+recovery/removal signoff are outside this narrow proposal. Designs without reset
+opt-in should not acquire reset diagnostics merely because a signal is named
+`rst`.
 
 ## Automatically inserted registers
 
@@ -424,15 +504,16 @@ Define acceptance and ready/valid values while reset is active and on the first
 post-reset cycle, including reset with CE low, full/empty state, simultaneous
 push/pop, wrapped pointers and a stalled output.
 
-The intended direction is that write-side reset blocks writes and read-side
-reset blocks reads and clears output validity. For synchronous reset, prefer
-registered state changes over combinational `ready/valid AND NOT reset` masks.
-This is a design direction, not yet a complete handshake contract:
+Write-side reset blocks writes; read-side reset blocks reads and clears output
+validity. A reset edge drops ready/valid transfers, valid must be low during
+reset, and ready should preferably be low too. For synchronous reset, retain the
+preference for registered state changes over combinational
+`ready/valid AND NOT reset` masks. The timing distinction is:
 
 - Immediately before the reset edge, old ready/valid values may still be high.
-  If both peers share the reset contract, define that edge as canceling transfers
-  even when ready and valid are high. Scoreboards and source/sink state must
-  apply the same rule; after the edge the FIFO's reset state is visible.
+  That edge cancels transfers even when ready and valid are high. Peers sharing
+  reset, scoreboards and source/sink state must apply the same rule; after the
+  edge the FIFO's reset state is visible.
 - An independently reset peer cannot silently discard a transfer that the other
   peer counted as accepted. Coordinate quiescence/reset or provide an explicit
   recovery protocol. A purely local registered flag cannot retroactively cancel
@@ -440,10 +521,12 @@ This is a design direction, not yet a complete handshake contract:
 - Suppress RAM write strobes and pointer advances at reset edges, even if CE is
   high or a request was already pending. Avoiding a combinational path to public
   ready/valid does not mean permitting internal memory writes during reset.
-- Define whether write-ready stays low while held in reset or can indicate empty
-  capacity under a shared cancellation rule, and when it becomes usable on
-  release. Read-valid must remain cleared after reset edges. Decide the exact
-  registered recovery behavior before coding the wrappers.
+- After the first reset edge, read-valid stays low while reset is held. Prefer
+  write-ready low too, even though reset has made the FIFO empty. Define the
+  registered ready behavior and when normal readiness returns after release.
+  This does not promise an immediate output change between clock edges: demanding
+  low flags before the first synchronous reset edge would require revisiting the
+  no-combinational-reset-path preference.
 
 Asynchronous reset may change registered status between edges; that is distinct
 from adding a combinational mask to a synchronous interface. Whether an async
@@ -634,6 +717,16 @@ omission and source-user state versus generated control/data state. The latter
 still needs correct behavior: a generated one-hot FSM cannot be exempted merely
 because its `= 1` came from the compiler.
 
+WireGuard makes this distinction practical: much of its state uses `Reg[T]`
+without `= value`. Its requested ASIC migration needs broad inherited physical
+reset even where the explicit-initializer checker has nothing to flag. Account
+for register arrays and nested structs, generated arithmetic stages and opaque
+library state. Report reset coverage and deliberate exceptions; do not infer
+permission to leave payload registers unreset merely because validity is reset.
+If required resettable register state would otherwise infer RAM, the lowering
+must respect that reset contract or diagnose an unsupported implementation;
+it cannot silently turn a register reset into memory initialization.
+
 Other HDLs separate these concepts differently. Amaranth uses a signal's `init`
 for power-up and, unless reset-less, reset. Chisel `RegInit` specifies the value
 loaded on reset, not a promise of ASIC power-up state. SpinalHDL's `BOOT` domain
@@ -699,8 +792,12 @@ every library and example has already been exhaustively reviewed.
 | [Pypeline examples](../examples/pypeline/) and board wrappers | Startup/restart expectations, PLL lock, external reset polarity, top-level port maps, pin constraints, testbench schedules and host-visible behavior. |
 
 PDW and the external WireGuard design are the first two large integration users,
-alongside focused new examples. Library support and application opt-in are
-separate steps. PDW provides these repository-local integration cases:
+alongside focused new examples. The legacy StreamSoC review informs a future
+Pypeline implementation. Library support and application opt-in are separate steps.
+
+### PDW
+
+PDW provides these repository-local integration cases:
 
 - Preserve staged control/datapath bring-up. Configuration intentionally survives
   datapath-only reset; a blanket domain-wide reset would destroy that feature.
@@ -718,13 +815,125 @@ separate steps. PDW provides these repository-local integration cases:
 - Update host bring-up/resynchronization instructions and tests with the hardware
   contract; do not leave obsolete minimum-hold guidance after removing a drain.
 
-The WireGuard design is outside this repository. Plan a coordinated change in
-that project to bind/use reset and verify its composed behavior; updating this
-repository alone cannot complete that integration. Inspect its source before
-identifying exact reset scopes, retained configuration and packet/state recovery
-requirements. Do not assume a local path or claim its behavior has been audited
-here. Its application-level tests should include in-flight work and restart,
-with expected cancellation/retention determined by that project's contract.
+### Legacy StreamSoC requirements for a Pypeline port
+
+The inspected design is [examples/stream_soc](../examples/stream_soc/), including
+its CPU, shared DDR bus, Ethernet/audio, FFT and video peripherals and referenced
+libraries. **Keep the Pypeline port's reset procedure as simple as the original
+C design.** The requirements here are to represent its existing reset signals,
+polarities and assignments, plus the agreed rule that reset drops ready/valid
+transfers, holds valid low and preferably holds ready low. This review does not
+add a transaction-cancellation protocol, bus-draining procedure, late-response
+filter or coordinated subsystem-restart controller.
+
+The [CPU device selection](../examples/stream_soc/cpu/hardware/devices.c) uses
+Ethernet-delivered audio and leaves direct I2S commented out. The
+[Arty wrapper](../examples/arty/board.vhd) contains commented StreamSoC reset
+connections, including combining DDR reset/calibration and I2S readiness into
+CPU reset. These are examples of intended wiring, not active connections
+verified in a build. Keep that distinction when using them as porting references.
+
+| Area and source evidence | Existing behavior | What the Pypeline reset feature should accommodate |
+|---|---|---|
+| [CPU top](../examples/stream_soc/cpu/hardware/top.c), [CPU FSM](../include/risc-v/fsm_riscv_decl.h), [CDC helper](../include/cdc.h) | `areset` passes through `xil_cdc2_bit`, an ordinary two-stage level synchronizer. Reset sets `pc = 0`, state to `FETCH_START`, and clears the top's sticky error flags. | Express the same input binding and reset assignments. The synchronizer is existing explicit logic; do not reinterpret it as asynchronous assertion or expand CPU reset into a new SoC-wide procedure. |
+| [Template CPU](../examples/stream_soc/TEMPLATE/cpu/hardware/top.c) | Ties the CPU's reset argument to zero and relies on FPGA startup initialization. | Keep this reset-free configuration possible under the opt-in and target rules. |
+| [I2S device](../examples/stream_soc/i2s/hardware/i2s.c), [I2S MAC](../include/i2s/i2s_mac.c) | Active-low `i2s_reset_n` reaches RX/TX control and bit-clock/LR-clock dividers. Manual branches reset selected phase/count/valid state, sample `last_lr = lr`, and clear the device overflow register. | Support active-low adaptation and manual assignments alongside inferred reset. Preserve the input-dependent `last_lr` assignment; a constant reset of every field is not an equivalent translation. |
+| [TEMAC wrapper](../examples/stream_soc/eth/hardware/xil_temac.c), [Ethernet consumers](../examples/stream_soc/eth/hardware/eth.c) | One active-low input feeds the MAC's global/RX/TX reset ports and PHY reset output. The MAC exports separate RX/TX clocks and reset outputs. Consumers contain reset/enable TODOs. | Represent external and IP-generated reset signals with the correct polarity and named clock association. The existing TODOs are not evidence of an additional reset protocol that the port must implement. |
+| [DDR interface](../examples/stream_soc/ddr/hardware/device.c) | Exposes `ui_clk_sync_rst` and `init_calib_complete`; `xil_mem_rst_done` combines reset deassertion with calibration completion. | Preserve those signals and the existing status expression. Keep controller reset distinct from resetting memory contents; no additional readiness/restart state machine is required by this review. |
+| [FFT device](../examples/stream_soc/fft/hardware/device.c), [scaler](../examples/stream_soc/video/scale/hardware/device.c), [GPU](../examples/stream_soc/gpu/hardware/device.c) | Several control flags initialize to one: FFT `wr_is_t`, `rd_req_is_t`, `rd_resp_is_t`, scaler `starting_new_frame`, and GPU `state_is_GET_CMD`. These declarations are initialization, not existing runtime reset branches. | Preserve startup values. If the port explicitly enables reset for this state, provide the appropriate nonzero values rather than assuming all control resets to zero. Their presence alone does not require new per-device reset sequencing. |
+| [Camera software](../examples/stream_soc/cam/ov2640/software/device.h), [DVP decoder](../examples/stream_soc/dvp/hardware/dvp.h) | Software sends the camera a soft-reset command, performs configuration and sets `cam_init_done`; DVP uses that status and frame synchronization. | Preserve the software/device sequence and local decoder behavior. A peripheral command is separate from the HDL register-reset mechanism. |
+
+The existing shared bus, stream FIFOs and peripheral state do not establish a
+requirement for independently restarting subsystems with transactions in flight.
+Preserve the original behavior unless the application deliberately changes it.
+The agreed reset-edge handshake rule still applies to blocks using the new reset
+feature: no transfer is counted on the reset edge, valid is low in reset, and
+ready is preferably low. That rule does not require inventing a protocol to undo
+transactions completed before reset.
+
+The CPU top uses generated instruction/data memory images. Its
+[bootstrap](../examples/stream_soc/cpu/software/bootstrap.S) sets the stack and
+jumps to `main`; it does not reload those images on reset. Preserve that behavior
+and the plan's distinction between FPGA memory initialization and register reset.
+This review does not add an ASIC boot-loader project to the StreamSoC port.
+
+Validation should compare the port's reset effects with these existing C
+assignments and connections: CPU PC/state/error flags, I2S polarity and manual
+sampling, IP reset/status wiring, and nonzero startup values. Add checks for the
+agreed dropped transfers and low valid/preferably-low ready during reset. Keep
+configuration and memory behavior consistent with the original design.
+
+### WireGuard FPGA prototype and ASIC reset coverage
+
+The external source root is `wireguard-fpga/3.build/pypeline_build/`; paths in
+this subsection are relative to that root. The review covers its Pypeline
+ChaCha20-Poly1305 encrypt/decrypt datapaths, sharing wrappers and testbenches,
+not the full project's networking/session management. These are source
+references to another repository, not assumed files in the PipelineC checkout.
+
+`src/chacha20poly1305.py` selects an Artix-7 part and imports flattened hardware
+IO wrappers. Those wrappers and `src/chacha20poly1305/*_ports.py` expose streams,
+key/nonce/AAD and the decrypt verification result, but no runtime reset port.
+The compute MAINs use the same selected `TARGET_MHZ`. Packet-end transitions and
+the `IDLE` assignments labeled “Reset state” in `src/poly1305/poly1305.py` are normal
+protocol behavior, not a way to reset a live, stalled design. Most declared
+registers omit an explicit initializer and currently rely on Pypeline defaults.
+
+**Application requirement:** use a single reset in every configuration, including
+the shared design, and enable broad inherited reset for the ASIC-compatible
+version, covering almost all register state. This includes
+payload/operand/key-bearing registers and generated storage, not only FSM and
+valid bits. Record any retained or unreset state as an intentional exception.
+FPGA declaration initialization can remain available for prototyping, but reset
+tests and ASIC lowering must work without relying on it. Payload RAM contents
+are retained under the plan's memory rule; reset FIFO occupancy and interfaces.
+
+| External source | State and derived reset requirement |
+|---|---|
+| `src/chacha20/chacha20.py`: `chacha20_fsm`, `pipeline_func` | Reset input/output phase FSMs, block counter, width converters, stream-pipeline credits/valid/data and output queues together. Restart with Poly1305-key generation before packet data; no pre-reset pipeline word may be interpreted as the next key or payload block. |
+| `src/prep_auth_data/prep_auth_data.py`, `src/prep_auth_data/prep_auth_data_wide.py`; `src/auth_tag/append_auth_tag.py`, `src/auth_tag/strip_auth_tag.py`, `src/auth_tag/auth_tag_wide.py` | Reset AAD snapshots, length/count state, staged blocks, held fragments, partial tags and finishing flags. Keep data, keep masks and end-of-data state aligned across 128/256-bit paths. An aborted packet must not donate a tail or tag to its successor. |
+| `src/poly1305/poly1305_mac_pipelined.py`: `prologue_stage`, `body_stage`, `epilogue_stage` | Reset packet-context banks, accumulator/key-power state, issue/complete selectors, lane selectors, outstanding counts, completion buffers and tags. Clear the free-running arithmetic pipeline and its parallel `owners` delay line consistently so a late result cannot write into a released/reused context. The existing ownership/underflow assertions identify useful post-reset invariants. |
+| `src/poly1305/poly1305_mac_paired.py`: `coefficient_pipeline`, `body_stage` | The two-block path additionally has a coefficient pipeline and `coefficient_owners` delay line before the feedback body. Both stages, owner lines and context counts must restart together; clearing only body ownership misses earlier work still in flight. Sizes follow the actual selected pipeline latencies. |
+| `src/poly1305/poly1305_service.py`, `src/poly1305/poly1305.py` | Setup/finalization services select AUTO_FSM or multi-cycle implementations; the legacy MAC uses a multi-cycle body and local accumulator/key state. Reset must cancel scheduled operations, wait counters, captured inputs and held results in every supported implementation, not only the current preferred configuration. |
+| `src/chacha20/chacha20_pipeline_shared.py`, `src/poly1305/poly1305_mcp_shared.py` | Reset shared pipelines/services, arbitration priority, held grants, direction tags, busy state and both clients coherently. Private MAC bodies do not make the shared engines private. Global-wire connections must propagate the chosen reset scope to the independently declared shared MAINs. |
+| `src/aead_types.py`: `make_aead_fifo`, `make_aead_output_slice`; `src/chacha20poly1305/*_dataflow_core.py` | Include authentication/append/verification FIFOs, FWFT output state, broadcast consumption tracking and output skid registers. The factories wrap PipelineC stream libraries and must inherit reset through those wrappers; adding a port only to the external top cannot reset them. |
+| `src/poly1305/poly1305_verify_decrypt.py`, `src/auth_tag/wait_to_verify.py` | Reset held received/calculated tags, compare verdict, wait/output FSM and buffered plaintext occupancy together. A verdict from an aborted packet must never authorize or label plaintext from another packet; no stale `is_verified_out` association may survive reset. |
+
+The single reset covers both directions, their private packet state and all
+shared pipelines/services together. This is the selected application contract,
+not an open choice between per-direction and common reset. The standalone
+encrypt/decrypt builds each expose that same single-reset model. The testbench
+must verify that one assertion cancels all outstanding owners and results in
+the shared design, including a stalled direction while the other is active.
+
+Specify reset as a packet-abort boundary with the upstream and downstream peers:
+discard local partial work, suppress/reset outstanding output validity, then
+accept a fresh packet with valid key/nonce/AAD inputs. The input wrappers supply
+those values from outside the core; reset does not invent a session restart or
+nonce-allocation policy. Existing decrypt behavior deliberately emits plaintext
+with `is_verified_out = 0` for a bad tag, as exercised by
+`src/chacha20poly1305/decrypt_syn_tb.py`. Reset must preserve that ordinary
+negative-verification contract while preventing any stale packet/verdict pairing.
+
+Extend both hardware IO and testbench wiring. The synthesizable benches have
+their own source/sink state, packet counters and sticky completion flags; their
+reset generator/scoreboard must not accidentally be held by the DUT reset it
+is trying to exercise. Existing arithmetic tests call `sim_reset()` between
+cases, which is session cleanup, not evidence of runtime reset. Performance
+occupancy probes also need an explicit accounting rule for discarded work so
+their counts do not survive a queue reset incorrectly.
+
+Required integration cases include mid-packet reset at each formatting stage,
+reset with both packet contexts occupied, a body/coefficient result about to
+retire, a stalled shared grant/service result, a buffered plaintext waiting for
+verification, and a held external output beat. Check repeated/held reset and
+reset with CE low, followed by correct complete packets in both directions.
+Cover private/shared resource selections, 128/256-bit datapaths, AUTO_FSM/MCP
+services and the legacy MAC where supported. Inspect actual mapped reset
+coverage in ASIC-target builds as well as native/GHDL behavior. This review
+executes none of those future reset regressions and changes no WireGuard source.
+
+### Adoption and focused examples
 
 New focused examples should show opt-in/inheritance, named access, an internal
 reset generator, manual versus automatic ownership, and explicit testbench reset
@@ -742,7 +951,7 @@ mechanism and should not depend on that unresolved behavior.
 | Owner | Work to account for |
 |---|---|
 | `pypeline.py` | Explicit opt-in, declarations/bindings, manual/automatic ownership syntax, policy validation, stable identity, native register/model semantics and named reset access. Keep native-runtime semantics accessible without importing the elaborator. |
-| `PY_TO_LOGIC.py` | Initializer provenance, reset inference/binding checks, initialized-bit coverage, per-instance policy, late MAIN handling, raw-VHDL contracts and source-located diagnostics. |
+| `PY_TO_LOGIC.py` | Initializer provenance, reset inference/binding checks, initialized-bit coverage, per-instance policy, late MAIN handling, raw-VHDL contracts and source-located diagnostics; optionally check declared reset source/conditioning metadata against receiving domains. |
 | `LOGIC.py` | Declared reset metadata on shared objects, copy/trim preservation and hierarchy queries; prevent merging stateful instances with different effective reset behavior. |
 | `AUTO_PIPELINE.py`, `RAW_VHDL.py`, `AUTO_FSM.py`, `AUTO_MULTI_CYCLE.py` | Register-bank policy, generated-state initialization, scheduling boundaries and latency/constraint interactions. |
 | `VHDL.py` | Preserve reset-free output; enabled top/entity ports and maps, local/raw interface choice, sensitivity lists, reset/CE priority across IO and internal banks, typed reset assignments and crossing adapters. |
@@ -808,13 +1017,16 @@ following the [test review](code_reviews/tests_review/TEST_REVIEW.md#5-duplicati
 | User registers | Explicit zero/nonzero values; default/no-init choice; enums/arrays/structs; manual and automatic overlap under the chosen syntax; partial fields/bits; reset with CE low; skipped child calls; repeat and held resets. Compare native and GHDL edges/outputs. |
 | Pipeline behavior | Force real inserted stages, IO banks, raw arithmetic splits, fixed-latency alignment and aligned globals. Exercise delayed CE, freely clocked banks and reset/release with work at every stage, unequal branches and stalls. Valid is ordinary state; no special `.valid` hook is required. |
 | Generated control | Binary and one-hot AUTO_FSM, pipelined shared units, pending output, MULTI_CYCLE waits and every supported reset priority. Verify restart accepts and completes new work. |
-| FIFO/storage | Full/empty/wrapped FIFO, simultaneous push/pop, FWFT output occupied, CE low and blocked consumer. Check reset-edge cancellation agrees at both peers, no stale output is valid, writes are suppressed, and synchronous ready/valid has no combinational reset path under the chosen contract. Change RAM before reset and verify contents are retained, not restored from initialization. |
+| FIFO/storage | Full/empty/wrapped FIFO, simultaneous push/pop, FWFT output occupied, CE low and blocked consumer. Check reset edges drop transfers at both peers, valid stays low in reset and ready preferably stays low, writes are suppressed, and synchronous ready/valid has no combinational reset path under the chosen contract. Change RAM before reset and verify contents are retained, not restored from initialization. |
 | CDC | Built-in and vendor FIFO implementations, both reset orders, one-sided requests according to the chosen contract, stopped/unequal clocks and busy release. Use a real multi-clock HDL harness. |
+| Optional reset diagnostic | Known asynchronous source with no conditioner, recognized per-domain synchronization, wrong-domain reuse, same-domain generation, opaque/IP contracts and unknown provenance. Check useful diagnostics without flagging intentional asynchronous assertion or reset-free designs; this is not proof of physical CDC safety. |
 | Simulator lifecycle | Clock-0 pulse only with opt-in and eligible driver; unchanged reset-free startup; cycle observations, explicit override, internal generator, repeat runs, scope-only reset, conditional models, RAM interface queues and no stale delayed global writes. |
 | Target rules | FPGA allowed register/memory initialization; ASIC initialized-register rejection for missing or unproven per-bit reset; rejection of RAM/ROM initialization even with interface reset; target-free flow, generated control and opaque-library contracts. Inspect mapped reset hardware as well as messages. |
 | Raw HDL | Reset-enabled and disabled instances of one reusable block, chosen tie-off/variant policy, correct inactive polarity, supported style checks, preserved FPGA initialization, corresponding model behavior and no top-level reset on unopted designs. |
 | Stability and timing | Same callable under different policies; double parse; cold/warm builds; changed-policy cache invalidation; final artifact replay; unchanged normal throughput/latency and measured reset cost. |
-| Migration | Small reusable-block synthesis tops and composed example builds; PDW mid-packet reset with blocked output and staged configuration bring-up; board wrapper port/constraint checks. Coordinate separate WireGuard integration tests in its own repository; do not report them as covered here. |
+| Migration | Small reusable-block synthesis tops and composed example builds; PDW mid-packet reset with blocked output and staged configuration bring-up; board wrapper port/constraint checks. |
+| Future StreamSoC | Preserve the original simple reset procedure: CPU PC/state/error flags, active-low I2S and manual sampling, IP reset/status connections, and nonzero startup values. Check the agreed reset-edge transfer drop and low valid/preferably-low ready; do not add a subsystem-restart protocol as a port requirement. |
+| External WireGuard | One reset across the whole selected design, including both directions and shared engines; broad coverage of omitted-initializer registers and generated/library storage; paired owner/result pipelines; formatting/verification queues; reset-free FPGA baseline and reset-enabled ASIC behavior. Run integration tests in its own repository; the source review is not execution evidence. |
 
 Existing useful fixtures include
 [register initialization](../src/tests/pypeline_tests/inst/reg_init_test.py),
@@ -844,8 +1056,14 @@ Settled requirements are opt-in with reset-free compatibility, active-high
 synchronous default, reset above CE, an eligible default harness pulse at clock 0
 only for reset-enabled designs, ordinary reset rules without special `.valid`
 hooks, no memory-content reset, FPGA-only memory initialization, and effective
-reset for explicit ASIC register initializers. Existing code becomes compatible;
-PDW, external WireGuard and new examples deliberately adopt reset.
+reset for explicit ASIC register initializers. Reset drops ready/valid transfers
+at the reset edge; valid is low in reset and ready is preferably low too, with
+synchronous registered-output timing as described above. Existing code becomes
+compatible;
+PDW, external WireGuard and new examples deliberately adopt reset. WireGuard
+uses one reset across the selected design, shared resources included, and
+requires almost all register state to reset for its ASIC-compatible version;
+legacy StreamSoC supplies requirements for a future Pypeline port.
 
 Resolve these before fixing the API:
 
@@ -861,10 +1079,10 @@ Resolve these before fixing the API:
 4. Raw VHDL fixed reset ports tied inactive versus generated reset-free variants;
    if fixed ports are chosen, explicitly agree their exception to strict absence
    of reset signals in emitted HDL.
-5. FIFO whole-reset versus independent-end reset, transfer cancellation at the
-   reset edge, registered ready/valid behavior, synchronization and release
-   readiness, with a realizable vendor adapter. Avoid combinational reset-to-
-   status paths for synchronous reset unless deliberately revising that preference.
+5. FIFO whole-reset versus independent-end reset, registered ready/valid timing,
+   synchronization and release readiness, with a realizable vendor adapter.
+   Reset-edge transfer drop and low valid are settled; implement preferably-low
+   ready while avoiding combinational reset-to-status paths for synchronous reset.
 6. Exact clock-0 observation semantics for enabled designs, low-level `sim_call`
    control, stimulus precedence and native support boundaries for asynchronous/
    multi-clock reset.
@@ -872,6 +1090,9 @@ Resolve these before fixing the API:
    opaque IP, and explicit migration of ASIC fixtures affected by stricter
    initialization legality. The RAM/ROM no-reset and FPGA-only initialization
    rules are requirements, not deferred policy choices.
+8. Whether the optional reset synchronization diagnostic fits the first version:
+   source/conditioner metadata, recognized IP/library contracts and warning/error
+   policy. Do not make a general reset-specific CDC analysis a prerequisite.
 
 A practical sequence starts with explicit opt-in and shared metadata, followed
 by an active-high synchronous slice through user registers, VHDL and simulation,
@@ -881,6 +1102,8 @@ contract, without adding validity-analysis infrastructure. Make libraries and
 models reset-compatible, add repeatable FIFO reset and CDC coordination, and
 enforce target capabilities with focused tests. Then enable reset deliberately
 in PDW, the external WireGuard project and new examples, with composed tests.
+Preserve StreamSoC's simple existing reset procedure in its future Pypeline port,
+without adding transaction-cancellation or coordinated restart machinery.
 Keep intermediate supported scopes explicit; auto-inserted registers, simulator
 queues and opaque storage must not retain undocumented pre-reset work. Retained
 memory contents and explicitly exempt state are part of the contract.
