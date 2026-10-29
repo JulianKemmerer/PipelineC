@@ -60,7 +60,7 @@ We use Ruff for linting and formatting (see [ruff.toml](ruff.toml) and [.pre-com
 
 ## Keep documentation useful
 
-Please keep the related design docs and usage instructions in step with your code. If your changes or verification show that a `docs/code_reviews/` finding has changed, update the affected review sections and recommendations alongside the relevant `docs/*_DESIGN.md` sections. User guides explain workflows and behavior; module design docs explain the implementation. Update the section that already covers the topic, describe current behavior, and check any other references affected by renamed options, functions, or output paths. Use portable paths and check the links you add.
+Please keep the related design docs and usage instructions in step with your code, including the [top-level README](README.md) (its feature table) and [docs/README.md](docs/README.md) when a change adds, removes or limits a user-visible feature. If your changes or verification show that a `docs/code_reviews/` finding has changed, update the affected review sections and recommendations alongside the relevant `docs/*_DESIGN.md` sections. User guides explain workflows and behavior; module design docs explain the implementation. Update the section that already covers the topic, describe current behavior, and check any other references affected by renamed options, functions, or output paths. Use portable paths and check the links you add.
 
 ## Verification and testing
 

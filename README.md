@@ -96,7 +96,7 @@ uint1_t blink()
 | Native Simulation | [Yes](docs/pypeline_guide.md#simulation) | No |
 | Valid-Ready handshaking | [Yes](docs/pypeline_guide.md#the-stream-interface-validready-handshaking) | Yes |
 | Globally visible point to point wires | [Yes](docs/pypeline_guide.md#global-signals) | Yes |
-| Multiple clock domains / Clock domain crossings | No | Yes |
+| Multiple clock domains / Clock domain crossings | [Yes](docs/pypeline_guide.md#part-iv--multiple-clock-domains) | Yes |
 | Parameterized/Template Functions+Types | [Yes](docs/pypeline_guide.md#parametric-hardware-with-factory-functions) | No |
 | Operator overloading | [Yes](docs/pypeline_guide.md#custom-operators) | Yes (hacky) |
 | User-visible automatic pipeline latency | [Yes](docs/pypeline_guide.md#latency-reading-back-the-discovered-pipeline-depth) | No |

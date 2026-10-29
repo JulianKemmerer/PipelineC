@@ -348,6 +348,11 @@ python3 src/tests/pypeline_tests/run_all.py --category known_issues -t NAME -j 1
   that describes code you changed. When you change CLI flags, configuration
   variables, generated output paths or function names, grep all of `docs/` and
   `README.md` and update every occurrence, including flag tables and artifact lists.
+- **Keep the READMEs current.** The top-level [`README.md`](README.md) (including its
+  Pypeline-versus-PipelineC feature table) and [`docs/README.md`](docs/README.md) are
+  user docs like the rest. When a change adds, removes or limits a user-visible feature,
+  re-read both for statements it makes false, such as a feature listed as unsupported,
+  and fix them with the guide and the design docs.
 - **Keep reviews current.** If verification shows that a review finding is resolved,
   partly addressed or no longer accurate, or your change alters it, revise that
   review section in place, together with its recommendations, any overview or

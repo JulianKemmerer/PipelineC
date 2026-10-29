@@ -207,7 +207,7 @@ The shorter Pypeline example above describes the same hardware without an event-
 process model. A typed function is a hardware module: arguments are input ports, its
 return value is an output port, and ordinary local variables are combinational wires.
 A local annotated with [`Reg[T]`](pypeline_guide.md#registers-regt) is explicit stored
-state. Pypeline assumes rising-edge operation within a single clock domain, so there are
+state. Pypeline assumes rising-edge operation, one clock per function, so there are
 no sensitivity lists, blocking/nonblocking assignment choices, or separate templates for
 combinational and registered logic.
 
@@ -240,7 +240,8 @@ clock port a fixed name, as in the
 [include/pypeline/board](../include/pypeline/board) declare ports like these for supported
 boards; [board/arty/clocks.py](../include/pypeline/board/arty/clocks.py) binds the Arty's
 100 MHz clock to `CLK100MHZ`. Designs on more than one clock are described in the guide's
-[Part IV — Multiple clock domains](pypeline_guide.md#part-iv--multiple-clock-domains). In native simulation, drive `Input[T]` ports from
+[Part IV — Multiple clock domains](pypeline_guide.md#part-iv--multiple-clock-domains).
+In native simulation, drive `Input[T]` ports from
 [`@sim_input`](pypeline_guide.md#sim_input--driving-simulation-inputs) functions, as
 [fsm.py](../examples/pypeline/fsm.py) does.
 
