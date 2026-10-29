@@ -19,8 +19,9 @@ WireGuard Pypeline design also supplies concrete integration requirements.
 Findings describe inspected source, not new synthesis measurements or executed
 reset regressions.
 
-The next planning step is **user-facing syntax options**, shown in the context
-of StreamSoC, WireGuard and PDW. No syntax is selected here. Keep compiler/VHDL
+The current planning focus is **user-facing syntax options**, shown in the
+[syntax alternatives](#potential-user-facing-syntax) for StreamSoC, WireGuard
+and PDW. No syntax is selected here. Keep compiler/VHDL
 implementation choices for later; the implementation considerations below are
 background constraints, not the next task. Prefer a small useful first feature
 set that users can compose with ordinary logic, without requiring a large reset
@@ -40,6 +41,15 @@ standard library or every advanced scenario in this inventory at once.
 - [Compiler and backend responsibilities](#compiler-and-backend-responsibilities)
 - [Validation plan](#validation-plan)
 - [Decisions and implementation order](#decisions-and-implementation-order)
+- [Potential user-facing syntax](#potential-user-facing-syntax)
+  - [Global clock and reset declarations](#global-clock-and-reset-declarations)
+  - [Register declarations and values](#register-declarations-and-values)
+  - [Manual reset in Pypeline HDL](#manual-reset-in-pypeline-hdl)
+  - [Manual reset in raw VHDL](#manual-reset-in-raw-vhdl)
+  - [PDW syntax examples](#pdw-syntax-examples)
+  - [WireGuard syntax examples](#wireguard-syntax-examples)
+  - [Future StreamSoC syntax examples](#future-streamsoc-syntax-examples)
+  - [Choices to review together](#choices-to-review-together)
 
 ## Requirements
 
@@ -63,12 +73,15 @@ standard library or every advanced scenario in this inventory at once.
    clock enable in priority**. Reset updates selected registers even with CE low.
    Reset values, overrides and supported additional styles still need definition.
    Each user `Reg[T]` must support inheriting, opting into or opting out of reset.
-   Selection must also work within compound registers: for example, reset only
-   a `Reg[Stream[T]]`'s `.valid` to zero without resetting its `.data`.
+   The first version may require separate registers for different policies,
+   such as resettable stream validity and unreset payload. Partial-field reset
+   within one compound `Reg[T]` is a possible later extension, not an initial
+   requirement.
 5. Distinguish automatic register reset from user-written reset logic. Reading
    reset is not, by itself, an instruction to disable inherited reset for a
    whole function or hierarchy. Define whether and how manual and inferred reset
-   coexist, including field/bit ownership, generated state and ASIC checks.
+   coexist, including register ownership, generated state and ASIC checks.
+   Field/bit policy overrides can follow if partial reset is added later.
 6. Give testbenches a way to drive reset explicitly, including during a run.
    For a reset-enabled domain with an eligible external reset, the default
    single-clock simulation applies **one cycle of synchronous reset at clock 0**,
@@ -171,9 +184,9 @@ edge and needs its own explicitly supported contract.
 
 Open decisions include whether initial and reset values must coincide, whether
 additional polarities/styles belong in the first implementation, and which
-settings can be overridden per MAIN, instance or function. Per-register and
-per-field reset participation are required; their syntax and policy precedence
-remain open.
+settings can be overridden per MAIN, instance or function. Per-register reset
+participation is required; its syntax and policy precedence remain open.
+Per-field participation within one compound register may be deferred.
 Typed reset values must cover signed/scalar values, enums, nested structs and
 arrays, including unspecified aggregate elements. Reuse existing conversion
 rules and diagnose unsupported types; do not silently coerce every reset to zero.
@@ -206,10 +219,11 @@ equivalent to the selected automatic reset priority.
 
 **Syntax and composition are central open decisions.** Do not assume manual and
 automatic reset exclude each other, or that writing `if rst` opts anything out.
-Define the scope of each declaration, whether a register's fields can have
-different owners, and what happens when both mechanisms target the same bits.
+Define the scope of each declaration and what happens when both mechanisms
+target the same register. The initial version can require separate registers
+for different policies/owners; field-level declarations can follow later.
 Possible rules include automatic reset winning, explicit manual ownership for
-those bits, or rejecting ambiguous overlap. Choose and document one rule rather
+those registers, or rejecting ambiguous overlap. Choose and document one rule rather
 than depending on statement order or recognizing a variable named `rst`.
 Also define whether a parent override affects children and automatically inserted
 registers; a manual branch must not silently disable their inherited reset.
@@ -243,27 +257,27 @@ a reset-enabled context. An explicit selection can supply a reset where the
 enclosing context has none. Reading reset for manual logic must remain separate
 from these declarations.
 
-Compound registers need the same control at field granularity. A key syntax
-example is a `Reg[Stream[T]]` with `.valid` reset to zero and `.data` excluded
-from reset. This is an ordinary partial-register reset, not a special stream or
-validity hook. Cover nested struct fields and define how array elements and
-overlapping whole-register/field declarations are expressed. Bit-slice syntax
-and the meaning of unspecified fields still need decisions; omitted fields must
-not silently acquire a zero reset just because the aggregate has a default value.
+**Partial-field reset may be deferred beyond the first version.** Start the
+syntax examples with one policy per whole `Reg[T]`. When stream validity needs
+reset but payload does not, declare separate valid and data registers and
+assemble the stream value when used. This needs no special `.valid` hooks and
+does not require splitting an otherwise uniformly reset compound register.
 
-Separate **no reset assignment** from **hold while reset is asserted**. A field
-excluded from reset is not necessarily frozen: whether it keeps taking ordinary
-enabled updates or holds with its containing register needs an explicit rule.
-Syntax examples should make that distinction visible, alongside reset values and
-manual/automatic ownership. The example requires no payload reset; it does not
-promise a particular payload value while `.valid` is zero.
+Separate **no reset assignment** from **hold while reset is asserted**. An
+excluded register is not necessarily frozen: define whether ordinary enabled
+updates continue, and show explicit user logic when holding is wanted. The
+split-register example promises no particular payload while validity is zero.
 
-Partial reset must respect the ASIC initializer rule per initialized bit. An
-explicit initializer for the entire stream cannot be justified on ASIC merely
-by resetting `.valid`. The syntax must distinguish unreset payload from payload
-whose initialization/reset value is promised. WireGuard's broad reset policy
-also remains an application choice; this capability is not permission to remove
-its payload resets automatically.
+A later field-level extension could express the same intent within one
+`Reg[Stream[T]]`. It would need rules for nested fields, arrays, unspecified
+fields and overlapping whole-register/field declarations. Keep those questions
+out of the initial syntax requirement.
+
+The ASIC initializer rule still applies per initialized bit. Splitting data and
+valid does not legalize an explicit initializer on unreset data. Likewise, a
+future partial reset of `.valid` would not justify initialization of the entire
+stream. WireGuard's broad reset policy remains an application choice; separate
+registers do not imply automatically removing its payload resets.
 
 ### Global wires during reset and clock disable
 
@@ -279,7 +293,7 @@ matters:
 | Boundary | Question to settle |
 |---|---|
 | All receiving state shares reset, and reset overrides updates | The receiver can ignore ordinary inputs at that reset edge. A blanket wire override may add no useful behavior. |
-| A receiving register/field opts out, uses another reset, or is an external interface | It may still observe or capture the wire. Decide which producer/consumer logic prevents unwanted effects. |
+| A receiving register opts out, uses another reset, or is an external interface | It may still observe or capture the wire. Decide which producer/consumer logic prevents unwanted effects. |
 | Producer and receiver share an effective CE | Disabled receivers can ignore changes, but the meaning and timing of the shared enable must be explicit. |
 | Producer is disabled while the receiver can advance | A held-high stream `.valid` can cause repeated transfers without interface handling. Holding registers alone does not prevent this. |
 
@@ -514,7 +528,7 @@ and [Amaranth control-flow modifiers](https://amaranth-lang.org/docs/amaranth/v0
 
 | Storage or boundary | Reset questions |
 |---|---|
-| `Reg[T]` user state | Initial versus reset value, partial/manual ownership, CE priority and next-state visibility. |
+| `Reg[T]` user state | Initial versus reset value, per-register/manual ownership, CE priority and next-state visibility; partial-field policy can follow later. |
 | Input/output banks (`io_registers_r`) | Reset data and control fields consistently, including registered CE and aligned global IO. |
 | Stage registers (`REG_STAGE...`) | Which wires reset, to which values, and whether post-reset fill is observable. |
 | Raw operator pipeline (`manual_registers_r`) | Partial carry/compare/arithmetic state and accumulated operands must obey the same contract as surrounding stages. This is compiler-generated raw HDL, distinct from user `vhdl()` text. |
@@ -549,8 +563,8 @@ ordinary-state model for validity as well as payload, but it does not specify
 what values Pypeline should assign to newly inserted pipeline stages. See
 [Chisel sequential circuits](https://www.chisel-lang.org/docs/explanations/sequential-circuits).
 
-Users must be able to explicitly leave payload fields unreset through the
-[partial-reset controls](#per-register-and-partial-reset). Automatically removing
+Users can explicitly leave payload unreset by declaring data and validity as
+[separate registers](#per-register-and-partial-reset). Automatically removing
 payload resets based on a validity/protocol proof is a separate, later
 optimization; such proof and special validity APIs are outside the initial
 requirement and must not become prerequisites for reset support.
@@ -1030,8 +1044,9 @@ executes none of those future reset regressions and changes no WireGuard source.
 ### Adoption and focused examples
 
 New focused examples should show opt-in/inheritance, named access, an internal
-reset generator, per-`Reg[T]` opt-in/out, partial compound-register reset, manual
-versus automatic ownership, and explicit testbench reset stimulus. Keep existing
+reset generator, per-`Reg[T]` opt-in/out, separate registers for data/valid reset
+policies, manual versus automatic ownership, and explicit testbench reset
+stimulus. Partial-field syntax is a possible extension. Keep existing
 examples reset-free unless there is a deliberate reason to enable reset for that
 application. Prefer small composable mechanisms and user-written logic for
 advanced reset sequences; add library helpers when concrete use cases need them.
@@ -1120,8 +1135,8 @@ following the [test review](code_reviews/tests_review/TEST_REVIEW.md#5-duplicati
 |---|---|
 | Reset-free compatibility | Compare existing designs against a pre-feature baseline: same outputs, first-cycle work, cycle labels, latency and CE behavior; no generated reset ports/signals/branches under the chosen raw-interface rule. Include combinational tops and reset-capable libraries instantiated without opt-in. |
 | API/inference | Opt-in/default/explicit/named/internal resets, multiple resets per clock, a shared async source with per-domain release, equal-rate named clocks, pin aliases, ambiguous shared instances, imported/late MAINs, conflicting drivers and reset-source cycles. Inspect resolved metadata and diagnostics. |
-| User registers | Per-register inherit/opt-in/opt-out, including explicit reset without an enclosing default; explicit zero/nonzero values; default/no-init choice; enums/arrays/structs; manual and automatic overlap; nested partial fields/bits. Reset only a stream register's valid field and check excluded payload follows its chosen normal-update/hold rule, including CE low. Cover skipped child calls, repeat and held resets in native and GHDL. |
-| Global-wire boundaries | Shared reset/CE at both ends, independently enabled receivers, reset-exempt receiving fields and external interfaces. Check acceptance and visible valid/ready values under the chosen interface contract, including a held-high valid while the producer is disabled. Do not assume every global wire is masked or every excluded field is held. |
+| User registers | Per-register inherit/opt-in/opt-out, including explicit reset without an enclosing default; explicit zero/nonzero values; default/no-init choice; whole enums/arrays/structs; manual and automatic overlap. Use separate data and valid registers for different policies and check normal-update/hold behavior, including CE low. Cover skipped child calls, repeat and held resets in native and GHDL. Partial-field cases belong to a later extension if selected. |
+| Global-wire boundaries | Shared reset/CE at both ends, independently enabled receivers, reset-exempt receiving registers and external interfaces. Check acceptance and visible valid/ready values under the chosen interface contract, including a held-high valid while the producer is disabled. Do not assume every global wire is masked or every excluded register is held. |
 | Pipeline behavior | Force real inserted stages, IO banks, raw arithmetic splits, fixed-latency alignment and aligned globals. Exercise delayed CE, freely clocked banks and reset/release with work at every stage, unequal branches and stalls. Valid is ordinary state; no special `.valid` hook is required. |
 | Generated control | Binary and one-hot AUTO_FSM, pipelined shared units, pending output, MULTI_CYCLE waits and every supported reset priority. Verify restart accepts and completes new work. |
 | FIFO/storage | Full/empty/wrapped FIFO, simultaneous push/pop, FWFT output occupied, CE low and blocked consumer. Check reset edges drop transfers at both peers, valid stays low in reset and ready preferably stays low, writes are suppressed, and synchronous ready/valid has no combinational reset path under the chosen contract. Change RAM before reset and verify contents are retained, not restored from initialization. |
@@ -1161,13 +1176,15 @@ tools and known-issue dependencies rather than counting skipped cases as passes.
 
 Settled requirements are opt-in with reset-free compatibility, active-high
 synchronous default, reset above CE, an eligible default harness pulse at clock 0
-only for reset-enabled designs, per-register opt-in/out and partial compound
-reset, ordinary reset rules without special `.valid` hooks, no memory-content
+only for reset-enabled designs, per-register opt-in/out, ordinary reset rules
+without special `.valid` hooks, no memory-content
 reset, FPGA-only memory initialization, and effective reset for explicit ASIC
 register initializers. Reset drops ready/valid transfers at the reset edge;
 valid is low in reset and ready is preferably low too, with synchronous
 registered-output timing as described above. General global-wire reset/CE
 overrides remain open.
+Partial-field reset is not an initial requirement; separate registers can carry
+different reset policies in the first version.
 
 Existing code becomes reset-compatible. PDW adopts resets primarily to remove
 reset-only FIFO flushing. WireGuard offers synchronous reset enabled by default,
@@ -1176,19 +1193,20 @@ all register state for ASIC compatibility. StreamSoC has no planned changes;
 its first Pypeline port copies the existing behavior, which the new reset
 feature must accommodate.
 
-### Next step: compare syntax in application context
+### Syntax review in application context
 
-Develop alternatives for **how users specify and use reset**, with side-by-side
-code examples for the same scenarios. Do not choose compiler data structures,
-inference algorithms or VHDL lowering during this step. Keep hypothetical syntax
-clearly labeled, and compare it with the relevant existing HDL precedents inline.
+The [syntax alternatives](#potential-user-facing-syntax) compare **how users
+specify and use reset** at two main levels: global clock/reset declarations and
+function/module register policy plus manual reset in Pypeline and raw `vhdl()`.
+The examples are hypothetical, not implementation commitments. Compiler data
+structures, inference algorithms and VHDL lowering remain outside this review.
 
 | Example context | What each syntax option must make clear |
 |---|---|
 | Future StreamSoC port | How existing explicit reset inputs, polarities and manual assignments can be preserved, including `last_lr = lr`; where future inherited reset could be enabled without forcing a rewrite of the copied design. |
 | WireGuard | One design option enables synchronous reset by default or disables it. Show the same choice reaching private and shared MAINs, library state and generated storage, plus intentional register exceptions. |
 | PDW | Bind control/datapath resets separately, retain configuration through datapath reset, and reset FIFO occupancy without reset-only draining logic. |
-| User register | Inherit, opt in with a selected source, or opt out; select values; reset only `.valid` in `Reg[Stream[T]]`; show nested field selection and the behavior of unselected fields. |
+| User register | Inherit, opt in with a selected source, or opt out; select values; use separate data/valid registers for different policies. Partial-field syntax is optional future work. |
 | Manual logic and interfaces | Read a named/inherited reset, combine manual assignments with automatic reset under explicit ownership, and show when global stream wires need producer/receiver logic under reset or CE. |
 | Testbench and reusable block | Drive an external reset or generate one internally, keep the generator outside its own DUT reset, and instantiate a reset-compatible block with reset enabled or disabled. |
 
@@ -1203,8 +1221,8 @@ Resolve these before fixing the API:
 1. Opt-in and scope/override syntax, named access, multiple resets per clock,
    shared sources and internal bindings. Decide additional supported styles.
 2. Manual versus automatic ownership and their possible coexistence, overlap
-   priority, per-register opt-in/out and partial-field syntax, unspecified-field
-   update/hold behavior, child/generated-state behavior, and which declarations
+   priority, per-register opt-in/out, unreset-register update/hold behavior,
+   child/generated-state behavior, and which declarations
    or restricted forms establish ASIC reset coverage.
 3. Initial versus reset values, explicit no-reset/uninitialized state, values for
    inserted pipeline stages and observable refill behavior. Review CE semantics,
@@ -1243,3 +1261,654 @@ inventory and clock/simulation source; those remote
 threads are not independently verified here. No existing issue is classified
 as fixed by this plan, and vendor reset requirements still require
 implementation-time verification.
+
+## Potential user-facing syntax
+
+**All reset APIs in this section are proposals, not supported syntax.** The
+examples compare declarations and observable behavior, not compiler or VHDL
+implementation. They are design sketches, with application bodies abbreviated;
+they are not complete builds or changes to the three projects. Existing names
+such as `make_clock`, `MAIN`, `hw_func`, `Reg`, `Input`, `Wire` and `vhdl` are
+real APIs, but the reset arguments, reset handles and helpers shown here are new.
+
+There are two independent choices: where the global default is declared, and
+how a register overrides that default. Choosing global option A does not require
+register option R1. The later examples use R1 for readability and show both
+global alternatives where they differ. No option requires partial-field reset;
+one compound register has one automatic reset policy in these initial sketches.
+
+### Global clock and reset declarations
+
+**Option A: a reset option on the existing clock declaration.** The common
+one-clock/one-reset case is short, and otherwise existing clock syntax remains:
+
+```python
+# Proposed A: module/global namespace.
+core_clk = make_clock(100.0, reset=True)
+core_reset = core_clk.reset
+
+@MAIN(core_clk)
+def core():
+    count: Reg[uint16_t] = 0
+    count = count + 1
+```
+
+Here `reset=True` opts into the active-high synchronous default. An unbound
+default source becomes the top input `reset_100p0`, alongside `clk_100p0`.
+With no reset declaration for that clock, `make_clock(100.0)` keeps its existing
+reset-free meaning; an explicit `reset=False` requests no default. The proposed
+`.reset` is a declaration handle, not a hardware bit read. A second reset can
+use `make_reset` below and be selected by a scope/register override; it does
+not require another clock.
+
+**Option B: declare reset separately and explicitly associate it with a clock.**
+
+```python
+# Proposed B: same default behavior, separate declarations.
+core_clk = make_clock(100.0)
+core_reset = make_reset(clock=core_clk, default=True)
+
+@MAIN(core_clk)
+def core():
+    count: Reg[uint16_t] = 0
+    count = count + 1
+```
+
+`make_reset` defaults to active-high synchronous operation. `default=True`
+provides the domain's inherited reset; omitting it declares a selectable source
+without changing the domain default. An explicit style spelling could be
+`kind="sync", active="high"`. Other kinds/polarities are possible future API
+values, not a commitment to implement them in the first version.
+
+Both options need the same source-binding vocabulary, analogous to clocks:
+
+```python
+# Proposed alternatives: choose ONE binding for this reset handle.
+board_reset: Input[uint1_t] = core_reset  # external pin, named board_reset
+# OR, in a synthesizable testbench / internal-source configuration:
+generated_reset: Wire[uint1_t] = core_reset  # driven by one hardware function
+```
+
+A binding replaces the automatic top input; it does not create a second source.
+Leaving an enabled source unbound requests the default external port. Declaring
+an unused non-default handle need not request an input. Reading an ordinary wire
+named `rst` does not opt into this mechanism. Neither declaring a reset nor
+selecting `kind="sync"` synchronizes an asynchronous physical source.
+
+The domain-default approach resembles the context in
+[Amaranth domains](https://amaranth-lang.org/docs/amaranth/v0.5.4/guide.html#clock-domains)
+and [SpinalHDL clock domains](https://spinalhdl.github.io/SpinalDoc-RTD/master/SpinalHDL/Structuring/clock_domain.html).
+The choice for Pypeline is how to expose it while keeping existing clocks
+reset-free. A is concise for WireGuard; B makes PDW's separate reset identities
+more visible. B also needs a clear `default` spelling so merely describing a
+legacy StreamSoC signal does not enable reset throughout its clock domain.
+
+Proposed selection rules for either option:
+
+| At a use site | Candidate meaning |
+|---|---|
+| Omitted `reset=` / `reset=INHERIT` | Use the surrounding effective policy; at a MAIN use its clock's default. With no default, preserve reset-free behavior. |
+| `reset=None` | Explicitly disable automatic reset in this scope or on this register. This is different from omission. |
+| `reset=core_reset` | Select that named handle, even when the containing scope has no default. |
+| `reset_signal()` | Read the effective reset as an active-high `uint1_t`; return constant zero if the scope has no reset. Reading it does not opt into reset. |
+| `reset_signal(core_reset)` | Read a particular declared source, normalized to asserted=1. It does not change the reader's register policy. A missing/invalid named handle is an error, not a silently invented source. |
+
+`@MAIN(core_clk, reset=other_reset)` and `@hw_func(reset=other_reset)` are
+candidate whole-function overrides. A reusable function normally keeps plain
+`@hw_func` and inherits at each use. A MAIN is a separate root: a caller's scope
+does not automatically govern an independently declared shared MAIN. Domain
+defaults or explicit selections must cover those roots too. Conflicting default
+declarations for the same clock must not depend on import order, and two reset
+handles must not become one just because their clock frequencies match.
+An omitted reset option on another reference to the same clock does not disable
+an explicitly configured domain default. An explicit conflicting default is an
+error; selecting `reset=None` on a MAIN is a local opt-out instead.
+
+For a different policy at one call site, two further spellings are possible:
+
+```python
+# Proposed scoped call; all omitted reset policies inside inherit control_reset.
+with reset_scope(control_reset):
+    result = control_block(inputs)
+
+# Alternative: a reusable binding made in the global namespace.
+control_instance = with_reset(control_block, control_reset)
+# Called inside a hardware function:
+result = control_instance(inputs)
+```
+
+These are alternatives, not two required helpers. A scope highlights a region;
+a bound callable makes two uses of one library block with different resets
+explicit. Either must allow a deliberate child/register override without
+mutating every instance of the original function. This parallels the role of
+[Chisel reset scopes](https://www.chisel-lang.org/docs/explanations/reset) and
+[SpinalHDL reset areas](https://spinalhdl.github.io/SpinalDoc-RTD/master/SpinalHDL/Structuring/clock_domain.html#resetarea).
+A first version could use function/MAIN overrides and leave the extra call-site
+form for cases that need it.
+
+### Register declarations and values
+
+**R1: keep the initializer and add options to the `Reg` annotation.**
+
+```python
+# Proposed declarations INSIDE a Pypeline hardware function.
+count: Reg[uint16_t] = 7                         # inherit; default reset value 7
+phase: Reg[uint8_t](reset_value=1)               # inherit; reset to 1
+local: Reg[uint16_t](reset=control_reset) = 7     # explicit source, reset to 7
+history: Reg[uint32_t](reset=None)               # no automatic reset
+```
+
+**R2: put policy and initialization in a declaration helper.** The same choices
+could instead look like this:
+
+```python
+# Proposed R2; reg(...) is a declaration, not a runtime next-state assignment.
+count: Reg[uint16_t] = 7
+phase: Reg[uint8_t] = reg(reset_value=1)
+local: Reg[uint16_t] = reg(init=7, reset=control_reset)
+history: Reg[uint32_t] = reg(reset=None)
+```
+
+R1 keeps `= value` as initialization and makes reset policy part of the storage
+annotation. R2 has familiar keyword-call syntax but gives the initializer
+position a second meaning. Neither should consume the existing second `Reg`
+subscript slot, which already accepts a multi-cycle timing tag. For example, R1
+could compose as `Reg[T, timing_tag](reset=control_reset)`. That is a syntax
+composition proposal, not an implementation claim.
+
+For comparison, these examples use the following **candidate value rule**:
+an omitted `reset_value` uses an explicit initializer, or the type's zero/null
+value if no initializer exists. `reset_value=` overrides only the runtime reset
+value. It does not itself opt into a reset or promise power-up initialization.
+Thus `phase` above has reset value one without an explicit power-up initializer;
+its pre-reset state is subject to the target/default-initialization rules.
+Keeping initialization and reset value identical is a simpler alternative;
+that would remove `reset_value=` and use `= 1` for `phase`. The choice is open.
+Chisel's [`RegInit`](https://www.chisel-lang.org/docs/explanations/sequential-circuits)
+is a reset-value precedent, not a guarantee of ASIC power-up state.
+
+For these examples, opting out means normal CE-qualified updates continue
+during reset; it does not implicitly hold the register. An explicit guard can
+hold it when that is the intended behavior. This is a proposed rule to review,
+not a settled change to CE. An explicit initializer on an unreset register is
+still subject to the FPGA/ASIC policy. Omitting the initializer must not be
+presented as proof of an ASIC's power-up value.
+
+Different data/valid policies use separate registers in the initial syntax:
+
+```python
+word_stream_t = make_stream_t(uint32_t)  # existing stream type factory
+
+@hw_func
+def sample_stage(word: uint32_t, take: uint1_t) -> word_stream_t:
+    data: Reg[uint32_t](reset=None)
+    valid: Reg[uint1_t](reset_value=0)
+    out: word_stream_t = word_stream_t(data=data, valid=valid)
+    if take:
+        data = word
+    valid = take
+    return out
+```
+
+This is a valid-only sample register, not a complete ready/valid buffer.
+With an inherited reset asserted at an edge, `valid` becomes zero even if
+`take` is high; `data` can still capture. Consumers must ignore data when valid
+is zero. The returned value is built from the old registers, so this example
+does not assert that synchronous reset changes outputs before its first edge.
+The same per-register distinction is available in
+[Amaranth's reset-less signal option](https://amaranth-lang.org/docs/amaranth/v0.5.4/guide.html#reset-less-signals).
+No field-mask declaration or special treatment of stream types is needed.
+
+### Manual reset in Pypeline HDL
+
+An ordinary `if` remains useful for protocol control and nonconstant reset
+assignments. Here automatic and manual behavior coexist on separate registers:
+
+```python
+# Proposed R1 / reset_signal access. Called on every clock edge in this sketch.
+@hw_func
+def track_lr(lr: uint1_t, advance: uint1_t) -> uint1_t:
+    last_lr: Reg[uint1_t](reset=None)       # user owns every assignment
+    have_advanced: Reg[uint1_t] = 0        # automatic inherited reset
+    changed: uint1_t = have_advanced & (last_lr != lr)
+    rst: uint1_t = reset_signal()
+    if rst:
+        last_lr = lr                      # input-dependent, not a constant reset
+    elif advance:
+        last_lr = lr
+        have_advanced = 1
+    return changed
+```
+
+The manual sampling portion could instead take an ordinary reset argument
+(this smaller helper returns the previous sample):
+
+```python
+# Proposed per-register opt-out; ordinary explicit reset argument.
+@hw_func
+def track_lr_explicit(lr: uint1_t, advance: uint1_t, rst: uint1_t) -> uint1_t:
+    last_lr: Reg[uint1_t](reset=None)
+    previous: uint1_t = last_lr
+    if rst:
+        last_lr = lr
+    elif advance:
+        last_lr = lr
+    return previous
+
+# Inside the caller; all hardware arguments are supplied.
+previous = track_lr_explicit(lr, advance, reset_signal(control_reset))
+```
+
+Implicit access reduces argument plumbing in reusable blocks; an explicit
+argument shows the dependency at the call. Passing that argument does not
+change the callee's inherited policy or its children's reset sources. Both
+examples explicitly exclude `last_lr` from automatic reset. Ordinary branches
+on reset do not automatically opt out any other state.
+
+For R1/R2, a simple candidate overlap rule is **automatic reset wins** on an
+automatically reset register, regardless of a manual assignment in the body.
+Users wanting complete manual ownership select `reset=None`. Rejecting overlap
+or adding a separate manual-ownership declaration are alternatives, but need not
+be additional first-version features. Arbitrary manual branches still do not
+establish ASIC initializer coverage merely because they read a reset signal.
+
+The examples run with their implicit CE asserted. `advance` is an ordinary
+data-enable input, so the manual branch precedes it. If the function is skipped
+or its implicit CE is low, an ordinary `if rst` is not promised to execute.
+Only automatic reset has the proposed unconditional priority over implicit CE.
+A user needing manual reset while normal work is disabled can keep the block
+clocked and move that normal-work enable inside the function. An automatic
+constant reset is preferable when it expresses the desired behavior.
+
+Global stream wires remain values driven by their producers. A source/sink or
+scoreboard can explicitly observe the transfer rule without changing a public
+valid/ready wire:
+
+```python
+# Proposed reset access; ordinary logic inside an always-called function.
+accepted: uint1_t = incoming.valid & ready & ~reset_signal()
+```
+
+This expression does not reset a queue, force output valid low or solve an
+independently enabled peer's protocol. Holding a producer's registers with CE
+likewise needs an acceptance rule at the receiver. Avoid introducing a global
+wire-reset declaration in these first examples; the owning stateful block and
+its interface contract determine what should be driven.
+
+### Manual reset in raw VHDL
+
+**V1: implicit local reset, like the existing local clock/CE.** The raw author
+writes the sequential behavior explicitly. For this sketch, `RESET` is a
+proposed normalized active-high one-bit `unsigned`, like `CLOCK_ENABLE`:
+
+```python
+# Proposed implicit RESET port; synchronous runtime behavior only.
+@hw_func
+def raw_hold(x: uint8_t, step: uint1_t) -> uint8_t:
+    vhdl("""
+signal held : unsigned(7 downto 0);
+begin
+process(clk)
+begin
+  if rising_edge(clk) then
+    if RESET(0) = '1' then
+      held <= (others => '0');
+    elsif CLOCK_ENABLE(0) = '1' then
+      if step(0) = '1' then
+        held <= x;
+      end if;
+    end if;
+  end if;
+end process;
+return_output <= held;
+""")
+```
+
+The effective inherited/named reset maps to local `RESET`; the raw author does
+not hardcode `reset_100p0`. Reset precedes CE in the process. Reading `RESET`
+does not add reset behavior to other private raw state: every such assignment
+is the author's responsibility. The excerpt has no power-up initializer;
+without reset, `held` has no promised hardware value before the first capture.
+A reset-free version of an existing FPGA block must preserve whatever supported
+initialization that block already promises.
+
+**V2: pass reset as an ordinary explicit raw-function argument.** The signature
+could be `raw_hold(x: uint8_t, step: uint1_t, rst: uint1_t) -> uint8_t`, with
+the same VHDL body testing `rst(0)` instead of `RESET(0)`. A caller uses:
+
+```python
+# Proposed reset_signal helper; ordinary hardware port dependency.
+held = raw_hold(x, step, reset_signal())
+# Or select a named source explicitly:
+held = raw_hold(x, step, reset_signal(control_reset))
+```
+
+The two calls are alternatives for one instance. V2 exposes the port in the
+Python signature and also suits existing manually reset raw IP. V1 gives
+reusable wrappers the same inherited reset access as ordinary registers. Like
+[Chisel external modules](https://www.chisel-lang.org/docs/explanations/blackboxes),
+explicit raw ports make the wrapper's connection contract visible. Neither
+approach proves the opaque body's reset coverage or adapts its process to an
+asynchronous style. This example is sync-only; mismatched styles need a declared
+contract or a different body, not a silent reinterpretation.
+
+Reset-disabled instantiation has two authoring options:
+
+- **One body, inactive port:** V1's `RESET` is tied to zero; V2 receives a constant
+  zero. The raw body/port remains in rendered HDL. This retains the unresolved
+  exception to literal reset-free HDL absence; no new top reset input appears.
+- **Two bodies:** choose the reset-enabled or plain text for each instance. A
+  possible V1 spelling is `vhdl(reset_body if has_reset() else plain_body)`.
+  Here `has_reset()` would be a proposed elaboration-time query about that
+  instance, not a runtime test of the reset level. The plain body omits the
+  reset reference/port. Supporting this query and authoring two bodies is a
+  separate choice, not existing `vhdl` behavior. For V2, a fixed `rst` argument
+  is still a port even if unused by the text; strict port absence needs a
+  separate reset-free signature/wrapper, not merely a different body.
+
+Attaching a native simulation model still needs matching reset behavior. The
+snippets do not imply that arbitrary VHDL becomes natively executable.
+
+### PDW syntax examples
+
+These sketches use the topology in
+[PDW's top](../examples/pypeline/dsp/pdw/top.py): one 125 MHz clock, registered
+`global_rst` from the OR of seven channel resets, and registered `ctrl_rst`
+from `tx0_s_axis_rst` alone. The source registers intentionally start at one on
+FPGA. Keep that existing delay/startup behavior in this comparison; replacing
+FIFO draining does not require changing the reset generator at the same time.
+
+Global option A:
+
+```python
+# Proposed global declarations; datapath reset is the clock's default.
+pdw_clk = make_clock(125.0, reset=True)
+datapath_reset = pdw_clk.reset
+control_reset = make_reset(clock=pdw_clk, name="control")
+global_rst: Wire[uint1_t] = datapath_reset
+ctrl_rst: Wire[uint1_t] = control_reset
+```
+
+Global option B, with the same source wires and behavior:
+
+```python
+pdw_clk = make_clock(125.0)
+datapath_reset = make_reset(clock=pdw_clk, default=True)
+control_reset = make_reset(clock=pdw_clk, name="control")
+global_rst: Wire[uint1_t] = datapath_reset
+ctrl_rst: Wire[uint1_t] = control_reset
+```
+
+Both options bind the existing internal signals rather than adding reset input
+ports on top of the existing channel pins. The existing generator would opt out
+of the default it generates:
+
+```python
+# Proposed reset=None; channel Input declarations are unchanged and omitted.
+@MAIN(pdw_clk, reset=None)
+def rst_main():
+    rst_r: Reg[uint1_t] = 1
+    ctrl_rst_r: Reg[uint1_t] = 1
+    global_rst = rst_r
+    ctrl_rst = ctrl_rst_r
+    rst_r = (rx0_s_axis_rst | tx0_s_axis_rst | rx0_m_axis_rst
+             | rx1_m_axis_rst | rx2_m_axis_rst | tx0_m_axis_rst
+             | tx1_m_axis_rst)
+    ctrl_rst_r = tx0_s_axis_rst
+
+@MAIN(pdw_clk, reset=control_reset)
+def ctrl_main():
+    ...  # Control receiver and register bank inherit control_reset.
+
+@MAIN(pdw_clk)
+def pdw_main():
+    ...  # Datapath, queues and generated stages inherit datapath_reset.
+
+@MAIN(pdw_clk)
+def pulse_gen_main():
+    ...  # Same datapath reset.
+```
+
+This reset-free generator relies on FPGA initialization and is not an ASIC
+startup solution. As an alternative to either clock-default arrangement, B
+could omit `default=True` and name the reset on every MAIN. That is more
+repetitive but makes each root's participation explicit. Merely reading the
+configuration wire in `pdw_main` must not change `ctrl_main`'s reset selection.
+
+Inside the control function, whole-register inherited reset is sufficient:
+
+```python
+# Proposed automatic reset semantics, using the existing compound type/defaults.
+@hw_func
+def config_bank(new_config: pdw_ctrl_t, write: uint1_t) -> pdw_ctrl_t:
+    regs: Reg[pdw_ctrl_t] = CTRL_DEFAULTS
+    current: pdw_ctrl_t = regs
+    if write:
+        regs = new_config
+    return current
+```
+
+Called under `ctrl_main`, this resets the entire bank to `CTRL_DEFAULTS` only
+on control reset. A simultaneous write loses to reset. Datapath reset leaves
+the bank running, so configuration can be loaded while the datapath is held.
+R1's `Reg[pdw_ctrl_t](reset=control_reset) = CTRL_DEFAULTS`, or R2's
+`Reg[pdw_ctrl_t] = reg(init=CTRL_DEFAULTS, reset=control_reset)`, could pin the
+same policy explicitly; inheritance keeps the reusable bank independent of PDW.
+
+The FIFO call need not carry another runtime argument when it inherits reset:
+
+```python
+# Existing factory/call shape; reset behavior is proposed for the library.
+packet_fifo = make_stream_fifo(sample_t, depth=PACKET_DEPTH)
+
+@hw_func
+def buffer_samples(in_stream_if: packet_fifo.fwd_t,
+                   out_stream_if: packet_fifo.fb_t) -> packet_fifo.return_t:
+    return packet_fifo(in_stream_if, out_stream_if)
+```
+
+An instance under `pdw_main` discards FIFO occupancy on datapath reset even when
+the output is stalled. It does not need `ready | global_rst` to drain the queue.
+This requires the future reset-compatible FIFO, serializer and upstream pipeline
+contracts; these snippets alone do not migrate the current libraries. Normal
+packet-ending/discard operations remain. Any manual PDW protocol logic can read
+`reset_signal()` or `reset_signal(control_reset)` without disabling automatic
+register/FIFO reset. Differing policies within a new local stream register can
+use the separate data/valid form above.
+
+### WireGuard syntax examples
+
+The shared project configuration is the natural place for its default-on
+option. These sketches use the existing `wireguard_env.TARGET_MHZ`; they do not
+introduce a second clock or a reset per direction. `RESET` below is a proposed
+project parameter, not an existing WireGuard option.
+
+Global option A:
+
+```python
+# Proposed common project declarations, imported by every participating module.
+reset_enabled = param("RESET", default=True, type=bool)
+wg_clk = make_clock(wireguard_env.TARGET_MHZ, reset=reset_enabled)
+wg_reset = wg_clk.reset  # None when the option is disabled.
+```
+
+Global option B:
+
+```python
+reset_enabled = param("RESET", default=True, type=bool)
+wg_clk = make_clock(wireguard_env.TARGET_MHZ)
+wg_reset = (make_reset(clock=wg_clk, default=True)
+            if reset_enabled else None)
+```
+
+Both would leave the default external port named from the selected clock. If
+the hardware wrapper wants a fixed port alias, it could bind it conditionally:
+
+```python
+# Proposed hardware-wrapper binding; absent in the reset-disabled build.
+if reset_enabled:
+    reset: Input[uint1_t] = wg_reset
+```
+
+All selected roots use the common clock/default, including the independently
+declared shared engine. Representative declarations are:
+
+```python
+@MAIN(wg_clk)
+def encrypt_main():
+    ...  # Private encrypt state and library calls inherit wg_reset.
+
+@MAIN(wg_clk)
+def decrypt_main():
+    ...  # Private decrypt state and library calls inherit the SAME reset.
+
+@MAIN(wg_clk)
+def chacha20_pipeline_shared():
+    priority_encrypt: Reg[uint1_t]
+    grant_stalled: Reg[uint1_t]
+    stalled_is_encrypt: Reg[uint1_t]
+    ...  # Existing arbitration and pipeline call, not reproduced here.
+```
+
+The three shared registers come from
+`src/chacha20/chacha20_pipeline_shared.py` in the external source root. The
+same rule must cover the selected Poly1305 shared services and private context
+state. Under the candidate value rule, omitted initializers still reset to
+typed zero; nonzero control encodings require their correct reset values.
+No per-register edits are needed just to inherit the chosen design reset.
+Compiler-created stages and reset-compatible libraries participate too.
+The separate-data/valid example is a language capability, not a recommendation
+to remove WireGuard's requested broad payload/key/operand reset coverage.
+
+Conceptually `-D RESET=False` selects the same design without the reset port,
+automatic reset logic or harness startup reset cycle, subject to the raw-body
+choice and target rules. This is a proposed parameter use, not a runnable
+command for the current design. With reset enabled, one assertion resets both
+directions and shared resources; it is never a choice between two independent
+direction resets. The [WireGuard behavioral requirements](#wireguard-fpga-prototype-and-asic-reset-coverage)
+still govern aborted work, owner/result alignment and output validity. A global
+default alone does not mask the combinational interface wires.
+
+A synthesizable testbench can replace the hardware input binding with an
+internal source. For example, this FPGA-only stimulus keeps its own counter
+outside the DUT reset:
+
+```python
+# Proposed testbench alternative; no simultaneous Input binding for wg_reset.
+dut_reset: Wire[uint1_t] = wg_reset
+
+@MAIN(wg_clk, reset=None)
+def reset_stimulus():
+    cycle: Reg[uint32_t] = 0
+    dut_reset = (cycle == 0) | (cycle == 200)
+    cycle = cycle + 1
+```
+
+The testbench chooses the reset-enabled configuration for this example. The
+counter's initializer is a testbench FPGA assumption, not DUT ASIC reset
+coverage. Explicit/internal stimulus replaces the automatic external startup
+driver; it must not compete with it. The exact pulse schedule is user logic.
+
+### Future StreamSoC syntax examples
+
+The first Pypeline version copies the existing design. It can keep ordinary
+inputs and manual branches without enabling the new reset feature at all.
+For either global option, that means a reset-free clock declaration:
+
+```python
+# Illustrative future port; no new reset opt-in.
+cpu_clk = make_clock(CPU_CLK_MHZ)
+areset: Input[uint1_t]
+
+@MAIN(cpu_clk)
+def cpu_top():
+    rst: uint1_t = xil_cdc2_bit(areset)  # Existing explicit synchronizer to port.
+    ...  # Pass rst to the copied CPU logic and clear the same sticky flags.
+```
+
+`xil_cdc2_bit` here denotes a future wrapper preserving the existing C helper;
+this snippet is not claiming that a Pypeline wrapper already exists. A fragment
+of the copied register logic would keep its ordinary explicit reset argument:
+
+```python
+# Behavioral fragment, not a replacement CPU implementation.
+@hw_func
+def cpu_state_fragment(rst: uint1_t, next_pc: uint32_t,
+                       next_state: cpu_state_t) -> uint32_t:
+    pc: Reg[uint32_t] = 0
+    state: Reg[cpu_state_t] = cpu_state_t.FETCH_START
+    previous_pc: uint32_t = pc
+    pc = next_pc
+    state = next_state
+    if rst:
+        pc = 0
+        state = cpu_state_t.FETCH_START
+    return previous_pc
+```
+
+Without feature opt-in this retains the ordinary assignment semantics, startup
+behavior and explicit reset stimulus. A signal named `rst` must not acquire
+implicit reset/CE priority, an automatic clock-0 pulse, or broader register
+coverage. The real port also preserves the CPU's other working-state updates
+and memory calls; this fragment makes no new cancellation guarantee.
+
+If a later design wants to describe that synchronized signal as a selectable
+reset, both global alternatives could use a **non-default** handle:
+
+```python
+# Optional future use, NOT a planned change to the copied StreamSoC.
+cpu_reset = make_reset(clock=cpu_clk, name="cpu", default=False)
+cpu_rst: Wire[uint1_t] = cpu_reset
+
+@MAIN(cpu_clk, reset=None)
+def cpu_reset_source():
+    cpu_rst = xil_cdc2_bit(areset)
+
+# Inside a function, select only the intended registers (proposed R1):
+# pc: Reg[uint32_t](reset=cpu_reset) = 0
+# state: Reg[cpu_state_t](reset=cpu_reset) = cpu_state_t.FETCH_START
+# Other registers remain without automatic reset unless explicitly selected.
+```
+
+This illustrates per-register opt-in without resetting every peripheral on the
+clock. R2 could express the same declarations with `reg(init=..., reset=cpu_reset)`.
+Equivalent automatic assignments would replace the corresponding manual
+constant-reset branches only if the port deliberately chose that change; no
+such migration is required here. Named observation could use
+`reset_signal(cpu_reset)` while other state remains manually controlled.
+
+The [I2S manual reset](../include/i2s/i2s_mac.c) is a useful counterexample to
+converting every reset into a constant initializer. Its future copy can retain:
+
+```python
+# Inside the copied, always-called I2S function; reset_n is an ordinary input.
+last_lr: Reg[uint1_t]
+# ... normal bit-edge updates ...
+if not reset_n:
+    last_lr = lr
+    # ... the same constant phase/count/valid assignments as the C source ...
+```
+
+If this function were later placed under an automatic reset context, R1's
+`last_lr: Reg[uint1_t](reset=None)` would keep its manual ownership; other
+registers could inherit constant reset. Input-dependent sampling must remain
+explicit. Active-low IP ports can likewise stay ordinary raw-function arguments
+as in V2; supporting first-class active-low reset declarations is not necessary
+just to copy those connections. Existing MAC/DDR reset and status signals and
+nonzero initialization remain as described in the source review. No new reset
+supervisor or transaction recovery protocol is part of these syntax examples.
+
+### Choices to review together
+
+| Choice | Main tradeoff in these examples |
+|---|---|
+| A clock option vs B separate reset declaration | A is short for WireGuard; B separates source declaration from choosing a domain default and makes PDW's two policies explicit. Both need named handles and external/internal bindings. |
+| Domain default vs explicit reset on every MAIN | Defaults reduce wiring across WireGuard's many roots. Explicit root selections expose exceptions such as PDW control and its reset generator. Neither changes clock identity. |
+| R1 annotation options vs R2 declaration helper | R1 preserves `= value` as initialization; R2 groups settings in a conventional keyword call. Both need per-register opt-in/out and a deliberate value rule. |
+| Inherited access vs explicit manual argument | `reset_signal()` keeps reusable signatures small; an explicit argument makes the dependency visible. Neither proves manual reset priority or ASIC coverage. |
+| Raw V1 vs V2, then tie-off vs body variants | Implicit local reset reduces raw wrapper plumbing; an explicit port is familiar for existing IP. Tie-off permits one body but retains a raw reset port; variants preserve literal reset-free HDL. |
+| Whole-register policies first | Separate data/valid registers cover the immediate differing-policy case. Field masks, nested overrides and their overlap rules can wait. |
+
+Choose a coherent small combination before implementation. The examples do not
+require every spelling, reset-specific CDC tooling, a new global-wire isolation
+API or a large reset standard library to ship together.
