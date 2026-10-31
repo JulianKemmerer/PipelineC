@@ -41,7 +41,7 @@ simulator for Pypeline designs, or an external HDL simulator run on the generate
 
 | module | role |
 |---|---|
-| `src/SIM.py` | selects the simulator (`SET_SIM_TOOL`), decides whether a native run needs a build (`NATIVE_SIM_SKIPS_BUILD`, `SIM_AT_COMB_STAGE`, `SIMULATE_BUILT_HARDWARE`), runs it (`DO_OPTIONAL_SIM`, and `DO_COMB_STAGE_SIM` after a `--comb` build's final files), records what native simulation takes from a build (`NATIVE_SIM_HARDWARE`, `WRITE_BUILT_HARDWARE`) and gathers what every backend needs (`GET_SIM_GEN_INFO`, `GET_SIM_FILES`, `GET_MAIN_FUNC_LATENCIES`) |
+| `src/SIM.py` | selects the simulator (`SET_SIM_TOOL`), decides whether a run needs a build (`NATIVE_SIM_SKIPS_BUILD`, `SIM_AT_COMB_STAGE`, `BUILT_HARDWARE_IS_CURRENT`, `SIMULATE_BUILT_HARDWARE`), runs it (`DO_OPTIONAL_SIM`, and `DO_COMB_STAGE_SIM` after a `--comb` build's final files), records what native simulation and the next build's up-to-date check take from a build (`NATIVE_SIM_HARDWARE`, `BUILD_INPUTS`, `WRITE_BUILT_HARDWARE`) and gathers what every backend needs (`GET_SIM_GEN_INFO`, `GET_SIM_FILES`, `GET_MAIN_FUNC_LATENCIES`) |
 | `src/pypeline_sim.py` | the native simulator, used as `SIM_TOOL` for `.py` designs ([`pypeline_sim_DESIGN.md`](pypeline_sim_DESIGN.md)) |
 | `src/COCOTB.py` | cocotb + GHDL on the generated VHDL, with a generated or user Makefile and testbench |
 | `src/VERILATOR.py` | GHDL + yosys to Verilog, then Verilator with a generated or user `main.cpp` |
@@ -85,10 +85,15 @@ calls `SIM` at four points:
 
   is therefore `python3 src/pypeline_sim.py my_design.py --run 1000` **plus a full build
   first when `--comb` is absent**.
-- **Before any build.** `SIMULATE_BUILT_HARDWARE(args, src_file)` reads the `--out_dir`'s
-  `built_hardware.json` (see [Simulating built hardware](#simulating-built-hardware)). When
-  it holds another top's hardware and this is a native `--sim`, it simulates that
-  hardware and the driver exits. Otherwise a build follows, so it removes the record.
+- **Before any build.** The driver takes the run's `BUILD_INPUTS(args, src_file)` and reads
+  the `--out_dir`'s `built_hardware.json` (see
+  [Simulating built hardware](#simulating-built-hardware)) twice:
+  - `BUILT_HARDWARE_IS_CURRENT(build_inputs, args)`: when a plain build (no `--sim`, no
+    `--rebuild`) finds the record of this very top from equal inputs, the build is up to
+    date and the driver exits;
+  - `SIMULATE_BUILT_HARDWARE(args, src_file, build_inputs)`: when it holds another top's
+    hardware and this is a native `--sim`, it simulates that hardware and the driver exits.
+    Otherwise a build follows, so it removes the record.
 - **After a `--comb` build's final files.** `DO_COMB_STAGE_SIM` runs the sim when
   `SIM_AT_COMB_STAGE(args)` is true: for `--sim_comb`, and for a native `--sim` run
   that was degraded to comb because no synthesis tool is installed (zero latency,
@@ -152,22 +157,44 @@ a sweep timed on that removes pipeline stages the real design needs (see
     elaboration read for each AUTO_PIPELINE or AUTO_MULTI_CYCLE it never instantiated,
     by kind and key. A design reads such a tag when, for example, a factory builds an
     alternative the configuration leaves unused. A tag read with two different values is
-    left out.
+    left out;
+  - `build_inputs`: the run's `BUILD_INPUTS`, which the driver takes once, before the
+    build reads anything:
+    - the compiler's source hash (`SYN.COMPILER_SOURCE_HASH`) and the top;
+    - every command-line setting except those in `_SETTINGS_OUTSIDE_BUILD_INPUTS` (where
+      the build runs and with how many jobs, where caches live, debug output and
+      simulation-only options), so a new setting counts by default. `-D` counts as the
+      parsed parameter table, so order does not matter, and a `--latency_hints` or
+      `--pins` file by its path and contents;
+    - the `PIPELINEC_*`, `PYPELINEC_*` and `PYPELINE_*` environment variables and
+      `PYTHONPATH`.
 - **Replacing it.** A record is only ever the last met build. `SIMULATE_BUILT_HARDWARE`
   removes it whenever a build follows, which also covers `--comb` and `--no_synth`
   builds that rewrite the directory, and a build that misses timing writes none.
+- **Up-to-date builds.** `BUILT_HARDWARE_IS_CURRENT` makes a plain build (no `--sim`, no
+  `--rebuild`) of the recorded top do nothing when `_BUILD_INPUTS_DIFFERENCE` finds no
+  difference: equal build inputs, and every recorded source still has its hash. The run
+  prints `Up to date: ...` and the driver exits before writing anything. Otherwise it
+  prints the first difference (`Building again: the --pipeline_min_effort setting
+  changed ...`) and the build follows. Not part of the comparison, so `--rebuild` is the
+  way to build again after changing them: the synthesis tool installation, files a
+  design reads with `open()`, installed Python packages, and other environment
+  variables.
 - **Simulating it.** `SIMULATE_BUILT_HARDWARE` runs when the record's top differs from
   the file given, `SIM_TOOL` is the native simulator and `--sim` was given (a `--comb`
   run has already exited). It:
-  - exits with an error if any recorded source's hash changed, or the record lists
-    problems;
+  - exits with an error if any recorded source's hash changed, if another version of the
+    compiler built the record (its `build_inputs` compiler hash differs or is missing),
+    or if the record lists problems;
   - calls `run_sim` with the recorded hardware, `built_hardware_from=` the directory and
     `design_params=` the recorded values and `unbuilt_latency_reads=` (see
     [Simulating another top's built hardware](pypeline_sim_DESIGN.md#simulating-another-tops-built-hardware));
   - turns a `pypeline.BuiltHardwareError` into an error exit.
 
-  Nothing is parsed, elaborated or written. A run of the same top in its own directory
-  is an ordinary build, so the existing edit-and-rebuild flow is unchanged.
+  Nothing is parsed, elaborated or written. A `--sim` of the recorded top itself is an
+  ordinary build and simulation, even when its build is current: the record keeps only
+  the AUTO_FSM schedule fields native simulation reads, and a design may read others when
+  it is imported (some self-checking tests assert on their own schedule).
 
 ## 4. The backend contract
 
@@ -299,8 +326,10 @@ the whole compiler; `VHDL.py` does not import `SIM`.
 - `src_module_import_test.py`: every src module, `SIM` and the backends included, imports
   first in a fresh interpreter.
 - `built_hardware_sim_test.py` (build_report, sky130): a testbench simulated on the hardware
-  built for its real top, and each refusal; see
+  built for its real top, and each refusal; the same build again is up to date, and
+  `--rebuild` builds; see
   [`pypeline_TESTS.md`](pypeline_TESTS.md).
+- `built_hardware_current_test.py` (unit): which build inputs make a recorded build current.
 - The `native_vs_vhdl_sim` category (`native_vs_vhdl_sim_tests.py`) runs designs through
   both the native simulator and cocotb + GHDL and diffs the cycle logs; see
   [`pypeline_TESTS.md`](pypeline_TESTS.md).

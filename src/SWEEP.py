@@ -3359,8 +3359,17 @@ def LATENCY_MEMORY_STORE_PATH(tool, part, kind, key):
     if SYN.SYNTHESIS_STORE_DIR is None:
         return None
     digest = hashlib.sha256(key.encode()).hexdigest()[:16]
-    return os.path.join(SYN.SYNTHESIS_STORE_DIR, "latency", "v2",
-                        tool, SYN.PART_CACHE_DIR_NAME(part), kind, digest + ".json")
+    # A tool with no part (pyrtl) shares one "none" directory, as AUTO_FSM's
+    # store does
+    return os.path.join(
+        SYN.SYNTHESIS_STORE_DIR,
+        "latency",
+        "v2",
+        tool,
+        SYN.PART_CACHE_DIR_NAME(part or "none"),
+        kind,
+        digest + ".json",
+    )
 
 
 def READ_LATENCY_TABLE(path):

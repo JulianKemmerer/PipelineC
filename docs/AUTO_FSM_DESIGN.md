@@ -1350,7 +1350,7 @@ search reads:
 - the call site's key and source identity, the budget scale, the encoding
   request, the area-sweep and force flags, and the whole carried schedule;
 - the design's source hashes and a hash of the compiler's and the Pypeline
-  library's own sources (`_compiler_source_hash`), so any code change searches
+  library's own sources (`SYN.COMPILER_SOURCE_HASH`), so any code change searches
   again;
 - `_search_parser_inputs`: every delay an entity carries and its estimated
   flag, the control-path proxies, the clock goals, the target, the delay,

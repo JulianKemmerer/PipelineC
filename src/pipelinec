@@ -60,6 +60,13 @@ parser.add_argument(
     help="Output directory. Default is a new directory inside the current directory.",
 )
 parser.add_argument(
+    "--rebuild",
+    action="store_true",
+    help="Build even when --out_dir already holds the timing-met build of this "
+    "top from identical inputs (design sources, -D values, build settings, "
+    "compiler). By default such a build is up to date and does nothing.",
+)
+parser.add_argument(
     "-D",
     "--define",
     action="append",
@@ -489,10 +496,17 @@ if SIM.NATIVE_SIM_SKIPS_BUILD(args):
     except pypeline.DesignParamError as e:
         sys.exit(f"ERROR: {e}")
     sys.exit(0)
+# What the result of this build depends on besides its design sources, taken
+# before anything is read -- see SIM.BUILD_INPUTS
+build_inputs = SIM.BUILD_INPUTS(args, src_file)
+# A build of the top already built in --out_dir from identical inputs has
+# nothing to do -- see SIM.BUILT_HARDWARE_IS_CURRENT
+if SIM.BUILT_HARDWARE_IS_CURRENT(build_inputs, args):
+    sys.exit(0)
 # A native --sim of another top on the hardware already built in --out_dir needs
 # no build either; any build first forgets that record -- see
 # SIM.SIMULATE_BUILT_HARDWARE.
-if SIM.SIMULATE_BUILT_HARDWARE(args, src_file):
+if SIM.SIMULATE_BUILT_HARDWARE(args, src_file, build_inputs):
     sys.exit(0)
 # AXIS XO file switch
 SYN.WRITE_AXIS_XO_FILE = args.xo_axis
@@ -601,8 +615,11 @@ if not args.no_synth:
     # generation are skipped and the exit code is non zero
     if SWEEP.PRINT_TIMING_FAILURES(parser_state, multimain_timing_params):
         sys.exit(1)
-    # What native simulation of another top takes from this build
-    SIM.WRITE_BUILT_HARDWARE(parser_state, multimain_timing_params, src_file)
+    # What native simulation of another top, and the next build's up-to-date
+    # check, take from this build
+    SIM.WRITE_BUILT_HARDWARE(
+        parser_state, multimain_timing_params, src_file, build_inputs
+    )
 
     if SYN.PIN_CONSTRAINTS_FILE:
         SYN.GENERATE_FINAL_BITSTREAM(parser_state, multimain_timing_params)

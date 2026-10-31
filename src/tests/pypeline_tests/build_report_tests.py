@@ -92,8 +92,10 @@ def get_tests() -> list:
     # A native testbench simulated on the hardware built for another top in
     # its --out_dir: no build, built latencies, the value the build read for a
     # tag it never built, and the refusals (an undecided tag, a call of a tag
-    # the build only read, a changed parameter or source); a new build removes
-    # the record. One sky130 build, six native runs and a --no_synth build.
+    # the build only read, a changed parameter or source, another compiler's
+    # hardware); the same build again is up to date; --rebuild builds; a new
+    # build removes the record. One cold and one warm (--rebuild) sky130 build,
+    # an up-to-date run, eight native runs and a --no_synth build.
     tests.append(
         Test(
             name="built_hardware_sim_test",

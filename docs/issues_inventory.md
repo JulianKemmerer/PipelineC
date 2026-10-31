@@ -124,6 +124,7 @@ Within each group, bugs that affect both front ends come first, problems in the 
 | 44 | [#380][i380] | Both | The top level's global-wire connections come out in a hash-dependent order, so `top.vhd` changes between builds | Yes |
 | 45 | [#381][i381] | Both | After the sweep meets timing, a failed trim trial is kept and the build ends TIMING NOT MET | Yes |
 | 46 | TBD | Both | A hierarchy with inferred multiplies is sliced as if its DSP leaves shrank with it: a Karatsuba body needs 10–34 stages where ~5 would do | Yes, Vivado |
+| 47 | TBD | Python | AUTO_FSM budgets every FSM for the design's tightest clock, and its decode estimate and search cache couple unrelated FSMs | From the code |
 
 ## Wrong hardware, or simulation disagrees with hardware
 
@@ -740,6 +741,31 @@ Within each group, bugs that affect both front ends come first, problems in the 
   each. Not in `known_issues_tests.py`: only vendor synthesis shows the stage count.
 - **Workaround:** a single inferred product (`make_inferred_mult`) for a body whose depth matters.
   WireGuard's `inferred_body` choice takes the feedback body from 10 stages to 3, at more DSPs.
+
+### 47. TBD: AUTO_FSM budgets every FSM for the design's tightest clock and couples unrelated FSMs
+
+- **Front ends:** Python (AUTO_FSM).
+- **What happens:**
+  - The per-state delay budget comes from the fastest `@MAIN` clock in the whole design, not
+    from the MAIN that instantiates the FSM, although `_budget_du`'s docstring says otherwise.
+    An FSM under a 50 MHz MAIN next to an unrelated 200 MHz MAIN gets more, smaller states
+    and more latency than its clock needs. One tag used under two clock goals gets one
+    schedule.
+  - Each FSM's state-decode delay estimate is the maximum over every FSM's measured decode
+    shape, so a small FSM is scheduled against a larger one's decode.
+  - The persistent search cache keys every FSM on every design source hash and every entity
+    delay, so an edit to any file, even one no FSM uses, re-runs every FSM's schedule search
+    (about 25 minutes of compiler time on WireGuard).
+- **Where to look:** `src/AUTO_FSM.py`: `_period_du` and `_budget_du`; `_control_snapshot` and
+  `_select_delay`; `_search_parser_inputs` and `HARVEST_AUTO_FSM_SCHEDULES`, whose stored
+  cache/delay reads are the process-wide `SYN.CACHED_PATH_DELAY_READS`.
+- **Reproduce:** a design with an unrelated `@MAIN(200.0)` and an AUTO_FSM used only in a
+  `@MAIN(50.0)`: the FSM's budget is computed for 200 MHz. For the cache, edit a function no
+  FSM calls and rebuild: every AUTO_FSM search runs again instead of printing `reusing the
+  schedule an earlier search chose from identical inputs`. Not in `known_issues_tests.py`: the
+  planned fix (a schedule per clock goal, per-FSM decode shapes and per-FSM search keys) lands
+  its regression tests directly.
+- **Workaround:** none per FSM. `--auto_fsm_budget_scale` loosens every FSM's budget at once.
 
 [issues]: https://github.com/JulianKemmerer/PipelineC/issues
 [discussions]: https://github.com/JulianKemmerer/PipelineC/discussions

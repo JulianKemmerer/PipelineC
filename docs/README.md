@@ -1095,14 +1095,26 @@ A build leaves several kinds of results behind. Each has one job:
 | AUTO_FSM search results (`auto_fsm_searches/`, store `auto_fsm/`) | the output directory; the store | A later build that schedules an FSM from identical inputs (its source, the delays, clock goal, carried schedule and compiler) reuses the result instead of searching again |
 | `latency_profile.json` | the output directory | What the build built for each AUTO_PIPELINE / AUTO_MULTI_CYCLE. Keep a copy to pass as `--latency_hints` |
 | `--latency_hints FILE` | a file you keep | Starting latencies only, like `start_latency=` |
-| `built_hardware.json` | the output directory, once the build met timing | The finished hardware: a testbench simulated in this directory runs on it without any build |
+| `built_hardware.json` | the output directory, once the build met timing | The finished hardware and the inputs that built it: a testbench simulated in this directory runs on it without any build, and the same build again has nothing to do |
 
 Only the last one fixes the hardware. The others make the next build cheaper, and
 that build still synthesizes and sweeps the top you give it.
 
+- **Nothing changed, nothing runs.** The same build command on the same `--out_dir`
+  again, after a build that met timing, prints `Up to date: ...` and does nothing: no
+  elaboration, search or synthesis. It is the same build when the design sources the
+  build read, the `-D` values, the build options (not `-j`, `--out_dir`,
+  `--syn_cache` or simulation options), the compiler's own code and its
+  `PIPELINEC_*` / `PYPELINEC_*` / `PYPELINE_*` environment variables are all
+  unchanged. Anything else builds again, and the build first says what changed.
+  `--rebuild` builds anyway, for example after upgrading the synthesis tool or
+  changing a data file the design reads with `open()`, which the comparison does not
+  cover. A `--sim` of that same top still builds; simulate a separate testbench file
+  instead to skip the build
+  ([Simulating a testbench on built hardware](#simulating-a-testbench-on-built-hardware)).
 - **Reusing a warm directory.** A later invocation pointed at the same `--out_dir`
-  reuses the earlier run's warm sweep/build results instead of paying for them again.
-  So does an invocation pointed at a copy of that directory.
+  that does need to build reuses the earlier run's warm sweep/build results instead of
+  paying for them again. So does an invocation pointed at a copy of that directory.
 - **One process at a time.** Never run two invocations in one `--out_dir` at the same
   time. To run several from the same warm results, give each its own copy.
 - **Example.** The cycle-diff tool uses separate copies of one warm directory so its
@@ -1183,6 +1195,7 @@ latency memory does not remember it.
 
 The simulation stops with an error, instead of guessing, when:
 - a source file the build read has changed since (rebuild the top first);
+- another version of the compiler built the hardware (rebuild the top first);
 - a design parameter both runs declare has a different value;
 - the testbench uses an AUTO_PIPELINE, AUTO_FSM, AUTO_MULTI_CYCLE or auto-pipelined RAM
   the build never decided, or has a `@MAIN` the sweep could pipeline that the build
@@ -1216,6 +1229,7 @@ before; `--comb` simulation never builds. To simulate generated VHDL instead
 | `--xo_axis` | Write the packaging script for a Vitis AXI-Stream `.xo` IP |
 | `--pins FILE` | Supply the pin-constraint file used for the final implementation (see [Full bitstream builds](#full-bitstream-builds---pins)) |
 | `--top NAME` | Change the generated top-level module name from `top` |
+| `--rebuild` | Build even when `--out_dir` already holds the timing-met build of this top from identical inputs (by default that build is up to date and nothing runs; see [Output directories](#output-directories---out_dir)) |
 
 `--mux_delay_by_width` and `--no_mux_delay_by_width` force mux timing-cache keys to
 include or ignore operand width. The default is backend-dependent: PyRTL uses its
@@ -1354,10 +1368,13 @@ Consume the explicit manifests and indexes instead of globbing generated directo
 - `built_hardware.json` (synthesizing builds of Pypeline designs that met timing) records
   what native simulation needs from the build: every MAIN latency, AUTO_PIPELINE depth,
   AUTO_MULTI_CYCLE count, AUTO_FSM schedule and RAM plan, the `.latency` values the
-  design read for tags it never instantiated, and the hashes of the sources the build
-  read. A testbench simulated in this output directory runs on this hardware
-  ([Simulating a testbench on built hardware](#simulating-a-testbench-on-built-hardware)).
-  A new build in the directory removes it first.
+  design read for tags it never instantiated, the hashes of the sources the build
+  read, and the build's other inputs (options, `-D` values, compiler). A testbench
+  simulated in this output directory runs on this hardware
+  ([Simulating a testbench on built hardware](#simulating-a-testbench-on-built-hardware)),
+  and the same build again is up to date
+  ([Output directories](#output-directories---out_dir)). A new build in the directory
+  removes it first.
 - `clock_crossings.log` (and `clock_crossings.json` for scripts) lists every async wire
   leaf and global FIFO of a Pypeline design, with its clocks, kind, hardware, depth and
   source line ([The crossing report](pypeline_guide.md#the-crossing-report)).

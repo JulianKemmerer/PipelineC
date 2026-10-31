@@ -20,6 +20,9 @@ Builds (PyRTL, seconds each):
     the input records, the old log was read and the old design's timing used;
   - the final pipelined VHDL in a reused --out_dir follows the edit too.
     Before, an existing entity file from an earlier run was never rewritten;
+  - an edit re-synthesizes only what it changed: after a --full_hier_syn
+    build, rewiring f on its own line reuses g's run and re-runs only f and
+    the top that contains it;
   - two fresh output directories sharing --syn_cache: the second synthesizes
     nothing and ends with the same results;
   - stored measurements: after a --full_hier_syn build measured f and g, a
@@ -321,6 +324,39 @@ def test_final_vhdl_follows_edit(out):
     _expect(changed, "a same-named pipelined entity kept the earlier run's VHDL")
 
 
+def test_edit_resynthesizes_only_what_it_changed(out):
+    design = _write(os.path.join(out, "edit.py"), HIER_DESIGN)
+    rc, log1 = run([design, "--out_dir", "e", "--full_hier_syn"], out)
+    _expect(rc == 0, "first build")
+
+    def functions(log, pattern):
+        # The function a log belongs to is its directory, <out_dir>/<function>/
+        return {
+            os.path.basename(os.path.dirname(p)) for p in re.findall(pattern, log, re.M)
+        }
+
+    _expect(
+        {"f", "g", "top"} <= functions(log1, r"^Running: (\S+)$"),
+        "the fixture no longer synthesizes f and g on their own",
+    )
+    # Same line, other wiring: f's HDL changes, g's doesn't
+    _write(design, HIER_DESIGN.replace("g(a, b) + g(b, a)", "g(b, a) + g(a, b)"))
+    rc, log2 = run([design, "--out_dir", "e", "--full_hier_syn"], out)
+    _expect(rc == 0, "rebuild")
+    _expect(functions(log2, r"^Reading log (\S+)$") == {"g"}, "g's run is reused")
+    _expect(
+        functions(log2, r"^Running: (\S+)$") == {"f", "top"},
+        "only f and the top containing it re-synthesize",
+    )
+    reused, stored, ran = results_line(log2)
+    _expect(
+        reused == 1
+        and stored == 0
+        and ran == len(re.findall(r"^Running: ", log2, re.M)),
+        "one reused run, every other run new",
+    )
+
+
 def test_shared_store(out):
     design = os.path.join(out, "shared.py")
     _write(design, SUB_DESIGN.format(expr="x - y"))
@@ -407,6 +443,7 @@ def main():
         print("In-process synthesis cache tests passed.", flush=True)
         test_stale_inputs_rebuild(out)
         test_final_vhdl_follows_edit(out)
+        test_edit_resynthesizes_only_what_it_changed(out)
         test_shared_store(out)
         test_stored_measurements(out)
         test_sim_only_param_reuses(out)

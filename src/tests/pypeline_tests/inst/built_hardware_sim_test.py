@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """Native simulation of a testbench on the hardware built for another top
-(SIM.SIMULATE_BUILT_HARDWARE, SIM.WRITE_BUILT_HARDWARE).
+(SIM.SIMULATE_BUILT_HARDWARE, SIM.WRITE_BUILT_HARDWARE), and the up-to-date
+build that record makes possible (SIM.BUILT_HARDWARE_IS_CURRENT).
 
 One sky130 build of built_hardware_top_design.py, whose real ports keep all of
 built_hardware_core_design.py, then native --sim runs of
@@ -17,9 +18,15 @@ built_hardware_tb_design.py in that build's --out_dir:
 - test_tag_the_build_only_read_is_refused_when_called: -D CALL_SPARE=1;
 - test_changed_design_parameter_is_refused;
 - test_changed_source_is_refused;
+- test_identical_build_is_up_to_date: the same build command again does
+  nothing and leaves the out_dir unchanged;
+- test_other_compilers_hardware_is_refused: in a copy of the out_dir, a record
+  from another compiler version, or one with no build inputs, is refused;
+- test_rebuild_builds: --rebuild builds again (warm) and rewrites the record;
 - test_new_build_removes_the_record: a --no_synth build in that out_dir.
 
-The fixtures are copied into the test's output directory first, so the
+Two builds in all, plus the --no_synth one: the first, cold, and the warm
+--rebuild. The fixtures are copied into the test's output directory first, so the
 changed-source case can edit one. The build passes --pipeline_min_effort 0:
 a trim trial of this design hits issue 45 (#381, a failed trim attributed to
 MAINs that cannot be pipelined is kept).
@@ -131,6 +138,55 @@ def test_changed_source_is_refused(designs, hw):
     print("test_changed_source_is_refused PASS")
 
 
+# Lines only a build prints: a run that prints none of them built nothing
+BUILD_MARKERS = (
+    "PY_TO_LOGIC parsing",
+    "Synthesizing",
+    "Running:",
+    "Synthesis results:",
+)
+
+
+def test_identical_build_is_up_to_date(designs, hw, build_args):
+    before = snapshot(hw)
+    log = pypelinec(designs / "built_hardware_top_design.py", hw, *build_args)
+    assert "Up to date: " in log and "holds the timing-met build of" in log
+    for marker in BUILD_MARKERS:
+        assert marker not in log, f"an up-to-date build must not build: {marker!r}"
+    assert snapshot(hw) == before, "an up-to-date build must not write its out_dir"
+    print("test_identical_build_is_up_to_date PASS")
+
+
+def test_other_compilers_hardware_is_refused(designs, hw):
+    other = hw.parent / "hw_other_compiler"
+    shutil.copytree(hw, other)
+    path = other / "built_hardware.json"
+    record = json.loads(path.read_text())
+    record["build_inputs"]["compiler"] = "another compiler version"
+    path.write_text(json.dumps(record))
+    log = simulate_tb(designs, other, check=False)
+    assert "by another version of the compiler" in log
+    # A record written before build inputs were recorded came from an older compiler
+    del record["build_inputs"]
+    path.write_text(json.dumps(record))
+    log = simulate_tb(designs, other, check=False)
+    assert "by another version of the compiler" in log
+    print("test_other_compilers_hardware_is_refused PASS")
+
+
+def test_rebuild_builds(designs, hw, build_args):
+    path = hw / "built_hardware.json"
+    before = json.loads(path.read_text())
+    log = pypelinec(
+        designs / "built_hardware_top_design.py", hw, *build_args, "--rebuild"
+    )
+    assert "Up to date:" not in log and "Synthesis results:" in log
+    # Rewritten by the build that met timing, from the same inputs
+    assert "Built hardware for native simulation of other tops" in log
+    assert json.loads(path.read_text())["build_inputs"] == before["build_inputs"]
+    print("test_rebuild_builds PASS")
+
+
 def test_new_build_removes_the_record(designs, hw):
     pypelinec(designs / "built_hardware_top_design.py", hw, "--no_synth")
     assert not (hw / "built_hardware.json").exists()
@@ -149,17 +205,24 @@ def main():
     hints = designs / "hints.json"
     hints.write_text(json.dumps({"AUTO_PIPELINE": {"built_hardware_spare": SPARE_SEED}}))
     hw = root / "hw"
-    pypelinec(
-        designs / "built_hardware_top_design.py", hw,
-        "--syn_tool", "device_models", "--pipeline_min_effort", "0",
-        "--latency_hints", str(hints),
+    build_args = (
+        "--syn_tool",
+        "device_models",
+        "--pipeline_min_effort",
+        "0",
+        "--latency_hints",
+        str(hints),
     )
+    pypelinec(designs / "built_hardware_top_design.py", hw, *build_args)
     test_testbench_runs_on_the_built_latencies(designs, hw)
     test_undecided_tag_is_refused(designs, hw)
     test_latency_the_build_read_but_never_built_is_served(designs, hw)
     test_tag_the_build_only_read_is_refused_when_called(designs, hw)
     test_changed_design_parameter_is_refused(designs, hw)
     test_changed_source_is_refused(designs, hw)
+    test_identical_build_is_up_to_date(designs, hw, build_args)
+    test_other_compilers_hardware_is_refused(designs, hw)
+    test_rebuild_builds(designs, hw, build_args)
     test_new_build_removes_the_record(designs, hw)
 
 

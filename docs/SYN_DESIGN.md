@@ -464,6 +464,14 @@ Three places hold measurements:
 - **An optional synthesis store (`--syn_cache DIR`).** Shares those logs between output
   directories.
 
+When nothing changed, nothing runs: an output directory's `built_hardware.json`
+records its last timing-met build with that build's inputs, and the same build again
+is up to date and does nothing
+([Simulating built hardware](SIM_DESIGN.md#simulating-built-hardware)). Results that
+depend on the compiler's own code record `COMPILER_SOURCE_HASH`, a hash of `src/` and
+`include/pypeline/`: that record, and AUTO_FSM search results
+([AUTO_FSM_DESIGN.md](AUTO_FSM_DESIGN.md#search-results-persist-across-builds)).
+
 ### Shared operator cache (`cache/`)
 
 Measurements outlive a build in one committed `cache/` tree next to `src/`,
@@ -847,6 +855,7 @@ observation, `fit_status` is `unknown`.
 | `--mux_delay_by_width` / `--no_mux_delay_by_width` | force width-keyed or collapsed MUX delay-cache entries |
 | `--syn_cache DIR` | share synthesis results between output directories through the store DIR (§6) |
 | `--syn_cache_prune DAYS` | at the end of the build, remove `--syn_cache` entries unused for DAYS days |
+| `--rebuild` | build even when `--out_dir` holds the timing-met build of this top from identical inputs; by default such a build is up to date and does nothing ([Simulating built hardware](SIM_DESIGN.md#simulating-built-hardware)) |
 | `--verilog`, `--yosys_json`, `--xo_axis`, `--pins FILE` | final-output variants: Verilog top, netlist export only, Vivado AXIS XO, bitstream with pin constraints |
 
 Sweep flags (`--coarse`, `--no_sweep`, `--pipeline_min_effort`, ...) are in
@@ -871,10 +880,12 @@ in the module whose feature it serves. In order, it:
    `--list_params` prints `pypeline_sim.design_param_list_text` and exits. It then
    sets the module globals and selects the simulator. A comb-only native simulation
    of a `.py` design stops here and simulates without building
-   (`SIM.NATIVE_SIM_SKIPS_BUILD`), and so does a native `--sim` of another top on the
-   hardware built in `--out_dir` (`SIM.SIMULATE_BUILT_HARDWARE`, which otherwise
-   removes that directory's hardware record before the build replaces it). The build
-   settings come after these shortcuts, and
+   (`SIM.NATIVE_SIM_SKIPS_BUILD`). Then it takes the run's `SIM.BUILD_INPUTS`. A
+   plain build that finds the `--out_dir`'s build of this top current stops with
+   nothing to do (`SIM.BUILT_HARDWARE_IS_CURRENT`). So does a native `--sim` of
+   another top on the hardware built in `--out_dir` (`SIM.SIMULATE_BUILT_HARDWARE`,
+   which otherwise removes that directory's hardware record before the build
+   replaces it). The build settings come after these shortcuts, and
    then the `atexit` hooks that end every build with `SYN.SYNTHESIS_REUSE_EXIT_REPORT`
    (§6) and then the elapsed summary (§7);
 2. installs `--latency_hints` starting latencies (`SWEEP.INSTALL_LATENCY_HINTS`). It
@@ -895,8 +906,9 @@ in the module whose feature it serves. In order, it:
    ([build entry points](AUTO_PIPELINE_DESIGN.md#4-build-entry-points)). Next,
    `SWEEP.WRITE_SWEEP_RESULTS` writes the sweep history, final files and latency
    profile. The build exits non-zero if a timing goal was missed
-   (`SWEEP.PRINT_TIMING_FAILURES`). Otherwise it records the hardware for native
-   simulation of other tops (`SIM.WRITE_BUILT_HARDWARE`), generates the bitstream
+   (`SWEEP.PRINT_TIMING_FAILURES`). Otherwise it records the hardware, with the
+   run's build inputs, for native simulation and the next build's up-to-date check
+   (`SIM.WRITE_BUILT_HARDWARE`), generates the bitstream
    (`--pins`) and runs the requested simulation (`SIM.DO_OPTIONAL_SIM`, see
    [`SIM_DESIGN.md`](SIM_DESIGN.md));
 7. writes the generated sources (`AUTO_COMB_OPT.DUMP_GENERATED_SOURCE`, needed by a

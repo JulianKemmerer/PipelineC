@@ -686,8 +686,8 @@ The latency memory and `--latency_hints` (see
   the stream fixture uses 100 and 110 MHz goals so the cold build must pipeline
   the core and resize its latency-dependent FIFO. Measured runtime is about
   14 minutes warm, 25 minutes alongside concurrent cold-cache builds;
-  1. a same-goal rebuild replays every MAIN in one confirmation, with no new
-     syntheses and no pass 2;
+  1. a same-goal rebuild (`--rebuild`, since the same command alone is up to date)
+     replays every MAIN in one confirmation, with no new syntheses and no pass 2;
   2. a lower-goal piece from the store starts a higher-goal build in another output
      directory, never builds below that depth, and takes fewer full syntheses than
      a cold build;
@@ -747,6 +747,13 @@ any rate, so these tests check the rate itself.
 - `self_check_stream_auto_pipeline_test.py` (`native_pipelined_sim_test`,
   synth_device_models): the same no-stall and no-bubble asserts at the latency a full
   build discovers.
+- `built_hardware_current_test.py` (unit): records written as `WRITE_BUILT_HARDWARE` writes
+  them, in-process. The design source, the `-D` values, a build setting (one the record
+  does not know included), a `--latency_hints` file's contents, the compiler hash, a
+  `PIPELINEC_*` environment variable and a record without build inputs each make the run
+  build, naming what changed. `-j`, `--out_dir`, `--syn_cache`, `--syn_cache_prune`,
+  simulation options, `-D` order and other environment variables don't. A `--sim` or
+  `--rebuild` run, another top and a C top are never up to date.
 - `built_hardware_sim_test.py` (build_report_device_models): one sky130 build of
   `built_hardware_top_design.py`, whose real ports keep all of
   `built_hardware_core_design.py` (an AUTO_PIPELINE region, an AUTO_FSM, and an
@@ -760,6 +767,11 @@ any rate, so these tests check the rate itself.
   - a tag the build never decided (`-D EXTRA_TAG=1`), a call of the tag the build only
     read (`-D CALL_SPARE=1`), a changed design parameter and an edited source are each
     refused;
+  - the same build command again is up to date: it builds nothing and leaves the
+    directory unchanged;
+  - in a copy of the directory, a record from another compiler version, or one with no
+    build inputs, is refused;
+  - `--rebuild` builds again (warm) and rewrites the record with the same build inputs;
   - a `--no_synth` build in the directory removes `built_hardware.json`.
 
   The build passes `--pipeline_min_effort 0`: a trim trial of this design hits issue 45
@@ -1252,6 +1264,9 @@ is a yosys run). A direct run does both.
     HDL, and re-synthesize.
   - **Final VHDL.** The same kind of edit on a pipelined design keeps the pipelined
     entity's file name, and that file must be rewritten.
+  - **Only what an edit changed.** After a `--full_hier_syn` build that synthesizes `f`
+    and `g` on their own, rewiring `f` on its own line reuses `g`'s run and re-runs only
+    `f` and the top that contains it.
   - **Shared store.** A second fresh directory sharing `--syn_cache` synthesizes
     nothing and ends with the same final record.
   - **Simulation-only parameter.** A `-D` value only simulation code reads reuses
@@ -1463,7 +1478,8 @@ end. Three tests cover it:
 
 - **`warm_copy_no_resynth_test.py` (build_report_device_models):** builds
   `self_check_auto_fsm_test.py` under sky130, copies the output directory,
-  and rebuilds in the copy. The rebuild must re-synthesize no DEVICE_MODELS leaf and print
+  and rebuilds in the copy with `--rebuild` (the copy's build is up to date). The rebuild
+  must re-synthesize no DEVICE_MODELS leaf and print
   no cache-mismatch line. It fails if any of the three fixes below is
   reverted.
   - The design matters: its AUTO_FSM passes differ in `c_structs_pkg` types

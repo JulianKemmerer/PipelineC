@@ -3,7 +3,8 @@
 
 pypeline_sim_debug.py builds once, then runs its native and VHDL sims each in
 their own copy of that warm directory. This checks the property that relies
-on: rebuilding in a copy reuses every cached DEVICE_MODELS leaf report.
+on: rebuilding in a copy reuses every cached DEVICE_MODELS leaf report. The
+copy's build is up to date, so the rebuild here passes --rebuild.
 
 The copied rebuild goes through every parse pass again (AUTO_FSM schedule
 passes included), so it fails on any generated file that changes between
@@ -36,8 +37,17 @@ def fail(msg):
     sys.exit(1)
 
 
-def build(out_dir):
-    cmd = [sys.executable, PYPELINEC, DESIGN, "--syn_tool", "device_models", "--out_dir", out_dir]
+def build(out_dir, *extra):
+    cmd = [
+        sys.executable,
+        PYPELINEC,
+        DESIGN,
+        "--syn_tool",
+        "device_models",
+        "--out_dir",
+        out_dir,
+        *extra,
+    ]
     print("Running:", " ".join(cmd), flush=True)
     result = subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True)
     print(result.stdout, flush=True)
@@ -75,7 +85,9 @@ def main():
         fail("the first build synthesized no DEVICE_MODELS leaves; nothing to reuse")
 
     shutil.copytree(build_dir, copy_dir, symlinks=True)
-    copy_log = build(copy_dir)
+    # The copy holds an up-to-date build of these exact inputs; --rebuild
+    # makes the rebuild this test is about happen anyway
+    copy_log = build(copy_dir, "--rebuild")
 
     mismatches = [l for l in copy_log.splitlines() if MISMATCH in l]
     resynth = synth_runs(copy_log)

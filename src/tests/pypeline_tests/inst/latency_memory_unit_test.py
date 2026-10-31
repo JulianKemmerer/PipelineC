@@ -215,6 +215,11 @@ def test_selection_and_store(tmp):
         path = SWEEP.LATENCY_MEMORY_STORE_PATH("device_models", "sky130", AP, "core")
         assert "/latency/v2/device_models/sky130/AUTO_PIPELINE/" in path
         assert len(os.path.basename(path)) == 21
+        # A tool with no part (pyrtl, the default) gets a directory too
+        assert (
+            "/latency/v2/pyrtl/none/AUTO_PIPELINE/"
+            in SWEEP.LATENCY_MEMORY_STORE_PATH("pyrtl", None, AP, "core")
+        )
         write(path, {"schema_version": 2, "pieces": entries})
         assert SWEEP._read_latency_pieces(path) == entries
         old = time.time() - 30 * 86400

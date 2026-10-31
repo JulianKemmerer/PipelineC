@@ -57,7 +57,8 @@ def main():
     depth = profile["entries"][0]["latency"]
     expect(depth > 0 and "AUTO_PIPELINE Pass 2" in first, "cold G1 must find depth and reparse")
     expect({e["kind"] for e in pieces(sub("g1"))} == {"AUTO_PIPELINE", "main"}, "depth and MAIN not recorded")
-    again, profile = build(sub("g1"), "--syn_cache", store)
+    # --rebuild: the same command alone finds the build up to date
+    again, profile = build(sub("g1"), "--syn_cache", store, "--rebuild")
     expect("Replaying MAIN" in again and full_syntheses(again) == 1, "same-goal rebuild did not replay in one confirmation")
     expect("0 new run(s)" in again and "from the store" in again, "same-goal rebuild synthesized new inputs")
     expect("AUTO_PIPELINE Pass 2" not in again, "replay needed pass 2")

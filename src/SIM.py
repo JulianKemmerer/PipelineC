@@ -207,14 +207,144 @@ def NATIVE_SIM_HARDWARE(parser_state, multimain_timing_params):
 BUILT_HARDWARE_FILE = "built_hardware.json"
 # Format of BUILT_HARDWARE_FILE; a record of another version is not used
 BUILT_HARDWARE_VERSION = 1
+# Command-line settings that never change what a build produces (where it runs,
+# how many jobs, where caches live, debug output, simulation-only options); every
+# other setting, including any new one, is one of the BUILD_INPUTS
+_SETTINGS_OUTSIDE_BUILD_INPUTS = frozenset(
+    (
+        "src_file",  # recorded as the absolute top path instead
+        "out_dir",
+        "jobs",
+        "syn_cache",
+        "syn_cache_prune",
+        "rebuild",
+        "list_params",
+        "auto_fsm_sweep_debug",
+        "sim",
+        "sim_comb",
+        "run",
+        "cocotb",
+        "makefile",
+        "ghdl",
+        "edaplay",
+        "modelsim",
+        "cxxrtl",
+        "verilator",
+        "main_cpp",
+    )
+)
+# Environment variables that are BUILD_INPUTS: the compiler's own knobs, by
+# prefix, and the module search path a design's imports resolve through
+_BUILD_ENVIRONMENT_PREFIXES = ("PIPELINEC_", "PYPELINEC_", "PYPELINE_")
+_BUILD_ENVIRONMENT_NAMES = ("PYTHONPATH",)
 
 
-def WRITE_BUILT_HARDWARE(parser_state, multimain_timing_params, src_file):
+def BUILD_INPUTS(args, src_file):
+    """What a build's result depends on besides its design sources (which
+    WRITE_BUILT_HARDWARE records by hash): the top, the compiler's own sources
+    (SYN.COMPILER_SOURCE_HASH), every command-line setting outside
+    _SETTINGS_OUTSIDE_BUILD_INPUTS, a file a setting names counting by its
+    contents, and the compiler's environment knobs. Taken once, before the
+    build reads anything, as the JSON form it is recorded in."""
+    import hashlib
+    import json
+    import pypeline
+
+    def file_identity(path):
+        path = os.path.abspath(path)
+        try:
+            with open(path, "rb") as f:
+                return [path, hashlib.sha256(f.read()).hexdigest()]
+        except OSError:
+            return [path, None]
+
+    settings = {}
+    for name, value in vars(args).items():
+        if name in _SETTINGS_OUTSIDE_BUILD_INPUTS:
+            continue
+        if name == "define":
+            # Order and repetition don't change the parameters
+            value = pypeline.PARSE_DESIGN_PARAM_DEFINES(value)
+        elif name == "latency_hints":
+            value = [file_identity(path) for path in value]
+        elif name == "pins" and value is not None:
+            value = file_identity(value)
+        settings[name] = value
+    environment = {
+        name: value
+        for name, value in os.environ.items()
+        if name.startswith(_BUILD_ENVIRONMENT_PREFIXES)
+        or name in _BUILD_ENVIRONMENT_NAMES
+    }
+    inputs = dict(
+        compiler=SYN.COMPILER_SOURCE_HASH(),
+        top=os.path.abspath(src_file),
+        settings=settings,
+        environment=environment,
+    )
+    return json.loads(json.dumps(inputs, sort_keys=True, default=str))
+
+
+def _BUILD_INPUTS_DIFFERENCE(record, build_inputs):
+    """What differs between a built hardware record and a run with
+    build_inputs, as text for a message: the first differing input, or a
+    recorded source whose contents changed. None when nothing does."""
+    # A record without build inputs was written by an older compiler
+    recorded = record.get("build_inputs") or {}
+    if recorded.get("compiler") != build_inputs["compiler"]:
+        return "the compiler's sources (src/, include/pypeline/)"
+    if recorded.get("top") != build_inputs["top"]:
+        return "the top"
+    old, new = recorded.get("settings") or {}, build_inputs["settings"]
+    for name in sorted(set(old) | set(new)):
+        if old.get(name) != new.get(name):
+            return "the -D values" if name == "define" else f"the --{name} setting"
+    old, new = recorded.get("environment") or {}, build_inputs["environment"]
+    for name in sorted(set(old) | set(new)):
+        if old.get(name) != new.get(name):
+            return f"the environment variable {name}"
+    changed = _changed_sources(record["sources"])
+    if changed:
+        return changed[0]
+    return None
+
+
+def BUILT_HARDWARE_IS_CURRENT(build_inputs, args) -> bool:
+    """Called before any build. True when this run is a plain build (no --sim,
+    no --rebuild) of the top whose timing-met build --out_dir already holds,
+    from equal BUILD_INPUTS and unchanged design sources: there is nothing to
+    do, and the run says so. When that record differs, the run says what
+    changed and the build follows (SIMULATE_BUILT_HARDWARE then removes it)."""
+    if args.sim or args.rebuild or not build_inputs["top"].endswith(".py"):
+        return False
+    out_dir = SYN.SYN_OUTPUT_DIRECTORY
+    record = _read_built_hardware(os.path.join(out_dir, BUILT_HARDWARE_FILE))
+    if record is None or record["top"] != build_inputs["top"]:
+        return False
+    difference = _BUILD_INPUTS_DIFFERENCE(record, build_inputs)
+    if difference is not None:
+        print(
+            f"Building again: {difference} changed since the build in {out_dir}",
+            flush=True,
+        )
+        return False
+    print(
+        f"Up to date: {out_dir} holds the timing-met build of {record['top']} "
+        "from these exact inputs (design sources, -D values, build settings, "
+        "compiler). Nothing to do; --rebuild builds it again.",
+        flush=True,
+    )
+    return True
+
+
+def WRITE_BUILT_HARDWARE(parser_state, multimain_timing_params, src_file, build_inputs):
     """After a synthesizing build of a Pypeline design met timing: record in
     BUILT_HARDWARE_FILE everything native simulation takes from a build
     (NATIVE_SIM_HARDWARE), with the top it built, the hashes of the sources it
-    read and its design parameters, so another top (a testbench) can be
-    simulated on this hardware without building (SIMULATE_BUILT_HARDWARE)."""
+    read, its design parameters and its BUILD_INPUTS, so another top (a
+    testbench) can be simulated on this hardware without building
+    (SIMULATE_BUILT_HARDWARE), and an identical later build of this top has
+    nothing to do (BUILT_HARDWARE_IS_CURRENT)."""
     if not src_file.endswith(".py"):
         return
     import dataclasses
@@ -251,6 +381,7 @@ def WRITE_BUILT_HARDWARE(parser_state, multimain_timing_params, src_file):
             hardware["auto_pipeline_latencies"] or {},
             hardware["auto_multi_cycle_latencies"] or {},
         ),
+        build_inputs=build_inputs,
     )
     path = os.path.join(SYN.SYN_OUTPUT_DIRECTORY, BUILT_HARDWARE_FILE)
     SYN._write_json_atomic(path, record)
@@ -310,15 +441,19 @@ def _changed_sources(sources):
     return changed
 
 
-def SIMULATE_BUILT_HARDWARE(args, src_file) -> bool:
+def SIMULATE_BUILT_HARDWARE(args, src_file, build_inputs) -> bool:
     """Called before any build. An --out_dir belongs to the top built in it:
     a native, non---comb --sim of another .py file there (a testbench of that
     hardware) simulates the recorded hardware (BUILT_HARDWARE_FILE) with no
-    elaboration, search or synthesis, and returns True. Its sources must be
-    unchanged since that build, and the simulation refuses hardware the build
-    never decided (pypeline_sim.run_sim built_hardware_from=). Otherwise a
-    build follows and replaces the --out_dir's contents, so the record goes
-    first: it is rewritten only if that build meets timing."""
+    elaboration, search or synthesis, and returns True. Its sources and the
+    compiler (build_inputs) must be unchanged since that build, and the
+    simulation refuses hardware the build never decided (pypeline_sim.run_sim
+    built_hardware_from=). A --sim of the built top itself builds: the record
+    keeps only the AUTO_FSM schedule fields native simulation reads
+    (AUTO_FSM_SIM_SCHEDULE_FIELDS), and a design may read others when it is
+    imported. Otherwise a build follows and replaces the --out_dir's contents,
+    so the record goes first: it is rewritten only if that build meets
+    timing."""
     import pypeline
 
     out_dir = SYN.SYN_OUTPUT_DIRECTORY
@@ -326,7 +461,7 @@ def SIMULATE_BUILT_HARDWARE(args, src_file) -> bool:
     record = _read_built_hardware(path)
     if (
         record is not None
-        and record["top"] != os.path.abspath(src_file)
+        and record["top"] != build_inputs["top"]
         and SIM_TOOL is pypeline_sim
         and args.sim
     ):
@@ -338,6 +473,14 @@ def SIMULATE_BUILT_HARDWARE(args, src_file) -> bool:
                 f"but these sources changed since that build:\n  "
                 + "\n  ".join(changed)
                 + f"\nRebuild {top} there first, or simulate in another --out_dir."
+            )
+        recorded_inputs = record.get("build_inputs") or {}
+        if recorded_inputs.get("compiler") != build_inputs["compiler"]:
+            sys.exit(
+                f"ERROR: --out_dir {out_dir} holds the hardware built from {top} "
+                "by another version of the compiler (its src/ or include/pypeline/ "
+                f"sources differ from this one's).\nRebuild {top} there first, or "
+                "simulate in another --out_dir."
             )
         if record["native_sim_problems"]:
             sys.exit(_PIPELINED_NATIVE_SIM_ERROR(record["native_sim_problems"]))

@@ -749,7 +749,7 @@ def test_search_with_identical_inputs_is_reused_and_any_change_searches():
             return AUTO_FSM.HARVEST_AUTO_FSM_SCHEDULES(parser, **kwargs)[key]
 
         saved = (SYN.SYN_OUTPUT_DIRECTORY, SYN.SYNTHESIS_STORE_DIR,
-                 AUTO_FSM._COMPILER_SOURCE_HASH)
+                 SYN._COMPILER_SOURCE_HASH)
         SYN.SYN_OUTPUT_DIRECTORY = os.path.join(tmp, "out")
         SYN.SYNTHESIS_STORE_DIR = os.path.join(tmp, "store")
         AUTO_FSM.SWEEP_MIN_AREA_SCHEDULE = counting_search
@@ -787,10 +787,10 @@ def test_search_with_identical_inputs_is_reused_and_any_change_searches():
             harvest()
             assert len(searches) == count + 2, "a changed clock goal"
             parser.main_mhz = {main: mhz / 2 for main, mhz in parser.main_mhz.items()}
-            AUTO_FSM._COMPILER_SOURCE_HASH = "a different compiler"
+            SYN._COMPILER_SOURCE_HASH = "a different compiler"
             harvest()
             assert len(searches) == count + 3, "a changed compiler"
-            AUTO_FSM._COMPILER_SOURCE_HASH = saved[2]
+            SYN._COMPILER_SOURCE_HASH = saved[2]
             for directory in ("out2", "store"):
                 for dirpath, _dirs, files in os.walk(os.path.join(tmp, directory)):
                     for name in files:
@@ -800,7 +800,7 @@ def test_search_with_identical_inputs_is_reused_and_any_change_searches():
         finally:
             AUTO_FSM.SWEEP_MIN_AREA_SCHEDULE = real_search
             SYN.SYN_OUTPUT_DIRECTORY, SYN.SYNTHESIS_STORE_DIR = saved[:2]
-            AUTO_FSM._COMPILER_SOURCE_HASH = saved[2]
+            SYN._COMPILER_SOURCE_HASH = saved[2]
 
 
 def test_search_result_is_stale_when_a_cache_delay_file_it_read_changes():

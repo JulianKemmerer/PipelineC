@@ -296,6 +296,17 @@ def get_tests() -> list:
             cmd=[INST_DIR / "latency_memory_unit_test.py"],
         )
     )
+    # Up-to-date builds (SIM.BUILD_INPUTS, SIM.BUILT_HARDWARE_IS_CURRENT) on
+    # written records: which sources, -D values, settings, hint contents,
+    # compiler and environment knobs make a build run again, and which
+    # operational settings don't
+    tests.append(
+        Test(
+            name="built_hardware_current_test",
+            category="unit",
+            cmd=[INST_DIR / "built_hardware_current_test.py"],
+        )
+    )
     # Pure-unit tests for readable, hierarchical canonical names of
     # factory-closure functions (_canonical_func_name/_callable_canonical_name)
     # against hand-built fixtures, plus a PARSE_FILE regression test for the

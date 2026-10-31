@@ -4992,32 +4992,6 @@ def _period_du(parser_state):
 
 # Version of the persistent search cache's key and file format.
 _SEARCH_CACHE_VERSION = 1
-# sha256 of the compiler's and the Pypeline library's source files, computed
-# once per process: a search result is reused only by the code that searched it.
-_COMPILER_SOURCE_HASH = None
-
-
-def _compiler_source_hash():
-    """sha256 over the Python sources of src/ (tests excluded), src/pipelinec
-    and include/pypeline/."""
-    global _COMPILER_SOURCE_HASH
-    if _COMPILER_SOURCE_HASH is None:
-        src = os.path.dirname(os.path.abspath(__file__))
-        digest = hashlib.sha256()
-        for root in (src, os.path.join(src, "..", "include", "pypeline")):
-            for dirpath, dirnames, filenames in os.walk(root):
-                dirnames[:] = sorted(
-                    d for d in dirnames if d not in ("__pycache__", "tests")
-                )
-                for name in sorted(filenames):
-                    if not (name.endswith(".py") or name == "pipelinec"):
-                        continue
-                    path = os.path.join(dirpath, name)
-                    digest.update(os.path.relpath(path, src).encode() + b"\0")
-                    with open(path, "rb") as f:
-                        digest.update(hashlib.sha256(f.read()).digest())
-        _COMPILER_SOURCE_HASH = digest.hexdigest()
-    return _COMPILER_SOURCE_HASH
 
 
 def _search_parser_inputs(parser_state):
@@ -5191,7 +5165,8 @@ def HARVEST_AUTO_FSM_SCHEDULES(
                 [
                     _SEARCH_CACHE_VERSION,
                     SCHEDULE_VERSION,
-                    _compiler_source_hash(),
+                    # A search result is reused only by the code that searched it
+                    SYN.COMPILER_SOURCE_HASH(),
                     parser_inputs,
                     key,
                     parser_state.pypeline_auto_fsm_source_identities.get(key)
