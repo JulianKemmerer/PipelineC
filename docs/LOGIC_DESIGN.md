@@ -122,10 +122,13 @@ rules must match `pypeline.py`'s; see
 
 ## 3. `ParserState` — the global compiler context
 
-AUTO_FSM declares its constant-specialization table, independent measurement
-callables and operand-mux callables here. `DEEPCOPY` preserves their mappings and
-live callable identities. Characterization resolves the current consumer list,
-so shapes registered after an earlier query are included.
+AUTO_FSM declares its tables here: call-site tags, constant specializations,
+soft-operator and width-halving equivalents, independent measurement and
+operand-mux callables, and the delays `AUTO._resolve_delay_du` derived, each with
+the cache reads behind it. AUTO_COMB_OPT declares its alternatives per objective.
+`DEEPCOPY` preserves their mappings and live callable identities.
+Characterization resolves the current consumer list, so shapes registered after
+an earlier query are included.
 
 
 ```python
@@ -283,7 +286,7 @@ came from.
 
 ### Owned FSM characterization state
 
-ParserState initializes and independently copies specialization, pipeline-profile, transform, decode-proxy, source-identity and provenance tables. Fixed-latency constraints carry an optional plain-data FSM placement recipe, avoiding planner state hidden on live objects.
+ParserState initializes and independently copies specialization, equivalent, pipeline-profile, transform, decode-proxy, source-identity, provenance, call-site tag, derived-delay and AUTO_COMB_OPT alternative tables. Fixed-latency constraints carry an optional plain-data FSM placement recipe, avoiding planner state hidden on live objects. A table created on first use (`getattr` with a default) makes behavior depend on call order.
 
 ### Name-keyed memos are per parse
 

@@ -69,6 +69,7 @@ shared machinery, docs/SYN_DESIGN.md for the delay model, and
 docs/SWEEP_DESIGN.md for the sweep this rides on.
 """
 
+import contextlib
 import copy
 import collections
 import re
@@ -293,7 +294,7 @@ def COLLECT_AUTO_FSM_KEYS(parser_state):
 def GET_TAGS(parser_state) -> dict:
     """canonical_key -> live pypeline.AUTO_FSM tag object, recorded by
     BUILD_AUTO_FSM_FUNC as call sites elaborate."""
-    return getattr(parser_state, "pypeline_auto_fsm_tags", {})
+    return parser_state.pypeline_auto_fsm_tags
 
 
 # ─────────────────────────────────────────────
@@ -2539,9 +2540,9 @@ _LARGE_SCHEDULE_WARNED_ATTR = "_auto_fsm_large_schedule_warned"
 
 
 def _warn_large_schedule(parser_state, key, busiest_entity, predicted_folds):
-    """One-time (per key, per parser_state -- see _DELAY_MEMO_ATTR for the
-    same pattern) notice that a schedule's busiest shared unit is about to
-    fold a lot of operations, printed BEFORE calling SCHEDULE_DAG so it lands
+    """One-time (per key, per parser_state) notice that a schedule's busiest
+    shared unit is about to fold a lot of operations, printed BEFORE calling
+    SCHEDULE_DAG so it lands
     even when a single schedule (e.g. under --auto_fsm_no_area_sweep, or the
     sweep's own anchor) is what runs long -- see SWEEP_LARGE_SCHEDULE_FOLDS.
 
@@ -3398,7 +3399,9 @@ def _map_forked(fn, items, caches=()):
     in `caches` hold pure results keyed by their inputs, and a value is
     replaced, never changed in place, when it advances (a resumable
     characterization, say). What a worker adds or replaces is merged back in
-    item order, so later calls reuse it as they would after running here."""
+    item order, so later calls reuse it as they would after running here. The
+    active SYN.RECORDED_READS scopes are always among them, so a search records
+    what its workers read."""
     n_workers = min(SYN.GET_NUM_PROCESSES(), len(items))
     if (
         n_workers < 2
@@ -3406,6 +3409,7 @@ def _map_forked(fn, items, caches=()):
         or "fork" not in multiprocessing.get_all_start_methods()
     ):
         return [fn(item) for item in items]
+    caches = list(caches) + SYN.ACTIVE_READ_SCOPES()
     global _FORKED_MAP
     _FORKED_MAP = (fn, items, caches)
     context = multiprocessing.get_context("fork")
@@ -3940,7 +3944,11 @@ def _BUILD_SCHEDULE(
         "unshared": [list(pair) for pair in unshared],
         "cleanup": cleanup_stats,
         "constant_wrapper_count": len(
-            set(parser_state.pypeline_auto_fsm_specializations.values())
+            {
+                node["entity"]
+                for node in nodes.values()
+                if node["entity"] in parser_state.pypeline_auto_fsm_specialization_shapes
+            }
         ),
         "implementations": implementations,
         "pipelined": [list(pair) for pair in pipelined if pair[0] in implementations],
@@ -4571,10 +4579,7 @@ def _SWEEP_MIN_AREA_SCHEDULE(
             for moves in _map_forked(
                 unit_moves,
                 _unit_candidate_nodes(parser_state, schedule),
-                [
-                    parser_state.pypeline_auto_fsm_unit_profiles,
-                    SYN.CACHED_PATH_DELAY_READS,
-                ],
+                [parser_state.pypeline_auto_fsm_unit_profiles],
             )
             for move in moves
         ]
@@ -4694,7 +4699,7 @@ def _SWEEP_MIN_AREA_SCHEDULE(
             visited.add(identity)
             slots.append(len(todo))
             todo.append(choices)
-        caches = [graph_memo.graphs, graph_memo.plans, memo, SYN.CACHED_PATH_DELAY_READS]
+        caches = [graph_memo.graphs, graph_memo.plans, memo]
         if build_memo is not None:
             caches.append(build_memo)
         built = _map_forked(build, todo, caches)
@@ -4899,10 +4904,8 @@ def SWEEP_MIN_AREA_SCHEDULE(
         build_memo=build_memo, graph_memo=graph_memo,
     )
     entity = AUTO._entity_key_for_callable(parser_state, tag.func)
-    choices = list(getattr(parser_state, "pypeline_comb_area_opt_candidates", {}).get(entity, []))
-    choices += getattr(parser_state, "pypeline_comb_delay_opt_candidates", {}).get(entity, [])[:3]
     considered = 0
-    for func, report in choices:
+    for func, report in _comb_opt_choices(parser_state, entity):
         candidate_entity = AUTO._entity_key_for_callable(parser_state, func)
         if candidate_entity is None or candidate_entity == entity:
             continue
@@ -4933,6 +4936,15 @@ def SWEEP_MIN_AREA_SCHEDULE(
     if considered:
         best["comb_opt_candidates"] = considered
     return best
+
+
+def _comb_opt_choices(parser_state, entity):
+    """The AUTO_COMB_OPT alternatives SWEEP_MIN_AREA_SCHEDULE also searches for
+    the function `entity`: [(callable, report)], every area alternative and
+    the first three delay alternatives (prepared by _PREPARE_CANDIDATES)."""
+    return list(parser_state.pypeline_comb_area_opt_candidates.get(entity, [])) + list(
+        parser_state.pypeline_comb_delay_opt_candidates.get(entity, [])[:3]
+    )
 
 
 def _units_of(schedule, entity):
@@ -4990,52 +5002,177 @@ def _period_du(parser_state):
     return 1000.0 / max(mhz_values) * SYN.DELAY_UNIT_MULT
 
 
-# Version of the persistent search cache's key and file format.
-_SEARCH_CACHE_VERSION = 1
+# Version of the persistent search cache's key and record format.
+_SEARCH_CACHE_VERSION = 2
+
+# Candidate tables a search looks up by key: a built-in operator entity, or a
+# constant, selection or pair shape. Each call site's elaboration fills the
+# entries of its own function (_PREPARE_CANDIDATES), but a search also looks up
+# the shapes of the graphs it opens, which another call site may have filled,
+# so a search records each lookup (_RecordedTable).
+_CANDIDATE_TABLES = (
+    "pypeline_auto_fsm_soft_equiv",
+    "pypeline_auto_fsm_split_equiv",
+    "pypeline_auto_fsm_specializations",
+    "pypeline_auto_fsm_specialization_shapes",
+    "pypeline_auto_fsm_selections",
+    "pypeline_auto_fsm_fusions",
+)
 
 
-def _search_parser_inputs(parser_state):
-    """What an area search can read from the parser state besides the FSM's own
-    source: the design's sources, every delay an entity carries and its
-    estimated flag, the measured control-path proxies, the clock goals and
-    target, the delay, area and placement settings and, under DEVICE_MODELS,
-    the leaf area cache. An entity without a delay is left out: a search materializes such
-    entities (candidates' built-in leaves, unit functions) as it goes, so they
-    depend on what searched earlier. What they resolve to from the cache/delay
-    files is checked separately (SYN.CACHED_PATH_DELAY_READS)."""
+class _RecordedTable(dict):
+    """One candidate table (_CANDIDATE_TABLES) while a search runs: each key
+    the search looks up is recorded with what it found, None for nothing
+    (SYN.RECORD_READ, kind "auto_fsm_lookup"). A copy of the table; a write
+    goes to the table it copies too."""
+
+    def __init__(self, name, table):
+        super().__init__(table)
+        self._name = name
+        self._table = table
+
+    def _found(self, key):
+        SYN.RECORD_READ("auto_fsm_lookup", (self._name, key), dict.get(self, key))
+
+    def get(self, key, default=None):
+        self._found(key)
+        return dict.get(self, key, default)
+
+    def __getitem__(self, key):
+        self._found(key)
+        return dict.__getitem__(self, key)
+
+    def __contains__(self, key):
+        self._found(key)
+        return dict.__contains__(self, key)
+
+    def __setitem__(self, key, value):
+        dict.__setitem__(self, key, value)
+        self._table[key] = value
+
+
+@contextlib.contextmanager
+def _recorded_candidate_lookups(parser_state):
+    """Within the block, every candidate table is a _RecordedTable."""
+    tables = {name: getattr(parser_state, name) for name in _CANDIDATE_TABLES}
+    for name, table in tables.items():
+        setattr(parser_state, name, _RecordedTable(name, table))
+    try:
+        yield
+    finally:
+        for name, table in tables.items():
+            setattr(parser_state, name, table)
+
+
+def _search_closure(parser_state, func_entity):
+    """The entities whose graphs and numbers an area search of the function
+    `func_entity` reads before it looks anything up: the function's subtree and
+    the subtrees of the AUTO_COMB_OPT alternatives it searches too
+    (_comb_opt_choices). What a search reaches through a candidate table is
+    recorded as it is looked up (_RecordedTable)."""
+    closure = set()
+    AUTO._subtree_entities(parser_state, func_entity, closure)
+    for func, _report in _comb_opt_choices(parser_state, func_entity):
+        entity = AUTO._entity_key_for_callable(parser_state, func)
+        if entity is not None:
+            AUTO._subtree_entities(parser_state, entity, closure)
+    return sorted(closure)
+
+
+def _entity_fingerprints(parser_state, entities):
+    """What an area search reads from each of `entities`: its graph, its
+    effects and HDL flags, the delay it carries (estimated flag, model error,
+    planner delay) and, under DEVICE_MODELS, the area a synthesis run of it
+    measured. [name, None] for an entity the table does not hold. Delays an
+    entity has none of are resolved from cache files, which the search records
+    (SYN.RECORDED_READS)."""
     import DEVICE_MODELS
-    import PY_TO_LOGIC
+
+    rows = []
+    for name in entities:
+        logic = parser_state.FuncLogicLookupTable.get(name)
+        if logic is None:
+            rows.append([name, None])
+            continue
+        rows.append(
+            [
+                name,
+                logic.inputs,
+                logic.outputs,
+                logic.submodule_instances,
+                logic.submodule_instance_to_input_port_names,
+                logic.wire_to_c_type,
+                logic.wire_driven_by,
+                sorted(logic.state_regs),
+                sorted(logic.feedback_vars),
+                sorted(logic.read_only_global_wires),
+                sorted(logic.write_only_global_wires),
+                [
+                    logic.is_c_built_in,
+                    logic.is_vhdl_func,
+                    logic.is_vhdl_expr,
+                    logic.vhdl_module_text,
+                ],
+                [
+                    logic.delay,
+                    bool(logic.delay_is_estimated),
+                    logic.delay_model_error,
+                    logic.planner_delay,
+                ],
+                SYN.MEASURED_AREA(logic, parser_state)
+                if SYN.SYN_TOOL is DEVICE_MODELS
+                else None,
+            ]
+        )
+    return rows
+
+
+def _type_layouts(parser_state, ctypes):
+    """{type name: layout} of every struct and enum among `ctypes`, nested
+    field and array element types included: a type name alone can miss a
+    changed field (long names collapse to a hash)."""
+    layouts = {}
+    todo = sorted(set(ctypes))
+    while todo:
+        name = todo.pop().split("[")[0]
+        if name in layouts:
+            continue
+        fields = parser_state.struct_to_field_type_dict.get(name)
+        enum = parser_state.enum_info_dict.get(name)
+        if fields is not None:
+            layouts[name] = ["struct", list(fields.items())]
+            todo.extend(fields.values())
+        elif enum is not None:
+            layouts[name] = ["enum", list(enum.id_to_int_val.items()), enum.int_c_type]
+    return layouts
+
+
+def _search_inputs(parser_state, tag, func_entity):
+    """What one call site's area search reads besides its own carried schedule
+    and request, as JSON-safe data: the clock period its budget comes from,
+    the target and the delay, area and placement settings, and the graphs,
+    numbers and type layouts of its closure (_search_closure). Another call
+    site, or a function no FSM calls, is not among them; what a search looks up
+    beyond its closure is recorded while it runs (HARVEST_AUTO_FSM_SCHEDULES)."""
+    import pypeline
     import SWEEP
 
-    delays = [
-        (name, logic.delay, bool(logic.delay_is_estimated))
-        for name, logic in sorted(parser_state.FuncLogicLookupTable.items())
-        if logic.delay is not None
-    ]
-    area_files = []
-    if SYN.SYN_TOOL is DEVICE_MODELS:
-        area_dir = SYN.GET_AREA_CACHE_DIR(parser_state)
-        for dirpath, dirnames, filenames in os.walk(area_dir or ""):
-            dirnames.sort()
-            for name in sorted(filenames):
-                stat = os.stat(os.path.join(dirpath, name))
-                area_files.append((name, stat.st_size, stat.st_mtime_ns))
-    return AUTO.fingerprint(
+    closure = _search_closure(parser_state, func_entity)
+    ctypes = [pypeline._ctype_str(tag.in_type), pypeline._ctype_str(tag.out_type)]
+    for name in closure:
+        ctypes += parser_state.FuncLogicLookupTable[name].wire_to_c_type.values()
+    return [
+        _period_du(parser_state),
+        _target_context(parser_state),
         [
-            sorted(PY_TO_LOGIC.DESIGN_SOURCE_HASHES().values()),
-            _target_context(parser_state),
-            sorted((main, mhz) for main, mhz in parser_state.main_mhz.items()),
-            [
-                SYN.USE_PRIMITIVE_DELAY_MODEL,
-                SYN._mux_cache_key_is_width_collapsed(),
-                AUTO.FORCE_ABSTRACT_AREA,
-                SWEEP.PIPELINE_MIN_EFFORT,
-            ],
-            _control_snapshot(parser_state),
-            delays,
-            area_files,
-        ]
-    )
+            SYN.USE_PRIMITIVE_DELAY_MODEL,
+            SYN._mux_cache_key_is_width_collapsed(),
+            AUTO.FORCE_ABSTRACT_AREA,
+            SWEEP.PIPELINE_MIN_EFFORT,
+        ],
+        _entity_fingerprints(parser_state, closure),
+        sorted(_type_layouts(parser_state, ctypes).items()),
+    ]
 
 
 def _search_cache_paths(parser_state, digest):
@@ -5060,27 +5197,52 @@ def _search_cache_paths(parser_state, digest):
     return paths
 
 
-def _read_cached_search(paths, digest, key):
-    """The schedule an earlier search with these exact inputs selected, its
-    recorded cache/delay reads, and the file it came from; (None, None, None)
-    on a miss. A result is reused only while every cache/delay file the
-    earlier build had read still reads the same. Anything unreadable, stale
-    or malformed is a miss, never a failure."""
-    for path in paths:
+def _search_reads_unchanged(parser_state, tag, reads, found):
+    """Whether everything a search read beyond its digest (its
+    SYN.RECORDED_READS) reads the same now: each persistent-cache file
+    (SYN.CACHE_FILES_UNCHANGED), each candidate-table lookup
+    (_RecordedTable), each operand mux's measured delay
+    (AUTO._measured_mux_du), and the graphs and numbers of what its lookups
+    found (`found`, _found_by_lookups)."""
+    types = AUTO._TypeResolver()
+    for t in (tag.in_type, tag.out_type):
+        types.seed(t)
+    for (kind, key), value in reads.items():
+        if kind in SYN.CACHE_FILE_KINDS:
+            continue
+        if kind == "auto_fsm_lookup":
+            table, lookup = key
+            if dict.get(getattr(parser_state, table), lookup) != value:
+                return False
+        elif kind == "auto_fsm_mux":
+            ctype, n = key
+            if AUTO._measured_mux_du(parser_state, types, ctype, n) != value:
+                return False
+        else:
+            return False
+    return SYN.CACHE_FILES_UNCHANGED(reads) and (
+        _entity_digests(parser_state, [row[0] for row in found]) == found
+    )
+
+
+def _read_cached_search(paths, digest, key, parser_state, tag):
+    """The search result an earlier search with these exact inputs stored:
+    ((schedule, reads, found), index of the path it came from), or
+    (None, None) on a miss. A result is reused only while everything it read
+    beyond its digest reads the same (_search_reads_unchanged). Anything
+    unreadable, stale or malformed is a miss, never a failure."""
+    for index, path in enumerate(paths):
         try:
             with open(path, "rb") as f:
-                version, cached_digest, cached_key, schedule, reads = pickle.loads(
-                    zlib.decompress(f.read())
+                version, cached_digest, cached_key, schedule, reads, found = (
+                    pickle.loads(zlib.decompress(f.read()))
                 )
             if (
                 version != _SEARCH_CACHE_VERSION
                 or cached_digest != digest
                 or cached_key != key
                 or not SCHEDULE_CACHE_USABLE(schedule)
-                or any(
-                    SYN.READ_CACHED_PATH_DELAY_FILE(file_path) != delay_ns
-                    for file_path, delay_ns in reads.items()
-                )
+                or not _search_reads_unchanged(parser_state, tag, reads, found)
             ):
                 continue
         except Exception:
@@ -5089,23 +5251,23 @@ def _read_cached_search(paths, digest, key):
             os.utime(path)  # --syn_cache_prune keeps what builds still reuse
         except OSError:
             pass
-        return schedule, reads, path
-    return None, None, None
+        return (schedule, reads, found), index
+    return None, None
 
 
-def _write_cached_search(paths, digest, key, schedule, reads):
-    """Keep a search result, with the cache/delay reads it rests on, at every
-    path that lacks it; a failed write only costs the next build a search."""
+def _write_cached_search(paths, digest, key, schedule, reads, found):
+    """Keep a search result with what it read at each of `paths`, replacing
+    what is there: an entry that did not serve this search (stale, foreign or
+    unreadable) would otherwise make every later build search again. A failed
+    write only costs the next build a search."""
     blob = zlib.compress(
         pickle.dumps(
-            (_SEARCH_CACHE_VERSION, digest, key, schedule, reads),
+            (_SEARCH_CACHE_VERSION, digest, key, schedule, reads, found),
             pickle.HIGHEST_PROTOCOL,
         ),
         1,
     )
     for path in paths:
-        if os.path.exists(path):
-            continue
         try:
             os.makedirs(os.path.dirname(path), exist_ok=True)
             temporary = f"{path}.{os.getpid()}.tmp"
@@ -5114,6 +5276,49 @@ def _write_cached_search(paths, digest, key, schedule, reads):
             os.replace(temporary, path)
         except OSError:
             pass
+
+
+def _search_digest(parser_state, key, tag, request):
+    """The persistent-cache key of one call site's search: its own inputs
+    (_search_inputs), source identity and `request` (budget scale, carried
+    schedule, area-sweep flag, encoding, forced open/unshare patterns), the
+    cache and schedule versions and the compiler's sources."""
+    func_entity = AUTO._entity_key_for_callable(parser_state, tag.func)
+    return hashlib.sha256(
+        json.dumps(
+            [
+                _SEARCH_CACHE_VERSION,
+                SCHEDULE_VERSION,
+                # A search result is reused only by the code that searched it
+                SYN.COMPILER_SOURCE_HASH(),
+                _search_inputs(parser_state, tag, func_entity),
+                key,
+                parser_state.pypeline_auto_fsm_source_identities.get(key)
+                or _source_identity(parser_state, func_entity),
+                request,
+            ],
+            sort_keys=True,
+            default=str,
+        ).encode()
+    ).hexdigest()
+
+
+def _entity_digests(parser_state, entities):
+    """[[name, hash of its _entity_fingerprints row]] for each of `entities`."""
+    return [
+        [row[0], AUTO.fingerprint(row)]
+        for row in _entity_fingerprints(parser_state, entities)
+    ]
+
+
+def _found_by_lookups(parser_state, reads):
+    """_entity_digests of every entity a search's candidate-table lookups
+    found (`reads`, its SYN.RECORDED_READS), subtrees included."""
+    entities = set()
+    for (kind, _key), value in reads.items():
+        if kind == "auto_fsm_lookup" and isinstance(value, str):
+            AUTO._subtree_entities(parser_state, value, entities)
+    return _entity_digests(parser_state, sorted(entities))
 
 
 @SYN.PHASED("AUTO_FSM schedule search")
@@ -5137,15 +5342,20 @@ def HARVEST_AUTO_FSM_SCHEDULES(
     later pass (where the pure function is no longer instantiated and therefore
     no longer measured) works from the same numbers as the first one.
 
-    A call site whose search inputs (_search_parser_inputs, its own source,
-    carried schedule and request) match an earlier search reuses that search's
-    result from the output directory or the --syn_cache store.
+    A call site's search depends only on what it reads, so editing another
+    call site, or a function no call site reads, keeps its result. Its digest
+    covers its own inputs (_search_inputs: clock period, target, settings and
+    its closure's graphs, numbers and types), its source identity, carried
+    schedule and request; while it runs, the search records everything else
+    it reads (SYN.RECORDED_READS: cache files, candidate-table lookups,
+    measured operand muxes). A later search with the same digest reuses the
+    result from the output directory or the --syn_cache store while all of
+    those still read the same (_search_reads_unchanged).
     """
     budget_scales = budget_scales or {}
     prev_schedules = prev_schedules or {}
     tags = GET_TAGS(parser_state)
     schedules = {}
-    parser_inputs = None
     for key in sorted(COLLECT_AUTO_FSM_KEYS(parser_state)):
         if keys is not None and key not in keys:
             continue
@@ -5157,41 +5367,28 @@ def HARVEST_AUTO_FSM_SCHEDULES(
             )
         budget_scale = budget_scales.get(key, DEFAULT_BUDGET_SCALE)
         prev = prev_schedules.get(key)
-        if parser_inputs is None:
-            parser_inputs = _search_parser_inputs(parser_state)
-        func_entity = AUTO._entity_key_for_callable(parser_state, tag.func)
-        digest = hashlib.sha256(
-            json.dumps(
-                [
-                    _SEARCH_CACHE_VERSION,
-                    SCHEDULE_VERSION,
-                    # A search result is reused only by the code that searched it
-                    SYN.COMPILER_SOURCE_HASH(),
-                    parser_inputs,
-                    key,
-                    parser_state.pypeline_auto_fsm_source_identities.get(key)
-                    or _source_identity(parser_state, func_entity),
-                    budget_scale,
-                    prev,
-                    area_sweep,
-                    ctl,
-                    sorted(force_open),
-                    sorted(force_unshare),
-                ],
-                sort_keys=True,
-                default=str,
-            ).encode()
-        ).hexdigest()
+        digest = _search_digest(
+            parser_state,
+            key,
+            tag,
+            [budget_scale, prev, area_sweep, ctl, sorted(force_open), sorted(force_unshare)],
+        )
         cache_paths = _search_cache_paths(parser_state, digest)
-        cached, reads, cached_path = _read_cached_search(cache_paths, digest, key)
+        cached, index = _read_cached_search(
+            cache_paths, digest, key, parser_state, tag
+        )
         if cached is not None:
+            schedule, reads, found = cached
             print(
                 f"AUTO_FSM {key}: reusing the schedule an earlier search chose "
-                f"from identical inputs ({cached_path})",
+                f"from identical inputs ({cache_paths[index]})",
                 flush=True,
             )
-            _write_cached_search(cache_paths, digest, key, cached, reads)
-            schedules[key] = cached
+            # The paths before it missed
+            _write_cached_search(
+                cache_paths[:index], digest, key, schedule, reads, found
+            )
+            schedules[key] = schedule
             continue
         modes = ("v3", "onehot") if ctl == "auto" else (ctl,)
         # Shared by the encodings below: under `auto` the onehot search
@@ -5233,24 +5430,32 @@ def HARVEST_AUTO_FSM_SCHEDULES(
                 build_memo=build_memo,
             )
 
-        variants = []
-        for mode in modes:
-            candidate = build_mode(mode)
-            cost = candidate.get("est_area")
-            if cost is None:
-                cost = ESTIMATE_SCHEDULE_AREA(parser_state, candidate)
-            feasible = (
-                not candidate["latency_infeasible"]
-                and candidate["worst_state_du"] <= candidate["budget_du"]
-            )
-            variants.append((not feasible, cost, mode, candidate))
+        with SYN.RECORDED_READS() as reads, _recorded_candidate_lookups(
+            parser_state
+        ):
+            variants = []
+            for mode in modes:
+                candidate = build_mode(mode)
+                cost = candidate.get("est_area")
+                if cost is None:
+                    cost = ESTIMATE_SCHEDULE_AREA(parser_state, candidate)
+                feasible = (
+                    not candidate["latency_infeasible"]
+                    and candidate["worst_state_du"] <= candidate["budget_du"]
+                )
+                variants.append((not feasible, cost, mode, candidate))
         _bad, _cost, _mode, selected = min(variants, key=lambda v: v[:3])
         if ctl == "auto":
             selected["ctl_auto_candidates"] = {
                 mode: round(cost, 3) for _bad, cost, mode, _candidate in variants
             }
         _write_cached_search(
-            cache_paths, digest, key, selected, dict(SYN.CACHED_PATH_DELAY_READS)
+            cache_paths,
+            digest,
+            key,
+            selected,
+            reads,
+            _found_by_lookups(parser_state, reads),
         )
         schedules[key] = selected
     return schedules
@@ -5629,7 +5834,7 @@ def DESCRIBE_SCHEDULE(parser_state, key, schedule) -> str:
         line += "\n  graph cleanup: " + ", ".join(
             f"{name} {count}" for name, count in sorted(schedule["cleanup"].items())
         )
-    line += f"\n  constant characterization shapes: {schedule.get('constant_wrapper_count', 0)}"
+    line += f"\n  constant wrappers bound: {schedule.get('constant_wrapper_count', 0)}"
     for entity, implementation in sorted(schedule.get("implementations", {}).items()):
         line += (
             f"\n  pipeline {entity}: L={implementation['latency']}, II={implementation['ii']}, "
@@ -5849,10 +6054,14 @@ def _prepare_control_proxies(parser_state, key, schedule, ctl):
     ]
 
 
-def _control_snapshot(parser_state, previous=None):
-    """Measured shape proxies, retained across scheduled re-parses."""
+def _control_snapshot(parser_state, previous=None, owned=()):
+    """One FSM's measured decode-shape rows, retained across scheduled
+    re-parses: its carried rows (`previous`) plus a row for each measured
+    record in `owned`, the proxies _prepare_control_proxies returned for its
+    own provisional schedules. Proxies are shared by shape, so another FSM may
+    have measured one, but another FSM's shapes never enter this FSM's rows."""
     result = copy.deepcopy(previous or {})
-    for record in parser_state.pypeline_auto_fsm_control_proxies.values():
+    for record in owned:
         logic = parser_state.FuncLogicLookupTable[record["entity"]]
         if logic.delay is not None and (
             record["wiring"] or not logic.delay_is_estimated
@@ -5870,15 +6079,18 @@ def _control_snapshot(parser_state, previous=None):
 
 
 def _select_delay(snapshot, ctl):
-    """Measured shape proxy; in-context state-register paths refine each unit."""
+    """The slowest of one FSM's own measured decode shapes for encoding `ctl`
+    (_control_snapshot); in-context state-register paths refine each unit."""
     return max(
         (row["delay_du"] for row in snapshot.values() if row["ctl"] == ctl), default=0
     )
 
 
 def _calibrate_controls(parser_state, budget_scales, ctl, previous, keys=None):
-    """Measure distinct decode shapes before the first full area search, for
-    every call site or only those in `keys`."""
+    """Measure each FSM's own decode shapes before its first full area search,
+    for every call site or only those in `keys`: one provisional schedule per
+    encoding its carried rows lack, and a measurement of each of its proxies
+    no earlier calibration measured. Returns key -> its _control_snapshot."""
     snapshots = {}
     modes = ("v3", "onehot") if ctl == "auto" else (ctl,)
     for key, tag in sorted(GET_TAGS(parser_state).items()):
@@ -5893,7 +6105,7 @@ def _calibrate_controls(parser_state, budget_scales, ctl, previous, keys=None):
             for mode in modes
             if not any(row["ctl"] == mode for row in snapshot.values())
         ]
-        roots = set()
+        owned = []
         for mode in missing:
             provisional = BUILD_SCHEDULE(
                 parser_state,
@@ -5903,16 +6115,17 @@ def _calibrate_controls(parser_state, budget_scales, ctl, previous, keys=None):
                 old,
                 ctl=mode,
             )
-            roots.update(
-                record["entity"]
-                for record in _prepare_control_proxies(
-                    parser_state, key, provisional, mode
-                )
-                if not record["wiring"]
-            )
+            owned += _prepare_control_proxies(parser_state, key, provisional, mode)
+        roots = set()
+        for record in owned:
+            logic = parser_state.FuncLogicLookupTable[record["entity"]]
+            if not record["wiring"] and (
+                logic.delay is None or logic.delay_is_estimated
+            ):
+                roots.add(record["entity"])
         if roots:
             parser_state = _measure_entities(parser_state, roots)
-        snapshots[key] = _control_snapshot(parser_state, snapshot)
+        snapshots[key] = _control_snapshot(parser_state, snapshot, owned)
     return parser_state, snapshots
 
 
@@ -6001,9 +6214,7 @@ def _measure_entities(parser_state, entities):
         VHDL.WRITE_LOGIC_ENTITY(sorted(insts)[0], logic, out_dir, isolated, timing)
     SYN.ADD_PATH_DELAY_TO_LOOKUP(isolated, root_func_names=set(pending))
     # Resolved delays derived from the old estimates are stale now.
-    memo = getattr(parser_state, AUTO._DELAY_MEMO_ATTR, None)
-    if memo is not None:
-        memo.clear()
+    parser_state.pypeline_auto_fsm_delay_memo.clear()
     return parser_state
 
 
@@ -8513,11 +8724,7 @@ def BUILD_AUTO_FSM_FUNC(tag, parser_state, elaborator=None):
     combinational passthrough. Schedule installed -> the generated FSM.
     Memoized on the tag so several call sites of one tag share one entity.
     """
-    tags = getattr(parser_state, "pypeline_auto_fsm_tags", None)
-    if tags is None:
-        tags = {}
-        parser_state.pypeline_auto_fsm_tags = tags
-    tags[tag.canonical_key] = tag
+    parser_state.pypeline_auto_fsm_tags[tag.canonical_key] = tag
 
     if tag._generated is not None:
         return tag._generated

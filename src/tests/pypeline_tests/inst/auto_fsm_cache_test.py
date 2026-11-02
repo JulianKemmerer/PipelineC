@@ -717,9 +717,9 @@ def test_binding_search_reuses_clean_graph_without_sharing_mutable_results():
 def test_search_with_identical_inputs_is_reused_and_any_change_searches():
     """A harvest whose inputs match an earlier search reads that search's result
     from the output directory or the --syn_cache store: no search, the same
-    schedule byte for byte. A changed delay, budget, encoding, carried
-    schedule, clock or compiler searches again, and an unreadable file is a
-    miss, not a failure."""
+    schedule byte for byte. A changed delay of an operation the function uses,
+    budget, encoding, carried schedule, clock or compiler searches again, and
+    an unreadable file is a miss, not a failure."""
     import SYN
 
     def dumps(schedule):
@@ -777,10 +777,16 @@ def test_search_with_identical_inputs_is_reused_and_any_change_searches():
                 harvest(**kwargs)
                 assert len(searches) == count + 1, what
             count = len(searches)
-            parser.FuncLogicLookupTable[adders[0]].delay = 31
+            # An adder the function itself uses (other widths belong to
+            # candidates this search never opens)
+            used = AUTO._subtree_entities(
+                parser, AUTO._entity_key_for_callable(parser, _tag.func)
+            )
+            adder = next(name for name in adders if name in used)
+            parser.FuncLogicLookupTable[adder].delay = 31
             harvest()
             assert len(searches) == count + 1, "a changed delay"
-            parser.FuncLogicLookupTable[adders[0]].delay = 30
+            parser.FuncLogicLookupTable[adder].delay = 30
             harvest()
             assert len(searches) == count + 1, "the original delay hits again"
             parser.main_mhz = {main: mhz * 2 for main, mhz in parser.main_mhz.items()}
@@ -816,14 +822,17 @@ def test_search_result_is_stale_when_a_cache_delay_file_it_read_changes():
         absent = Path(tmp, "absent.delay")
         read.write_text("1.5\n")
         entry = os.path.join(tmp, "entry.pkl.z")
-        reads = {str(read): 1.5, str(absent): None}
-        AUTO_FSM._write_cached_search([entry], "digest", key, schedule, reads)
+        reads = {("delay", str(read)): 1.5, ("delay", str(absent)): None}
+        AUTO_FSM._write_cached_search([entry], "digest", key, schedule, reads, [])
 
-        def reused():
-            return AUTO_FSM._read_cached_search([entry], "digest", key)[0] is not None
+        def reused(digest="digest"):
+            return (
+                AUTO_FSM._read_cached_search([entry], digest, key, parser, tag)[0]
+                is not None
+            )
 
         assert reused()
-        assert AUTO_FSM._read_cached_search([entry], "other digest", key)[0] is None
+        assert not reused("other digest")
         read.write_text("2.0\n")
         assert not reused(), "a changed delay file"
         read.unlink()
@@ -905,11 +914,14 @@ def test_store_prune_removes_search_results_no_build_reused():
             )
             assert "/auto_fsm/" in old
             for digest, entry in (("old", old), ("recent", recent)):
-                AUTO_FSM._write_cached_search([entry], digest, key, schedule, {})
+                AUTO_FSM._write_cached_search([entry], digest, key, schedule, {}, [])
             month_ago = time.time() - 30 * 86400
             for entry in (old, recent):
                 os.utime(entry, (month_ago, month_ago))
-            assert AUTO_FSM._read_cached_search([recent], "recent", key)[0] is not None
+            assert (
+                AUTO_FSM._read_cached_search([recent], "recent", key, parser, tag)[0]
+                is not None
+            )
             assert SYN.SYNTHESIS_STORE_PRUNE(7) == 1
             assert not os.path.exists(old) and os.path.exists(recent)
         finally:

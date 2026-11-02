@@ -2156,10 +2156,99 @@ def GET_CACHED_PATH_DELAY_COMPONENTS_FILE_PATH(logic, parser_state):
     return GET_PATH_DELAY_CACHE_DIR(parser_state) + "/" + key + ".timing.json"
 
 
-# file path -> delay ns (None: no file) of every cached path delay this process
-# read; AUTO_FSM keeps them with a search result and reuses it only while every
-# file still reads the same (READ_CACHED_PATH_DELAY_FILE).
-CACHED_PATH_DELAY_READS = {}
+class _ReadScopes(threading.local):
+    """Per thread: a scope belongs to the thread that opened it, and synthesis
+    runs in thread pools."""
+
+    def __init__(self):
+        # This thread's active RECORDED_READS dicts, outermost first: each
+        # (kind, key) -> the value read
+        self.stack = []
+
+
+# The RECORDED_READS scopes active now, per thread
+_READ_SCOPES = _ReadScopes()
+
+
+def _read_scopes():
+    return _READ_SCOPES.stack
+# The persistent-cache file kinds SYN records (_record_cache_file_read) and
+# checks (CACHE_FILES_UNCHANGED)
+CACHE_FILE_KINDS = ("delay", "components", "area")
+
+
+@contextlib.contextmanager
+def RECORDED_READS():
+    """Record the reads made inside the block in the dict this yields:
+    (kind, key) -> the value read. SYN records each persistent-cache file it
+    reads (CACHE_FILE_KINDS: key the path, value CACHE_FILE_SIGNATURE, None
+    for no file); another module records its own kinds (RECORD_READ) and
+    checks them itself. Scopes nest and a read goes to every active one. A
+    memo of a value derived from reads keeps them and replays them on a hit
+    (REPLAY_READS), so each scope holds every read its result rests on,
+    whatever ran before it. AUTO_FSM keeps a search's reads with its result
+    and reuses it only while they all read the same; its forked workers send
+    their reads back into the scopes active when they forked
+    (AUTO_FSM._map_forked)."""
+    reads = {}
+    stack = _read_scopes()
+    stack.append(reads)
+    try:
+        yield reads
+    finally:
+        assert stack[-1] is reads, "RECORDED_READS scopes must nest"
+        stack.pop()
+
+
+def ACTIVE_READ_SCOPES():
+    """This thread's active RECORDED_READS dicts, outermost first."""
+    return list(_read_scopes())
+
+
+def RECORD_READ(kind, key, value):
+    """Record one read in every active RECORDED_READS scope."""
+    for scope in _read_scopes():
+        scope[(kind, key)] = value
+
+
+def REPLAY_READS(reads):
+    """Add reads recorded earlier (a RECORDED_READS dict) to every active scope."""
+    for scope in _read_scopes():
+        scope.update(reads)
+
+
+def CACHE_FILE_SIGNATURE(kind, path):
+    """What the persistent-cache file at `path` holds now, in the form
+    RECORDED_READS records a read of it: the delay ns of a "delay" file, the
+    sha256 of a "components" file, the (value, unit) of an "area" file; None
+    when there is no usable file. Records nothing."""
+    if kind == "delay":
+        return READ_CACHED_PATH_DELAY_FILE(path)
+    if kind == "components":
+        try:
+            with open(path, "rb") as f:
+                return hashlib.sha256(f.read()).hexdigest()
+        except OSError:
+            return None
+    if kind == "area":
+        return _read_area_file(path)
+    raise ValueError(f"not a persistent-cache file kind: {kind!r}")
+
+
+def CACHE_FILES_UNCHANGED(reads):
+    """Whether every persistent-cache file read among `reads` (a
+    RECORDED_READS dict) would read the same now: a changed, removed or newly
+    created file is a difference. Other kinds are their recorder's to check."""
+    return all(
+        CACHE_FILE_SIGNATURE(kind, path) == value
+        for (kind, path), value in reads.items()
+        if kind in CACHE_FILE_KINDS
+    )
+
+
+def _record_cache_file_read(kind, path, value):
+    if _read_scopes():
+        RECORD_READ(kind, path, value)
 
 
 def READ_CACHED_PATH_DELAY_FILE(file_path):
@@ -2177,7 +2266,7 @@ def GET_CACHED_PATH_DELAY(logic, parser_state):
     # Look in cache dir
     file_path = GET_CACHED_PATH_DELAY_FILE_PATH(logic, parser_state)
     delay_ns = READ_CACHED_PATH_DELAY_FILE(file_path)
-    CACHED_PATH_DELAY_READS[file_path] = delay_ns
+    _record_cache_file_read("delay", file_path, delay_ns)
     return delay_ns
 
 
@@ -2304,6 +2393,8 @@ def GET_CACHED_PATH_DELAY_COMPONENTS(logic, parser_state, expected_delay_ns=None
     if not logic.is_c_built_in and LOGIC.FUNC_IS_OP_OVERLOAD(logic.func_name):
         return None
     path = GET_CACHED_PATH_DELAY_COMPONENTS_FILE_PATH(logic, parser_state)
+    if _read_scopes():
+        RECORD_READ("components", path, CACHE_FILE_SIGNATURE("components", path))
     if not os.path.exists(path):
         return None
     try:
@@ -2413,7 +2504,16 @@ def _READ_CACHED_AREA_FILE(file_path):
     """(value, unit) parsed from one .area file, or None on a missing or
     malformed file, or a unit that disagrees with the active model's own
     unit (DEVICE_MODELS.AREA_UNIT) -- the whole point of writing the unit
-    into the file is to make that mismatch loud instead of silently mixed."""
+    into the file is to make that mismatch loud instead of silently mixed.
+    Recorded in the active RECORDED_READS scopes."""
+    area = _read_area_file(file_path)
+    if file_path is not None:
+        _record_cache_file_read("area", file_path, area)
+    return area
+
+
+def _read_area_file(file_path):
+    """_READ_CACHED_AREA_FILE without recording the read."""
     if file_path is None or not os.path.exists(file_path):
         return None
     text = open(file_path).read().strip()

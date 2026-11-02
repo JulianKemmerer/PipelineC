@@ -55,6 +55,7 @@ figures out the rest — how many stages, or how many states.
   - [Schedules a build produced are applied or the build stops](#schedules-a-build-produced-are-applied-or-the-build-stops)
   - [Measurements before scheduling decisions](#measurements-before-scheduling-decisions)
   - [Measured unit stages](#measured-unit-stages)
+  - [Search reuse keyed on what each search reads](#search-reuse-keyed-on-what-each-search-reads)
   - [Control timing and local repair](#control-timing-and-local-repair)
   - [Tighten loop termination](#tighten-loop-termination)
   - [Forced descent into one-bit gates](#forced-descent-into-one-bit-gates)
@@ -822,7 +823,7 @@ Three details that are load-bearing:
   two would silently drop every accepted input.
 - **The select table is off the data path.** `st` is a register output
   available at the start of the cycle, so `st -> table -> mux.sel` resolves in
-  parallel with `operands -> mux.data`. The scheduler charges `max(data arrival, select arrival) + mux delay`. The select arrival comes from measured decode-shape proxies initially and attributed state-register paths on later passes.
+  parallel with `operands -> mux.data`. The scheduler charges `max(data arrival, select arrival) + mux delay`. The select arrival comes from the FSM's own measured decode-shape proxies initially and attributed state-register paths on later passes.
 
 Two shapes were considered and **rejected**: using the state bits *directly* as
 a mux select (with data inputs padded out to one row per state) grows the
@@ -949,6 +950,14 @@ inline v3 tables, onehot encoders or v2 comparisons. Exact table contents never
 create characterization entities. Proxies estimate decode depth; they cannot
 measure the fanout and routing of the real FSM. Later attributed paths starting
 at the state register replace the proxy with in-context per-unit select arrival.
+
+Each call site's decode rows (`control_delays_snapshot`, carried in its
+schedule) hold only the shapes of its own provisional schedules, one per
+encoding its carried rows lack. A proxy is shared by shape, so one another call
+site already measured is not measured again, but another call site's shapes
+never enter this one's rows. `_select_delay` takes the slowest of the call
+site's own rows for the encoding, so a small FSM is not scheduled against a
+larger FSM's decode.
 
 After synthesis, the driver reads the observation matching the retained
 implementation signature. Generated source lines and register writer maps
@@ -1343,28 +1352,46 @@ which a reused result needs too.
 
 `HARVEST_AUTO_FSM_SCHEDULES` keeps each call site's selected schedule in the
 output directory (`auto_fsm_searches/<digest>.pkl.z`) and, with `--syn_cache`,
-in the store (`auto_fsm/v1/<tool>/<part>/<digest>.pkl.z`). A later harvest
+in the store (`auto_fsm/v2/<tool>/<part>/<digest>.pkl.z`). A later harvest
 with the same digest reuses it instead of searching, prints that it did, and
-copies a store hit into its own output directory. The digest covers what the
-search reads:
-- the call site's key and source identity, the budget scale, the encoding
-  request, the area-sweep and force flags, and the whole carried schedule;
-- the design's source hashes and a hash of the compiler's and the Pypeline
-  library's own sources (`SYN.COMPILER_SOURCE_HASH`), so any code change searches
-  again;
-- `_search_parser_inputs`: every delay an entity carries and its estimated
-  flag, the control-path proxies, the clock goals, the target, the delay,
-  area and placement settings, and under DEVICE_MODELS the leaf area cache.
+copies a store hit into its own output directory. A search's result depends
+only on what that search reads, so editing another call site's function, or a
+function no call site uses, keeps it. The digest (`_search_digest`) covers the
+call site's own inputs:
+- its key and source identity, the budget scale, the encoding request, the
+  area-sweep and force flags, and the whole carried schedule (which holds its
+  own decode rows);
+- `_search_inputs`: the clock period its budget comes from (`_period_du`), the
+  target, the delay, area and placement settings, and for every entity of its
+  closure (`_search_closure`: the function's subtree and its AUTO_COMB_OPT
+  alternatives' subtrees) the graph, effects, HDL flags, carried delay numbers
+  and, under DEVICE_MODELS, measured area, plus the layout of every struct and
+  enum their wires use (a type name alone can miss a changed field);
+- a hash of the compiler's and the Pypeline library's own sources
+  (`SYN.COMPILER_SOURCE_HASH`), so any code change searches again.
 
-An entity without a delay is left out of the digest. A search materializes
-such entities as it goes (a candidate's built-in leaves, unit functions), so
-leaving them in would make the next harvest's digest depend on whether the
-previous one searched or reused. What those entities resolve to on disk is
-checked instead. `SYN.GET_CACHED_PATH_DELAY` records every cache/delay file the
-process reads (`SYN.CACHED_PATH_DELAY_READS`, merged back from forked
-workers), a stored result keeps that record, and a result is reused only while
-every recorded file still reads the same, a missing file included. An
-unreadable, foreign or stale entry is a miss, never a failure. A reuse
+Everything else a search reads it records as it runs (`SYN.RECORDED_READS`),
+and a stored result keeps that record:
+- each cache file read (`.delay`, `.timing.json`, `.area`), a missing file
+  included. `AUTO._resolve_delay_du`'s memo keeps the reads behind each value
+  and replays them on a hit, so a search records them whichever search
+  resolved them first;
+- each lookup in a candidate table keyed by a built-in entity or a constant,
+  selection or pair shape (`_CANDIDATE_TABLES`, swapped for `_RecordedTable`
+  while the search runs), with what it found. A search also looks up the shapes
+  of graphs it opens, which another call site's preparation may have filled.
+  The record keeps a hash of the graph and numbers of each entity found
+  (`_found_by_lookups`);
+- each operand mux shape it priced, with the measured delay a scheduled FSM's
+  instance of that mux had, or none (`AUTO._measured_mux_du`). Which shapes are
+  instantiated depends on every scheduled FSM.
+
+Forked search workers send their reads back (`_map_forked`). A result is reused
+only while every recorded read reads the same (`_search_reads_unchanged`).
+Entities a search materializes as it goes (unit functions, their built-in
+leaves) are never in a digest: they exist only once some search ran, but what
+they resolve to on disk is recorded. An unreadable, foreign or stale entry is a
+miss, never a failure, and the search's new result replaces it. A reuse
 refreshes the stored file's time, and `--syn_cache_prune` removes results no
 build has used for that long.
 Area contributions use compensated summation so equal modeled costs do not
@@ -1822,6 +1849,7 @@ first build).
 |---|---|---|
 | `auto_fsm_attribution_test.py` | unit | ordered Vivado carry/routing arcs, endpoint-only paths, retained unmatched evidence, parallel late select arrival, edge separation, width-keyed decode proxies, measured pinned-unit stages (isolated and launch) and rescheduling placements measured over budget before a build |
 | `auto_fsm_cache_test.py` | unit | stale source/target/version refusal (recorded, and an internal error inside a build), malformed cache misses, applied forced schedules, provenance completeness, serial unit characterization and stable hardware identities; `REPARSE` schedules a call site new to the build and still refuses a rejected schedule; a call site created during a pass is scheduled from `--auto_fsm_budget_scale`, blamed and tightened (stubbed driver) |
+| `auto_fsm_independence_test.py` | unit | two call sites in two files and a function neither uses: each one's select delay comes from its own decode shapes in either calibration order; editing one call site's function or the unused function between builds keeps the other's search digest, while a delay, estimated flag, struct layout, clock, setting or compiler it reads changes it; a search reads no entity outside its closure but what its recorded lookups found; recorded reads are the same in either search order and at `-j 1` and `-j 3`; changed lookups, found entities and measured muxes are misses; a stale stored result is replaced |
 | `auto_fsm_transforms_test.py` | unit | exclusive selection proofs, typed width-adapter legality and next-wider merge steps, closed-pair fusion refusal and trimmed measurement roots |
 | `auto_fsm_prefix_tree_test.py` | unit | a derived hierarchy estimate is measured (outermost first, never when a measured part already exceeds the budget) before it decides forced descent, and the carried measurement is reused on a later pass; array input elements render as indexes; a MAIN with no registers of its own drives its scheduled FSM's clock enable; a helper kept whole as a pipelined unit is not a blocked descent |
 | `auto_fsm_var_index_read_test.py` | elab_introspect | direct and nested variable-index source regeneration (regression for #377) |
@@ -2161,11 +2189,31 @@ same way (52.57 MHz, a four-stage modular multiply), and each in-context
 correction cost a whole-design pass. Chosen placements are therefore measured
 on their own before the first build that uses them.
 
+### Search reuse keyed on what each search reads
+
+The first persistent search cache keyed each call site's search on the whole
+design: every design source, every entity's delay, every MAIN's clock and every
+FSM's decode proxies, with every cache file the process had read. Any edit, even
+to a function no FSM uses, ran every search again: about 25 minutes of compiler
+time for WireGuard's two Poly1305 FSMs (80 MHz, Vivado xc7a200tffg1156-2,
+`-j 3`). A digest now covers one call site's closure, and what a search reaches
+beyond it is recorded as it runs. Two traps shaped the record. A per-parse memo
+serves a later search a delay an earlier search resolved from a file, so a memo
+entry keeps and replays its reads. A search looks up candidate tables by shape,
+including the shapes of graphs it opens, so another call site's preparation can
+add what it finds; each lookup is recorded with its result. Recording changes
+no search's choices, only whether a search runs.
+
 ### Control timing and local repair
 
 The data and select paths are parallel, so the scheduler charges
 `max(data, select) + mux`. A small width-keyed proxy supplies the first estimate;
-state-register paths supply in-context corrections. Selectors remain inline:
+state-register paths supply in-context corrections. The estimate once took the
+slowest proxy any FSM in the design had measured, and an FSM calibrated after
+another found its encodings already covered and measured none of its own
+shapes, so a small FSM was scheduled against a larger one's decode. Proxies are
+still shared by shape, but each FSM's estimate comes from its own shapes only.
+Selectors remain inline:
 per-table characterization would add runs without capturing real fanout.
 Attributed misses compare local complete reschedules before global tightening.
 Repair applies only where the model predicted a fit. In the first form a

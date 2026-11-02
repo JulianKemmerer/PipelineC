@@ -163,10 +163,18 @@ their names are not trusted.
 pass measured (or a pinned snapshot), the `Logic`'s own measured delay, the
 on-disk path-delay cache (how a never-instantiated descent candidate gets a
 real number), then `_heuristic_leaf_delay_du`, a width-based guess only a cold
-cache ever sees. `_mux_delay_du` prices an n-way operand mux: measured when the
-mux entity exists (`_mux_callable` / `_mux_entity`,
+cache ever sees. The last three are memoized per parse
+(`ParserState.pypeline_auto_fsm_delay_memo`) with the cache files they read,
+and a hit replays those reads into the active `SYN.RECORDED_READS` scopes, so an
+AUTO_FSM search records them even when an earlier search resolved the value
+([AUTO_FSM_DESIGN.md](AUTO_FSM_DESIGN.md#search-results-persist-across-builds)).
+`_mux_delay_du` prices an n-way operand mux: measured when the
+mux entity exists (`_measured_mux_du`, through `_mux_callable` / `_mux_entity`,
 `include/pypeline/operators/auto_fsm_mux.py`), else a measurement remembered
 from an earlier pass, else `MUX_BASE_DU + MUX_PER_LEVEL_DU * ceil(log2 n)`.
+Whether the mux entity exists depends on every scheduled FSM in the parse, so
+`_measured_mux_du` records its answer (`SYN.RECORD_READ`, kind
+`auto_fsm_mux`).
 The current pass's mux measurements are explicit AUTO_FSM consumers collected
 by `SYN.COLLECT_PATH_DELAY_REQUIREMENTS`, independently of stateful callers.
 

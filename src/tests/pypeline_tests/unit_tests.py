@@ -201,6 +201,17 @@ def get_tests() -> list:
             cmd=[INST_DIR / "auto_fsm_cache_test.py"],
         )
     )
+    # Each call site's decode estimate, search digest and recorded reads
+    # depend only on its own inputs: two call sites in two files, a function
+    # neither uses, both search orders, -j 1 and -j 3; stale stored results
+    # are replaced. No synthesis; measured 18-20 s.
+    tests.append(
+        Test(
+            name="auto_fsm_independence_test",
+            category="unit",
+            cmd=[INST_DIR / "auto_fsm_independence_test.py"],
+        )
+    )
     # Ordered Vivado arcs, verified sky130 endpoint aliases, late selection, local
     # edge repair and measured pinned-unit stages; measured 1.3 s.
     tests.append(

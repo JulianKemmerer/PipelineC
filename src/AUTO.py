@@ -1732,22 +1732,35 @@ def _mux_delay_du(parser_state, types, ctype, n, snapshot):
     """
     if n < 2:
         return 0
-    key = f"{ctype}#{n}"
-    cached = (snapshot or {}).get(key)
+    measured = _measured_mux_du(parser_state, types, ctype, n)
+    if measured is not None:
+        return measured
+    cached = (snapshot or {}).get(f"{ctype}#{n}")
+    if cached is not None:
+        return cached
+    levels = max(1, (n - 1).bit_length())
+    return MUX_BASE_DU + MUX_PER_LEVEL_DU * levels
+
+
+def _measured_mux_du(parser_state, types, ctype, n):
+    """_mux_delay_du's first choice: the delay this parse measured for the
+    n-way mux over `ctype`, or None when no generated FSM in it instantiates
+    that mux. Which shapes are instantiated depends on every scheduled FSM in
+    the design, so the answer is recorded (SYN.RECORD_READ, kind
+    "auto_fsm_mux"), and a reused search result checks it again."""
     try:
         t = types.resolve(ctype)
     except AutoError:
         t = None
+    du = None
     if t is not None:
         entity = _mux_entity(parser_state, t, n)
         if entity is not None:
             logic = parser_state.FuncLogicLookupTable.get(entity)
             if logic is not None and logic.delay is not None:
-                return max(1, int(logic.delay))
-    if cached is not None:
-        return cached
-    levels = max(1, (n - 1).bit_length())
-    return MUX_BASE_DU + MUX_PER_LEVEL_DU * levels
+                du = max(1, int(logic.delay))
+    SYN.RECORD_READ("auto_fsm_mux", (ctype, n), du)
+    return du
 
 
 def _ctype_width(ctype_str) -> int:
@@ -2113,9 +2126,6 @@ def FIND_EFFECTS(parser_state, entity, include_self=True):
     return found
 
 
-_DELAY_MEMO_ATTR = "_auto_fsm_delay_memo"
-
-
 def _resolve_delay_du(parser_state, entity, delays, _stack=None):
     """Delay of one operation, in delay units, however little is known about it.
 
@@ -2135,6 +2145,10 @@ def _resolve_delay_du(parser_state, entity, delays, _stack=None):
     accuracy in the area search; getting them ABSENT (v1's behavior: no Logic
     means delay 0) would be worse than wrong, because a zero-delay operation is
     treated as free wiring and never shared at all.
+
+    Steps 3-5 are memoized per parse (pypeline_auto_fsm_delay_memo) with the
+    cache files they read, and a hit replays those reads (SYN.RECORDED_READS), so
+    an AUTO_FSM search records them whichever search resolved them first.
     """
     known = delays.get(entity)
     if known is not None:
@@ -2145,34 +2159,34 @@ def _resolve_delay_du(parser_state, entity, delays, _stack=None):
     if logic.delay is not None:
         return logic.delay
 
-    memo = getattr(parser_state, _DELAY_MEMO_ATTR, None)
-    if memo is None:
-        memo = {}
-        setattr(parser_state, _DELAY_MEMO_ATTR, memo)
+    memo = parser_state.pypeline_auto_fsm_delay_memo
     hit = memo.get(entity)
     if hit is not None:
-        return hit
+        du, reads = hit
+        SYN.REPLAY_READS(reads)
+        return du
     _stack = set() if _stack is None else _stack
     if entity in _stack:
         return 0
     _stack.add(entity)
 
-    du = None
-    try:
-        cached_ns = SYN.GET_CACHED_PATH_DELAY(logic, parser_state)
-        if cached_ns is not None:
-            du = max(0, int(cached_ns * SYN.DELAY_UNIT_MULT))
-    except Exception:
+    with SYN.RECORDED_READS() as reads:
         du = None
-    if du is None and logic.submodule_instances:
-        du = sum(
-            _resolve_delay_du(parser_state, sub, delays, _stack)
-            for sub in set(logic.submodule_instances.values())
-        )
-    if du is None:
-        du = _heuristic_leaf_delay_du(entity, logic)
+        try:
+            cached_ns = SYN.GET_CACHED_PATH_DELAY(logic, parser_state)
+            if cached_ns is not None:
+                du = max(0, int(cached_ns * SYN.DELAY_UNIT_MULT))
+        except Exception:
+            du = None
+        if du is None and logic.submodule_instances:
+            du = sum(
+                _resolve_delay_du(parser_state, sub, delays, _stack)
+                for sub in set(logic.submodule_instances.values())
+            )
+        if du is None:
+            du = _heuristic_leaf_delay_du(entity, logic)
     _stack.discard(entity)
-    memo[entity] = du
+    memo[entity] = (du, reads)
     return du
 
 
@@ -2228,7 +2242,7 @@ def _is_decomposable(parser_state, entity, logic):
 def _soft_equivalents(parser_state):
     """built-in op entity -> equivalent Python-sourced entity, as prepared by
     PREPARE_SOFT_EQUIVALENTS during AUTO_FSM call-site elaboration."""
-    return getattr(parser_state, "pypeline_auto_fsm_soft_equiv", {})
+    return parser_state.pypeline_auto_fsm_soft_equiv
 
 
 # Which soft-operator factory implements each built-in operator. One fixed
@@ -2417,10 +2431,7 @@ def PREPARE_SOFT_EQUIVALENTS(tag, parser_state, elaborator):
     Best-effort throughout: a shape with no soft equivalent, or an operators
     package that is not importable, just means one fewer descent candidate.
     """
-    equiv = getattr(parser_state, "pypeline_auto_fsm_soft_equiv", None)
-    if equiv is None:
-        equiv = {}
-        parser_state.pypeline_auto_fsm_soft_equiv = equiv
+    equiv = parser_state.pypeline_auto_fsm_soft_equiv
     try:
         func_logic = elaborator._elaborate_live_func(
             getattr(tag.func, "__name__", "auto_fsm_func"), tag.func
@@ -2470,7 +2481,7 @@ def PREPARE_SOFT_EQUIVALENTS(tag, parser_state, elaborator):
 def _split_equivalents(parser_state):
     """built-in op entity -> its width-halving equivalent entity, as prepared
     by PREPARE_SPLIT_EQUIVALENTS."""
-    return getattr(parser_state, "pypeline_auto_fsm_split_equiv", {})
+    return parser_state.pypeline_auto_fsm_split_equiv
 
 
 def PREPARE_SPLIT_EQUIVALENTS(tag, parser_state, elaborator):
@@ -2484,10 +2495,7 @@ def PREPARE_SPLIT_EQUIVALENTS(tag, parser_state, elaborator):
     uninstantiated, and nothing is built unless a schedule binds it. Bounded by
     _MAX_SPLIT_EQUIVALENTS elaborated shapes.
     """
-    equiv = getattr(parser_state, "pypeline_auto_fsm_split_equiv", None)
-    if equiv is None:
-        equiv = {}
-        parser_state.pypeline_auto_fsm_split_equiv = equiv
+    equiv = parser_state.pypeline_auto_fsm_split_equiv
     try:
         func_logic = elaborator._elaborate_live_func(
             getattr(tag.func, "__name__", "auto_fsm_func"), tag.func
@@ -2748,7 +2756,9 @@ def _build_dag_level(
         # rebinding it to the enclosing wrapper would create recursive calls.
         specializations = parser_state.pypeline_auto_fsm_specializations
         specialized_from = None
-        if entity not in specializations.values():
+        # A constant wrapper is a key of specialization_shapes (one per value
+        # of specializations): a lookup, so a search records only this entity.
+        if entity not in parser_state.pypeline_auto_fsm_specialization_shapes:
             shape_node = {
                 "entity": sub_entity,
                 "operands": operands,

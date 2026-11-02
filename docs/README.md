@@ -1092,7 +1092,7 @@ A build leaves several kinds of results behind. Each has one job:
 |---|---|---|
 | Synthesis logs | the output directory; with `--syn_cache`, the shared store | Reused whenever a later run synthesizes exactly the same inputs, in any output directory sharing the store |
 | Latency memory (`latency_memory.json`, store pieces) | the output directory; the store | Starting depths, counts, locks and MAIN implementations for later builds of unchanged hardware. Synthesis confirms every reuse |
-| AUTO_FSM search results (`auto_fsm_searches/`, store `auto_fsm/`) | the output directory; the store | A later build that schedules an FSM from identical inputs (its source, the delays, clock goal, carried schedule and compiler) reuses the result instead of searching again |
+| AUTO_FSM search results (`auto_fsm_searches/`, store `auto_fsm/`) | the output directory; the store | A later build that schedules an FSM from identical inputs (its own function and the alternatives it considers, the delays and cached measurements it reads, the clock goal, its carried schedule and the compiler) reuses the result instead of searching again. Editing another FSM's function, or code no FSM uses, keeps it |
 | `latency_profile.json` | the output directory | What the build built for each AUTO_PIPELINE / AUTO_MULTI_CYCLE. Keep a copy to pass as `--latency_hints` |
 | `--latency_hints FILE` | a file you keep | Starting latencies only, like `start_latency=` |
 | `built_hardware.json` | the output directory, once the build met timing | The finished hardware and the inputs that built it: a testbench simulated in this directory runs on it without any build, and the same build again has nothing to do |

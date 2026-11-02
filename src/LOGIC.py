@@ -3346,6 +3346,18 @@ class ParserState:
         self.pypeline_auto_fsm_control_proxies = {}
         # Call site -> why an installed schedule was not applied on this parse.
         self.pypeline_auto_fsm_schedule_rejections = {}
+        # Entity -> (delay du, its SYN.RECORDED_READS) AUTO._resolve_delay_du derived.
+        self.pypeline_auto_fsm_delay_memo = {}
+        # Canonical key -> live pypeline.AUTO_FSM tag of each elaborated call site.
+        self.pypeline_auto_fsm_tags = {}
+        # Built-in operator entity -> its soft-operator equivalent entity.
+        self.pypeline_auto_fsm_soft_equiv = {}
+        # Built-in operator entity -> its width-halving equivalent entity.
+        self.pypeline_auto_fsm_split_equiv = {}
+        # Function entity -> AUTO_COMB_OPT's [(alternative callable, report)]
+        # for the area objective, and for the delay objective.
+        self.pypeline_comb_area_opt_candidates = {}
+        self.pypeline_comb_delay_opt_candidates = {}
 
         # Pragma info
         self.main_mhz = {}  # dict[main_inst_name]=mhz # Any inst name can be used
@@ -3471,6 +3483,14 @@ class ParserState:
         )
         rv.pypeline_auto_fsm_schedule_rejections = dict(
             self.pypeline_auto_fsm_schedule_rejections
+        )
+        rv.pypeline_auto_fsm_delay_memo = dict(self.pypeline_auto_fsm_delay_memo)
+        rv.pypeline_auto_fsm_tags = dict(self.pypeline_auto_fsm_tags)
+        rv.pypeline_auto_fsm_soft_equiv = dict(self.pypeline_auto_fsm_soft_equiv)
+        rv.pypeline_auto_fsm_split_equiv = dict(self.pypeline_auto_fsm_split_equiv)
+        rv.pypeline_comb_area_opt_candidates = dict(self.pypeline_comb_area_opt_candidates)
+        rv.pypeline_comb_delay_opt_candidates = dict(
+            self.pypeline_comb_delay_opt_candidates
         )
         rv.pypeline_auto_fsm_elaborators = {
             key: copy.copy(elaborator)

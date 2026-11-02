@@ -84,7 +84,8 @@ For test-runner commands, see [Testing](#testing).
   [compiler complexity review](docs/code_reviews/complexity_review/REVIEW_COMPLEXITY.md)
   and the affected modules' reviews linked from it. When adding or changing tests,
   read the [test-suite review](docs/code_reviews/tests_review/TEST_REVIEW.md) and its
-  linked inventory for the affected tests.
+  linked inventory for the affected tests. The reviews are living documents: you
+  also add to them what your work finds (see [Documentation](#documentation)).
 - **Don't extend the patterns they flag:** duplicated logic, responsibilities outside
   their owning module, overlapping test builds, unrelated scenarios added to an
   already unwieldy test file. Check the specific review's recommendations when
@@ -137,9 +138,17 @@ For test-runner commands, see [Testing](#testing).
 
 ### Scope the design
 
-- For a large feature, question the requirements, including the human's. Say which
+- **Count the users first.** For a large feature, list the designs that need it:
+  the examples, the tests and any downstream design the task names. If none does
+  yet, say so. Question the requirements, including the human's: say which
   requested parts aren't worth their cost before writing the plan, and prefer the
   smallest safe design that reuses an existing mechanism.
+- **Name the mechanism.** Each plan step names the functions and data it changes
+  and the existing mechanism it reuses. A step that only restates a requirement
+  ("add a discovery phase") is not a plan step.
+- **Land in phases.** Order a large change into phases that each pass their own
+  tests and update their own docs, most valuable and least risky first, so a later
+  phase can be deferred without reworking the earlier ones.
 - Implement agreed designs faithfully. Don't add heuristic bounds, arbitrary floors or
   behavioral limits nobody asked for unless they're confirmed and tested.
 - If a simplification turns out unsafe during implementation, fix it and say so plainly.
@@ -152,11 +161,17 @@ For test-runner commands, see [Testing](#testing).
   comments next to it.
 - **Declared state:** declare results stored on `ParserState`, or on any other shared
   object, in its `__init__` with a one-line comment. Don't compute such state lazily on
-  first use or branch on `hasattr`: behavior then depends on call order.
+  first use or branch on `hasattr`: behavior then depends on call order. When you
+  change code that relies on state created that way, declare it.
 - **Retire what you replace:** when new logic replaces a rule, delete the code that
   can no longer run. Search `src/` and `docs/` for the old function and rule names and
   fix every comment and doc that cites them, in other modules too. Re-read the
   comments next to any code whose behavior you change.
+- **Check every consumer of a changed contract.** Before changing what a value
+  means or when it may be read (a `.latency`, an identity hash, a cache key, a
+  record format), find every reader in `src/`, `include/`, `examples/`, the tests and
+  any downstream design the task names, and check each one against the change. A
+  value hashed into generated names renames hardware when it changes.
 - **Keep evidence you can't attribute:** if a measured result (a timing path, say)
   can't be matched to part of the design, handle it conservatively or report it.
   Don't silently drop it.
@@ -183,9 +198,15 @@ For test-runner commands, see [Testing](#testing).
   from its source line (`pypeline_py_lNNNN`), so adding or deleting lines in
   `pypeline.py` renames everything defined below. That is not a regression.
 - **Caches save synthesis runs.** Use cached results whenever they're valid, and make
-  sure code detects and ignores stale entries. Cached or remembered data must never
+  sure code detects, ignores and replaces stale entries: a stale entry left in place
+  makes every later build redo the work. Cached or remembered data must never
   make a build fail that would succeed without it. A fix that invalidates old caches
   is fine; don't add workarounds to preserve them.
+- **A cache key covers everything its computation reads.** Derive it from the code,
+  not from the task's description: list the shared tables, memos and files the
+  computation reads, including entries other features fill (another call site's
+  prepared candidates, say), and record what can't be listed in advance. Test the
+  key by recording reads while the computation runs.
 - **C front-end output is not byte-reproducible.** C instance names carry
   `id()`-derived suffixes, so an A/B comparison of C builds must normalize those
   suffixes and compare sorted lines.
@@ -212,6 +233,10 @@ For test-runner commands, see [Testing](#testing).
   expected. Use them in designs anyway, and test that code through cocotb + GHDL.
   Check the specific factory first: being built on `vhdl()` doesn't by itself mean a
   wrapper can't simulate natively.
+- **Native sim runs one clock.** It refuses a design whose `@MAIN`s name more than
+  one clock ([Simulation across clocks](docs/pypeline_guide.md#simulation-across-clocks)).
+  Check multi-clock behavior with HDL simulation or synthesis, and each clock's logic
+  in a single-clock design.
 - **Never hardcode a latency.** Read it from a `.latency` value (an `AUTO_PIPELINE`
   instance has one), and give new pipelined blocks one too.
 - **Read the critical path, don't guess.** Before changing a design for timing, read
@@ -286,6 +311,10 @@ python3 src/tests/pypeline_tests/run_all.py --category known_issues -t NAME -j 1
 
 ### Write tests
 
+- **Check existing coverage first.** Before adding a test, find the tests that
+  already assert the property (the
+  [test inventory](docs/code_reviews/tests_review/TEST_INVENTORY.md), a grep of
+  `test_*` names) and extend or cite them. Say what each new test adds.
 - **Pick the test by the bug's failure mode.** An elaboration failure can use a
   plain design registered in `elab_tests.py`. A GHDL or synthesis rejection needs
   an invocation that actually runs that tool. Silent bugs need assertions on the
@@ -360,6 +389,13 @@ python3 src/tests/pypeline_tests/run_all.py --category known_issues -t NAME -j 1
   remains to be done and the source or test evidence for the revised finding. Keep
   historical measurements tied to their original source and conditions, and claim
   only the checks you reran and the findings you revalidated.
+- **Add what you learn to the reviews.** The reviews in `docs/code_reviews/` are kept
+  current by whoever works in the code. After a work session, add to the affected
+  module's review what made the code hard to work with and isn't there yet: a hidden
+  coupling, a misleading name or comment, state with no clear owner, a rule
+  duplicated elsewhere. Put it in the section that covers it, name the functions and
+  the commit or tree it describes, give the evidence, and label a suspected problem
+  as suspected. A finding is reference material, not a session log.
 - **Reference, not a logbook.** Docs describe what the code does now, in the present
   tense. No dated entries, no "recently added" or "now supports", no session
   write-ups. `git log` is the change record. A reason worth keeping goes in the file's

@@ -237,11 +237,8 @@ def prepare(func, parser_state, elaborator, strict=True, objective="area"):
         return prepare(chosen, parser_state, elaborator, strict, objective)
     logic = elaborator._elaborate_live_func(getattr(func, "__name__", "comb"), func)
     entity = logic.func_name
-    table_attr = "pypeline_comb_delay_opt_candidates" if objective == "delay" else "pypeline_comb_area_opt_candidates"
-    table = getattr(parser_state, table_attr, None)
-    if table is None:
-        table = {}
-        setattr(parser_state, table_attr, table)
+    table = (parser_state.pypeline_comb_delay_opt_candidates if objective == "delay"
+             else parser_state.pypeline_comb_area_opt_candidates)
     if entity in table:
         return table[entity]
     AUTO._RESOLVE_BUILTIN_SUBMODULES(parser_state, entity)
@@ -399,8 +396,8 @@ def BUILD_FUNC(tag, parser_state, elaborator):
 def DUMP_GENERATED_SOURCE(parser_state, out_dir):
     if not out_dir:
         return
-    entries = dict(getattr(parser_state, "pypeline_comb_area_opt_candidates", {}))
-    entries.update({"delay:" + k: v for k, v in getattr(parser_state, "pypeline_comb_delay_opt_candidates", {}).items()})
+    entries = dict(parser_state.pypeline_comb_area_opt_candidates)
+    entries.update({"delay:" + k: v for k, v in parser_state.pypeline_comb_delay_opt_candidates.items()})
     sources = {fn.__name__: fn._auto_comb_opt_generated_src
                for values in entries.values() for fn, _ in values
                if hasattr(fn, "_auto_comb_opt_generated_src")}

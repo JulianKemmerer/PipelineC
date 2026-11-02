@@ -472,6 +472,21 @@ depend on the compiler's own code record `COMPILER_SOURCE_HASH`, a hash of `src/
 `include/pypeline/`: that record, and AUTO_FSM search results
 ([AUTO_FSM_DESIGN.md](AUTO_FSM_DESIGN.md#search-results-persist-across-builds)).
 
+A result kept for reuse must be checked against every cache file it rests on.
+`RECORDED_READS()` opens a scope that records, as `(kind, key) -> value`, each
+read made inside it: SYN records the cache files it reads (`CACHE_FILE_KINDS`:
+`.delay` and `.timing.json` files by `GET_CACHED_PATH_DELAY` and
+`GET_CACHED_PATH_DELAY_COMPONENTS`, `.area` files by `_READ_CACHED_AREA_FILE`,
+each with `CACHE_FILE_SIGNATURE`, `None` for no file), and another module
+records kinds of its own (`RECORD_READ`) and checks them itself. Scopes nest, a
+read goes to every active one, and each thread has its own (synthesis runs in
+thread pools). A memo of a value derived from reads keeps them and replays them
+on a hit (`REPLAY_READS`), so a scope holds every read its result rests on,
+whatever ran first. `CACHE_FILES_UNCHANGED` checks the cache files of a record
+again: a changed, removed or newly created file is a difference. AUTO_FSM keeps
+one search's reads with its result
+([AUTO_FSM_DESIGN.md](AUTO_FSM_DESIGN.md#search-results-persist-across-builds)).
+
 ### Shared operator cache (`cache/`)
 
 Measurements outlive a build in one committed `cache/` tree next to `src/`,
@@ -638,10 +653,10 @@ several share. Examples: WireGuard's per-profile build directories, a fresh
     that long ago. It also removes the store's latency memory pieces
     (`DIR/latency/v2/<tool>/<part>/<kind>/<key digest>.json`, shared by every output
     directory, see [SWEEP_DESIGN.md](SWEEP_DESIGN.md#5-latency-memory)) and its
-    AUTO_FSM search results (`DIR/auto_fsm/v1/<tool>/<part>/<digest>.pkl.z`, see
+    AUTO_FSM search results (`DIR/auto_fsm/v2/<tool>/<part>/<digest>.pkl.z`, see
     [AUTO_FSM_DESIGN.md](AUTO_FSM_DESIGN.md#search-results-persist-across-builds))
-    that no build has read or written for that long, and the old `latency/v1/` files
-    current builds no longer read.
+    that no build has read or written for that long, and the old `latency/v1/` and
+    `auto_fsm/v1/` files current builds no longer read.
   - Deleting the store is always safe.
   - Each build ends with `Synthesis results: N reused from the output directory,
     M from the store DIR, K new run(s)`, plus a count of stale logs set aside

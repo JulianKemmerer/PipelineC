@@ -499,7 +499,7 @@ def test_decode_proxies_are_keyed_only_by_encoding_and_widths():
         wire = AUTO_FSM._control_proxy(parser, key, "v3", 1, 1)
         assert wire["wiring"]
         assert (
-            AUTO_FSM._control_snapshot(parser)[wire["entity"]]["source"]
+            AUTO_FSM._control_snapshot(parser, None, [wire])[wire["entity"]]["source"]
             == "wiring proof"
         )
 

@@ -327,6 +327,7 @@ The 367 old samples total **32,745.3 test-seconds (9.10 h)**, including two fail
 | `async_fifo_path_unit_test` | [inst/async_fifo_path_unit_test.py](../../../src/tests/pypeline_tests/inst/async_fifo_path_unit_test.py) | Python assertions / wrapper | U (not measured) | Unit checks of how the sweep and the back end treat an async global FIFO: a parsed two-clock FIFO design (PY_TO_LOGIC.PARSE_FILE, no synthesis) and fake timing path reports. | Keep compiler-contract checks; select by feature and measured cost, since this category alone does not guarantee a cheap run. | measure first |
 | `auto_fsm_attribution_test` | [inst/auto_fsm_attribution_test.py](../../../src/tests/pypeline_tests/inst/auto_fsm_attribution_test.py) | Python assertions / wrapper | M 3.1 s / PASS | Ordered timing arcs, register writers, late selection and local scheduling. | Keep compiler-contract checks; select by feature and measured cost, since this category alone does not guarantee a cheap run. | fast candidate |
 | `auto_fsm_cache_test` | [inst/auto_fsm_cache_test.py](../../../src/tests/pypeline_tests/inst/auto_fsm_cache_test.py) | Python assertions / wrapper | M 206.5 s / PASS | Carried schedule validity, pinned recipe integrity, model-only updates and call sites new to a build (AUTO_FSM.REPARSE). | Keep cache invalidation, deterministic generation and new-call-site cases; separate slow real parses from cheap synthetic fixtures. | feature/slow |
+| `auto_fsm_independence_test` | [inst/auto_fsm_independence_test.py](../../../src/tests/pypeline_tests/inst/auto_fsm_independence_test.py) | Python assertions / wrapper | U | Added after the snapshot. Each call site's decode estimate, search digest and recorded reads depend only on its own inputs (two call sites, an unused function, both search orders, -j 1 and -j 3); stale stored results are replaced. | Keep apart from `auto_fsm_unit_test` and `auto_fsm_cache_test`; the per-build digest case runs a process per build. | fast candidate |
 | `auto_fsm_prefix_tree_test` | [inst/auto_fsm_prefix_tree_test.py](../../../src/tests/pypeline_tests/inst/auto_fsm_prefix_tree_test.py) | Python assertions / wrapper | M 273.1 s / PASS | Measured helper delays prevent unnecessary descent; scheduled FSMs render array inputs correctly and supply clock enable to an otherwise stateless MAIN. | Keep: measurement-before-descent and clock-enable emission are unique; move real-parse cases out of the fast tier. | feature/slow |
 | `auto_fsm_transforms_test` | [inst/auto_fsm_transforms_test.py](../../../src/tests/pypeline_tests/inst/auto_fsm_transforms_test.py) | Python assertions / wrapper | M 9.0 s / PASS | Proof/refusal cases for balanced selectors, width adapters and closed fusion. | Keep compiler-contract checks; select by feature and measured cost, since this category alone does not guarantee a cheap run. | fast candidate |
 | `auto_fsm_unit_test` | [inst/auto_fsm_unit_test.py](../../../src/tests/pypeline_tests/inst/auto_fsm_unit_test.py) | Python assertions / wrapper | M 1648.3 s / PASS | Real scheduler/codegen invariants: binding, state dependencies, register lifetimes, budgets, determinism, serialization, constant cleanup and pipelined units. | Split slow scheduling/reparse cases from small invariants; retain both. Historical 1,648.3 s makes the current fast-unit description misleading. | deep/nightly |
@@ -847,6 +848,23 @@ Python entry registered; module auto-discovery. Registration(s): `unit:auto_fsm_
 | [test_corrected_unit_tries_its_pipeline_before_forced_descent](../../../src/tests/pypeline_tests/inst/auto_fsm_cache_test.py#L516) | Corrected unit tries its pipeline before forced descent. |
 | [test_encoding_memo_does_not_reuse_a_different_select_arrival](../../../src/tests/pypeline_tests/inst/auto_fsm_cache_test.py#L536) | Encoding memo does not reuse a different select arrival. |
 | [test_binding_search_reuses_clean_graph_without_sharing_mutable_results](../../../src/tests/pypeline_tests/inst/auto_fsm_cache_test.py#L563) | Binding search reuses clean graph without sharing mutable results. |
+
+### inst/auto_fsm_independence_test.py
+
+Python entry registered; module auto-discovery. Registration(s): `unit:auto_fsm_independence_test`.
+
+| Declaration | Purpose / execution note |
+|---|---|
+| [test_each_fsm_select_delay_uses_only_its_own_decode_shapes](../../../src/tests/pypeline_tests/inst/auto_fsm_independence_test.py#L219) | Each fsm select delay uses only its own decode shapes. |
+| [test_another_fsms_proxy_does_not_suppress_own_calibration](../../../src/tests/pypeline_tests/inst/auto_fsm_independence_test.py#L239) | Another fsms proxy does not suppress own calibration. |
+| [test_editing_one_fsm_or_unrelated_code_keeps_other_search_digests](../../../src/tests/pypeline_tests/inst/auto_fsm_independence_test.py#L284) | Editing one fsm or unrelated code keeps other search digests. |
+| [test_any_input_a_search_reads_changes_its_digest](../../../src/tests/pypeline_tests/inst/auto_fsm_independence_test.py#L301) | Any input a search reads changes its digest. |
+| [test_search_reads_only_its_closure](../../../src/tests/pypeline_tests/inst/auto_fsm_independence_test.py#L436) | Search reads only its closure. |
+| [test_reused_search_checks_the_operand_muxes_it_priced](../../../src/tests/pypeline_tests/inst/auto_fsm_independence_test.py#L469) | Reused search checks the operand muxes it priced. |
+| [test_recorded_reads_do_not_depend_on_search_order](../../../src/tests/pypeline_tests/inst/auto_fsm_independence_test.py#L529) | Recorded reads do not depend on search order. |
+| [test_recorded_reads_include_forked_workers_reads](../../../src/tests/pypeline_tests/inst/auto_fsm_independence_test.py#L538) | Recorded reads include forked workers reads. |
+| [test_search_result_is_stale_when_a_lookup_or_what_it_found_changes](../../../src/tests/pypeline_tests/inst/auto_fsm_independence_test.py#L560) | Search result is stale when a lookup or what it found changes. |
+| [test_stale_search_result_is_replaced](../../../src/tests/pypeline_tests/inst/auto_fsm_independence_test.py#L589) | Stale search result is replaced. |
 
 ### inst/auto_fsm_prefix_tree_test.py
 
