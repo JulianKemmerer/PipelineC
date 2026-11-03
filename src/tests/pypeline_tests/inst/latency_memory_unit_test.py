@@ -608,6 +608,57 @@ def test_dependent_piece_resolution(tmp):
         SYN.SYN_TOOL = original_tool
 
 
+def test_key_at_two_goals_is_remembered_per_goal(tmp):
+    """One AUTO_PIPELINE key used at 50 and 100 MHz (auto_goal_split_design.py)
+    is two pieces, each at its own goal: a depth remembered at 50 MHz starts
+    only the 50 MHz objects."""
+    import PY_TO_LOGIC
+
+    design = os.path.join(THIS_DIR, "auto_goal_split_design.py")
+    out_dir = os.path.join(tmp, "two_goals_out")
+    os.makedirs(out_dir)
+    SYN.SYN_OUTPUT_DIRECTORY = out_dir
+    SYN.TOP_LEVEL_MODULE = "top"
+    original_tool = SYN.SYN_TOOL
+    SYN.SYN_TOOL = SYN.TOOL_MODULES["vivado"]
+
+    def parse(seeds):
+        pypeline.SET_LATENCY_SEEDS(seeds)
+        state = PY_TO_LOGIC.PARSE_FILE(design)
+        state.part = "xc7a35ticsg324-1l"
+        AUTO_PIPELINE.WRITE_0_ADDED_CLKS_INIT_FILES(state)
+        return state
+
+    try:
+        pypeline.SET_AUTO_PIPELINE_BUILD_MODE("sweep")
+        first = parse({})
+        pieces = {
+            pair: item["goal_mhz"]
+            for pair, item in SWEEP._latency_piece_identities(first).items()
+            if pair[0] == AP
+        }
+        (key,) = {pair[1].split("@")[0] for pair in pieces}
+        slow, fast = f"{key}@50p0mhz", f"{key}@100p0mhz"
+        assert pieces == {(AP, slow): 50.0, (AP, fast): 100.0}, pieces
+        digest = SWEEP._latency_piece_identities(first)[(AP, slow)]["digest"]
+        write(os.path.join(out_dir, "latency_memory.json"), {"schema_version": 2, "pieces": [
+            dict(kind=AP, key=slow, digest=digest, goal_mhz=50.0,
+                 part=first.part, tool="vivado", latency=2)]})
+        SWEEP.LOAD_LATENCY_SEEDS(out_dir, [])
+        SWEEP.RESOLVE_LATENCY_MEMORY(parse({}), {}, parse)
+        assert pypeline._latency_seeds_applied.get((AP, slow), (None,))[0] == 2, (
+            pypeline._latency_seeds_applied
+        )
+        assert (AP, fast) not in pypeline._latency_seeds_applied
+        print("test_key_at_two_goals_is_remembered_per_goal PASS")
+    finally:
+        pypeline.SET_LATENCY_SEEDS({})
+        pypeline.SET_AUTO_PIPELINE_BUILD_MODE(None)
+        pypeline.SET_AUTO_GOAL_TABLES({}, {})
+        SWEEP.LOAD_LATENCY_SEEDS(out_dir, [])
+        SYN.SYN_TOOL = original_tool
+
+
 if __name__ == "__main__":
     with tempfile.TemporaryDirectory() as tmp:
         test_read_latency_table_formats(tmp)
@@ -621,4 +672,5 @@ if __name__ == "__main__":
         test_hint_beats_lower_goal_memory(tmp)
         test_lower_goal_floor_only_for_regions(tmp)
         test_dependent_piece_resolution(tmp)
+        test_key_at_two_goals_is_remembered_per_goal(tmp)
     print("All latency memory unit tests passed.")

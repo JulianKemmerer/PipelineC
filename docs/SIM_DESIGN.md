@@ -153,9 +153,14 @@ a sweep timed on that removes pipeline stages the real design needs (see
   - `PY_TO_LOGIC.DESIGN_SOURCE_HASHES()` of every source the build read;
   - its design parameter values;
   - `PIPELINED_NATIVE_SIM_PROBLEMS`, so a later simulation refuses what this one would;
+  - `goal_mode`: `"pnr"` or `"syn"`, whether the build took a MAIN's clock goal from its
+    rate or its `syn_mhz` (`SYN.TOOL_DOES_PNR`). AUTO_PIPELINE depths and AUTO_FSM
+    schedules are recorded by binding, so an AUTO key used at several goals has one entry
+    per goal (`key@50p0mhz`,
+    [AUTO_DESIGN.md](AUTO_DESIGN.md#7-clock-goals-of-auto-objects));
   - `unbuilt_latency_reads` (`_unbuilt_latency_reads`): the `.latency` value the final
     elaboration read for each AUTO_PIPELINE or AUTO_MULTI_CYCLE it never instantiated,
-    by kind and key. A design reads such a tag when, for example, a factory builds an
+    by kind and binding. A design reads such a tag when, for example, a factory builds an
     alternative the configuration leaves unused. A tag read with two different values is
     left out;
   - `build_inputs`: the run's `BUILD_INPUTS`, which the driver takes once, before the
@@ -187,7 +192,7 @@ a sweep timed on that removes pipeline stages the real design needs (see
     compiler built the record (its `build_inputs` compiler hash differs or is missing),
     or if the record lists problems;
   - calls `run_sim` with the recorded hardware, `built_hardware_from=` the directory and
-    `design_params=` the recorded values and `unbuilt_latency_reads=` (see
+    `design_params=` the recorded values, `goal_mode=` and `unbuilt_latency_reads=` (see
     [Simulating another top's built hardware](pypeline_sim_DESIGN.md#simulating-another-tops-built-hardware));
   - turns a `pypeline.BuiltHardwareError` into an error exit.
 

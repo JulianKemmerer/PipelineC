@@ -212,6 +212,28 @@ def get_tests() -> list:
             cmd=[INST_DIR / "auto_fsm_independence_test.py"],
         )
     )
+    # An AUTO_FSM's budget comes from the goals of the MAINs that instantiate
+    # it: an unrelated faster MAIN, a goal-less MAIN, two goals (tightest, one
+    # NOTE) and a clock's syn_mhz on a synthesis-only tool. No synthesis.
+    tests.append(
+        Test(
+            name="auto_fsm_owner_goal_test",
+            category="unit",
+            cmd=[INST_DIR / "auto_fsm_owner_goal_test.py"],
+        )
+    )
+    # AUTO objects and clock goals in pypeline.py: construction sites tell
+    # objects from one line apart (calls, comprehensions, loops, a library
+    # factory, a body), objects resolve through their site's binding, and a
+    # native replay of per-goal results takes its own clock's (two goals, one
+    # goal, a missing goal). No elaboration or synthesis.
+    tests.append(
+        Test(
+            name="auto_construction_site_unit_test",
+            category="unit",
+            cmd=[INST_DIR / "auto_construction_site_unit_test.py"],
+        )
+    )
     # Ordered Vivado arcs, verified sky130 endpoint aliases, late selection, local
     # edge repair and measured pinned-unit stages; measured 1.3 s.
     tests.append(

@@ -124,7 +124,6 @@ Within each group, bugs that affect both front ends come first, problems in the 
 | 44 | [#380][i380] | Both | The top level's global-wire connections come out in a hash-dependent order, so `top.vhd` changes between builds | Yes |
 | 45 | [#381][i381] | Both | After the sweep meets timing, a failed trim trial is kept and the build ends TIMING NOT MET | Yes |
 | 46 | TBD | Both | A hierarchy with inferred multiplies is sliced as if its DSP leaves shrank with it: a Karatsuba body needs 10–34 stages where ~5 would do | Yes, Vivado |
-| 47 | TBD | Python | AUTO_FSM budgets every FSM for the design's tightest clock | From the code |
 
 ## Wrong hardware, or simulation disagrees with hardware
 
@@ -741,24 +740,6 @@ Within each group, bugs that affect both front ends come first, problems in the 
   each. Not in `known_issues_tests.py`: only vendor synthesis shows the stage count.
 - **Workaround:** a single inferred product (`make_inferred_mult`) for a body whose depth matters.
   WireGuard's `inferred_body` choice takes the feedback body from 10 stages to 3, at more DSPs.
-
-### 47. TBD: AUTO_FSM budgets every FSM for the design's tightest clock
-
-- **Front ends:** Python (AUTO_FSM).
-- **What happens:** the per-state delay budget comes from the fastest `@MAIN` clock in the
-  whole design, not from the MAIN that instantiates the FSM, although `_budget_du`'s
-  docstring says otherwise. An FSM under a 50 MHz MAIN next to an unrelated 200 MHz MAIN
-  gets more, smaller states and more latency than its clock needs. One tag used under two
-  clock goals gets one schedule. Adding a faster MAIN anywhere also searches every FSM
-  again, since each search's clock period changes.
-- **Where to look:** `src/AUTO_FSM.py`: `_period_du`, `_budget_du`, `TIGHTENED_BUDGET_SCALE`
-  and the period `DO_SCHEDULE_PASSES` and `_timing_repair_candidates` compare against.
-  The MAINs that instantiate an FSM are those `_AUTO_FSM_KEYS_UNDER_MAIN` finds; the
-  sweep's goal for a MAIN is `SYN.GET_TARGET_MHZ`.
-- **Reproduce:** a design with an unrelated `@MAIN(200.0)` and an AUTO_FSM used only in a
-  `@MAIN(50.0)`: the FSM's budget is computed for 200 MHz. Not in `known_issues_tests.py`:
-  the fix lands its regression tests directly.
-- **Workaround:** none per FSM. `--auto_fsm_budget_scale` loosens every FSM's budget at once.
 
 [issues]: https://github.com/JulianKemmerer/PipelineC/issues
 [discussions]: https://github.com/JulianKemmerer/PipelineC/discussions

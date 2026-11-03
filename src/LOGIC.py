@@ -502,6 +502,12 @@ class Logic:
         # and zero-added-latency -- it exists so the driver can find AUTO_FSM call
         # sites to schedule. See docs/AUTO_FSM_DESIGN.md.
         self.sub_inst_to_auto_fsm_key = {}
+        # Pypeline frontend only: local inst name of an AUTO_PIPELINE / AUTO_FSM
+        # call -> sorted construction sites (pypeline object .site) of the
+        # objects it calls; several once duplicate calls collapse into one.
+        # Which goals each object is used at comes from these
+        # (AUTO.COLLECT_AUTO_SITE_GOALS).
+        self.sub_inst_to_auto_site = {}
         self.ast_meta = None
         self.pypeline_emission_names = None
         # Python clock-by-clock bodies consume these pipeline outputs in the
@@ -655,6 +661,7 @@ class Logic:
         )
         rv.sub_inst_to_auto_pipeline_key = dict(self.sub_inst_to_auto_pipeline_key)
         rv.sub_inst_to_auto_fsm_key = dict(self.sub_inst_to_auto_fsm_key)
+        rv.sub_inst_to_auto_site = dict(self.sub_inst_to_auto_site)
         rv.ast_meta = self.ast_meta
         rv.pypeline_emission_names = self.pypeline_emission_names
         rv.submodule_latencies_are_self_timed = set(
@@ -1653,6 +1660,7 @@ class Logic:
             self.sub_inst_to_auto_pipeline_latency,
             self.sub_inst_to_auto_pipeline_key,
             self.sub_inst_to_auto_fsm_key,
+            self.sub_inst_to_auto_site,
         ):
             if old_inst in tags:
                 tags[new_inst] = tags[old_inst]
@@ -3189,6 +3197,10 @@ def TRIM_COLLAPSE_FUNC_DEFS_RECURSIVE(func_logic, parser_state):
         func_logic.submodule_instance_to_source_origins[new_sub_inst_name] = (
             set().union(*(func_logic.submodule_instance_to_source_origins.get(i, set()) for i in dup_insts))
         )
+        # The kept call stands for every collapsed call's AUTO object
+        sites = set().union(*(func_logic.sub_inst_to_auto_site.get(i, ()) for i in dup_insts))
+        if sites:
+            func_logic.sub_inst_to_auto_site[new_sub_inst_name] = tuple(sorted(sites))
 
         # Wire new inst ce+inputs with known identical drivers
         # Make ce connection
@@ -3350,6 +3362,10 @@ class ParserState:
         self.pypeline_auto_fsm_delay_memo = {}
         # Canonical key -> live pypeline.AUTO_FSM tag of each elaborated call site.
         self.pypeline_auto_fsm_tags = {}
+        # (kind, key) of every AUTO_FSM / AUTO_PIPELINE call site a MAIN
+        # instantiates -> the sorted names of those MAINs; their clock goals
+        # are what the object is built for (AUTO.COLLECT_AUTO_OWNERS).
+        self.pypeline_auto_owner_mains = {}
         # Built-in operator entity -> its soft-operator equivalent entity.
         self.pypeline_auto_fsm_soft_equiv = {}
         # Built-in operator entity -> its width-halving equivalent entity.
@@ -3486,6 +3502,7 @@ class ParserState:
         )
         rv.pypeline_auto_fsm_delay_memo = dict(self.pypeline_auto_fsm_delay_memo)
         rv.pypeline_auto_fsm_tags = dict(self.pypeline_auto_fsm_tags)
+        rv.pypeline_auto_owner_mains = dict(self.pypeline_auto_owner_mains)
         rv.pypeline_auto_fsm_soft_equiv = dict(self.pypeline_auto_fsm_soft_equiv)
         rv.pypeline_auto_fsm_split_equiv = dict(self.pypeline_auto_fsm_split_equiv)
         rv.pypeline_comb_area_opt_candidates = dict(self.pypeline_comb_area_opt_candidates)

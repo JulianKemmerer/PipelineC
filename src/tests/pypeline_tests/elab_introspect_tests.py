@@ -69,6 +69,19 @@ def get_tests() -> list:
             cmd=[INST_DIR / "sim_input_local_error_test.py"],
         )
     )
+    # One AUTO object per clock domain through PARSE_FILE: identical factory
+    # products holding objects at different goals stop merging (separate
+    # calls, a comprehension, a dict, a bundle, a factory argument, a body
+    # loop, made MAINs, an inferred bare MAIN, AUTO_FSM), same-goal objects
+    # still share, the read error for one object at two goals, and names
+    # independent of construction order and hash seed.
+    tests.append(
+        Test(
+            name="auto_goal_split_test",
+            category="elab_introspect",
+            cmd=[INST_DIR / "auto_goal_split_test.py"],
+        )
+    )
     # Regression-tests a FuncLogicLookupTable closure-callable naming
     # collision: same signature on both sides means no type error either
     # way, so it's undetectable except by inspecting FuncLogicLookupTable

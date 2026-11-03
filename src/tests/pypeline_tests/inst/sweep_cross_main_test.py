@@ -603,17 +603,18 @@ def test_confirmation_keeps_crossed_mains_and_skips_unhelpful_fallback():
 # ─── start_latency= regions take the mini-sweep ladder ───
 
 
-def _region_state(constraint, other_main_member=False):
+def _region_state(constraint, other_main_member=False, other_goal=100):
     mains = ["a", "z"] if other_main_member else ["a"]
     tree = {}
     for m in mains:
         tree[m] = (m, False)
         tree[m + M + "r"] = ("region_func", False)
         tree[m + M + "r" + M + "h"] = ("h", False)
-    ps = _state(tree, {m: 100 for m in mains})
+    ps = _state(tree, {m: (100 if m == "a" else other_goal) for m in mains})
     for m in mains:
         ps.LogicInstLookupTable[m].sub_inst_to_auto_pipeline_latency = {"r": constraint}
         ps.LogicInstLookupTable[m].sub_inst_to_auto_pipeline_key = {"r": "region_key"}
+    ps.pypeline_auto_owner_mains = {("AUTO_PIPELINE", "region_key"): tuple(mains)}
     return ps
 
 
@@ -626,9 +627,11 @@ def test_lock_rules_for_regions():
         (LOGIC.AutoPipelineLatency(start_latency=1, max_latency=3), False, False, "constrained AUTO_PIPELINE region"),
         # The other member's MAIN is a peer (same goal): the lock goes into both
         (start_only, True, True, None),
-        (start_only, True, False, "AUTO_PIPELINE region shared with a MAIN at another clock goal"),
+        # The other member's MAIN is at another goal: its region is another
+        # group (one key at one goal, its own depth), so it blocks nothing
+        (start_only, True, False, None),
     ]:
-        ps = _region_state(constraint, member)
+        ps = _region_state(constraint, member, other_goal=100 if peer else 50)
         plan = SWEEP.MainSweepPlan("a", 100)
         plan.subtrees = ["a"]
         if peer:

@@ -338,6 +338,17 @@ def _stable_key(value, seen=frozenset()):
                 # their names never moved. A named tag is its name plus the
                 # constraints that change hardware: its start_latency is only
                 # a starting count, so editing it renames nothing.
+                # An object of a key used at several clock goals is told
+                # apart from the key's other objects (_auto_split_component);
+                # every other object's identity is unchanged.
+                kind = {
+                    "_is_auto_pipeline_pragma": "AUTO_PIPELINE",
+                    "_is_auto_fsm_pragma": "AUTO_FSM",
+                }.get(attr)
+                split = (
+                    _auto_split_component(kind, value) if kind is not None else None
+                )
+                split = () if split is None else (("split", split),)
                 if attr == "_is_auto_pipeline_pragma" and (
                     getattr(value, "name", None) is not None
                 ):
@@ -349,7 +360,7 @@ def _stable_key(value, seen=frozenset()):
                         )
                         if getattr(value, attr_name, None) is not None
                     )
-                    return (attr, _stable_key(value.func, seen), config)
+                    return (attr, _stable_key(value.func, seen), config) + split
                 config = (
                     tuple(
                         (name, getattr(value, attr_name, None))
@@ -368,7 +379,7 @@ def _stable_key(value, seen=frozenset()):
                         )
                     )
                 )
-                return (attr, _stable_key(value.func, seen), config)
+                return (attr, _stable_key(value.func, seen), config) + split
         value = _inspect.unwrap(value)
         code = getattr(value, "__code__", None)
         if code is not None:
@@ -3216,6 +3227,150 @@ def _construction_site():
     return _latency_read_site()
 
 
+# ─────────────────────────────────────────────
+# AUTO objects and clock goals: an AUTO_PIPELINE / AUTO_FSM object's results
+# are those of its key at the clock goals of the MAINs that use it
+# (docs/pypeline_DESIGN.md, "AUTO objects and clock goals")
+# ─────────────────────────────────────────────
+
+# (kind, construction site) -> the key an object built there finds its installed
+# results under (its binding): its key at the clock goal of the MAINs that use
+# it. Only objects of keys used at more than one goal have entries; any other
+# object's binding is its canonical_key, as is that of an AUTO_PIPELINE used
+# at several goals itself (one depth per goal, so no installed value matches
+# it). Installed by PY_TO_LOGIC.PARSE_FILE from the previous parse
+# (SET_AUTO_GOAL_TABLES).
+_auto_site_bindings: dict = {}
+# (kind, canonical_key) -> how the objects of a key used at several goals and
+# built at several sites are told apart in generated names: "site" (each object
+# on its own, while PARSE_FILE learns where each is used) or {site: its goals}
+# (objects used at the same goals share hardware). Installed with the above.
+_auto_split_keys: dict = {}
+# Goal text (GOAL_TEXT) of a native simulation replaying built hardware, or
+# None: an object then resolves to its key's binding at this goal
+_auto_run_goal = None
+# (kind, tag) for every AUTO_PIPELINE / AUTO_FSM object the current design
+# execution constructed, in construction order
+_auto_constructed: list = []
+# Construction chain -> how many objects the current design execution built
+# with it (the ordinal that tells objects from one source line apart)
+_auto_site_counts: dict = {}
+# An object's binding before its first use resolves it
+_UNRESOLVED = object()
+# (kind, construction site) -> "file:line" sites that read the object's .latency
+# during the current design execution, outside a native simulation run
+_auto_reads: dict = {}
+
+
+def GOAL_TEXT(goal) -> str:
+    """A clock goal (MHz, or None) in the clock-port style bindings and
+    generated names use: 50.0 -> "50p0mhz", None -> "nogoal"."""
+    if goal is None:
+        return "nogoal"
+    return str(float(goal)).replace(".", "p").replace("-", "m") + "mhz"
+
+
+def GOAL_BINDING(key, goal) -> str:
+    """The binding of `key` at one clock goal: key@50p0mhz."""
+    return f"{key}@{GOAL_TEXT(goal)}"
+
+
+def SET_AUTO_GOAL_TABLES(site_bindings, split_keys) -> None:
+    """PY_TO_LOGIC.PARSE_FILE hook: install the bindings and split keys the
+    next design execution's AUTO objects resolve with (see above)."""
+    global _auto_site_bindings, _auto_split_keys
+    _auto_site_bindings = dict(site_bindings)
+    _auto_split_keys = dict(split_keys)
+
+
+def AUTO_GOAL_TABLES():
+    """(site bindings, split keys) installed for the current design execution."""
+    return dict(_auto_site_bindings), dict(_auto_split_keys)
+
+
+def SET_AUTO_RUN_GOAL(goal_text) -> None:
+    """pypeline_sim hook: the goal text of a replay of built hardware whose
+    results are per clock goal, or None."""
+    global _auto_run_goal
+    _auto_run_goal = goal_text
+
+
+def AUTO_READS():
+    """(kind, construction site) -> sites that read that object's .latency
+    during the current design execution (outside a native simulation run)."""
+    return {pair: list(sites) for pair, sites in _auto_reads.items()}
+
+
+def AUTO_CONSTRUCTED():
+    """(kind, canonical_key, site, splittable) of every AUTO_PIPELINE /
+    AUTO_FSM object the current design execution constructed, in construction
+    order. splittable: whether its latency can depend on the clock goal (not a
+    fixed latency=, nor an AUTO_FSM's pinned unit)."""
+    return [
+        (
+            kind,
+            tag.canonical_key,
+            tag.site,
+            kind != "AUTO_PIPELINE"
+            or (tag.fixed_latency is None and tag._auto_fsm_implementation is None),
+        )
+        for kind, tag in _auto_constructed
+    ]
+
+
+def _auto_construction_site():
+    """Where an AUTO_PIPELINE / AUTO_FSM object is built, unique within one
+    design execution: the (module, function, line) of each frame from its
+    construction out to the first module-level frame, so a factory's own line
+    and the line that called it both count, plus an ordinal among objects with
+    that chain (a loop, a comprehension): "module:function:line|...#ordinal".
+    An object built while elaborating a @hw_func body is one per body line, so
+    it has no ordinal. One built while a native simulation run steps its
+    cycles (every cycle, in a body) has none: nothing resolves by site there."""
+    if _sim_run_in_progress:
+        return None
+    if _const_folding:
+        return "body:" + _latency_read_site()
+    frames = []
+    frame = _sys._getframe(1)
+    while frame is not None:
+        if frame.f_code.co_filename != __file__:
+            frames.append(
+                f"{frame.f_globals.get('__name__', '?')}:"
+                f"{frame.f_code.co_name}:{frame.f_lineno}"
+            )
+            if frame.f_code.co_name == "<module>":
+                break
+        frame = frame.f_back
+    chain = "|".join(frames)
+    ordinal = _auto_site_counts.get(chain, 0)
+    _auto_site_counts[chain] = ordinal + 1
+    return f"{chain}#{ordinal}"
+
+
+def _auto_binding(kind, tag, cache):
+    """The key `tag`'s installed results are under: its canonical_key, the
+    binding installed for its construction site, or in a replay of per-goal
+    results its key at the run's goal."""
+    key = tag.canonical_key
+    if _auto_run_goal is not None:
+        return key if key in cache else f"{key}@{_auto_run_goal}"
+    return _auto_site_bindings.get((kind, tag.site), key)
+
+
+def _auto_split_component(kind, tag):
+    """What tells `tag` apart from other objects of its key in generated names
+    (see _auto_split_keys), or None when nothing needs to."""
+    if not _auto_split_keys:
+        return None
+    mode = _auto_split_keys.get((kind, tag.canonical_key))
+    if mode is None:
+        return None
+    if mode == "site" or tag.site not in mode:
+        return tag.site
+    return "_".join(GOAL_TEXT(goal) for goal in mode[tag.site]) or "unused"
+
+
 # (kind, canonical_key) -> (latency, source text): starting latencies from the
 # latency memory and --latency_hints files, installed by the pipelinec driver
 # before its first parse of a synthesizing build (SWEEP.LOAD_LATENCY_SEEDS).
@@ -3253,16 +3408,21 @@ def LATENCY_SEEDS_UNUSED() -> list:
     )
 
 
-def _latency_seed(kind, key, max_latency):
-    """The installed seed for one tag, clamped to max_latency, or None."""
+def _latency_seed(kind, key, max_latency, binding=None):
+    """The installed seed for one tag, clamped to max_latency, or None: the
+    one for its binding (its key at one clock goal) when that differs from the
+    key, else the key's own (a hints-file entry names the key)."""
     _latency_seeds_looked_up.add((kind, key))
-    entry = _latency_seeds.get((kind, key))
+    pair = (kind, binding) if binding and (kind, binding) in _latency_seeds else (kind, key)
+    if pair[1] != key:
+        _latency_seeds_looked_up.add(pair)
+    entry = _latency_seeds.get(pair)
     if entry is None:
         return None
     value, source = entry
     if max_latency is not None:
         value = min(value, max_latency)
-    _latency_seeds_applied[(kind, key)] = (value, source)
+    _latency_seeds_applied[pair] = (value, source)
     return value
 
 
@@ -3307,7 +3467,7 @@ def _require_built(kind, tag, read=False):
     (_built_unbuilt_reads). Reads canonical_key only then, so plain simulation
     never imports the compiler."""
     if _built_hardware_source is not None and not tag._built_decided:
-        if read and (kind, tag.canonical_key) in _built_unbuilt_reads:
+        if read and (kind, tag.binding_key) in _built_unbuilt_reads:
             return
         raise BuiltHardwareError(
             f"{kind} {tag.canonical_key} is not part of the hardware built in "
@@ -3359,7 +3519,7 @@ def AUTO_PIPELINE_SERVED_LATENCIES() -> dict:
     design execution (pypelinec builds only; empty otherwise)."""
     served = {}
     for ap, value in _auto_pipeline_served:
-        served.setdefault(ap.canonical_key, set()).add(value)
+        served.setdefault(ap.binding_key, set()).add(value)
     return served
 
 
@@ -3368,7 +3528,7 @@ def AUTO_PIPELINE_READ_SITES() -> dict:
     design execution, first read first (pypelinec builds only)."""
     sites = {}
     for ap, site in _auto_pipeline_read_sites:
-        found = sites.setdefault(ap.canonical_key, [])
+        found = sites.setdefault(ap.binding_key, [])
         if site not in found:
             found.append(site)
     return sites
@@ -3653,6 +3813,12 @@ class AUTO_PIPELINE:
         self.name = name
         self._canonical_key = None
         self._sim_key_str = None
+        # Where it was built (_auto_construction_site); its binding is resolved
+        # on first use (binding_key)
+        self.site = _auto_construction_site()
+        self._binding_key = _UNRESOLVED
+        if self.site is not None:
+            _auto_constructed.append(("AUTO_PIPELINE", self))
         if name is not None:
             _check_user_name(name, "AUTO_PIPELINE")
             signature = (_name_identity(func), latency, start_latency, max_latency)
@@ -3683,7 +3849,9 @@ class AUTO_PIPELINE:
             and fixed is None
             and _auto_pipeline_build_mode == "sweep"
         ):
-            self.seed = _latency_seed("AUTO_PIPELINE", self.canonical_key, max_latency)
+            self.seed = _latency_seed(
+                "AUTO_PIPELINE", self.canonical_key, max_latency, self.binding_key
+            )
             if self.seed is not None:
                 self._latency = self.seed
         # Whether the installed build harvest has this tag (_require_built)
@@ -3692,7 +3860,8 @@ class AUTO_PIPELINE:
         # comb builds, bootstrap pass): keeps pure-sim runs from importing
         # the compiler (see canonical_key).
         if _auto_pipeline_latency_cache or _built_hardware_source is not None:
-            cached = _auto_pipeline_latency_cache.get(self.canonical_key)
+            binding = self.binding_key
+            cached = _auto_pipeline_latency_cache.get(binding)
             self._built_decided = cached is not None
             if cached is not None:
                 if latency is not None and cached != latency:
@@ -3702,9 +3871,9 @@ class AUTO_PIPELINE:
                     )
                 self._latency = cached
                 self.seed = None  # the build's own result supersedes it
-            elif ("AUTO_PIPELINE", self.canonical_key) in _built_unbuilt_reads:
+            elif ("AUTO_PIPELINE", binding) in _built_unbuilt_reads:
                 # The simulated build read this tag but never built it
-                self._latency = _built_unbuilt_reads[("AUTO_PIPELINE", self.canonical_key)]
+                self._latency = _built_unbuilt_reads[("AUTO_PIPELINE", binding)]
 
     def latency_suffix(self) -> str:
         # A named tag's start_latency is a starting count, not identity
@@ -3719,10 +3888,26 @@ class AUTO_PIPELINE:
         global _auto_pipeline_latency_was_read
         _require_built("AUTO_PIPELINE", self, read=True)
         _auto_pipeline_latency_was_read = True
+        if not _sim_run_in_progress:
+            found = _auto_reads.setdefault(("AUTO_PIPELINE", self.site), [])
+            site = _latency_read_site()
+            if site not in found:
+                found.append(site)
         if _auto_pipeline_build_mode is not None:
             _auto_pipeline_served.append((self, self._latency))
             _auto_pipeline_read_sites.append((self, _latency_read_site()))
         return self._latency
+
+    @property
+    def binding_key(self) -> str:
+        """The key this object's installed results are under: its
+        canonical_key, or canonical_key@goal when its key is used at several
+        clock goals. See _auto_binding."""
+        if self._binding_key is _UNRESOLVED:
+            self._binding_key = _auto_binding(
+                "AUTO_PIPELINE", self, _auto_pipeline_latency_cache
+            )
+        return self._binding_key
 
     @property
     def canonical_key(self) -> str:
@@ -4178,6 +4363,12 @@ class AUTO_FSM:
         self.out_stream_t = _make_auto_fsm_stream_t(self.out_type)
         self._canonical_key = None
         self._generated = None  # memoized generated hw_func for this pass
+        # Where it was built (_auto_construction_site); its binding is resolved
+        # on first use (binding_key)
+        self.site = _auto_construction_site()
+        self._binding_key = _UNRESOLVED
+        if self.site is not None:
+            _auto_constructed.append(("AUTO_FSM", self))
         # Snapshot the installed schedule at construction time, mirroring
         # AUTO_PIPELINE's latency snapshot: the driver installs the cache before
         # re-executing the design, so every construction in one pass sees one
@@ -4185,7 +4376,7 @@ class AUTO_FSM:
         # (native sim, comb builds, bootstrap pass) so pure-sim runs never import
         # the compiler.
         if _auto_fsm_schedule_cache or _built_hardware_source is not None:
-            self._schedule = _auto_fsm_schedule_cache.get(self.canonical_key)
+            self._schedule = _auto_fsm_schedule_cache.get(self.binding_key)
             # Native simulation consumes latency/state count and evaluates the
             # original pure function. Deep graph/recipe validation belongs to
             # the compiler before emission, without a compiler dependency here.
@@ -4231,6 +4422,18 @@ class AUTO_FSM:
         """The installed schedule dict for this call site, or None before one
         has been computed. Read by the elaborator; designs use .latency."""
         return self._schedule
+
+    @property
+    def binding_key(self) -> str:
+        """The key this call site's installed schedule is under: its
+        canonical_key, or canonical_key@goal when its key is used at several
+        clock goals (an object used at several goals has the tightest one's).
+        See _auto_binding."""
+        if self._binding_key is _UNRESOLVED:
+            self._binding_key = _auto_binding(
+                "AUTO_FSM", self, _auto_fsm_schedule_cache
+            )
+        return self._binding_key
 
     @property
     def canonical_key(self) -> str:
@@ -5426,6 +5629,9 @@ def RESET_AUTO_MULTI_CYCLE_TRACKING() -> None:
     _auto_pipeline_names.clear()
     _latency_seeds_applied.clear()
     _latency_seeds_looked_up.clear()
+    _auto_constructed.clear()
+    _auto_site_counts.clear()
+    _auto_reads.clear()
 
 
 def USER_NAMED_AUTO_TAGS() -> list:

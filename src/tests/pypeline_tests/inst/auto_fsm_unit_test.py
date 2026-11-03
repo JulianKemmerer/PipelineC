@@ -2129,27 +2129,33 @@ def main():
         )
 
         print("[tightening steps by the measured miss and past the worst state]")
-        fake80 = type("PS", (), {})()
-        fake80.main_mhz = {"m": 80.0}  # 125 delay units per period
+        def fake_state(mhz):
+            # Call site "k" under MAIN "m" (AUTO.COLLECT_AUTO_OWNERS)
+            fake = type("PS", (), {})()
+            fake.main_mhz = {"m": mhz}
+            fake.main_syn_mhz = {"m": mhz}
+            fake.pypeline_auto_owner_mains = {("AUTO_FSM", "k"): ("m",)}
+            return fake
+
+        fake80 = fake_state(80.0)  # 125 delay units per period
         tighten = AUTO_FSM.TIGHTENED_BUDGET_SCALE
         check(
-            abs(tighten(fake80, 0.9, 72.65 / 80.0, 112) - 0.9 * 72.65 / 80.0) < 1e-9,
+            abs(tighten(fake80, "k", 0.9, 72.65 / 80.0, 112) - 0.9 * 72.65 / 80.0) < 1e-9,
             "a 72.65-of-80 MHz miss shrinks the budget by that ratio (11.2 -> "
             "10.2 ns), not by the fixed fallback step (8.4 ns)",
         )
-        near = tighten(fake80, 0.9, 79.99 / 80.0, 110)
+        near = tighten(fake80, "k", 0.9, 79.99 / 80.0, 110)
         check(
-            AUTO_FSM._budget_du(fake80, near) == 109,
+            AUTO_FSM._budget_du(fake80, "k", near) == 109,
             "a near miss still steps just below the current worst state",
         )
         check(
-            abs(tighten(fake80, 0.9, None, 112) - 0.9 * AUTO_FSM.BUDGET_TIGHTEN_FACTOR) < 1e-9,
+            abs(tighten(fake80, "k", 0.9, None, 112) - 0.9 * AUTO_FSM.BUDGET_TIGHTEN_FACTOR) < 1e-9,
             "with no achieved MHz the fixed BUDGET_TIGHTEN_FACTOR applies",
         )
-        fake85 = type("PS", (), {})()
-        fake85.main_mhz = {"m": 85.0}  # 117.6 delay units: not an integer
+        fake85 = fake_state(85.0)  # 117.6 delay units: not an integer
         check(
-            AUTO_FSM._budget_du(fake85, tighten(fake85, 0.95, 0.9999, 110)) == 109,
+            AUTO_FSM._budget_du(fake85, "k", tighten(fake85, "k", 0.95, 0.9999, 110)) == 109,
             "the below-worst step survives a non-integer clock period",
         )
         params13 = type("P", (), {})()

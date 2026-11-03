@@ -286,6 +286,7 @@ The 367 old samples total **32,745.3 test-seconds (9.10 h)**, including two fail
 | `async_fifo_elab_test` | [inst/async_fifo_elab_test.py](../../../src/tests/pypeline_tests/inst/async_fifo_elab_test.py) | PARSE_FILE + assertions | U (not measured) | In-process checks of async global FIFOs: a Fifo[T] whose ends are used on two clocks. Each design is written to a temp .py file and parsed with PY_TO_LOGIC.PARSE_FILE, then checked against the parser state, the raised ElaborationError, or the written crossing report. | Keep: graph/type/diagnostic assertions catch errors that a successful build can miss. | measure first |
 | `auto_comb_area_opt_test` | [inst/auto_comb_area_opt_test.py](../../../src/tests/pypeline_tests/inst/auto_comb_area_opt_test.py) | PARSE_FILE + assertions | M 209.9 s / PASS | Combinational sharing API, generated graph, and semantic regressions. | Keep graph/semantic checks; split expensive elaboration from constructor/native cases for targeted runs. | feature/slow |
 | `auto_comb_delay_opt_test` | [inst/auto_comb_delay_opt_test.py](../../../src/tests/pypeline_tests/inst/auto_comb_delay_opt_test.py) | PARSE_FILE + assertions | M 263.3 s / PASS | Delay-first combinational API, graph, equivalence and timing regressions. | Keep timing-dependency and equivalence checks; split expensive elaboration from constructor/native cases. | feature/slow |
+| `auto_goal_split_test` | [inst/auto_goal_split_test.py](../../../src/tests/pypeline_tests/inst/auto_goal_split_test.py) | PARSE_FILE + assertions | U | Added after the snapshot. One AUTO object per clock domain through `PARSE_FILE`: identical factory products holding objects at different goals stop merging (separate calls, a comprehension, a dict, a bundle, a factory argument, a body loop, made MAINs, an inferred bare MAIN, AUTO_FSM), same-goal objects share, the read error, name stability. | Keep; ~50 s, several parses per case. | fast candidate |
 | `auto_fsm_purity_test` | [inst/auto_fsm_purity_test.py](../../../src/tests/pypeline_tests/inst/auto_fsm_purity_test.py) | PARSE_FILE + assertions | M 11.4 s / PASS | AUTO_FSM requires a pure function in its whole subtree (AUTO.FIND_EFFECTS), not just in the levels the scheduler opens. | Keep: graph/type/diagnostic assertions catch errors that a successful build can miss. | fast candidate |
 | `auto_fsm_var_index_read_test` | [inst/auto_fsm_var_index_read_test.py](../../../src/tests/pypeline_tests/inst/auto_fsm_var_index_read_test.py) | PARSE_FILE + assertions | M 68.9 s / PASS | Regression for #377: direct and nested variable-index array reads. | Keep: graph/type/diagnostic assertions catch errors that a successful build can miss. | feature/slow |
 | `c_structs_pkg_relayout_test` | [inst/c_structs_pkg_relayout_test.py](../../../src/tests/pypeline_tests/inst/c_structs_pkg_relayout_test.py) | PARSE_FILE + assertions | M 77.6 s / PASS | c_structs_pkg stays valid VHDL when a type's layout changes between parse passes of one run but its emitted VHDL name doesn't. | Keep: graph/type/diagnostic assertions catch errors that a successful build can miss. | feature/slow |
@@ -325,9 +326,11 @@ The 367 old samples total **32,745.3 test-seconds (9.10 h)**, including two fail
 | `added_latency_context_test` | [inst/added_latency_context_test.py](../../../src/tests/pypeline_tests/inst/added_latency_context_test.py) | Python assertions / wrapper | M 21.4 s / PASS | Compiler-added latency stays within an absorbing caller context; no synthesis. | Keep compiler-contract checks; select by feature and measured cost, since this category alone does not guarantee a cheap run. | fast candidate |
 | `area_model_test` | [inst/area_model_test.py](../../../src/tests/pypeline_tests/inst/area_model_test.py) | Python assertions / wrapper | M 1.5 s / FAIL | Pure unit coverage for the sky130 area model: liberty area extraction, mapped-netlist area summation, the leaf cache/area (SYN.GET_AREA_CACHE_DIR and friends), and the whole-hierarchy estimate (SYN.GET_ESTIMATED_COMBINATIONAL_AREA/ESTIMATE_DESIGN_AREA). | Repair isolation: retain synthetic unit cases; move committed-cache calibration to a pinned dataset/QoR check. The old absolute-MAE failure is now addressed in source by a per-bit residual bound; current pass status was not rechecked. | fast candidate |
 | `async_fifo_path_unit_test` | [inst/async_fifo_path_unit_test.py](../../../src/tests/pypeline_tests/inst/async_fifo_path_unit_test.py) | Python assertions / wrapper | U (not measured) | Unit checks of how the sweep and the back end treat an async global FIFO: a parsed two-clock FIFO design (PY_TO_LOGIC.PARSE_FILE, no synthesis) and fake timing path reports. | Keep compiler-contract checks; select by feature and measured cost, since this category alone does not guarantee a cheap run. | measure first |
+| `auto_construction_site_unit_test` | [inst/auto_construction_site_unit_test.py](../../../src/tests/pypeline_tests/inst/auto_construction_site_unit_test.py) | Python assertions / wrapper | U | Added after the snapshot. Construction sites of AUTO_PIPELINE / AUTO_FSM objects (calls, comprehensions, loops, a library factory, a body), resolution through a site's binding, and native replay of per-goal results at the run's clock goal. | Keep apart from elaboration tests: no parse, sub-second. | fast candidate |
 | `auto_fsm_attribution_test` | [inst/auto_fsm_attribution_test.py](../../../src/tests/pypeline_tests/inst/auto_fsm_attribution_test.py) | Python assertions / wrapper | M 3.1 s / PASS | Ordered timing arcs, register writers, late selection and local scheduling. | Keep compiler-contract checks; select by feature and measured cost, since this category alone does not guarantee a cheap run. | fast candidate |
 | `auto_fsm_cache_test` | [inst/auto_fsm_cache_test.py](../../../src/tests/pypeline_tests/inst/auto_fsm_cache_test.py) | Python assertions / wrapper | M 206.5 s / PASS | Carried schedule validity, pinned recipe integrity, model-only updates and call sites new to a build (AUTO_FSM.REPARSE). | Keep cache invalidation, deterministic generation and new-call-site cases; separate slow real parses from cheap synthetic fixtures. | feature/slow |
 | `auto_fsm_independence_test` | [inst/auto_fsm_independence_test.py](../../../src/tests/pypeline_tests/inst/auto_fsm_independence_test.py) | Python assertions / wrapper | U | Added after the snapshot. Each call site's decode estimate, search digest and recorded reads depend only on its own inputs (two call sites, an unused function, both search orders, -j 1 and -j 3); stale stored results are replaced. | Keep apart from `auto_fsm_unit_test` and `auto_fsm_cache_test`; the per-build digest case runs a process per build. | fast candidate |
+| `auto_fsm_owner_goal_test` | [inst/auto_fsm_owner_goal_test.py](../../../src/tests/pypeline_tests/inst/auto_fsm_owner_goal_test.py) | Python assertions / wrapper | U | Added after the snapshot. An AUTO_FSM's budget comes from the goals of the MAINs that instantiate it: an unrelated faster MAIN, a goal-less MAIN, two goals, a clock's `syn_mhz`. | Keep apart from `auto_fsm_independence_test`: owner goals, not search reuse. | fast candidate |
 | `auto_fsm_prefix_tree_test` | [inst/auto_fsm_prefix_tree_test.py](../../../src/tests/pypeline_tests/inst/auto_fsm_prefix_tree_test.py) | Python assertions / wrapper | M 273.1 s / PASS | Measured helper delays prevent unnecessary descent; scheduled FSMs render array inputs correctly and supply clock enable to an otherwise stateless MAIN. | Keep: measurement-before-descent and clock-enable emission are unique; move real-parse cases out of the fast tier. | feature/slow |
 | `auto_fsm_transforms_test` | [inst/auto_fsm_transforms_test.py](../../../src/tests/pypeline_tests/inst/auto_fsm_transforms_test.py) | Python assertions / wrapper | M 9.0 s / PASS | Proof/refusal cases for balanced selectors, width adapters and closed fusion. | Keep compiler-contract checks; select by feature and measured cost, since this category alone does not guarantee a cheap run. | fast candidate |
 | `auto_fsm_unit_test` | [inst/auto_fsm_unit_test.py](../../../src/tests/pypeline_tests/inst/auto_fsm_unit_test.py) | Python assertions / wrapper | M 1648.3 s / PASS | Real scheduler/codegen invariants: binding, state dependencies, register lifetimes, budgets, determinism, serialization, constant cleanup and pipelined units. | Split slow scheduling/reparse cases from small invariants; retain both. Historical 1,648.3 s makes the current fast-unit description misleading. | deep/nightly |
@@ -383,6 +386,7 @@ The 367 old samples total **32,745.3 test-seconds (9.10 h)**, including two fail
 |---|---|---|---|---|---|---|
 | `multi_clock_ghdl_test` | [inst/multi_clock_ghdl_test.py](../../../src/tests/pypeline_tests/inst/multi_clock_ghdl_test.py) | Python assertions / wrapper | D ≈20 s | Build multi_clock_design.py (two clocks, an async global FIFO, a sync global FIFO and an async wire) with --comb --no_synth, then check the generated design in GHDL: no synthesis tool runs. | Keep hardware-only asynchronous-clock oracle. Extend clock ratios/phases, FIFO wrap/full/empty and stalls without requiring unsupported native multi-clock sim. | feature/tool |
 | `multi_clock_open_tools_test` | [inst/multi_clock_open_tools_test.py](../../../src/tests/pypeline_tests/inst/multi_clock_open_tools_test.py) | Python assertions / wrapper; open_tools category | D 50–120 s | Build multi-clock designs with open_tools (ECP5 nextpnr) and check what the timing reports and the sweep do with more than one clock. | Keep ECP5 clock attribution, pin naming, selective cuts and FIFO-only timing failure; place in a tool-specific integration lane. | feature/tool |
+| `auto_goal_vivado_test` | [inst/auto_goal_vivado_test.py](../../../src/tests/pypeline_tests/inst/auto_goal_vivado_test.py) | Python assertions / wrapper | U | Added after the snapshot. Three Vivado sweeps at once: two AUTO_PIPELINE objects of one factory at 25 and 100 MHz (separate calls, and a comprehension) get their own goal's depths; one AUTO_MULTI_CYCLE object under 50 and 100 MHz gets one count meeting both. | Keep: the only test building AUTO objects at two goals with real timing. | heavy lane |
 | `multi_clock_vivado_test` | [inst/multi_clock_vivado_test.py](../../../src/tests/pypeline_tests/inst/multi_clock_vivado_test.py) | Python assertions / wrapper; vivado category | D ≈150 s | Build multi_clock_synth_design.py with Vivado (the Arty's xc7a35ti) and check the async FIFO hardware and the clock constraints. | Keep XPM and builtin FIFO plus asynchronous clock-group checks; backend behavior differs from ECP5 and needs its own lane. | feature/tool |
 
 ## synth_device_models
@@ -849,6 +853,21 @@ Python entry registered; module auto-discovery. Registration(s): `unit:auto_fsm_
 | [test_encoding_memo_does_not_reuse_a_different_select_arrival](../../../src/tests/pypeline_tests/inst/auto_fsm_cache_test.py#L536) | Encoding memo does not reuse a different select arrival. |
 | [test_binding_search_reuses_clean_graph_without_sharing_mutable_results](../../../src/tests/pypeline_tests/inst/auto_fsm_cache_test.py#L563) | Binding search reuses clean graph without sharing mutable results. |
 
+### inst/auto_construction_site_unit_test.py
+
+Python entry registered; module auto-discovery. Registration(s): `unit:auto_construction_site_unit_test`.
+
+| Declaration | Purpose / execution note |
+|---|---|
+| [test_sites_tell_apart_objects_from_one_line](../../../src/tests/pypeline_tests/inst/auto_construction_site_unit_test.py#L58) | Sites tell apart objects from one line. |
+| [test_sites_restart_with_each_design_execution](../../../src/tests/pypeline_tests/inst/auto_construction_site_unit_test.py#L80) | Sites restart with each design execution. |
+| [test_object_built_while_elaborating_a_body_has_its_body_line](../../../src/tests/pypeline_tests/inst/auto_construction_site_unit_test.py#L87) | Object built while elaborating a body has its body line. |
+| [test_object_resolves_through_its_sites_binding](../../../src/tests/pypeline_tests/inst/auto_construction_site_unit_test.py#L122) | Object resolves through its sites binding. |
+| [test_goal_text_is_clock_port_style](../../../src/tests/pypeline_tests/inst/auto_construction_site_unit_test.py#L155) | Goal text is clock port style. |
+| [test_replay_takes_the_run_goals_results](../../../src/tests/pypeline_tests/inst/auto_construction_site_unit_test.py#L199) | Replay takes the run goals results. |
+| [test_replay_of_one_goal_record_is_unchanged](../../../src/tests/pypeline_tests/inst/auto_construction_site_unit_test.py#L209) | Replay of one goal record is unchanged. |
+| [test_replay_at_a_goal_the_build_lacks_raises](../../../src/tests/pypeline_tests/inst/auto_construction_site_unit_test.py#L215) | Replay at a goal the build lacks raises. |
+
 ### inst/auto_fsm_independence_test.py
 
 Python entry registered; module auto-discovery. Registration(s): `unit:auto_fsm_independence_test`.
@@ -859,12 +878,40 @@ Python entry registered; module auto-discovery. Registration(s): `unit:auto_fsm_
 | [test_another_fsms_proxy_does_not_suppress_own_calibration](../../../src/tests/pypeline_tests/inst/auto_fsm_independence_test.py#L239) | Another fsms proxy does not suppress own calibration. |
 | [test_editing_one_fsm_or_unrelated_code_keeps_other_search_digests](../../../src/tests/pypeline_tests/inst/auto_fsm_independence_test.py#L284) | Editing one fsm or unrelated code keeps other search digests. |
 | [test_any_input_a_search_reads_changes_its_digest](../../../src/tests/pypeline_tests/inst/auto_fsm_independence_test.py#L301) | Any input a search reads changes its digest. |
-| [test_search_reads_only_its_closure](../../../src/tests/pypeline_tests/inst/auto_fsm_independence_test.py#L436) | Search reads only its closure. |
-| [test_reused_search_checks_the_operand_muxes_it_priced](../../../src/tests/pypeline_tests/inst/auto_fsm_independence_test.py#L469) | Reused search checks the operand muxes it priced. |
-| [test_recorded_reads_do_not_depend_on_search_order](../../../src/tests/pypeline_tests/inst/auto_fsm_independence_test.py#L529) | Recorded reads do not depend on search order. |
-| [test_recorded_reads_include_forked_workers_reads](../../../src/tests/pypeline_tests/inst/auto_fsm_independence_test.py#L538) | Recorded reads include forked workers reads. |
-| [test_search_result_is_stale_when_a_lookup_or_what_it_found_changes](../../../src/tests/pypeline_tests/inst/auto_fsm_independence_test.py#L560) | Search result is stale when a lookup or what it found changes. |
-| [test_stale_search_result_is_replaced](../../../src/tests/pypeline_tests/inst/auto_fsm_independence_test.py#L589) | Stale search result is replaced. |
+| [test_search_reads_only_its_closure](../../../src/tests/pypeline_tests/inst/auto_fsm_independence_test.py#L438) | Search reads only its closure. |
+| [test_reused_search_checks_the_operand_muxes_it_priced](../../../src/tests/pypeline_tests/inst/auto_fsm_independence_test.py#L471) | Reused search checks the operand muxes it priced. |
+| [test_recorded_reads_do_not_depend_on_search_order](../../../src/tests/pypeline_tests/inst/auto_fsm_independence_test.py#L531) | Recorded reads do not depend on search order. |
+| [test_recorded_reads_include_forked_workers_reads](../../../src/tests/pypeline_tests/inst/auto_fsm_independence_test.py#L540) | Recorded reads include forked workers reads. |
+| [test_search_result_is_stale_when_a_lookup_or_what_it_found_changes](../../../src/tests/pypeline_tests/inst/auto_fsm_independence_test.py#L562) | Search result is stale when a lookup or what it found changes. |
+| [test_stale_search_result_is_replaced](../../../src/tests/pypeline_tests/inst/auto_fsm_independence_test.py#L591) | Stale search result is replaced. |
+
+### inst/auto_fsm_owner_goal_test.py
+
+Python entry registered; module auto-discovery. Registration(s): `unit:auto_fsm_owner_goal_test`.
+
+| Declaration | Purpose / execution note |
+|---|---|
+| [test_unrelated_faster_main_does_not_tighten_budget](../../../src/tests/pypeline_tests/inst/auto_fsm_owner_goal_test.py#L107) | Unrelated faster main does not tighten budget. |
+| [test_main_without_goal_leaves_fsm_unconstrained](../../../src/tests/pypeline_tests/inst/auto_fsm_owner_goal_test.py#L116) | Main without goal leaves fsm unconstrained. |
+| [test_fsm_under_two_goals_uses_tightest_with_one_note](../../../src/tests/pypeline_tests/inst/auto_fsm_owner_goal_test.py#L123) | Fsm under two goals uses tightest with one note. |
+| [test_synthesis_only_tool_uses_clock_syn_mhz](../../../src/tests/pypeline_tests/inst/auto_fsm_owner_goal_test.py#L134) | Synthesis only tool uses clock syn mhz. |
+
+### inst/auto_goal_split_test.py
+
+Python entry registered; module auto-discovery. Registration(s): `elab_introspect:auto_goal_split_test`.
+
+| Declaration | Purpose / execution note |
+|---|---|
+| [test_two_calls_at_two_goals_build_their_own_hardware](../../../src/tests/pypeline_tests/inst/auto_goal_split_test.py#L100) | Two calls at two goals build their own hardware. |
+| [test_objects_at_one_goal_still_share_hardware](../../../src/tests/pypeline_tests/inst/auto_goal_split_test.py#L118) | Objects at one goal still share hardware. |
+| [test_comprehension_objects_are_named_by_goal_not_position](../../../src/tests/pypeline_tests/inst/auto_goal_split_test.py#L157) | Comprehension objects are named by goal not position. |
+| [test_objects_held_in_containers_and_arguments_are_told_apart](../../../src/tests/pypeline_tests/inst/auto_goal_split_test.py#L200) | Objects held in containers and arguments are told apart. |
+| [test_mains_made_in_a_loop_get_their_own_goals_hardware](../../../src/tests/pypeline_tests/inst/auto_goal_split_test.py#L236) | Mains made in a loop get their own goals hardware. |
+| [test_bare_main_counts_at_its_inferred_goal](../../../src/tests/pypeline_tests/inst/auto_goal_split_test.py#L267) | Bare main counts at its inferred goal. |
+| [test_one_object_at_two_goals_whose_latency_is_read_is_an_error](../../../src/tests/pypeline_tests/inst/auto_goal_split_test.py#L290) | One object at two goals whose latency is read is an error. |
+| [test_one_object_at_two_goals_without_a_read_parses](../../../src/tests/pypeline_tests/inst/auto_goal_split_test.py#L304) | One object at two goals without a read parses. |
+| [test_auto_fsm_objects_at_two_goals_get_a_call_site_each](../../../src/tests/pypeline_tests/inst/auto_goal_split_test.py#L353) | Auto fsm objects at two goals get a call site each. |
+| [test_names_do_not_depend_on_the_hash_seed](../../../src/tests/pypeline_tests/inst/auto_goal_split_test.py#L364) | Names do not depend on the hash seed. |
 
 ### inst/auto_fsm_prefix_tree_test.py
 

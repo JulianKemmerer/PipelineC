@@ -44,6 +44,7 @@ figures out the rest — how many stages, or how many states.
   - [3.7 The minimum-area search](#37-the-minimum-area-search)
   - [3.8 Consuming real sky130 area](#38-consuming-real-sky130-area)
   - [3.9 What the clock goal does to allocation](#39-what-the-clock-goal-does-to-allocation)
+  - [3.10 Clock goals](#310-clock-goals)
 - [4. Results](#4-results)
   - [Poly1305 kernels on Artix-7](#poly1305-kernels-on-artix-7)
 - [5. Tests](#5-tests)
@@ -270,7 +271,7 @@ full self-checking design, also run through real GHDL (§5).
     ▼
  AUTO_FSM.HARVEST_AUTO_FSM_SCHEDULES   build DAG -> schedule -> bind
     ▼
- pypeline.SET_AUTO_FSM_SCHEDULE_CACHE     canonical_key -> schedule dict
+ pypeline.SET_AUTO_FSM_SCHEDULE_CACHE     call-site key -> schedule dict
     ▼
  PY_TO_LOGIC.PARSE_FILE (re-execute the design)
     │  now _elab_call finds a schedule and instantiates the GENERATED FSM,
@@ -1361,7 +1362,8 @@ call site's own inputs:
 - its key and source identity, the budget scale, the encoding request, the
   area-sweep and force flags, and the whole carried schedule (which holds its
   own decode rows);
-- `_search_inputs`: the clock period its budget comes from (`_period_du`), the
+- `_search_inputs`: the clock period its budget comes from (`_period_du`: the
+  tightest goal of the MAINs that instantiate this call site), the
   target, the delay, area and placement settings, and for every entity of its
   closure (`_search_closure`: the function's subtree and its AUTO_COMB_OPT
   alternatives' subtrees) the graph, effects, HDL flags, carried delay numbers
@@ -1740,6 +1742,30 @@ amount first.
 
 ---
 
+### 3.10 Clock goals
+
+A call site is scheduled for the clock goal of the MAINs that instantiate it,
+never another MAIN's: `_period_du(parser_state, key)` is the tightest goal among
+its owners (`AUTO.OWNER_GOALS`; a MAIN's goal is the one its sweep uses,
+`main_syn_mhz` on a synthesis-only tool), and None, an unconstrained one-state
+budget, when none of them has a goal. `_budget_du`, `TIGHTENED_BUDGET_SCALE`,
+local repair's clock check and the search digest (`_search_inputs`) all take
+the call site's key, so adding a faster MAIN elsewhere neither tightens an FSM
+nor searches it again. Objects used at several goals share one schedule, built
+for the tightest, and `_period_du` prints one NOTE per build naming them.
+
+The call-site key is the tag's `binding_key`
+([AUTO_DESIGN.md](AUTO_DESIGN.md#7-clock-goals-of-auto-objects)): its
+`canonical_key`, or `canonical_key@<goal>` when objects of one key are used at
+different goals (two factory calls, one per clock domain). Every per-call-site
+table is keyed by it (`GET_TAGS`, schedules, source identities, provenance,
+rejections, the elaborator that unit functions are made with), so two such
+objects are scheduled and searched independently. The generated FSM's entity
+name comes from its schedule, so two goals whose schedules are equal share one
+entity; a timing failure through it blames the call sites used under the failing
+MAIN (`_BLAMED_MISS_RATIOS`). The combinational passthrough is named from the
+canonical key: its hardware is the same at every goal.
+
 ## 4. Results
 
 Measured on this repo with the PYRTL/yosys flow (`src/tests/pypeline_tests/inst/`
@@ -1894,6 +1920,11 @@ Priorities are discussed in [#347](https://github.com/JulianKemmerer/PipelineC/d
 
 **Current limitations**
 
+- One AUTO_FSM object used under MAINs at different clock goals has one
+  schedule, built for the tightest of them, with a NOTE once per build. Objects
+  built separately, one per clock domain (a separate `AUTO_FSM(...)` or factory
+  call each, in a loop or not), are scheduled each for its own goal; see
+  [§3.10](#310-clock-goals).
 - One argument (bundle into a struct); one computation in flight; the raw
   call site has no backpressure — `valid` while busy is ignored. Wrap with
   `make_stream_auto_fsm` (§2.1) for a real valid/ready port instead.

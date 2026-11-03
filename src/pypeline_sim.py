@@ -87,6 +87,7 @@ def run_sim(
     built_hardware_from=None,
     design_params=None,
     unbuilt_latency_reads=None,
+    goal_mode=None,
 ) -> None:
     """Run the native simulation.
 
@@ -113,9 +114,16 @@ def run_sim(
     Then the build's decisions must cover the design: an AUTO tag or RAM it never
     decided, or a pipelinable @MAIN it never built, is an error, and so is a
     design parameter (design_params, {name: value}) whose value differs.
-    unbuilt_latency_reads ({kind: {canonical_key: value}}) are the .latency
+    unbuilt_latency_reads ({kind: {binding: value}}) are the .latency
     values that build read for tags it never instantiated; reading one returns
     the same value, and only calling it is an error.
+
+    A build records the results of an AUTO key used at several clock goals per
+    goal (pypeline.GOAL_BINDING). Replaying such a record, a first import
+    shows the one clock this simulation runs; in the import that runs, every
+    object then takes its key's results at that clock's goal, as goal_mode
+    ("pnr": the clock's mhz, "syn": its syn_mhz) says the build chose goals
+    (_run_goal_text).
     """
     # Apply sim mode before importing the design: @hw_func decorators read these
     # flags at decoration time, so they must be set before import_design runs.
@@ -131,6 +139,21 @@ def run_sim(
     else:
         raise ValueError(
             f"Unknown sim_mode {sim_mode!r}; expected strict, loose, or raw"
+        )
+    pypeline.SET_AUTO_RUN_GOAL(None)
+    if built_hardware_from is not None and _per_goal_results(
+        auto_pipeline_latencies, auto_fsm_schedules, unbuilt_latency_reads
+    ):
+        # Results recorded per clock goal: a first import, with no results and
+        # no built-hardware checks, shows the clock this simulation runs
+        pypeline.SET_BUILT_HARDWARE_SOURCE(None)
+        pypeline.SET_AUTO_PIPELINE_LATENCY_CACHE({})
+        pypeline.SET_AUTO_FSM_SCHEDULE_CACHE({})
+        pypeline.RESET_AUTO_MULTI_CYCLE_TRACKING()
+        _evict_design_modules()
+        import_design(design_file)
+        pypeline.SET_AUTO_RUN_GOAL(
+            _run_goal_text(list(pypeline._main_registry), goal_mode)
         )
     pypeline.SET_BUILT_HARDWARE_SOURCE(built_hardware_from, unbuilt_latency_reads)
     # Install harvested AUTO_PIPELINE latencies BEFORE importing the design:
@@ -371,6 +394,29 @@ def _refuse_multi_clock(mains) -> None:
             f"name {len(by_clock)} clocks ({clocks}). Simulate one clock domain "
             f"at a time; simulating several clocks is not supported yet."
         )
+
+
+def _per_goal_results(
+    auto_pipeline_latencies, auto_fsm_schedules, unbuilt_latency_reads
+) -> bool:
+    """Whether a build's recorded results hold a key used at several clock
+    goals: a binding key@goal (pypeline.GOAL_BINDING)."""
+    keys = list(auto_pipeline_latencies or {}) + list(auto_fsm_schedules or {})
+    for reads in (unbuilt_latency_reads or {}).values():
+        keys += list(reads)
+    return any("@" in key for key in keys)
+
+
+def _run_goal_text(mains, goal_mode) -> str:
+    """pypeline.GOAL_TEXT of the clock this simulation's MAINs run on
+    (_refuse_multi_clock allows one): its mhz, or under goal_mode "syn" its
+    syn_mhz when it has one. MAINs naming no clock run on no goal."""
+    for fn in mains:
+        clock = fn._pypeline_main.clock
+        if clock is not None:
+            use_syn = goal_mode == "syn" and clock.syn_mhz is not None
+            return pypeline.GOAL_TEXT(clock.syn_mhz if use_syn else clock.mhz)
+    return pypeline.GOAL_TEXT(None)
 
 
 def _mains_by_name(mains) -> dict:

@@ -14,7 +14,9 @@ no scheduler state. This module holds:
   heuristics and the entity area model (`ESTIMATE_ENTITY_AREA`);
 - source emission helpers (`_Emitter`, `_exec_generated`) and the
   scheduler-free node renderer `_GraphCodegen`;
-- `AutoError`, the design-level error every AUTO feature raises.
+- `AutoError`, the design-level error every AUTO feature raises;
+- which clock goals each AUTO_FSM / AUTO_PIPELINE object is built for
+  (`COLLECT_AUTO_OWNERS`, `AUTO_GOAL_TABLES`).
 
 Candidates are emitted and re-elaborated before any consumer scores them, so
 area and timing models always see the hardware that will be built.
@@ -3493,3 +3495,210 @@ class _GraphCodegen:
                 f"AUTO_FSM: constant {wire_name!r} has non-integer value "
                 f"{text!r}, which cannot be regenerated as a literal yet"
             )
+
+
+# ======================================================================
+# Clock goals of AUTO objects: which MAINs, and so which clock goals,
+# instantiate each AUTO_FSM / AUTO_PIPELINE call site (docs/AUTO_DESIGN.md,
+# "Clock goals of AUTO objects").
+# ======================================================================
+
+
+def GOAL_OF_MAIN(parser_state, main):
+    """The clock goal in MHz a MAIN's AUTO objects are built for: the goal its
+    sweep uses (SYN.GET_TARGET_MHZ, so main_syn_mhz on a synthesis-only tool),
+    or None for a MAIN with no goal."""
+    mhz = SYN.GET_TARGET_MHZ(main, parser_state, allow_no_syn_tool=True)
+    return float(mhz) if mhz else None
+
+
+def COLLECT_AUTO_OWNERS(parser_state):
+    """(kind, key) -> sorted names of the MAINs whose instance hierarchy holds
+    an AUTO_FSM or AUTO_PIPELINE call site with that key. Only instances
+    count: a function no MAIN reaches owns nothing."""
+    owners = {}
+    marker = LOGIC.SUBMODULE_MARKER
+    for inst, logic in parser_state.LogicInstLookupTable.items():
+        tagged = [("AUTO_FSM", key) for key in logic.sub_inst_to_auto_fsm_key.values()]
+        tagged += [
+            ("AUTO_PIPELINE", key)
+            for key in logic.sub_inst_to_auto_pipeline_key.values()
+            if key is not None
+        ]
+        main = inst.split(marker)[0]
+        if not tagged or main not in parser_state.main_mhz:
+            continue
+        for pair in tagged:
+            owners.setdefault(pair, set()).add(main)
+    return {pair: tuple(sorted(mains)) for pair, mains in owners.items()}
+
+
+def OWNER_GOALS(parser_state, kind, key):
+    """The distinct clock goals of the MAINs that instantiate one AUTO
+    object key, goal-less (None) first, then ascending."""
+    # getattr: AUTO_PIPELINE's harvest also runs on C front-end parser states,
+    # which have no Pypeline fields when pickled by an older compiler
+    owners = getattr(parser_state, "pypeline_auto_owner_mains", {})
+    mains = owners.get((kind, key), ())
+    goals = {GOAL_OF_MAIN(parser_state, main) for main in mains}
+    return sorted(goals, key=lambda goal: (goal is not None, goal or 0.0))
+
+
+def TIGHTEST_GOAL(goals):
+    """The fastest of some clock goals, or None when none has a goal."""
+    return max((goal for goal in goals if goal is not None), default=None)
+
+
+def _goal_order(goal):
+    return (goal is not None, goal or 0.0)
+
+
+def COLLECT_AUTO_SITE_GOALS(parser_state):
+    """(kind, construction site) -> the clock goals of the MAINs whose
+    hierarchy calls the AUTO_PIPELINE / AUTO_FSM object built there
+    (Logic.sub_inst_to_auto_site). Objects whose hardware merged into another
+    object's (identical factory products) show under that object's site."""
+    site_goals = {}
+    goal_of = {}
+    marker = LOGIC.SUBMODULE_MARKER
+    for inst, logic in parser_state.LogicInstLookupTable.items():
+        if not logic.sub_inst_to_auto_site:
+            continue
+        main = inst.split(marker)[0]
+        if main not in parser_state.main_mhz:
+            continue
+        if main not in goal_of:
+            goal_of[main] = GOAL_OF_MAIN(parser_state, main)
+        for local, sites in logic.sub_inst_to_auto_site.items():
+            if local not in logic.submodule_instances:
+                continue  # collapsed into another call, which lists its site
+            kind = (
+                "AUTO_FSM" if local in logic.sub_inst_to_auto_fsm_key else "AUTO_PIPELINE"
+            )
+            for site in sites:
+                site_goals.setdefault((kind, site), set()).add(goal_of[main])
+    return site_goals
+
+
+def AUTO_GOAL_TABLES(parser_state, constructed, split_keys):
+    """The (site bindings, split keys) a parse of this design should resolve
+    its AUTO objects with (pypeline.SET_AUTO_GOAL_TABLES), from this parse's
+    instances. `constructed` is pypeline.AUTO_CONSTRUCTED(), `split_keys` the
+    split keys this parse used.
+
+    Only keys whose objects are used at more than one clock goal get entries.
+    Such a key built at several sites is split, so identical factory products
+    holding different objects stop merging into one function: first each
+    object on its own ("site"), which shows the goals each object is used at,
+    then by those goals ({site: goals}), so objects used at the same goals
+    share hardware again. An object's binding is its key at its goal; an
+    AUTO_FSM used at several goals takes the tightest (one schedule serves
+    them); an AUTO_PIPELINE used at several has no entry (one depth per goal,
+    see AUTO_GOAL_READ_PROBLEMS). An AUTO_FSM key whose objects all get one
+    binding keeps its plain key.
+    Fixed-latency AUTO_PIPELINEs and AUTO_FSM's pinned units are never split:
+    their latency does not depend on the goal."""
+    import pypeline
+
+    site_goals = COLLECT_AUTO_SITE_GOALS(parser_state)
+
+    def goals_of(kind, site):
+        return tuple(sorted(site_goals.get((kind, site), ()), key=_goal_order))
+
+    key_sites = {}
+    for kind, key, site, splittable in constructed:
+        key_sites.setdefault((kind, key), []).append((site, splittable))
+    bindings = {}
+    new_split = {}
+    for (kind, key), entries in sorted(key_sites.items()):
+        sites = [site for site, _splittable in entries]
+        goals = set().union(*(site_goals.get((kind, site), set()) for site in sites))
+        if len(goals) <= 1:
+            continue  # used at one goal, or unused: the binding is the key
+        per_site = {site: goals_of(kind, site) for site in sites}
+        if len(sites) > 1 and all(splittable for _site, splittable in entries):
+            mode = split_keys.get((kind, key))
+            if mode == "site":
+                mode = per_site
+            elif not (
+                isinstance(mode, dict)
+                and all(site in mode for site in sites)
+                and all(
+                    set(mode[site]) == site_goals[(kind, site)]
+                    for site in sites
+                    if (kind, site) in site_goals
+                )
+            ):
+                mode = "site"
+            new_split[(kind, key)] = mode
+            if isinstance(mode, dict):
+                per_site = mode
+        fixed = {site for site, splittable in entries if not splittable}
+        for site, site_goal_list in per_site.items():
+            if not site_goal_list or site in fixed:
+                # Unused (its key has no value), or a latency no goal changes
+                continue
+            if kind == "AUTO_FSM":
+                bindings[(kind, site)] = pypeline.GOAL_BINDING(
+                    key, TIGHTEST_GOAL(site_goal_list)
+                )
+            elif len(site_goal_list) == 1:
+                bindings[(kind, site)] = pypeline.GOAL_BINDING(key, site_goal_list[0])
+        if kind == "AUTO_FSM":
+            mine = [(kind, site) for site in per_site if (kind, site) in bindings]
+            if len({bindings[pair] for pair in mine}) == 1:
+                for pair in mine:
+                    del bindings[pair]
+    return bindings, new_split
+
+
+def DESCRIBE_SITE(site):
+    """A construction site (pypeline._auto_construction_site) as messages
+    name it: innermost frame first."""
+    if site.startswith("body:"):
+        return "a @hw_func body at " + site[len("body:"):]
+    chain, _hash, ordinal = site.rpartition("#")
+    frames = []
+    for frame in chain.split("|"):
+        module, function, line = frame.rsplit(":", 2)
+        frames.append(f"{module} line {line} ({function})")
+    text = ", called from ".join(frames)
+    return text if ordinal == "0" else f"{text}, object #{int(ordinal) + 1} built there"
+
+
+def AUTO_GOAL_READ_PROBLEMS(parser_state, constructed, reads):
+    """Messages for AUTO_PIPELINE objects used under MAINs at several clock
+    goals whose .latency the design read: each instance is pipelined for its
+    own goal, so no one value matches. A fixed latency= is the same at every
+    goal. `constructed` is pypeline.AUTO_CONSTRUCTED(), `reads`
+    pypeline.AUTO_READS()."""
+    site_goals = COLLECT_AUTO_SITE_GOALS(parser_state)
+    fixed = {site for kind, _key, site, splittable in constructed if not splittable}
+    problems = []
+    for (kind, site), read_sites in sorted(reads.items()):
+        goals = site_goals.get((kind, site), set())
+        if kind != "AUTO_PIPELINE" or len(goals) <= 1 or site in fixed:
+            continue
+        problems.append(
+            f"AUTO_PIPELINE built at {DESCRIBE_SITE(site)} is used under MAINs "
+            "with clock goals "
+            + ", ".join(f"{g:g} MHz" if g is not None else "none" for g in
+                        sorted(goals, key=_goal_order))
+            + f", and its .latency is read at {', '.join(read_sites)}: each "
+            "instance is pipelined for its own clock, so no one value matches. "
+            "Construct one object per clock domain (a separate AUTO_PIPELINE(...) "
+            "or factory call for each)."
+        )
+    return problems
+
+
+def AUTO_PIPELINE_BINDING(parser_state, key, main):
+    """The binding an AUTO_PIPELINE instance of `key` under MAIN `main` is
+    harvested, planned and remembered under: the key itself, or the key at
+    that MAIN's goal (pypeline.GOAL_BINDING) when the key is used at several
+    goals, each of which gets its own depth."""
+    import pypeline
+
+    if len(OWNER_GOALS(parser_state, "AUTO_PIPELINE", key)) <= 1:
+        return key
+    return pypeline.GOAL_BINDING(key, GOAL_OF_MAIN(parser_state, main))

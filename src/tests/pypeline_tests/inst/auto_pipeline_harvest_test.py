@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 # In-process unit tests for the AUTO_PIPELINE .latency machinery:
-#   - AUTO_PIPELINE.HARVEST_AUTO_PIPELINE_LATENCIES grouping + divergence detection
+#   - AUTO_PIPELINE.HARVEST_AUTO_PIPELINE_LATENCIES grouping (by key and clock
+#     goal) + divergence detection
 #   - AUTO_PIPELINE.SEED_TIMING_PARAMS_FROM_PREVIOUS concrete replay + the
 #     unseeded-auto_pipeline-instance (call-site-set-changed) detection
 #   - pinned AUTO_FSM units are neither harvested nor required to have a
@@ -134,6 +135,31 @@ def test_harvest_two_named_groups_on_one_function():
     latencies, divergences = AUTO_PIPELINE_MODULE.HARVEST_AUTO_PIPELINE_LATENCIES(ps, tpl)
     assert latencies == {"body_encrypt": 3, "body_decrypt": 5}, latencies
     assert divergences == {}, divergences
+
+def test_harvest_groups_by_clock_goal():
+    # One key under a 50 MHz and a 100 MHz MAIN (two objects of it, or one
+    # used in both): each goal is its own group, harvested to its own depth.
+    # A divergence inside one goal is still one.
+    ps = FakeParserState()
+    ps.main_mhz = {"slow": 50.0, "fast": 100.0, "fast2": 100.0}
+    ps.main_syn_mhz = dict(ps.main_mhz)
+    ps.pypeline_auto_owner_mains = {("AUTO_PIPELINE", "keyA"): ("fast", "fast2", "slow")}
+    parent = make_logic("parent_func", {"core0": "keyA"})
+    for main in ps.main_mhz:
+        ps.LogicInstLookupTable[main] = parent
+    tpl = {
+        "slow" + M + "core0": FakeTimingParams(1),
+        "fast" + M + "core0": FakeTimingParams(3),
+        "fast2" + M + "core0": FakeTimingParams(3),
+    }
+    latencies, divergences = AUTO_PIPELINE_MODULE.HARVEST_AUTO_PIPELINE_LATENCIES(ps, tpl)
+    assert latencies == {"keyA@50p0mhz": 1, "keyA@100p0mhz": 3}, latencies
+    assert divergences == {}, divergences
+    tpl["fast2" + M + "core0"] = FakeTimingParams(4)
+    latencies, divergences = AUTO_PIPELINE_MODULE.HARVEST_AUTO_PIPELINE_LATENCIES(ps, tpl)
+    assert latencies == {"keyA@50p0mhz": 1}, latencies
+    assert list(divergences) == ["keyA@100p0mhz"], divergences
+
 
 def test_harvest_no_auto_pipeline_is_empty():
     ps = FakeParserState()
@@ -737,6 +763,7 @@ if __name__ == "__main__":
     test_harvest_agreeing_instances()
     test_harvest_divergent_instances()
     test_harvest_two_named_groups_on_one_function()
+    test_harvest_groups_by_clock_goal()
     test_harvest_no_auto_pipeline_is_empty()
     test_seed_exact_path_function_fallback_and_unseeded_detection()
     test_seed_preserves_relative_instances_and_independent_mains()

@@ -3174,6 +3174,11 @@ Rules shared by the AUTO tags:
   AUTO_COMB_AREA_OPT's latency is always zero and needs no latency feedback pass.
 - **Write handshakes that react to the chosen value**, not to a number you guessed. The tool is
   free to change its mind when the clock goal or the design changes.
+- **An object is implemented for the clock goals of the `@MAIN`s that use it**, never for
+  another `@MAIN`'s. To use one function in several clock domains, construct one object per
+  domain: a separate `AUTO_PIPELINE(...)` / `AUTO_FSM(...)` or factory call each, in a loop
+  or not. See
+  [AUTO objects in several clock domains](#auto-objects-in-several-clock-domains).
 
 These were previously spelled `AUTOPIPELINE`, `AUTOMCP` and `AUTOFSM`. Their stream wrappers
 were `make_stream_pipeline`, `make_stream_interface_mcp`, `make_stream_interface_automcp` and
@@ -5931,6 +5936,41 @@ together are an error. `Inst[f]` and `Fifo[T]` take no markers.
 
 ---
 
+### AUTO objects in several clock domains
+
+Each AUTO object is implemented for the clock goals of the `@MAIN`s that use it. A faster
+`@MAIN` elsewhere does not change it: an AUTO_FSM under a 50 MHz `@MAIN` is scheduled for
+50 MHz even when another `@MAIN` runs at 200 MHz.
+
+To use one function in two clock domains, make one object per domain. No `name=` is
+needed, and each object's `.latency` is its own domain's value:
+
+```python
+def make_lane(f):
+    AP = AUTO_PIPELINE(f)
+    fifo = make_fifo(word_t, AP.latency + 4)  # sized for this object's domain
+    ...
+
+SLOW = make_lane(work)   # used by the 50 MHz @MAIN
+FAST = make_lane(work)   # used by the 100 MHz @MAIN
+LANES = [make_lane(work) for _ in range(4)]   # objects from a loop work the same way
+```
+
+Objects used at the same clock goal share their hardware. A goal is the clock's rate, or
+its `syn_mhz` on a synthesis-only tool.
+
+One object used by `@MAIN`s at different goals keeps a single implementation:
+
+| | One object used at several clock goals |
+|---|---|
+| `AUTO_PIPELINE` | Each instance is pipelined for its own `@MAIN`'s goal. Reading its `.latency` is an error, since no one value matches; make one object per domain instead |
+| `AUTO_FSM` | One schedule, built for the fastest goal, with a note saying so |
+| `AUTO_MULTI_CYCLE` | One cycle count, enough for the fastest goal |
+| Auto-pipelined RAM | One plan per configuration, meeting every clock |
+
+Native simulation runs one clock, so a testbench simulating hardware built at several goals
+sees the objects' values at its own clock's goal.
+
 ## Async Wires: `Wire[T, ASYNC]`
 
 An async wire carries its writer's value to readers on other clocks unchanged, with no
@@ -6785,6 +6825,7 @@ tracks the row.
 | Source model | **Multi-clock constraints on every synthesis tool** | Not supported | Quartus ignores its clock groups when a design has three or more clocks, and Gowin, Efinity, PyRTL and DEVICE_MODELS stop on designs with more than one clock | — |
 | Source model | **Arrays of interface ports on a global instance** | Not supported | `Inst[f]` rejects an argument or return field that is an array of interface port halves, such as a fan-out port. Wrap `f` in a `@hw_func` with one port per element, or declare the wires and a wiring `@MAIN` | — |
 | Source model | **Other wrappers as a global instance's hardware** | Not supported | `Inst[f]` takes a `@hw_func` or an `AUTO_PIPELINE(f)` tag. For `AUTO_FSM(f)` or `MULTI_CYCLE[...]`, call it in a `@hw_func` and make that the instance | — |
+| Source model | **One AUTO object implemented separately per clock domain** | Not supported | One AUTO object used by `@MAIN`s at different clock goals keeps a single implementation ([AUTO objects in several clock domains](#auto-objects-in-several-clock-domains)); so do identical auto-pipelined RAM configurations. Make one object per domain: a separate constructor or factory call each | — |
 | Source model | **A global instance on a stated clock** | Not supported | An instance runs on the clock of the functions that use it ([`Inst[f]`](#instf--global-instances)) | — |
 | Source model | **Global FIFOs and instances made by library code** | Not supported | A `Fifo[T]` or `Inst[f]` is a module-level declaration, so a factory cannot create one | — |
 | Source model | **Global FIFO chains with skid buffers** | Not supported | No `chain(skid, global_fifo(64), skid)` initializer; put a skid buffer inside the producer or consumer function | — |

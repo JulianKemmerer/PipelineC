@@ -80,6 +80,11 @@ a miss the search cannot avoid ends those rounds.
 `auto_fsm_cache_test.py` also checks that width merges reuse the cleaned
 graph instead of cleaning it again. The synthesis-iteration test also requires real failing
 sky130 end-register attribution to the writer chain.
+`auto_fsm_owner_goal_test.py` (unit, fake 3 ns adders, no synthesis) checks that a call
+site's budget comes from the clock goals of the MAINs that instantiate it: an unrelated
+200 MHz MAIN leaves a 50 MHz FSM's budget at 180 du and its search digest unchanged, a
+goal-less MAIN leaves it unconstrained, two goals give the tightest with one NOTE, and a
+synthesis-only tool uses the clock's `syn_mhz`.
 
 `self_check_auto_fsm_poly1305_test.py` checks the unchanged arithmetic at reduced
 capacity in GHDL. Its epilogue takes 2,165–2,501 s and its prologue 721–906 s;
@@ -602,6 +607,8 @@ from a different angle:
     - two names on one function are two groups, harvested to independent
       latencies, and identical tags share one;
     - a same-name conflict is a `TypeError` naming both sites;
+  - one key under MAINs at two clock goals harvests to one depth per goal
+    (`key@50p0mhz`), and a divergence within one goal is still one;
   - starting latencies (`SET_LATENCY_SEEDS`):
     - the served value and a region's `start()`;
     - clamping to `max_latency`;
@@ -681,7 +688,9 @@ The latency memory and `--latency_hints` (see
   - a hint deeper than a lower-goal depth starts the tag above that floor, one
     shallower starts at the floor, and same-goal memory still beats a hint;
   - an AUTO_MULTI_CYCLE whose datapath size depends on an AUTO_PIPELINE depth
-    resolves in two memory re-parses.
+    resolves in two memory re-parses;
+  - an AUTO_PIPELINE key used at two clock goals is one piece per goal, and a depth
+    remembered at 50 MHz starts only the 50 MHz objects.
 - **`latency_memory_build_test.py` (build_report_device_models, sky130):**
   the stream fixture uses 100 and 110 MHz goals so the cold build must pipeline
   the core and resize its latency-dependent FIFO. Measured runtime is about
@@ -1046,6 +1055,7 @@ Clocks, async wires and global FIFOs across clocks
 | `multi_clock_ghdl_test` | `multi_clock` (no synthesis) | the guide's Part IV design (`multi_clock_design.py`), `--comb --no_synth`: the crossing report, the top's clock ports and pin, and a two-clock GHDL testbench in which bytes cross the built-in async FIFO in order and the synchronized flag rises |
 | `multi_clock_open_tools_test` | `multi_clock` (open_tools) | `multi_clock_synth_design.py` on ECP5: `--comb` with a PASS line per clock; `multi_clock_design.py --comb`, whose pin clock nextpnr reports by the pin's name, still with a PASS line under `clk_125p0_eth_rx`; a sweep at `CRUNCH_MHZ=80` that cuts `crunch` and not the side MAINs; `multi_clock_fifo_timing_design.py`, whose read clock misses 900 MHz inside the FIFO, ending `TIMING NOT MET: global FIFO mon [...]` |
 | `multi_clock_vivado_test` | `multi_clock` (Vivado) | the same design on the Arty's xc7a35ti: `xpm_fifo_async` at depth 16, the built-in FIFO with `FIFO_IMPL=builtin`, every clock and the asynchronous clock groups in `clocks.xdc`, a PASS line per clock |
+| `auto_goal_vivado_test` | `multi_clock` (Vivado) | AUTO objects at two clock goals, three sweeps at once: two factory calls of one AUTO_PIPELINE factory at 25 and 100 MHz, and the same in a comprehension, record one depth per goal in `built_hardware.json`, the faster one deeper, and their factory-time `.latency` reads match what was built; one AUTO_MULTI_CYCLE object under 50 and 100 MHz gets one count that meets both clocks |
 | `self_check_named_clock_pin_test` | `native_vs_vhdl_sim` (`--comb`) | two `@MAIN`s and a global FIFO on a named clock bound to the pin `SYS_CLK`: the cocotb testbench clocks the pin, its one clock, and native sim and GHDL match |
 | `clock_domain_inference_test` | `elab` | a bare MAIN reading a wire that a helper one call deep under another MAIN writes takes that MAIN's clock |
 
@@ -1433,7 +1443,27 @@ exercise generated helpers and specialization reuse in real hardware builds.
   - direct and stream-factory AUTO_PIPELINE names preserve emitted instance hierarchy;
   - a conflicting name fails, naming both sites.
 - **`double_parse_file_test.py` (elab_introspect):** `user_names_design.py`, with
-  every form of `name=`, parses to the same keys twice.
+  every form of `name=`, parses to the same keys twice; `auto_goal_split_design.py`,
+  whose objects from one comprehension are used at two clock goals, too.
+
+**AUTO objects at several clock goals.**
+- **`auto_construction_site_unit_test.py` (unit, no parse):** construction sites tell
+  apart objects from separate calls, a comprehension, a `for` loop, a helper called
+  from two lines and a library factory, restart with each design execution, and are
+  one per body line for an object built while a body is elaborated; an object resolves
+  through its site's installed binding; a native replay of per-goal results takes its
+  own clock's goal (also for reads at import), keeps a one-goal record unchanged, and
+  raises `BuiltHardwareError` at a goal the build lacks.
+- **`auto_goal_split_test.py` (elab_introspect):** identical factory products holding
+  objects used at different goals elaborate as separate functions: two calls, a
+  comprehension (named by goal, so reordering renames nothing), a dict, a bundle's
+  attribute, a factory argument, a body loop, MAINs made in a loop, a bare MAIN
+  inferred onto a clock and two AUTO_FSM objects; objects at one goal still share; one
+  object at two goals parses unless its `.latency` is read; names are the same under
+  two hash seeds.
+- **`factory_closure_naming_test.py` (unit):** the split component joins a tag's
+  identity only when its key is split, as its site and then its goals, and reaches a
+  product through a closure, a list, a dict, a bundle and a factory argument.
 
 **Known issue: large numpy arguments.** `numpy_factory_arg_identity_test.py`
 (known_issues) builds two specializations of one factory whose only difference is

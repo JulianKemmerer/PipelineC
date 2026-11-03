@@ -64,6 +64,20 @@ def get_tests() -> list:
             syn_tool="vivado",
         )
     )
+    # Artix-7 sweeps of AUTO objects at two clock goals, three builds at once:
+    # two factory calls of one AUTO_PIPELINE factory at 25 and 100 MHz, and the
+    # same in a comprehension, each get their own goal's depth and their
+    # factory-time .latency reads match it; one AUTO_MULTI_CYCLE object under
+    # 50 and 100 MHz gets one count meeting both. About 30 min.
+    tests.append(
+        Test(
+            name="auto_goal_vivado_test",
+            category=CATEGORY,
+            cmd=[INST_DIR / "auto_goal_vivado_test.py"],
+            needs_out_dir=True,
+            syn_tool="vivado",
+        )
+    )
     return tests
 
 

@@ -117,7 +117,7 @@ def test_estimated_descent_is_measured_and_kept_whole():
     try:
         with tempfile.TemporaryDirectory() as tmp:
             parser, key, tag, _entity, helpers = cold_parse(tmp)
-            budget = AUTO_FSM._budget_du(parser, AUTO_FSM.DEFAULT_BUDGET_SCALE)
+            budget = AUTO_FSM._budget_du(parser, key, AUTO_FSM.DEFAULT_BUDGET_SCALE)
             too_slow = sorted(
                 name
                 for name in helpers
@@ -191,7 +191,7 @@ def test_estimated_descent_is_measured_and_kept_whole():
         requested.clear()
         with tempfile.TemporaryDirectory() as tmp:
             parser, key, tag, _entity, helpers = cold_parse(tmp)
-            budget = AUTO_FSM._budget_du(parser, 0.6)
+            budget = AUTO_FSM._budget_du(parser, key, 0.6)
             nine, five = (
                 next(name for name in helpers if f"n_leaves_{n}_" in name)
                 for n in (9, 5)
@@ -213,7 +213,9 @@ def test_estimated_descent_is_measured_and_kept_whole():
             parser, key, tag, _entity, helpers = cold_parse(
                 tmp,
                 lambda parsed: AUTO_FSM._budget_du(
-                    parsed, AUTO_FSM.DEFAULT_BUDGET_SCALE
+                    parsed,
+                    next(iter(AUTO_FSM.GET_TAGS(parsed))),
+                    AUTO_FSM.DEFAULT_BUDGET_SCALE,
                 )
                 + 1,
             )
@@ -229,8 +231,8 @@ def test_pipelined_helper_is_not_a_blocked_descent():
     """An over-budget helper kept whole as a pipelined unit is a choice whose
     stages fit; reporting it as a blocked descent misled a Poly1305 report."""
     with tempfile.TemporaryDirectory() as tmp:
-        parser, _key, _tag, entity, helpers = cold_parse(tmp)
-        budget = AUTO_FSM._budget_du(parser, AUTO_FSM.DEFAULT_BUDGET_SCALE)
+        parser, key, _tag, entity, helpers = cold_parse(tmp)
+        budget = AUTO_FSM._budget_du(parser, key, AUTO_FSM.DEFAULT_BUDGET_SCALE)
         child = sorted(parser.FuncLogicLookupTable[entity].submodule_instances.values())
         slow = [
             name

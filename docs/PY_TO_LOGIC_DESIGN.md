@@ -172,6 +172,7 @@ See [auto-pipelined RAM compilation](AUTO_PIPELINE_DESIGN.md#ram-compiler-sweep-
   - [Side tables for code generation](#side-tables-for-code-generation)
   - [Determinism requirements](#determinism-requirements)
   - [Repeated `PARSE_FILE` support (the pin-and-confirm loop's foundation)](#repeated-parse_file-support-the-pin-and-confirm-loops-foundation)
+  - [AUTO objects at several clock goals: `PARSE_FILE` parses until the goal tables settle](#auto-objects-at-several-clock-goals-parse_file-parses-until-the-goal-tables-settle)
   - [Design parameters (`param()`, `-D`)](#design-parameters-param--d)
   - [Test coverage](#test-coverage)
 - [`MULTI_CYCLE[ncycles]` / `Reg[T, tag]` — Multi-Cycle Path Constraint](#multi_cyclencycles--regt-tag--multi-cycle-path-constraint)
@@ -5212,10 +5213,15 @@ exactly the instance this call created:
             self.logic.sub_inst_to_auto_pipeline_key[inst] = (
                 auto_pipeline_call.canonical_key
             )
+            self.logic.sub_inst_to_auto_site[inst] = (auto_pipeline_call.site,)
         return port_return, ret_typ
 ```
 
-Both dicts live on `self.logic`, the `FuncElaborator`'s own per-function `Logic()`
+`sub_inst_to_auto_site` holds the construction site of the object the call uses
+(`pypeline` `.site`): which clock goals each object is built for comes from it
+([AUTO_DESIGN.md](AUTO_DESIGN.md#7-clock-goals-of-auto-objects)).
+
+All three dicts live on `self.logic`, the `FuncElaborator`'s own per-function `Logic()`
 object. A tag used inside one function body therefore only affects calls elaborated
 within that same function, matching the C implementation's per-`Logic()` scoping.
 The C frontend's forward-looking `next_func_call_auto_pipeline_latency` field carries a
@@ -5300,8 +5306,13 @@ Tagging mirrors AUTO_PIPELINE's, immediately after `_add_submodule_instance`:
 
 ```python
         if auto_fsm_call is not None:
-            self.logic.sub_inst_to_auto_fsm_key[inst] = auto_fsm_call.canonical_key
+            self.logic.sub_inst_to_auto_fsm_key[inst] = auto_fsm_call.binding_key
+            self.logic.sub_inst_to_auto_site[inst] = (auto_fsm_call.site,)
 ```
+
+The key is the call site's `binding_key`: its canonical key, or that key at one
+clock goal when objects of the key are used at different goals
+([AUTO_FSM_DESIGN.md](AUTO_FSM_DESIGN.md#310-clock-goals)).
 
 Unlike `sub_inst_to_auto_pipeline_key`, this changes nothing about how SYN or
 SWEEP treat the instance — a generated FSM entity holds `Reg` state, so it is
@@ -5418,6 +5429,26 @@ being called more than once per process:
   whose record a testbench simulation refuses once any of them changes
   ([Simulating built hardware](SIM_DESIGN.md#simulating-built-hardware)).
   Library callers of `PARSE_FILE` don't freeze anything.
+
+### AUTO objects at several clock goals: `PARSE_FILE` parses until the goal tables settle
+
+`PARSE_FILE` is a loop around `_PARSE_FILE_ONCE`, the import and elaboration above.
+After each parse, `AUTO.AUTO_GOAL_TABLES` computes from its instances which binding
+each AUTO_PIPELINE / AUTO_FSM object resolves to and which keys are split
+([AUTO_DESIGN.md](AUTO_DESIGN.md#7-clock-goals-of-auto-objects)). When those differ
+from the tables the parse used (`pypeline.AUTO_GOAL_TABLES()`), they are installed and
+the design is parsed again; the hooks of `run_syn_initial_hooks` run on the first parse
+only. A design whose AUTO keys are each used at one goal yields empty tables and parses
+once. Two factory calls of one function at two goals take two more parses on a build's
+first parse (one telling objects apart by site, one by goal); later parses of the build
+start from the installed tables and parse once. A state the loop has already been
+through means the goals an object is used at depend on what it resolves to, and is an
+`ElaborationError`. Once settled, an AUTO_PIPELINE object used at several goals whose
+`.latency` the design read is an `ElaborationError` too
+(`AUTO.AUTO_GOAL_READ_PROBLEMS`).
+
+The tables are module state of `pypeline`, so a re-parse in the same process starts
+from them, which `double_parse_file_test.py` covers with `auto_goal_split_design.py`.
 - **Per-parse compiler cache cleanup**: the re-parse branch runs
   `LOGIC.DEL_ALL_CACHES()` + `SYN.DEL_ALL_CACHES()` (the shared part of the cleanup the C
   frontend's `C_TO_LOGIC.DEL_ALL_CACHES()` runs at the end of its own `PARSE_FILE`) plus the zero-clk TimingParams

@@ -90,7 +90,9 @@ Other fields carry state registers and global wires (`state_regs`,
 `global_wire_write_locs`), feedback wires, multi-cycle paths
 (`mcp_tuples`, `auto_multi_cycle_tuples`), AUTO_PIPELINE and AUTO_FSM tags
 (`sub_inst_to_auto_pipeline_latency`, `sub_inst_to_auto_pipeline_key`,
-`sub_inst_to_auto_fsm_key`), how a built-in is emitted (`is_c_built_in`, `is_vhdl_func`,
+`sub_inst_to_auto_fsm_key`, and `sub_inst_to_auto_site`, the construction sites of the
+objects a call uses; a call that duplicates collapse into keeps the union, see
+[AUTO_DESIGN.md](AUTO_DESIGN.md#7-clock-goals-of-auto-objects)), how a built-in is emitted (`is_c_built_in`, `is_vhdl_func`,
 `is_vhdl_expr`, `vhdl_module_text`), and the measured `delay`. Each field's comment in
 `Logic.__init__` says which front end fills it. `DEEPCOPY`, `MERGE_COMB_LOGIC` and
 `MERGE_SEQ_LOGIC` must be updated with every new field. The merges are called by the C
@@ -126,6 +128,11 @@ AUTO_FSM declares its tables here: call-site tags, constant specializations,
 soft-operator and width-halving equivalents, independent measurement and
 operand-mux callables, and the delays `AUTO._resolve_delay_du` derived, each with
 the cache reads behind it. AUTO_COMB_OPT declares its alternatives per objective.
+`pypeline_auto_owner_mains`, filled at the end of every Pypeline parse, maps each
+AUTO_FSM / AUTO_PIPELINE key to the MAINs that instantiate it
+([AUTO_DESIGN.md](AUTO_DESIGN.md#7-clock-goals-of-auto-objects)); shared back-end
+code reads it with `getattr`, since C front-end states pickled by an older
+compiler lack it.
 `DEEPCOPY` preserves their mappings and live callable identities.
 Characterization resolves the current consumer list, so shapes registered after
 an earlier query are included.

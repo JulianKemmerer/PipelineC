@@ -896,6 +896,59 @@ def test_stream_factory_names_unchanged_and_forwarded():
     PL.RESET_AUTO_MULTI_CYCLE_TRACKING()
 
 
+def test_goal_split_component_only_for_split_keys():
+    # Two identical factory calls build products with one name, so they share
+    # hardware. Once their tags' key is split (used at several clock goals,
+    # PY_TO_LOGIC.PARSE_FILE), each tag's site, then its goals, joins its
+    # identity: the products part at different goals and merge again at one.
+    # The component reaches a tag held in a list, a dict, a bundle's
+    # attributes or a factory argument.
+    import types
+
+    from stream.stream_auto_pipeline import make_stream_auto_pipeline
+
+    PL.RESET_AUTO_MULTI_CYCLE_TRACKING()
+    a = make_stream_auto_pipeline(round_a_hw)
+    b = make_stream_auto_pipeline(round_a_hw)
+    tag_a, tag_b = a.auto_pipeline, b.auto_pipeline
+    key = ("AUTO_PIPELINE", tag_a.canonical_key)
+    assert tag_a.canonical_key == tag_b.canonical_key
+
+    def make_wrapper(inner):
+        @PL.hw_func
+        def wrapped(x: PL.uint8_t) -> PL.uint8_t:
+            return inner(x)
+
+        return wrapped
+
+    def holders(product, tag):
+        return [
+            P.CANONICAL_CALLABLE_KEY(product),
+            P.CANONICAL_CALLABLE_KEY(make_wrapper(product)),
+            PL._name_identity([tag]),
+            PL._name_identity({"t": tag}),
+            PL._name_identity(types.SimpleNamespace(t=tag)),
+        ]
+
+    try:
+        assert holders(a, tag_a) == holders(b, tag_b)
+        assert "split" not in PL._name_identity(tag_a)
+        PL.SET_AUTO_GOAL_TABLES({}, {key: "site"})
+        split_a, split_b = holders(a, tag_a), holders(b, tag_b)
+        assert all(x != y for x, y in zip(split_a, split_b)), (split_a, split_b)
+        PL.SET_AUTO_GOAL_TABLES({}, {key: {tag_a.site: (50.0,), tag_b.site: (50.0,)}})
+        assert holders(a, tag_a) == holders(b, tag_b)
+        PL.SET_AUTO_GOAL_TABLES({}, {key: {tag_a.site: (50.0,), tag_b.site: (100.0,)}})
+        assert all(x != y for x, y in zip(holders(a, tag_a), holders(b, tag_b)))
+        assert "50p0mhz" in PL._name_identity(tag_a)
+        # Another key's split leaves these alone
+        PL.SET_AUTO_GOAL_TABLES({}, {("AUTO_PIPELINE", "other"): "site"})
+        assert holders(a, tag_a) == holders(b, tag_b)
+    finally:
+        PL.SET_AUTO_GOAL_TABLES({}, {})
+        PL.RESET_AUTO_MULTI_CYCLE_TRACKING()
+
+
 @PL.hw_func
 def round_a_hw(x: PL.uint8_t) -> PL.uint8_t:
     return x + 1
@@ -945,4 +998,5 @@ if __name__ == "__main__":
     test_named_hw_func_errors()
     test_named_struct_and_enum_type_names()
     test_stream_factory_names_unchanged_and_forwarded()
+    test_goal_split_component_only_for_split_keys()
     print("All factory_closure_naming tests passed.")

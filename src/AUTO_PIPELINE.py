@@ -27,6 +27,7 @@ import sys
 from distutils.dir_util import copy_tree
 from pathlib import Path
 
+import AUTO
 import AUTO_MULTI_CYCLE
 import LOGIC
 import OPEN_TOOLS
@@ -2302,16 +2303,18 @@ def _PINNED_AUTO_FSM_UNIT(logic, local_sub):
 # Course then fine - knowhaimsayin
 def HARVEST_AUTO_PIPELINE_LATENCIES(parser_state, TimingParamsLookupTable):
     """Collect the discovered pipeline latency of every AUTO_PIPELINE-tagged
-    submodule instance, grouped by the tag's canonical latency-cache key
-    (pypeline.AUTO_PIPELINE.canonical_key, recorded per local submodule in
-    Logic.sub_inst_to_auto_pipeline_key by the Pypeline elaborator). Pinned
+    submodule instance, grouped by binding: the tag's canonical latency-cache
+    key (pypeline.AUTO_PIPELINE.canonical_key, recorded per local submodule in
+    Logic.sub_inst_to_auto_pipeline_key by the Pypeline elaborator), or that
+    key at the instance's MAIN's clock goal when the key is used at several
+    goals (AUTO.AUTO_PIPELINE_BINDING): each goal gets its own depth. Pinned
     AUTO_FSM units are skipped (_PINNED_AUTO_FSM_UNIT): when a re-elaboration
     schedules a new FSM, its units must not read as changed latencies.
 
     Returns (latencies, divergences):
-      latencies:   canonical_key -> latency (int) for keys whose instances
+      latencies:   binding -> latency (int) for bindings whose instances
                    all agree
-      divergences: canonical_key -> {full inst path -> latency} for keys
+      divergences: binding -> {full inst path -> latency} for bindings
                    whose instantiations were given different stage counts by
                    the sweep -- legal per-instance in the framework, but
                    unrepresentable as the single .latency int the design's
@@ -2346,7 +2349,10 @@ def HARVEST_AUTO_PIPELINE_LATENCIES(parser_state, TimingParamsLookupTable):
             latency = sub_timing_params.GET_TOTAL_LATENCY(
                 parser_state, TimingParamsLookupTable
             )
-            key_to_inst_latencies.setdefault(canonical_key, {})[sub_inst] = latency
+            binding = AUTO.AUTO_PIPELINE_BINDING(
+                parser_state, canonical_key, inst_name.split(LOGIC.SUBMODULE_MARKER)[0]
+            )
+            key_to_inst_latencies.setdefault(binding, {})[sub_inst] = latency
     latencies = {}
     divergences = {}
     for canonical_key, inst_latencies in key_to_inst_latencies.items():
@@ -2637,10 +2643,9 @@ def AUTO_PIPELINE_DIVERGENCE_EXIT(divergences):
             print(f"  {lat} clks : {sub_inst}")
     sys.exit(
         "AUTO_PIPELINE: ambiguous .latency: the above call site(s) are "
-        "instantiated multiple times with different discovered stage "
-        "counts, which a single .latency int cannot represent. Give "
-        "each call site its own factory-produced closure, or pin an "
-        "explicit latency=N."
+        "instantiated multiple times at one clock goal with different "
+        "discovered stage counts, which a single .latency int cannot "
+        "represent. Pin an explicit latency=N."
     )
 
 
@@ -2664,6 +2669,10 @@ def AUTO_PIPELINE_CONSTRAINTS_REALIZED_PROBLEMS(
     for inst_name, logic in parser_state.LogicInstLookupTable.items():
         for local_sub, constraint in logic.sub_inst_to_auto_pipeline_latency.items():
             key = logic.sub_inst_to_auto_pipeline_key.get(local_sub)
+            if key is not None:
+                key = AUTO.AUTO_PIPELINE_BINDING(
+                    parser_state, key, inst_name.split(marker)[0]
+                )
             floor = SWEEP.LATENCY_MEMORY_AP_FLOORS.get(key, 0) if memory_floors else 0
             if (constraint is None or constraint.upper_bound() is None) and not floor:
                 continue
@@ -4218,13 +4227,14 @@ class AutoPipelineRegion:
     lowered, verified against its real GET_TOTAL_LATENCY and then locked
     (params_are_fixed) before any containing landscape is built -- the
     container sees an ordinary Segment.LOCKED, the same path mini-sweep locks
-    use. Instances sharing a canonical key form one group and are planned to
-    one register count, so the harvested .latency cannot diverge."""
+    use. Instances sharing a binding (one key at one clock goal) form one
+    group and are planned to one register count, so the harvested .latency
+    cannot diverge."""
 
     def __init__(self, inst, constraint, key, func_name):
         self.inst = inst
         self.constraint = constraint
-        self.key = key  # canonical .latency key (None for C designs)
+        self.key = key  # .latency binding (AUTO.AUTO_PIPELINE_BINDING; None for C)
         self.func_name = func_name
         self.group = key if key is not None else ("inst", inst)
         # Budget divisor private to this region, multiplied on top of the
@@ -4296,13 +4306,13 @@ def COLLECT_AUTO_PIPELINE_REGIONS(parser_state, scope_inst=None, fixed_only=Fals
                 sub_inst == scope_inst or sub_inst.startswith(scope_inst + marker)
             ):
                 continue
-            regions.append(
-                AutoPipelineRegion(
-                    sub_inst,
-                    constraint,
-                    logic.sub_inst_to_auto_pipeline_key.get(local_sub),
-                    sub_logic.func_name,
+            key = logic.sub_inst_to_auto_pipeline_key.get(local_sub)
+            if key is not None:
+                key = AUTO.AUTO_PIPELINE_BINDING(
+                    parser_state, key, inst_name.split(marker, 1)[0]
                 )
+            regions.append(
+                AutoPipelineRegion(sub_inst, constraint, key, sub_logic.func_name)
             )
     return regions
 

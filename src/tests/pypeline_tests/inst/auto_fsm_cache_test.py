@@ -319,7 +319,7 @@ def test_call_site_created_during_a_pass_is_scheduled_blamed_and_tightened():
                     "_collect_timing_evidence",
                     lambda p, t, s: {k: [] for k in s},
                 ),
-                (AUTO_FSM, "_period_du", lambda parser: 100.0),
+                (AUTO_FSM, "_period_du", lambda parser, key: 100.0),
                 (
                     PY_TO_LOGIC,
                     "PARSE_FILE",
@@ -332,7 +332,7 @@ def test_call_site_created_during_a_pass_is_scheduled_blamed_and_tightened():
                 stack.enter_context(patch.object(obj, name, value))
             AUTO_FSM.DO_SCHEDULE_PASSES(state(), args, "design.py")
             # 80 of 100 MHz, a 15 ns worst state against a 10 ns period
-            tightened = AUTO_FSM.TIGHTENED_BUDGET_SCALE(state(), 2.5, 0.8, 150)
+            tightened = AUTO_FSM.TIGHTENED_BUDGET_SCALE(state(), "new", 2.5, 0.8, 150)
     finally:
         pypeline.SET_AUTO_FSM_SCHEDULE_CACHE({})
     assert sweeps == ["old", "new"], sweeps
@@ -430,7 +430,7 @@ def test_next_pass_reschedules_only_the_blamed_fsm():
                     "_collect_timing_evidence",
                     lambda p, t, s: {k: [] for k in s},
                 ),
-                (AUTO_FSM, "_period_du", lambda parser: 100.0),
+                (AUTO_FSM, "_period_du", lambda parser, key: 100.0),
                 (
                     PY_TO_LOGIC,
                     "PARSE_FILE",
@@ -443,7 +443,7 @@ def test_next_pass_reschedules_only_the_blamed_fsm():
                 stack.enter_context(patch.object(obj, name, value))
             AUTO_FSM.DO_SCHEDULE_PASSES(state(), args, "design.py")
             default = AUTO_FSM.DEFAULT_BUDGET_SCALE
-            tightened = AUTO_FSM.TIGHTENED_BUDGET_SCALE(state(), default, 0.8, 150)
+            tightened = AUTO_FSM.TIGHTENED_BUDGET_SCALE(state(), 1, default, 0.8, 150)
     finally:
         pypeline.SET_AUTO_FSM_SCHEDULE_CACHE({})
     assert sweeps == [0, 1], sweeps
@@ -789,10 +789,14 @@ def test_search_with_identical_inputs_is_reused_and_any_change_searches():
             parser.FuncLogicLookupTable[adder].delay = 30
             harvest()
             assert len(searches) == count + 1, "the original delay hits again"
+            # A MAIN's clock sets both its rate and its synthesis-only goal
+            # (PY_TO_LOGIC._set_main_clock)
             parser.main_mhz = {main: mhz * 2 for main, mhz in parser.main_mhz.items()}
+            parser.main_syn_mhz = dict(parser.main_mhz)
             harvest()
             assert len(searches) == count + 2, "a changed clock goal"
             parser.main_mhz = {main: mhz / 2 for main, mhz in parser.main_mhz.items()}
+            parser.main_syn_mhz = dict(parser.main_mhz)
             SYN._COMPILER_SOURCE_HASH = "a different compiler"
             harvest()
             assert len(searches) == count + 3, "a changed compiler"

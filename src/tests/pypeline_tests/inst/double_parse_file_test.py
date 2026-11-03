@@ -24,6 +24,7 @@ import tempfile
 import C_TO_LOGIC
 import PY_TO_LOGIC
 import SYN
+import pypeline
 
 SYN.SYN_OUTPUT_DIRECTORY = tempfile.mkdtemp(prefix="double_parse_file_test_")
 
@@ -98,6 +99,15 @@ def test_auto_fsm_design_reparses():
     # ids come from source coordinates. Any re-parse instability here would
     # rename the entity every pass and break cross-pass matching.
     parse_twice_and_compare(os.path.join(INST_DIR, "auto_fsm_test.py"))
+
+
+def test_auto_goal_split_design_reparses():
+    # AUTO objects from one comprehension used at two clock goals: the first
+    # parse elaborates again until each object resolves with its goal's
+    # tables, and names products by goal; a re-parse starts from those tables
+    # and must reach the same names in one elaboration.
+    parse_twice_and_compare(os.path.join(INST_DIR, "auto_goal_split_design.py"))
+    pypeline.SET_AUTO_GOAL_TABLES({}, {})
 
 
 def test_scheduled_auto_fsm_cache_reparses():
@@ -217,6 +227,7 @@ if __name__ == "__main__":
     test_stream_auto_pipeline_design_reparses()
     test_fir_design_reparses()
     test_auto_fsm_design_reparses()
+    test_auto_goal_split_design_reparses()
     test_var_ref_naming_design_reparses()
     test_user_names_design_reparses()
     test_design_source_is_frozen_across_reparses()

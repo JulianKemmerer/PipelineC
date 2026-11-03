@@ -3896,9 +3896,13 @@ def TRY_LATENCY_MEMORY_REPLAY(parser_state, args):
 
 
 def _auto_pipeline_tag_instances(parser_state):
-    """(key, main inst, constraint, callee func name) per AUTO_PIPELINE-tagged
-    instance, except fixed ones (latency=, @pipeline_latency callees), whose
-    latency is never a starting value."""
+    """(binding, main inst, constraint, callee func name) per AUTO_PIPELINE-
+    tagged instance, except fixed ones (latency=, @pipeline_latency callees),
+    whose latency is never a starting value. The binding is the tag's key, or
+    the key at the MAIN's goal when the key is used at several goals
+    (AUTO.AUTO_PIPELINE_BINDING): each goal remembers its own depth."""
+    import AUTO
+
     marker = LOGIC.SUBMODULE_MARKER
     fixed_funcs = getattr(parser_state, "func_fixed_latency", {}) or {}
     for inst_name, logic in sorted(parser_state.LogicInstLookupTable.items()):
@@ -3911,7 +3915,8 @@ def _auto_pipeline_tag_instances(parser_state):
                 continue
             if callee is None or callee in fixed_funcs:
                 continue
-            yield key, inst_name.split(marker)[0], constraint, callee
+            main = inst_name.split(marker)[0]
+            yield AUTO.AUTO_PIPELINE_BINDING(parser_state, key, main), main, constraint, callee
 
 
 def _latency_owners(parser_state):
@@ -5752,18 +5757,12 @@ def REGION_INTERIOR_LOCK_BLOCKER(region, plan, parser_state):
 
     A fixed (latency=) or capped (max_latency=) region owns its register
     count and resets its interior on a recount, which would drop the lock.
-    Every member of the region's group must lie in this plan's MAIN or a
-    peer's, at the same clock goal: the lock then goes into every member
-    (SHARE_LOCK), and group members must realize one .latency."""
+    Every other member of the region's group is in this plan's MAIN or a
+    peer's: a group is one key at one clock goal
+    (AUTO.AUTO_PIPELINE_BINDING), and the lock goes into every member
+    (SHARE_LOCK), which must realize one .latency."""
     if region.constraint.upper_bound() is not None:
         return "constrained AUTO_PIPELINE region"
-    marker = LOGIC.SUBMODULE_MARKER
-    mains = [plan.main_inst] + [peer.main_inst for peer in getattr(plan, "peers", ())]
-    for other in AUTO_PIPELINE.COLLECT_AUTO_PIPELINE_REGIONS(parser_state):
-        if other.group == region.group and not any(
-            other.inst.startswith(main + marker) for main in mains
-        ):
-            return "AUTO_PIPELINE region shared with a MAIN at another clock goal"
     return None
 
 

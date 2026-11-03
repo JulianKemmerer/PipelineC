@@ -1198,7 +1198,8 @@ The simulation stops with an error, instead of guessing, when:
 - another version of the compiler built the hardware (rebuild the top first);
 - a design parameter both runs declare has a different value;
 - the testbench uses an AUTO_PIPELINE, AUTO_FSM, AUTO_MULTI_CYCLE or auto-pipelined RAM
-  the build never decided, or has a `@MAIN` the sweep could pipeline that the build
+  the build never decided, at the testbench's clock goal when the build built it for
+  several goals, or has a `@MAIN` the sweep could pipeline that the build
   never built. Testbench MAINs are normally `@wires` or stateful, which need no build.
   A tag the built design read but never used, such as a factory's unused alternative,
   is allowed as long as the testbench only reads its `.latency`: it gets the value the

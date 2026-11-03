@@ -2,15 +2,18 @@
 
 [`src/AUTO.py`](../src/AUTO.py) holds what more than one AUTO feature needs:
 the typed combinational DAG, the bounded candidate search over it, the delay
-and area models used to rank candidates, and the helpers that turn a chosen
-graph back into ordinary Pypeline source. Nothing here schedules, pipelines or
-synthesizes anything by itself.
+and area models used to rank candidates, the helpers that turn a chosen
+graph back into ordinary Pypeline source, and which clock goals each
+AUTO_FSM / AUTO_PIPELINE object is built for. Nothing here schedules,
+pipelines or synthesizes anything by itself.
 
 | consumer | uses |
 |---|---|
 | [`AUTO_COMB_AREA_OPT` / `AUTO_COMB_DELAY_OPT`](AUTO_COMB_OPT_DESIGN.md) (`src/AUTO_COMB_OPT.py`) | DAG decoding, search, delay rewrites, timing model, area model, `_GraphCodegen`, `AutoError` |
 | [`AUTO_FSM`](AUTO_FSM_DESIGN.md) (`src/AUTO_FSM.py`) | DAG decoding (with descent into slow operations), soft equivalents, type resolution, the delay heuristics and area model its scheduler ranks with, `_Emitter` / `_exec_generated` / `_GraphCodegen`, `AutoError` |
 | `src/pipelinec` | sets `FORCE_ABSTRACT_AREA` (`--auto_fsm_abstract_area`) |
+| [`PY_TO_LOGIC.PARSE_FILE`](PY_TO_LOGIC_DESIGN.md) | `COLLECT_AUTO_OWNERS`, `AUTO_GOAL_TABLES`, `AUTO_GOAL_READ_PROBLEMS` |
+| [`AUTO_PIPELINE`](AUTO_PIPELINE_DESIGN.md), [`SWEEP`](SWEEP_DESIGN.md) | `AUTO_PIPELINE_BINDING` (harvest, regions, latency memory) |
 
 The temporal AUTO features' shared machinery — iterating synthesis toward a
 timing goal — is [`SWEEP_DESIGN.md`](SWEEP_DESIGN.md); the pipeline
@@ -31,7 +34,8 @@ representation is [`AUTO_PIPELINE_DESIGN.md`](AUTO_PIPELINE_DESIGN.md).
 - [4. Area](#4-area)
 - [5. Emitting source](#5-emitting-source)
 - [6. Errors and versions](#6-errors-and-versions)
-- [7. Tests](#7-tests)
+- [7. Clock goals of AUTO objects](#7-clock-goals-of-auto-objects)
+- [8. Tests](#8-tests)
 
 - [History](#history)
 
@@ -251,13 +255,79 @@ Its users:
 the timing report; bump the first when a rewrite or the graph encoding changes
 meaning, the second when the timing model does.
 
-## 7. Tests
+## 7. Clock goals of AUTO objects
+
+An AUTO_FSM or AUTO_PIPELINE object is built for the clock goals of the MAINs
+that use it, never for another MAIN's. A MAIN's goal is `GOAL_OF_MAIN`: the
+goal its sweep uses (`SYN.GET_TARGET_MHZ`, so `main_syn_mhz` on a
+synthesis-only tool), or None for a MAIN with no goal. Equal goals share.
+
+**Owners.** `COLLECT_AUTO_OWNERS` walks the instance tree once, at the end of
+every `PARSE_FILE`, into `ParserState.pypeline_auto_owner_mains`: (kind, key)
+-> the sorted names of the MAINs whose hierarchy calls it. AUTO_FSM keys are
+the call sites' binding keys (`Logic.sub_inst_to_auto_fsm_key`), AUTO_PIPELINE
+keys the tags' canonical keys. Only instances count: a function no MAIN
+reaches owns nothing. Goals are read from it when needed (`OWNER_GOALS`,
+`TIGHTEST_GOAL`), since the synthesis tool, and with it the goal of a MAIN, is
+settled only after the first parse. `AUTO_FSM._period_du` budgets a call site
+for the tightest goal among its owners.
+
+**Objects and sites.** Two factory calls on one function build two objects
+with one key, and their factory products, whose names come from what they
+wrap, elaborate as one function. Each object therefore records where it was
+built (`pypeline._auto_construction_site`, see
+[pypeline_DESIGN.md, AUTO objects and clock goals](pypeline_DESIGN.md#auto-objects-and-clock-goals)),
+and each AUTO call records the sites of the objects it calls
+(`Logic.sub_inst_to_auto_site`). `COLLECT_AUTO_SITE_GOALS` gives (kind, site)
+-> the goals of the MAINs calling the object built there.
+
+**Goal tables.** `AUTO_GOAL_TABLES(parser_state, constructed, split_keys)`
+gives what the next parse's objects resolve with
+(`pypeline.SET_AUTO_GOAL_TABLES`); `PY_TO_LOGIC.PARSE_FILE` parses again until
+a parse yields the tables it used. Only keys used at more than one goal get
+entries:
+
+- A key built at more than one site is *split*, unless its objects have a fixed
+  latency (`latency=`, AUTO_FSM's pinned units). First every object is told
+  apart by its site (`"site"`), which shows the goals each object is used at;
+  then by those goals (`{site: goals}`), so objects used at the same goals
+  share hardware again and names do not depend on construction order. The
+  split component joins the tag's naming identity (`pypeline._stable_key`), so
+  it reaches every closure, container and factory argument holding the tag.
+  A goal-named group instantiated outside its goals goes back to `"site"`.
+- An object's binding, the key its installed results are under, is its key at
+  its goal (`pypeline.GOAL_BINDING`: `key@50p0mhz`). An AUTO_FSM object used at
+  several goals takes the tightest: one schedule serves them, and
+  `_period_du` notes the shared budget once per build. An AUTO_FSM key whose
+  objects all get one binding keeps its plain key. An AUTO_PIPELINE object
+  used at several goals gets no entry: each of its instances is pipelined for
+  its own goal.
+
+A design whose AUTO keys are each used at one goal has empty tables and parses
+once, with the names, keys and VHDL it had before goals existed.
+
+**AUTO_PIPELINE bindings.** `AUTO_PIPELINE_BINDING(parser_state, key, main)`
+is an instance's group: the key, or the key at its MAIN's goal when the key
+is used at several. The harvest, the planner's region groups and the latency
+memory use it, so each goal gets its own depth.
+`AUTO_GOAL_READ_PROBLEMS` names each AUTO_PIPELINE object used at several
+goals whose `.latency` the design read (`pypeline.AUTO_READS`): no one value
+matches its instances, and `PARSE_FILE` raises with it.
+
+AUTO_MULTI_CYCLE needs none of this: an unnamed tag's key is its construction
+site already, and one tag used at several goals gets the count its fastest
+goal needs (see
+[AUTO_MULTI_CYCLE_DESIGN.md](AUTO_MULTI_CYCLE_DESIGN.md)).
+
+## 8. Tests
 
 `auto_comb_area_opt_test.py` and `auto_comb_delay_opt_test.py` exercise the
 search, BDD predicates, CSE, rewrites and timing model directly;
 `auto_fsm_unit_test.py` covers DAG decoding, descent, type resolution and the
 area model inside scheduling; `area_model_test.py` holds the area constants
-to the committed sky130 `cache/area`. See
+to the committed sky130 `cache/area`. `auto_fsm_owner_goal_test.py` covers the
+owner-goal budget, `auto_construction_site_unit_test.py` sites and bindings,
+and `auto_goal_split_test.py` the goal tables through `PARSE_FILE`. See
 [`pypeline_TESTS.md`](pypeline_TESTS.md).
 
 ## History

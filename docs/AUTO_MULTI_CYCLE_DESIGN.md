@@ -233,6 +233,12 @@ elaborated counts overlaid with the sweep's final overrides.
   multi-cycle path stops there with "Multi cycle paths have only been tested with Vivado!".
   Support for other tools is discussed in [#346](https://github.com/JulianKemmerer/PipelineC/discussions/346).
 - The coarse sweep, `--no_sweep` and `--comb` build the elaborated counts unchanged.
+- One tag has one count, even when MAINs at different clock goals use it: the count
+  grows for whichever goal's path fails, and `SEED_COUNTS` seeds from the fastest
+  goal, so it meets every clock and is more cycles than a slower domain needs. Tags
+  constructed separately, one per clock domain (two factory calls, or a loop), are
+  separate keys already, since an unnamed tag's key is its construction site, and get
+  counts of their own. A count per goal for one tag is not supported yet.
 - The count never goes below where it started: a post-met probe downward would cost a
   full synthesis per step on large designs.
 - Only the worst path per clock group is reported, so an AUTO_MULTI_CYCLE path hidden behind a

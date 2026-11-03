@@ -344,8 +344,10 @@ def test_any_input_a_search_reads_changes_its_digest():
             ),
             (
                 "the clock",
-                lambda: parser.main_mhz.update(top=100.0),
-                lambda: parser.main_mhz.update(top=200.0),
+                # A MAIN's clock sets both its rate and its synthesis-only
+                # goal (PY_TO_LOGIC._set_main_clock)
+                lambda: (parser.main_mhz.update(top=100.0), parser.main_syn_mhz.update(top=100.0)),
+                lambda: (parser.main_mhz.update(top=200.0), parser.main_syn_mhz.update(top=200.0)),
             ),
             (
                 "a delay setting",

@@ -990,7 +990,9 @@ compact repeated-helper solution before global densification skips past it:
    in-MAIN instance makes the hotspot unpipelinable. A hotspot inside an
    uncapped `start_latency=` region takes this step too
    (`REGION_INTERIOR_LOCK_BLOCKER`): the hint is only a starting count, so the
-   region must search like an untagged call site. Its region-wide growth only
+   region must search like an untagged call site. A region group is one key at one
+   goal (`AUTO.AUTO_PIPELINE_BINDING`), so its other members are always in this MAIN
+   or a peer. Its region-wide growth only
    spreads cuts over the delay model's layout, which can be far from the real
    paths (see History: *start_latency regions and mini-sweeps*). After the
    lock, `RESET_REGION_CALIBRATION_AFTER_LOCK` plans the rest of the region
@@ -1267,14 +1269,17 @@ invalid or stale memory leaves the normal build flow available; a cached build m
 follow a different path to an equally valid implementation.
 
 **Pieces and identities.** Each piece has a part, tool, key, digest and owning MAIN
-goal. A tag shared by MAINs has the *lowest* owner goal, and is recorded only when
+goal. An AUTO_PIPELINE key used at several clock goals is one piece per goal: its key
+is the binding (`AUTO.AUTO_PIPELINE_BINDING`, `key@50p0mhz`), and its instances there
+are seeded from it alone (`pypeline._latency_seed` tries the binding, then a hints
+file's plain key). A tag shared by MAINs has the *lowest* owner goal, and is recorded only when
 all owners met timing (`measured` or `no_failing_path_reported`). A failure in an
 unrelated MAIN does not discard a passing MAIN's depths or locks. Remember how a
 result was reached, such as depth 8 from a mini-sweep of `poly1305_body`.
 
 | Piece | Digest/key | Same goal | Lower goal |
 |---|---|---|---|
-| AUTO_PIPELINE depth | tag key and callee subtree digest | serves `.latency` and region `seed` start | serves and starts at the remembered depth, or at a deeper hint; for a region, also a floor it never realizes below (`LATENCY_MEMORY_AP_FLOORS`, see [AUTO_PIPELINE_DESIGN.md](AUTO_PIPELINE_DESIGN.md)) |
+| AUTO_PIPELINE depth | tag binding (key, or key at one goal) and callee subtree digest | serves `.latency` and region `seed` start | serves and starts at the remembered depth, or at a deeper hint; for a region, also a floor it never realizes below (`LATENCY_MEMORY_AP_FLOORS`, see [AUTO_PIPELINE_DESIGN.md](AUTO_PIPELINE_DESIGN.md)) |
 | AUTO_MULTI_CYCLE count | tag key and capture callee subtree/cone digest | provisional seed, with confirm-down | floor start (or a deeper hint), never confirmed below the remembered count |
 | mini-sweep lock | MAIN function / locked function and `SUBTREE_MODEL_FINGERPRINT` | loaded through `CARRIED_LOCKS` / `LOAD_CARRIED_LOCKS` | mini-sweep hint: skips the streak wait and starts coarse search at the old depth |
 | MAIN implementation | MAIN function and MAIN subtree digest under the same served values | `CAPTURE_CONCRETE_PIPELINE` / `RESTORE_CONCRETE_PIPELINE`, confirmed by synthesis | never replayed |
@@ -1480,8 +1485,9 @@ run on a fake hierarchy.
   - the pass-2 confirmation keeps crossed MAINs and skips a fallback that
     could not help.
 - **Regions:**
-  - region lock rules (unconstrained and start-only allowed; `latency=`, `max_latency=` and
-    groups shared with a MAIN at another clock goal refused);
+  - region lock rules (unconstrained and start-only allowed, also when the region's key
+    has a member at another goal, which is another group; `latency=` and
+    `max_latency=` refused);
   - a lock reaches every same-goal peer's instances, not another goal's;
     region-group decisions cover every same-goal member;
   - a scripted shared region locked once for both MAINs;

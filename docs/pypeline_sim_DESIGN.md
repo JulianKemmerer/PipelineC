@@ -2217,7 +2217,19 @@ what the build did not decide:
   wiring, is skipped.
 
 Keys match across the two tops because they never name the top: a named tag's key is its
-name, and an unnamed tag's is `CANONICAL_CALLABLE_KEY` of its function. `SIM.SIMULATE_BUILT_HARDWARE`
+name, and an unnamed tag's is `CANONICAL_CALLABLE_KEY` of its function.
+
+- **Results per clock goal.** A build records the results of an AUTO key used at several
+  clock goals once per goal (`key@50p0mhz`, `pypeline.GOAL_BINDING`). When the record holds
+  such entries (`_per_goal_results`), `run_sim` first imports the design with no results
+  and no built-hardware checks, only to learn the one clock its MAINs run on
+  (`_refuse_multi_clock` allows one), and installs that clock's goal
+  (`_run_goal_text`: its rate, or its `syn_mhz` when the record's `goal_mode` is `"syn"`)
+  with `pypeline.SET_AUTO_RUN_GOAL`. In the import that runs, every AUTO_PIPELINE /
+  AUTO_FSM takes its key's own entry when there is one, else its key at the run's goal,
+  at construction, so `.latency` reads during import see it too. A testbench at a goal
+  the build has no entry for gets `BuiltHardwareError`. The run goal is cleared at the
+  start of every `run_sim` and by `SIM.SIMULATE_BUILT_HARDWARE` afterwards. `SIM.SIMULATE_BUILT_HARDWARE`
 resets the source to `None` afterwards; every `run_sim` call also sets it from its own
 argument.
 

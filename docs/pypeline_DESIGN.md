@@ -1351,7 +1351,9 @@ The removed `depth=` keyword raises a `TypeError` that names its replacements.
 `.latency` is decided when the tag is constructed, in this order:
 1. A fixed `latency=N` is always N.
 2. Otherwise, the harvested stage count once the module-level cache
-   (`pypeline._auto_pipeline_latency_cache`) holds the tag's key. `AUTO_PIPELINE.DO_AUTO_PIPELINE_LATENCY_PASSES`
+   (`pypeline._auto_pipeline_latency_cache`) holds the tag's binding (`binding_key`: its
+   key, or its key at the clock goal of the MAINs that use it, see
+   [AUTO objects and clock goals](#auto-objects-and-clock-goals)). `AUTO_PIPELINE.DO_AUTO_PIPELINE_LATENCY_PASSES`
    installs the cache between pin-and-confirm passes, and again before a non-`--comb`
    `--sim` run imports the design for native sim.
 3. Otherwise, in a synthesizing build, a starting latency from the latency memory or
@@ -1383,7 +1385,7 @@ the compiler: its instance key falls back to `module.qualname#serial`. See
 returned (`AUTO_PIPELINE_SERVED_LATENCIES`). The driver skips the pin-and-confirm
 re-elaboration in two cases:
 - nothing was read;
-- every returned value already equals the stage count harvested for its key. That
+- every returned value already equals the stage count harvested for its binding. That
   covers fixed latencies, a correct `start_latency` guess, and a discovered 0.
 
 Naming: an unconstrained tag's identity is exactly its wrapped function's identity. This
@@ -1495,11 +1497,13 @@ UPDATE.latency                   # fixed in->out cycle count; 0 until a real bui
 Structurally a sibling of `AUTO_PIPELINE`, and deliberately so: a duck-type marker
 the elaborator probes for (`_is_auto_fsm_pragma`), a module-global cache
 `AUTO_FSM.DO_SCHEDULE_PASSES` installs between passes (`SET_AUTO_FSM_SCHEDULE_CACHE`,
-carrying `canonical_key -> schedule dict` instead of `-> stage count`; `AUTO_FSM.REPARSE`
+carrying `binding_key -> schedule dict` instead of `-> stage count`; `AUTO_FSM.REPARSE`
 adds call sites new to the build), a
 snapshot taken at construction so one design execution sees one consistent view,
-a `canonical_key` computed lazily via `PY_TO_LOGIC.CANONICAL_CALLABLE_KEY`, and
-an address-free `__repr__` for the same entity-naming-determinism reason.
+a `canonical_key` computed lazily via `PY_TO_LOGIC.CANONICAL_CALLABLE_KEY`, a
+`binding_key` (the key at the clock goal of the MAINs that use the object, see
+[AUTO objects and clock goals](#auto-objects-and-clock-goals)), and an
+address-free `__repr__` for the same entity-naming-determinism reason.
 
 The differences worth knowing:
 
@@ -1651,6 +1655,41 @@ The library factories `make_stream_multi_cycle(func, latency)` (fixed `MULTI_CYC
 Sweep and pin-and-confirm handling are in
 [`AUTO_MULTI_CYCLE_DESIGN.md`](AUTO_MULTI_CYCLE_DESIGN.md); elaboration is in
 [`PY_TO_LOGIC_DESIGN.md`](PY_TO_LOGIC_DESIGN.md#multi_cyclencycles--regt-tag--multi-cycle-path-constraint).
+
+### AUTO objects and clock goals
+
+An AUTO_PIPELINE or AUTO_FSM object is implemented for the clock goals of the MAINs
+that use it. The compiler decides which goals those are
+([AUTO_DESIGN.md](AUTO_DESIGN.md#7-clock-goals-of-auto-objects)); this module holds
+what a design execution resolves with, without importing the compiler.
+
+- **Sites.** Every AUTO_PIPELINE / AUTO_FSM object records where it was built,
+  `.site` (`_auto_construction_site`): the `(module, function, line)` of each frame
+  from its construction out to the first module-level frame, so a factory's own line
+  and the line that called it both count, plus an ordinal among objects with that
+  chain (a loop, a comprehension). An object built while a `@hw_func` body is
+  elaborated (`_const_folding`) is one per body line, with no ordinal; one built while
+  native simulation run steps its cycles (in a body, every cycle) has no site and is not recorded.
+  `AUTO_CONSTRUCTED()` lists the current execution's objects (kind, key, site, and
+  whether its latency can depend on a goal: not a fixed `latency=`, not an AUTO_FSM
+  pinned unit). Sites live within one build; they never enter names, records or
+  caches.
+- **Tables.** `PY_TO_LOGIC.PARSE_FILE` installs `SET_AUTO_GOAL_TABLES(site_bindings,
+  split_keys)` before each parse. `_auto_site_bindings` maps (kind, site) to the
+  object's binding; `_auto_split_keys` maps (kind, key) of a key split by goal to
+  `"site"` or `{site: goals}`. Only keys used at more than one goal have entries.
+- **Bindings.** `binding_key` (`_auto_binding`) is the key an object's installed
+  results are under: its site's binding, else its `canonical_key`. `GOAL_BINDING(key,
+  goal)` spells one, `key@50p0mhz` (`GOAL_TEXT`: the clock-port style, `nogoal` for a
+  MAIN with no goal). A native simulation replaying per-goal results sets
+  `SET_AUTO_RUN_GOAL`: an object then takes its key's own entry when the record has
+  one, else its key at the run's goal.
+- **Split identity.** `_stable_key` adds `("split", component)` to a tag's identity
+  when its key is split (`_auto_split_component`: its site, or the `GOAL_TEXT` of its
+  goals). Every other tag's identity is unchanged.
+- **Reads.** An AUTO_PIPELINE's `.latency` read outside a native simulation run is recorded
+  per object (`AUTO_READS()`), so a read of an object used at several goals can be
+  reported with its read sites.
 
 ### Fixed User Pipelines
 

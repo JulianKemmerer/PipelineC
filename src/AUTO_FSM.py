@@ -292,7 +292,8 @@ def COLLECT_AUTO_FSM_KEYS(parser_state):
 
 
 def GET_TAGS(parser_state) -> dict:
-    """canonical_key -> live pypeline.AUTO_FSM tag object, recorded by
+    """Call-site key (the tag's binding_key: its canonical_key, or the key at
+    one clock goal) -> live pypeline.AUTO_FSM tag object, recorded by
     BUILD_AUTO_FSM_FUNC as call sites elaborate."""
     return parser_state.pypeline_auto_fsm_tags
 
@@ -1626,7 +1627,7 @@ def _fu_id(entity, copy_index):
 
 def _prepare_unit_candidates(tag, parser_state, elaborator):
     """Retain the elaboration context for candidates discovered by scheduling."""
-    parser_state.pypeline_auto_fsm_elaborators[tag.canonical_key] = elaborator
+    parser_state.pypeline_auto_fsm_elaborators[tag.binding_key] = elaborator
 
 
 def _unit_function(parser_state, key, node, selection_rows=None):
@@ -3589,7 +3590,7 @@ def _BUILD_SCHEDULE(
             f"AUTO_FSM: the function tagged by {key!r} was never elaborated, so "
             f"there is nothing to schedule (internal error)."
         )
-    budget_du = _budget_du(parser_state, budget_scale)
+    budget_du = _budget_du(parser_state, key, budget_scale)
     snapshot = (prev_schedule or {}).get("entity_delays_snapshot", {})
     delays = _schedule_delays(parser_state, func_entity, snapshot)
     delays.update((prev_schedule or {}).get("corrected_entity_delays", {}))
@@ -4974,32 +4975,48 @@ def _unshareable_entities(schedule, unshared):
     return out
 
 
-def _budget_du(parser_state, budget_scale):
-    """Per-state delay budget in delay units (tenths of a nanosecond).
+def _budget_du(parser_state, key, budget_scale):
+    """Per-state delay budget in delay units (tenths of a nanosecond) for
+    call site `key`.
 
-    Derived from the clock goal of the MAIN(s) the FSM ends up inside; when it
-    is instantiated under several clocks the tightest one wins, since one entity
-    is built once and must satisfy every context it appears in.
+    Derived from the clock goal of the MAIN(s) that instantiate the call site;
+    when they have several goals the tightest one wins, since one entity is
+    built once and must satisfy every context it appears in. Another MAIN's
+    goal plays no part.
     """
-    period_du = _period_du(parser_state)
+    period_du = _period_du(parser_state, key)
     if period_du is None:
-        # No clock goal anywhere: nothing to schedule against, so keep the whole
-        # function in one state.
+        # No MAIN using it has a clock goal: nothing to schedule against, so
+        # keep the whole function in one state.
         return 1 << 30
     return max(1, int(period_du * budget_scale))
 
 
-def _period_du(parser_state):
-    """The tightest MAIN clock period in (fractional) delay units, or None
-    when no MAIN has a clock goal. See _budget_du."""
+# Call-site keys whose MAINs have several clock goals, already noted this session
+_MULTI_GOAL_NOTED = set()
+
+
+def _period_du(parser_state, key):
+    """The clock period, in (fractional) delay units, of the tightest goal
+    among the MAINs that instantiate call site `key`, or None when none of
+    them has a goal. See _budget_du."""
     import SYN
 
-    mhz_values = [
-        mhz for mhz in parser_state.main_mhz.values() if mhz is not None and mhz > 0
-    ]
-    if not mhz_values:
+    goals = AUTO.OWNER_GOALS(parser_state, "AUTO_FSM", key)
+    goal = AUTO.TIGHTEST_GOAL(goals)
+    if goal is None:
         return None
-    return 1000.0 / max(mhz_values) * SYN.DELAY_UNIT_MULT
+    if len([g for g in goals if g is not None]) > 1 and key not in _MULTI_GOAL_NOTED:
+        _MULTI_GOAL_NOTED.add(key)
+        print(
+            f"NOTE: AUTO_FSM {key} is used under MAINs with clock goals "
+            + ", ".join(f"{g:g}" for g in goals if g is not None)
+            + f" MHz; one schedule serves them all, built for {goal:g} MHz. "
+            "Construct one AUTO_FSM per clock domain (a separate AUTO_FSM(...) "
+            "or factory call each) to schedule each for its own clock.",
+            flush=True,
+        )
+    return 1000.0 / goal * SYN.DELAY_UNIT_MULT
 
 
 # Version of the persistent search cache's key and record format.
@@ -5147,7 +5164,7 @@ def _type_layouts(parser_state, ctypes):
     return layouts
 
 
-def _search_inputs(parser_state, tag, func_entity):
+def _search_inputs(parser_state, key, tag, func_entity):
     """What one call site's area search reads besides its own carried schedule
     and request, as JSON-safe data: the clock period its budget comes from,
     the target and the delay, area and placement settings, and the graphs,
@@ -5162,7 +5179,7 @@ def _search_inputs(parser_state, tag, func_entity):
     for name in closure:
         ctypes += parser_state.FuncLogicLookupTable[name].wire_to_c_type.values()
     return [
-        _period_du(parser_state),
+        _period_du(parser_state, key),
         _target_context(parser_state),
         [
             SYN.USE_PRIMITIVE_DELAY_MODEL,
@@ -5291,7 +5308,7 @@ def _search_digest(parser_state, key, tag, request):
                 SCHEDULE_VERSION,
                 # A search result is reused only by the code that searched it
                 SYN.COMPILER_SOURCE_HASH(),
-                _search_inputs(parser_state, tag, func_entity),
+                _search_inputs(parser_state, key, tag, func_entity),
                 key,
                 parser_state.pypeline_auto_fsm_source_identities.get(key)
                 or _source_identity(parser_state, func_entity),
@@ -5336,7 +5353,7 @@ def HARVEST_AUTO_FSM_SCHEDULES(
     """Schedule every AUTO_FSM call site in the design, or only those in
     `keys` when given.
 
-    Returns canonical_key -> schedule dict, ready to hand to
+    Returns call-site key (binding_key) -> schedule dict, ready to hand to
     pypeline.SET_AUTO_FSM_SCHEDULE_CACHE before re-executing the design file.
     prev_schedules carries forward the delay snapshot, so a reschedule on a
     later pass (where the pure function is no longer instantiated and therefore
@@ -5505,15 +5522,21 @@ def _BLAMED_MISS_RATIOS(parser_state, multimain_timing_params, schedules):
     # A failure names an FSM entity, or the AUTO_PIPELINE region of one of its
     # pinned units ("stop(AUTO_FSM owns pipeline placement auto_fsm_pinned_...)"),
     # which repair and tightening of the owning FSM can address.
-    name_to_key = {sched["entity"]: key for key, sched in schedules.items()}
+    # Two call sites at different clock goals can share one entity (equal
+    # schedules): a failure blames those used under the failing MAIN.
+    name_to_keys = {}
     for key, sched in schedules.items():
+        name_to_keys.setdefault(sched["entity"], set()).add(key)
         for implementation in sched.get("implementations", {}).values():
-            name_to_key[_pinned_unit_name(implementation)] = key
+            name_to_keys.setdefault(_pinned_unit_name(implementation), set()).add(key)
     ratios = {}
     for main_func_name, goal, achieved, why in failures:
-        keys = {
-            name_to_key[name] for name in name_to_key if name in (why or "")
-        } or _AUTO_FSM_KEYS_UNDER_MAIN(parser_state, main_func_name)
+        named = set().union(
+            *(keys for name, keys in name_to_keys.items() if name in (why or ""))
+        )
+        if len(named) > 1:
+            named = named & _AUTO_FSM_KEYS_UNDER_MAIN(parser_state, main_func_name) or named
+        keys = named or _AUTO_FSM_KEYS_UNDER_MAIN(parser_state, main_func_name)
         ratio = achieved / goal if achieved and goal else None
         for key in keys:
             if key not in schedules:
@@ -5526,7 +5549,9 @@ def _BLAMED_MISS_RATIOS(parser_state, multimain_timing_params, schedules):
     return ratios
 
 
-def TIGHTENED_BUDGET_SCALE(parser_state, budget_scale, miss_ratio, worst_state_du):
+def TIGHTENED_BUDGET_SCALE(
+    parser_state, key, budget_scale, miss_ratio, worst_state_du
+):
     """The next per-state budget scale for an FSM blamed for a timing miss.
 
     Scaled by the measured miss (achieved / goal MHz): a build that reached
@@ -5547,7 +5572,7 @@ def TIGHTENED_BUDGET_SCALE(parser_state, budget_scale, miss_ratio, worst_state_d
         else BUDGET_TIGHTEN_FACTOR
     )
     scale = budget_scale * factor
-    period_du = _period_du(parser_state)
+    period_du = _period_du(parser_state, key)
     if period_du and worst_state_du > 0:
         # _budget_du truncates, so any scale putting period_du * scale below
         # worst_state_du gives a budget of at most worst_state_du - 1.
@@ -5557,14 +5582,11 @@ def TIGHTENED_BUDGET_SCALE(parser_state, budget_scale, miss_ratio, worst_state_d
 
 def _AUTO_FSM_KEYS_UNDER_MAIN(parser_state, main_func_name):
     """AUTO_FSM keys instantiated anywhere in one MAIN's instance hierarchy."""
-    keys = set()
-    for inst_name, logic in parser_state.LogicInstLookupTable.items():
-        if not logic.sub_inst_to_auto_fsm_key:
-            continue
-        root = inst_name.split(LOGIC.SUBMODULE_MARKER)[0]
-        if root == main_func_name:
-            keys.update(logic.sub_inst_to_auto_fsm_key.values())
-    return keys
+    return {
+        key
+        for (kind, key), mains in parser_state.pypeline_auto_owner_mains.items()
+        if kind == "AUTO_FSM" and main_func_name in mains
+    }
 
 
 # Schedule fields that describe HOW a schedule was reached or scored, not the
@@ -6259,7 +6281,7 @@ def _measure_schedule_inputs(parser_state, budget_scales, previous, keys=None):
                 )
             )
             budget_du = _budget_du(
-                parser_state, budget_scales.get(key, DEFAULT_BUDGET_SCALE)
+                parser_state, key, budget_scales.get(key, DEFAULT_BUDGET_SCALE)
             )
             try:
                 dag = AUTO.BUILD_DAG(parser_state, func_entity, delays, budget_du)
@@ -7110,7 +7132,7 @@ def _timing_repair_candidates(parser_state, key, tag, schedule, evidence, build_
             continue
         if SCHEDULES_EQUAL({key: schedule}, {key: trial}):
             continue
-        period = _period_du(parser_state)
+        period = _period_du(parser_state, key)
         clock_budget = min(trial["budget_du"], period) if period else trial["budget_du"]
         feasible = (
             not trial["latency_infeasible"] and trial["worst_state_du"] <= clock_budget
@@ -7423,8 +7445,8 @@ def DO_SCHEDULE_PASSES(parser_state, args, src_file):
             parser_state, multimain_timing_params, schedules
         )
         repaired = dict(schedules)
-        period_du = _period_du(parser_state)
         for key in sorted(blamed):
+            period_du = _period_du(parser_state, key)
             rows = evidence[key]
             unmatched = sum(not row["attributed"] for row in rows)
             schedules[key]["timing_evidence"] = (
@@ -7495,6 +7517,7 @@ def DO_SCHEDULE_PASSES(parser_state, args, src_file):
             for key in blamed:
                 budget_scales[key] = TIGHTENED_BUDGET_SCALE(
                     parser_state,
+                    key,
                     budget_scales.get(key, DEFAULT_BUDGET_SCALE),
                     miss_ratios.get(key),
                     latest[key]["worst_state_du"],
@@ -8610,7 +8633,7 @@ class _Codegen(AUTO._GraphCodegen):
         self.cur_state = first_node["state"]
         if implementation is not None:
             pipeline = _make_unit_tag(
-                self.parser_state, self.tag.canonical_key, first_node, implementation
+                self.parser_state, self.tag.binding_key, first_node, implementation
             )
             call = em.inj(pipeline, "pipeline")
             em.line(f"    {out_local} = {call}({', '.join(arguments)})", kind="unit")
@@ -8678,9 +8701,9 @@ def GENERATE_FSM_SOURCE(tag, schedule, parser_state):
     """Generate the resource-shared FSM as ordinary pypeline source."""
     generator = _Codegen(tag, schedule, parser_state)
     result = generator.generate()
-    parser_state.pypeline_auto_fsm_provenance[tag.canonical_key] = {
+    parser_state.pypeline_auto_fsm_provenance[tag.binding_key] = {
         "schema_version": 1,
-        "key": tag.canonical_key,
+        "key": tag.binding_key,
         "entity": schedule["entity"],
         "lines": generator.em.records,
         "registers": generator.register_nodes,
@@ -8712,7 +8735,7 @@ def _PREPARE_CANDIDATES(tag, parser_state, elaborator):
     AUTO_COMB_OPT.prepare(tag.func, parser_state, elaborator, strict=False)
     AUTO_COMB_OPT.prepare(tag.func, parser_state, elaborator, strict=False, objective="delay")
     entity = elaborator._elaborate_live_func(tag.func.__name__, tag.func).func_name
-    parser_state.pypeline_auto_fsm_source_identities[tag.canonical_key] = (
+    parser_state.pypeline_auto_fsm_source_identities[tag.binding_key] = (
         _source_identity(parser_state, entity)
     )
 
@@ -8724,7 +8747,7 @@ def BUILD_AUTO_FSM_FUNC(tag, parser_state, elaborator=None):
     combinational passthrough. Schedule installed -> the generated FSM.
     Memoized on the tag so several call sites of one tag share one entity.
     """
-    parser_state.pypeline_auto_fsm_tags[tag.canonical_key] = tag
+    parser_state.pypeline_auto_fsm_tags[tag.binding_key] = tag
 
     if tag._generated is not None:
         return tag._generated
@@ -8759,7 +8782,7 @@ def BUILD_AUTO_FSM_FUNC(tag, parser_state, elaborator=None):
             rejected = "malformed or stale schedule data"
         elif (
             schedule["source_identity"]
-            != parser_state.pypeline_auto_fsm_source_identities[tag.canonical_key]
+            != parser_state.pypeline_auto_fsm_source_identities[tag.binding_key]
         ):
             rejected = "the function's source geometry changed"
         elif schedule["target_context"] != _target_context(parser_state):
@@ -8771,7 +8794,7 @@ def BUILD_AUTO_FSM_FUNC(tag, parser_state, elaborator=None):
         if rejected is not None:
             # A stale carried schedule is a cache miss; the driver treats a
             # rejection of a schedule it has just produced as an internal error.
-            parser_state.pypeline_auto_fsm_schedule_rejections[tag.canonical_key] = (
+            parser_state.pypeline_auto_fsm_schedule_rejections[tag.binding_key] = (
                 rejected
             )
             tag._schedule = None
@@ -8815,7 +8838,7 @@ def DUMP_GENERATED_SOURCE(parser_state, out_dir, schedules=None):
             with open(os.path.join(gen_dir, f"{fn.__name__}.py"), "w") as f:
                 f.write(src)
             provenance = parser_state.pypeline_auto_fsm_provenance.get(
-                tag.canonical_key
+                tag.binding_key
             )
             if provenance is not None:
                 with open(
@@ -8823,7 +8846,7 @@ def DUMP_GENERATED_SOURCE(parser_state, out_dir, schedules=None):
                 ) as f:
                     json.dump(provenance, f, indent=2, sort_keys=True)
                     f.write("\n")
-            schedule = (schedules or {}).get(tag.canonical_key, tag.schedule)
+            schedule = (schedules or {}).get(tag.binding_key, tag.schedule)
             if schedule is not None:
                 with open(
                     os.path.join(gen_dir, f"{fn.__name__}.schedule.json"), "w"

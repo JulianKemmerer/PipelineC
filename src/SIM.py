@@ -206,7 +206,7 @@ def NATIVE_SIM_HARDWARE(parser_state, multimain_timing_params):
 # needs from that build (WRITE_BUILT_HARDWARE); present only once it met timing
 BUILT_HARDWARE_FILE = "built_hardware.json"
 # Format of BUILT_HARDWARE_FILE; a record of another version is not used
-BUILT_HARDWARE_VERSION = 1
+BUILT_HARDWARE_VERSION = 2
 # Command-line settings that never change what a build produces (where it runs,
 # how many jobs, where caches live, debug output, simulation-only options); every
 # other setting, including any new one, is one of the BUILD_INPUTS
@@ -377,6 +377,11 @@ def WRITE_BUILT_HARDWARE(parser_state, multimain_timing_params, src_file, build_
             for key, plan in sorted(hardware["auto_pipeline_ram_plans"].items())
         },
         pipeline_timing=hardware["pipeline_timing"],
+        # Which rate a MAIN's goal is (AUTO.GOAL_OF_MAIN): a clock's mhz, or on
+        # a synthesis-only tool its syn_mhz. Results of a key used at several
+        # goals are recorded per goal (pypeline.GOAL_BINDING); a simulation
+        # takes those of its own clock's goal.
+        goal_mode="pnr" if SYN.TOOL_DOES_PNR() else "syn",
         unbuilt_latency_reads=_unbuilt_latency_reads(
             hardware["auto_pipeline_latencies"] or {},
             hardware["auto_multi_cycle_latencies"] or {},
@@ -389,7 +394,7 @@ def WRITE_BUILT_HARDWARE(parser_state, multimain_timing_params, src_file, build_
 
 
 def _unbuilt_latency_reads(auto_pipeline_latencies, auto_multi_cycle_latencies):
-    """{kind: {canonical_key: value}}: the .latency value the final
+    """{kind: {binding: value}}: the .latency value the final
     elaboration read for each AUTO_PIPELINE / AUTO_MULTI_CYCLE it never
     instantiated (a factory's unused alternative, say). A simulation of this
     build serves the same value (pypeline._require_built). A tag read with two
@@ -502,6 +507,7 @@ def SIMULATE_BUILT_HARDWARE(args, src_file, build_inputs) -> bool:
                 auto_fsm_schedules=record["auto_fsm_schedules"],
                 pipeline_timing=record["pipeline_timing"],
                 auto_multi_cycle_latencies=record["auto_multi_cycle_latencies"],
+                goal_mode=record["goal_mode"],
                 built_hardware_from=out_dir,
                 design_params=record["design_params"],
                 unbuilt_latency_reads=record.get("unbuilt_latency_reads"),
@@ -510,6 +516,7 @@ def SIMULATE_BUILT_HARDWARE(args, src_file, build_inputs) -> bool:
             sys.exit(f"ERROR: {e}")
         finally:
             pypeline.SET_BUILT_HARDWARE_SOURCE(None)
+            pypeline.SET_AUTO_RUN_GOAL(None)
         return True
     if os.path.exists(path):
         os.remove(path)

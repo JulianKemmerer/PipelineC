@@ -492,8 +492,12 @@ repeat-the-sweep one:
    [latency memory or `--latency_hints`](SWEEP_DESIGN.md#5-latency-memory)) → path delays → full throughput
    sweep → `HARVEST_AUTO_PIPELINE_LATENCIES` walks the finished
    TimingParamsLookupTable and groups each AUTO_PIPELINE-tagged instance's
-   `GET_TOTAL_LATENCY` by the tag's canonical key (a pure in-memory walk; no
-   synthesis, no file I/O). The harvest invalidates every entry's memoized
+   `GET_TOTAL_LATENCY` by binding (`AUTO.AUTO_PIPELINE_BINDING`: the tag's canonical
+   key, or that key at the instance's MAIN's clock goal when the key is used at
+   several goals, so each goal gets its own depth; see
+   [AUTO_DESIGN.md](AUTO_DESIGN.md#7-clock-goals-of-auto-objects)) (a pure in-memory
+   walk; no synthesis, no file I/O). Instances of one binding with different depths
+   stop the build (`AUTO_PIPELINE_DIVERGENCE_EXIT`). The harvest invalidates every entry's memoized
    latency/hash first (same rationale as `WRITE_FINAL_FILES`): the planner
    mutates submodule `_slices` after container totals were first memoized,
    and a stale memo here would feed `.latency` (and the native simulator's
@@ -503,7 +507,7 @@ repeat-the-sweep one:
 2. **Early exits (the zero-added-cost invariant):** if there are no AUTO_PIPELINE call
    sites, or the design's Python never *read* any `.latency`
    (`pypeline.AUTO_PIPELINE_LATENCY_WAS_READ()`, a read-tracked property flag), or every
-   value it read already equals the stage count harvested for that key, the
+   value it read already equals the stage count harvested for its binding, the
    loop ends here. The second check compares `pypeline.AUTO_PIPELINE_SERVED_LATENCIES()`
    with the harvest using `AUTO_PIPELINE_SERVED_VALUES_MATCH`, and holds for fixed
    `latency=` call sites, a correct `start_latency=` guess or remembered latency, or a
@@ -599,10 +603,16 @@ repeat-the-sweep one:
    unstable call site.
 
 Hard errors (instead of silently-wrong hardware):
-- **Divergent `.latency`:** the same AUTO_PIPELINE-tagged function instantiated at
-  multiple sites with *different* discovered stage counts — legal per-instance in
-  the framework, unrepresentable as the single `.latency` int the design's Python
-  read. Fix: give each call site its own factory-produced closure, or pin `latency=N`.
+- **Divergent `.latency`:** one binding's instances (one key at one clock goal) given
+  *different* discovered stage counts — legal per-instance in the framework,
+  unrepresentable as the single `.latency` int the design's Python read. Fix: pin
+  `latency=N`.
+- **`.latency` of an object used at several clock goals:** each of its instances is
+  pipelined for its own MAIN's goal, so no one value matches; `PY_TO_LOGIC.PARSE_FILE`
+  raises (`AUTO.AUTO_GOAL_READ_PROBLEMS`) naming the object's construction line, its
+  goals and the read sites. Fix: construct one object per clock domain (a separate
+  `AUTO_PIPELINE(...)` or factory call each); unread, one object at several goals is
+  fine.
 - **Call-site set changed between passes:** an AUTO_PIPELINE-tagged instance on pass
   2 whose func didn't exist in pass 1 (detected as unseedable) — i.e. Python control
   flow, or closure-captured values encoded in a tagged function's identity, depended
@@ -739,9 +749,11 @@ delay axis, and the container can't count the region's latency.
     divided by `global_scale * region.scale` and in-region weights including
     `func_delay_scale`, capped at M.
 
-  Instances that share a canonical key form one group and are planned to one K, so the
-  harvested `.latency` can't diverge between them. When the members lie in several MAINs
-  at one clock goal, a decision for the group is made for every member: growth,
+  Instances that share a binding (one canonical key at one clock goal,
+  `AUTO.AUTO_PIPELINE_BINDING`; `region.key` is the binding) form one group and are
+  planned to one K, so the harvested `.latency` can't diverge between them. Members at
+  another goal are another group, with a depth of their own. When the members lie in
+  several MAINs at one clock goal, a decision for the group is made for every member: growth,
   rebalancing and post-lock recalibration (`_REGION_GROUP_PLANS`) as well as interior
   locks (`SWEEP.SHARE_LOCK`). The other MAIN takes no decision of its own for that
   hotspot in the same iteration. `AUTO_PIPELINE(func, name=)` gives
@@ -788,9 +800,9 @@ delay axis, and the container can't count the region's latency.
     one already tried while a region is at its cap. This stops before re-synthesizing.
 - **Mini-sweeps** never lock a hotspot that contains a region, or that lies inside a
   fixed (`latency=`) or capped (`max_latency=`) region: those own their count, and a
-  recount resets the interior. Inside an uncapped `start_latency=` region they do lock,
-  when every member of the region's group is in the blamed MAIN or a MAIN at the same
-  clock goal (`SWEEP.REGION_INTERIOR_LOCK_BLOCKER`); the lock goes into every member. The hint is a starting count only, and
+  recount resets the interior. Inside an uncapped `start_latency=` region they do lock
+  (`SWEEP.REGION_INTERIOR_LOCK_BLOCKER`): every member of the region's group is in the
+  blamed MAIN or a MAIN at its clock goal, and the lock goes into every member. The hint is a starting count only, and
   region-wide growth over a serial-layout delay model can need twice the registers. See
   [`SWEEP_DESIGN.md` History](SWEEP_DESIGN.md#start_latency-regions-and-mini-sweeps).
 - **Everything else includes regions:**
@@ -867,6 +879,11 @@ planning), `pipeline_latency_test.py` (fixed user pipelines),
 types and initialization conventions, with a synchronous memory access at
 every implementation point. Their minimum latency is **one enabled clock**.
 They never use a zero-cycle asynchronous-read memory as a timing baseline.
+
+One plan serves a configuration (its key) wherever it is used: `RAM_SEARCH` accepts a
+plan only when every clock meets timing, so identical RAM configurations under MAINs at
+different clock goals share a plan sized for the fastest. Separate per-goal plans for one
+configuration are not supported yet.
 
 Supported synthesis targets are Vivado (validated on `xc7a200tffg1156-2`) and
 ECP5 with `OPEN_TOOLS` (GHDL, Yosys, nextpnr-ecp5), tested on

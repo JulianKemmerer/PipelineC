@@ -5307,8 +5307,11 @@ class FuncElaborator:
             self.logic.sub_inst_to_auto_pipeline_key[inst] = (
                 auto_pipeline_call.canonical_key
             )
+            self.logic.sub_inst_to_auto_site[inst] = (auto_pipeline_call.site,)
         if auto_fsm_call is not None:
-            self.logic.sub_inst_to_auto_fsm_key[inst] = auto_fsm_call.canonical_key
+            # Its schedule's key: the binding at its MAINs' clock goal
+            self.logic.sub_inst_to_auto_fsm_key[inst] = auto_fsm_call.binding_key
+            self.logic.sub_inst_to_auto_site[inst] = (auto_fsm_call.site,)
         return port_return, ret_typ
 
     @staticmethod
@@ -9148,7 +9151,53 @@ def _elaborate_live_roots(roots):
 
 
 def PARSE_FILE(py_file, run_syn_initial_hooks=False, resolved_part=None):
-    """Import and elaborate a Pypeline design file.
+    """Import and elaborate a Pypeline design file (_PARSE_FILE_ONCE), again
+    until its AUTO objects resolve with the goal tables this parse's instances
+    give (AUTO.AUTO_GOAL_TABLES): an object used at a clock goal gets that
+    goal's results, and identical factory products holding objects used at
+    different goals stop merging into one function. A design whose AUTO keys
+    are each used at one goal parses once. Then an AUTO_PIPELINE used at
+    several goals whose .latency was read is an error.
+
+    run_syn_initial_hooks and resolved_part: see _PARSE_FILE_ONCE (the hooks
+    run on the first parse only).
+    """
+    import AUTO
+
+    seen = []
+    while True:
+        parser_state = _PARSE_FILE_ONCE(py_file, run_syn_initial_hooks, resolved_part)
+        run_syn_initial_hooks = False
+        installed = _pypeline_mod.AUTO_GOAL_TABLES()
+        tables = AUTO.AUTO_GOAL_TABLES(
+            parser_state, _pypeline_mod.AUTO_CONSTRUCTED(), installed[1]
+        )
+        if tables == installed:
+            break
+        if tables in seen:
+            raise ElaborationError(
+                "AUTO objects used at several clock goals did not settle: which "
+                "goals each object is used at depends on the values it resolves "
+                "to. Keys: "
+                + ", ".join(sorted({f"{kind} {key}" for kind, key in tables[1]}))
+            )
+        seen.append(tables)
+        _pypeline_mod.SET_AUTO_GOAL_TABLES(*tables)
+        print(
+            "AUTO objects are used at several clock goals; elaborating again so "
+            "each gets its own goal's hardware",
+            flush=True,
+        )
+    problems = AUTO.AUTO_GOAL_READ_PROBLEMS(
+        parser_state, _pypeline_mod.AUTO_CONSTRUCTED(), _pypeline_mod.AUTO_READS()
+    )
+    if problems:
+        raise ElaborationError("\n".join(problems))
+    return parser_state
+
+
+def _PARSE_FILE_ONCE(py_file, run_syn_initial_hooks=False, resolved_part=None):
+    """Import and elaborate a Pypeline design file once (see PARSE_FILE).
 
     run_syn_initial_hooks: run the design's @initial(syn) hooks right after the
     import, before elaboration, and keep them as pypeline._syn_hook_snapshot
@@ -9568,6 +9617,10 @@ def PARSE_FILE(py_file, run_syn_initial_hooks=False, resolved_part=None):
         logic.pypeline_emission_names = names
     for logic in parser_state.LogicInstLookupTable.values():
         logic.pypeline_emission_names = names
+    # Which MAINs, and so which clock goals, each AUTO call site is built for
+    import AUTO
+
+    parser_state.pypeline_auto_owner_mains = AUTO.COLLECT_AUTO_OWNERS(parser_state)
     return parser_state
 
 
