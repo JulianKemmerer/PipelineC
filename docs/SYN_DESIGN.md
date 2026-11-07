@@ -88,6 +88,16 @@ design's RAMs for the resolved target (`AUTO_PIPELINE.RAM_PREPARE_TARGET`). For 
 OpenXC7 `--pins` build, it checks the Project X-Ray bitstream conversion tools
 before any time goes into a sweep.
 
+**Register power-up values.** `TARGET_HAS_REGISTER_POWER_UP_VALUES(part, tool_name)`
+says whether a declared target gives registers power-up values: `False` for an ASIC
+(the part selects `DEVICE_MODELS`, or the tool is `device_models` or `pyrtl`), `None`
+when neither part nor tool is declared, `True` for an FPGA. It reads names only, so a
+declared ASIC target counts where its tool is not installed. For `False`,
+`RESOLVE_BUILD_TARGET` runs `PY_TO_LOGIC.CHECK_ASIC_REGISTER_INITS` on a `.py` design:
+an initialized register there must reset
+([guide](pypeline_guide.md#asic-targets)). The later `PART_SET_TOOL` fallback to PyRTL
+for a build with no part is no declaration, so such builds are not checked.
+
 | part prefix | `SYN_TOOL` | `--syn_tool` name | `DEFAULT_PART` | runs |
 |---|---|---|---|---|
 | none | `PYRTL` | `pyrtl` | *(none)* | PyRTL's software gate-delay model (no FPGA part) |

@@ -43,6 +43,16 @@ def get_tests() -> list:
             cmd=[INST_DIR / "clock_api_unit_test.py"],
         )
     )
+    # The reset API: make_reset styles, Reg[T, RESET/NO_RESET] markers,
+    # make_clock(reset=) and its conflicts, MAIN(reset=, reset_registers=), the
+    # shared reset resolution rules, and the `reset` identifier rename.
+    tests.append(
+        Test(
+            name="reset_api_unit_test",
+            category="unit",
+            cmd=[INST_DIR / "reset_api_unit_test.py"],
+        )
+    )
     # The sweep's and back end's view of an async FIFO: paths inside its
     # clk_cross instance go to the side MAIN of their clock; side MAINs, not
     # the crossing, are its MAINs; CLK_CROSS_USES_XPM per tool and impl=.

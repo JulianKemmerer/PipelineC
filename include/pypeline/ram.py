@@ -600,7 +600,8 @@ def ram_vhdl_text(cfg, handshake):
             if cfg.byte_write_enables:
                 for j in range(cfg.we_bits):
                     t(
-                        f"if {bR}({p.valid_bit}) = '1' and {bR}({p.we_lo + j}) = '1' then"
+                        f"if RESET = '0' and {bR}({p.valid_bit}) = '1' and "
+                        f"{bR}({p.we_lo + j}) = '1' then"
                     )
                     t(
                         f"  ram_mem({p.sig}_a)({8 * j + 7} downto {8 * j}) <= "
@@ -608,7 +609,10 @@ def ram_vhdl_text(cfg, handshake):
                     )
                     t("end if;")
             else:
-                t(f"if {bR}({p.valid_bit}) = '1' and {bR}({p.we_lo}) = '1' then")
+                t(
+                    f"if RESET = '0' and {bR}({p.valid_bit}) = '1' and "
+                    f"{bR}({p.we_lo}) = '1' then"
+                )
                 t(f"  ram_mem({p.sig}_a) <= {bR}({p.wd_hi} downto {p.wd_lo});")
                 t("end if;")
         for stage in range(1, L + 1):
@@ -621,6 +625,18 @@ def ram_vhdl_text(cfg, handshake):
             s(f"    if {p.sig}_en = '1' then")
             body.extend("      " + line for line in stmts)
             s("    end if;")
+    # A reset (vhdl(..., reset="sync")) cancels every request in flight and
+    # clears the read registers; the memory keeps its contents. It is after
+    # the stage enables, so it wins over them.
+    cleared = []
+    for p in layouts:
+        cleared += [p.b(stage) for stage in range(1, L + 1)]
+        if p.readable and L > R:
+            cleared += [f"{p.sig}_rd{stage}" for stage in range(R + 1, L + 1)]
+    if cleared:
+        s("    if RESET = '1' then")
+        body.extend(f"      {name} <= (others => '0');" for name in cleared)
+        s("    end if;")
     s("  end if;")
     s("end process;")
 
@@ -691,6 +707,12 @@ def ram_model_class(cfg, handshake, port_out_types, out_t, resp_stream_types=Non
     class RamModel:
         def __init__(self):
             self.mem = copy.deepcopy(template) if compound else list(template)
+            self.pending = []
+            self.stages = [[empty] * L for _ in kinds]
+
+        def on_reset(self):
+            # A reset (pypeline._sim_apply_resets) cancels the requests in
+            # flight and the writes of its clock edge; the memory stays.
             self.pending = []
             self.stages = [[empty] * L for _ in kinds]
 
@@ -877,7 +899,7 @@ def make_ram(
     src = (
         f"@pipeline_latency({cfg.latency})\n"
         f"def {func_name}({params}) -> RAM_OUT_T:\n"
-        f"    vhdl(VHDL_TEXT)\n"
+        f'    vhdl(VHDL_TEXT, reset="sync")\n'
     )
     ns = {
         "pipeline_latency": pipeline_latency,
@@ -927,6 +949,11 @@ def _auto_pipeline_ram_vhdl(cfg, plan):
     """
     decl, body, clocked = [], [], []
     d, s, c = decl.append, body.append, clocked.append
+    # (register, its reset value) of the clocked registers a reset clears:
+    # the request bundles and tree, and every valid flag. Data registers next
+    # to the memory keep their values (their valid flags say they are stale),
+    # so the BRAM read and output registers infer as before.
+    cleared = []
     dual_writer = sum(k != "r" for k in cfg.ports) == 2
     memory_processes = [[] for _ in cfg.ports]
     L, D = plan.latency, plan.split_depth
@@ -983,6 +1010,7 @@ def _auto_pipeline_ram_vhdl(cfg, plan):
         s(f"{p.b(0)} <= {' & '.join(parts)};")
         for stage in range(1, L + 1):
             c(f"{p.b(stage)} <= {p.b(stage-1)};")
+            cleared.append((p.b(stage), "(others => '0')"))
 
         root = f"rq_p{p.i}_d0_n0"
         d(f"signal {root} : std_logic_vector({p.bw-1} downto 0);")
@@ -1005,6 +1033,8 @@ def _auto_pipeline_ram_vhdl(cfg, plan):
                     f"signal {name} : std_logic_vector({p.bw-1} downto 0) := (others => '0');"
                 )
                 emit = c if level <= plan.request_levels else s
+                if level <= plan.request_levels:
+                    cleared.append((name, "(others => '0')"))
                 emit(
                     f"{name}({p.valid_bit-1} downto 0) <= {parent}({p.valid_bit-1} downto 0);"
                 )
@@ -1033,7 +1063,9 @@ def _auto_pipeline_ram_vhdl(cfg, plan):
                     qdecl(memory_q)
                     c(f"{q} <= {memory_q};")
                     c(f"{q}_v <= {memory_q}_v;")
+                    cleared.append((q + "_v", "'0'"))
                 c(f"{memory_q}_v <= {req}({p.valid_bit});")
+                cleared.append((memory_q + "_v", "'0'"))
                 m(
                     f"if {req}({p.valid_bit}) = '1' then {memory_q} <= {mem}({addr}); end if;"
                 )
@@ -1045,7 +1077,8 @@ def _auto_pipeline_ram_vhdl(cfg, plan):
                         else (0, cfg.width - 1)
                     )
                     m(
-                        f"if {req}({p.valid_bit}) = '1' and {req}({p.we_lo+byte}) = '1' then"
+                        f"if RESET = '0' and {req}({p.valid_bit}) = '1' and "
+                        f"{req}({p.we_lo+byte}) = '1' then"
                     )
                     assignment = ":=" if dual_writer else "<="
                     m(
@@ -1061,6 +1094,8 @@ def _auto_pipeline_ram_vhdl(cfg, plan):
                     left, right = (f"rd_p{p.i}_d{level+1}_n{2*n+j}" for j in (0, 1))
                     qdecl(q)
                     emit = c if registered else s
+                    if registered:
+                        cleared.append((q + "_v", "'0'"))
                     emit(f"{q}_v <= {left}_v or {right}_v;")
                     if registered:
                         emit(
@@ -1074,6 +1109,7 @@ def _auto_pipeline_ram_vhdl(cfg, plan):
                 qdecl(reg)
                 c(f"{reg} <= {q};")
                 c(f"{reg}_v <= {q}_v;")
+                cleared.append((reg + "_v", "'0'"))
                 q = reg
             s(f"{p.out_prefix}rd_data <= {_vhdl_from_slv(cfg.elem_t, q)};")
         last = p.b(L)
@@ -1097,7 +1133,14 @@ def _auto_pipeline_ram_vhdl(cfg, plan):
                 "process(clk) begin\n  if rising_edge(clk) then\n    if CLOCK_ENABLE(0) = '1' then"
             )
             body.extend("      " + line for line in statements)
-            s("    end if;\n  end if;\nend process;")
+            s("    end if;")
+            # A reset (vhdl(..., reset="sync")) cancels the requests in flight,
+            # over the clock enable; the memory keeps its contents.
+            if statements is clocked and cleared:
+                s("    if RESET = '1' then")
+                body.extend(f"      {name} <= {value};" for name, value in cleared)
+                s("    end if;")
+            s("  end if;\nend process;")
     # The same caller contract as the native model. These checks have no
     # hardware cost and do not impose read-first/priority logic on inference.
     s("-- synthesis translate_off")
@@ -1167,6 +1210,10 @@ def _auto_pipeline_ram_model(cfg, plan, out_ts, out_t):
             new.__class__ = AutoPipelineRamModel
             new.recent_writes = list(self.recent_writes)
             return new
+
+        def on_reset(self):
+            super().on_reset()
+            self.recent_writes = []
 
         def __call__(self, *args, **kwargs):
             args = _bind_args([f"p{i}" for i in range(len(cfg.ports))], args, kwargs)
@@ -1288,7 +1335,10 @@ def make_auto_pipeline_ram(
     out_t = ram_make_struct("ram_out_t", [(f"p{i}", t) for i, t in enumerate(out_ts)])
     name = f"auto_pipeline_ram_h{key[:12]}_p{plan.fingerprint}"
     params = ", ".join(f"p{i}: P{i}_IN_T" for i in range(len(in_ts)))
-    source = f"@pipeline_latency({plan.latency})\ndef {name}({params}) -> OUT_T:\n    vhdl(VHDL_TEXT)\n"
+    source = (
+        f"@pipeline_latency({plan.latency})\ndef {name}({params}) -> OUT_T:\n"
+        f'    vhdl(VHDL_TEXT, reset="sync")\n'
+    )
     ns = dict(
         pipeline_latency=py.pipeline_latency,
         vhdl=py.vhdl,

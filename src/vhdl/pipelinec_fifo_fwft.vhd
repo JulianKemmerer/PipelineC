@@ -20,7 +20,10 @@ entity pipelinec_fifo_fwft is
     ready_in  : in  std_logic;
     data_out   : out std_logic_vector(DATA_WIDTH-1 downto 0);
     -- Optional for legacy C wrappers; Pypeline propagates the caller's CE.
-    clock_enable : in std_logic := '1'
+    clock_enable : in std_logic := '1';
+    -- Synchronous reset, over the clock enable: empties the FIFO (its
+    -- pointers and output valid; memory keeps its contents). Optional: '0'.
+    rst : in std_logic := '0'
   );
 end entity pipelinec_fifo_fwft;
 
@@ -42,11 +45,6 @@ architecture rtl of pipelinec_fifo_fwft is
   signal valid_out_pipe : std_logic;
   signal data_out_pipe : std_logic_vector(DATA_WIDTH-1 downto 0);
   signal pipe_ready       : std_logic;
-  signal por : std_logic := '1';
-  attribute KEEP : string;
-  attribute DONT_TOUCH : string;
-  attribute KEEP of por : signal is "TRUE";
-  attribute DONT_TOUCH of por : signal is "TRUE";
   signal ready_out_internal : std_logic;
   function make_mask return unsigned is
     variable rv : unsigned(ADDR_WIDTH downto 0) := (others => '0');
@@ -57,8 +55,6 @@ architecture rtl of pipelinec_fifo_fwft is
   constant mask : unsigned(ADDR_WIDTH downto 0) := make_mask; --(ADDR_WIDTH => '1', others => '0');
 
 begin
-  por <= '0' when rising_edge(clk);
-
   -- full when first MSB different but rest same
   full <= '1' when wr_ptr_reg = (rd_ptr_reg xor mask) else '0';
   full_cur <= '1' when wr_ptr_cur_reg = (rd_ptr_reg xor mask) else '0';
@@ -67,7 +63,7 @@ begin
   -- overflow within packet
   full_wr <= '1' when wr_ptr_reg = (wr_ptr_cur_reg xor mask) else '0';
 
-  ready_out_internal <= not full; -- and not por;
+  ready_out_internal <= not full;
   ready_out <= ready_out_internal;
 
   valid_out_pipe <= valid_out_pipe_reg;
@@ -84,10 +80,10 @@ begin
           mem(to_integer(wr_ptr_reg(ADDR_WIDTH-1 downto 0))) <= data_in;
           wr_ptr_reg <= wr_ptr_reg + 1;
         end if;
-        --if por = '1' then
-        --  wr_ptr_reg <= (others => '0');
-        --  wr_ptr_cur_reg <= (others => '0');
-        --end if;
+      end if;
+      if rst = '1' then
+        wr_ptr_reg <= (others => '0');
+        wr_ptr_cur_reg <= (others => '0');
       end if;
     end if;
   end process;
@@ -112,11 +108,10 @@ begin
             rd_ptr_reg <= rd_ptr_reg + 1;
           end if;
         end if;
-
-        --if por = '1' then
-        --  rd_ptr_reg <= (others => '0');
-        --  valid_out_pipe_reg <= '0';
-        --end if;
+      end if;
+      if rst = '1' then
+        rd_ptr_reg <= (others => '0');
+        valid_out_pipe_reg <= '0';
       end if;
     end if;
   end process;

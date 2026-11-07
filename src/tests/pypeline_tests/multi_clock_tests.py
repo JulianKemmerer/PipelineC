@@ -37,6 +37,32 @@ def get_tests() -> list:
             requires=["ghdl"],
         )
     )
+    # The two-domain reset design, --comb --no_synth, run in GHDL: each
+    # domain's MAINs, global instance and FIFO map their domain's reset, and a
+    # testbench resets each domain in turn while the other keeps counting.
+    # About 20 s, no synthesis tool.
+    tests.append(
+        Test(
+            name="multi_clock_reset_ghdl_test",
+            category=CATEGORY,
+            cmd=[INST_DIR / "multi_clock_reset_ghdl_test.py"],
+            needs_out_dir=True,
+            requires=["ghdl"],
+        )
+    )
+    # The same design synthesized --comb on ECP5 and on Artix-7: both clocks
+    # meet timing with their resets, and both per-policy entities of one
+    # function are built.
+    for tool in ("open_tools", "vivado"):
+        tests.append(
+            Test(
+                name=f"multi_clock_reset_synth_{tool}_test",
+                category=CATEGORY,
+                cmd=[INST_DIR / "multi_clock_reset_synth_test.py", "--syn_tool", tool],
+                needs_out_dir=True,
+                syn_tool=tool,
+            )
+        )
     # ECP5 builds of the two-clock synth fixture: --comb (a PASS line per
     # clock), the Part IV design --comb (its pin clock ETH_RX_CLK, which
     # nextpnr reports by the pin's name, gets its PASS line), a sweep that

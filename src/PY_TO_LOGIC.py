@@ -34,6 +34,7 @@ from pypeline import (
     _FifoType,
     _GlobalFifoInit,
     _Clock,
+    _Reset,
     BIT_MANIP_FUNC_NAMES as _BIT_MANIP_FUNC_NAMES,
     _INT_CTYPE_RE,
     _ctype_is_int,
@@ -57,6 +58,16 @@ import pypeline as _pypeline_mod
 # Imported here, not where it is used: PARSE_FILE evicts every module first
 # imported after the first parse whenever it re-parses
 import pypeline_host
+
+def _is_generated_source(src_file):
+    """True if src_file is the synthetic path of compiler-generated source
+    (pypeline._exec_generated_func, AUTO._exec_generated): an initializer
+    there is the compiler's, not the user's (CHECK_ASIC_REGISTER_INITS)."""
+    parts = os.path.normpath(str(src_file or "")).split(os.sep)
+    return len(parts) == 3 and parts[0] == "" and (
+        parts[1] in _pypeline_mod._GENERATED_SOURCE_DIR_MARKERS
+    )
+
 
 # Recognized by name in FuncElaborator._elab_stmt as a raw-VHDL-passthrough statement.
 # Distinct from LOGIC.VHDL_FUNC_NAME ("__vhdl__") — Pypeline's user-facing surface
@@ -2031,6 +2042,16 @@ class FuncElaborator:
             scope_globals if scope_globals is not None else self.module_globals
         )
         self.module_name = self.scope_globals.get("__name__")
+        # Whether a name in scope (or an attribute of a module in scope) holds a
+        # reset or clock a wire is bound to: only then can _refs_bound_wire hit
+        self.scope_has_bound_wires = any(
+            isinstance(v, (_Reset, _Clock))
+            or (
+                isinstance(v, _types.ModuleType)
+                and any(isinstance(x, (_Reset, _Clock)) for x in vars(v).values())
+            )
+            for v in list(self.scope_globals.values())
+        )
         # module_prefix: set to the import name (e.g. 'file_a') for functions defined in
         # an imported sub-file. Bare wire names and func names are mangled with this prefix.
         self.module_prefix = module_prefix
@@ -2255,6 +2276,28 @@ class FuncElaborator:
             for sub in ast.walk(node)
         )
 
+    def _refs_bound_wire(self, node):
+        """True if the expression reads a global wire whose module global holds
+        what it is bound to (`rst: Input[uint1_t] = make_reset()`, a clock pin):
+        eval() would see that Python object -- `if rst:` would fold to always
+        true -- where the name means the wire."""
+        if not self.scope_has_bound_wires:
+            return False
+        for sub in ast.walk(node):
+            if isinstance(sub, ast.Name) and isinstance(sub.ctx, ast.Load):
+                value = self.scope_globals.get(sub.id)
+                if isinstance(value, (_Reset, _Clock)) and (
+                    self._resolve_global_wire(sub.id) is not None
+                ):
+                    return True
+            elif isinstance(sub, ast.Attribute) and isinstance(sub.value, ast.Name):
+                mod = self._wire_module(sub.value.id)
+                if mod is not None and isinstance(
+                    getattr(mod, sub.attr, None), (_Reset, _Clock)
+                ):
+                    return True
+        return False
+
     def _try_eval_const(self, node, allow_hw_shadow=False):
         """Try to evaluate an AST expression as a plain Python elaboration-time value.
         Returns the Python value if successful, None if it involves hardware wires
@@ -2273,7 +2316,9 @@ class FuncElaborator:
         ordinary code -- a variable ANNOTATION -- where the surrounding Python
         constant is the only possible meaning.
         """
-        if not allow_hw_shadow and self._refs_hw_local(node):
+        if not allow_hw_shadow and (
+            self._refs_hw_local(node) or self._refs_bound_wire(node)
+        ):
             return None
         # A @sim_input/@sim_output reached by this eval (directly, or inside a
         # plain-Python helper) raises instead of running: folding its value
@@ -2654,11 +2699,30 @@ class FuncElaborator:
                 f"'{self.func_name}' (an optional leading docstring is fine) "
                 f"(at {_loc_str(self.src_file, stmt)})"
             )
-        if len(call.args) != 1 or call.keywords:
+        if len(call.args) != 1 or any(kw.arg != "reset" for kw in call.keywords):
             raise ElaborationError(
                 f"{_VHDL_TEXT_FUNC_NAME}(text) takes exactly one positional argument "
+                f"and the optional reset=\"sync\" "
                 f"(at {_loc_str(self.src_file, stmt)})"
             )
+        for kw in call.keywords:
+            reset = self._try_eval_const(kw.value)
+            if reset not in (None, "sync"):
+                raise ElaborationError(
+                    f"{_VHDL_TEXT_FUNC_NAME}(text, reset={reset!r}): give "
+                    f"reset=\"sync\" for text that resets its registers with "
+                    f"RESET, or leave it out "
+                    f"(at {_loc_str(self.src_file, stmt)})"
+                )
+            self.logic.vhdl_reset = reset
+        for arg in self.func_def.args.args + self.func_def.args.kwonlyargs:
+            if arg.arg.lower() in _pypeline_mod._IMPLICIT_PORT_NAMES:
+                raise ElaborationError(
+                    f"'{self.func_name}': a {_VHDL_TEXT_FUNC_NAME}(...) function "
+                    f"cannot have an argument named '{arg.arg}' -- VHDL reads it as "
+                    f"the RESET port the compiler adds for resets. Rename it "
+                    f"(rst, say). (at {_loc_str(self.src_file, stmt)})"
+                )
         text = self._try_eval_const(call.args[0])
         if not isinstance(text, str):
             raise ElaborationError(
@@ -3396,7 +3460,15 @@ class FuncElaborator:
                         f"'{var_name}': Reg[T] initializer must be a compile-time constant",
                         stmt.value,
                     )
-            self._declare_state_reg(var_name, inner_ctype, stmt.target, init_py_val)
+            self._declare_state_reg(
+                var_name,
+                inner_ctype,
+                stmt.target,
+                init_py_val,
+                reset_mode=ann_val.reset_mode,
+                init_explicit=stmt.value is not None
+                and not _is_generated_source(self.src_file),
+            )
             if ann_val.multi_cycle_role is not None:
                 self._tag_multi_cycle_reg(var_name, ann_val.multi_cycle_role)
             return
@@ -6411,7 +6483,10 @@ class FuncElaborator:
         _connect(self.logic, zeros_wire, var_name)
         self.env[var_name] = (var_name, typ)
 
-    def _declare_state_reg(self, var_name, c_type, node, init_py_val=None):
+    def _declare_state_reg(
+        self, var_name, c_type, node, init_py_val=None, reset_mode=None,
+        init_explicit=False,
+    ):
         """Declare a hardware state register (Reg[T] annotation).
 
         The base wire represents the register's current (start-of-cycle) value.
@@ -6420,8 +6495,12 @@ class FuncElaborator:
         create aliases in wire_aliases_over_time; the final alias is the next-cycle
         value (drives REG_COMB_<var_name> in the generated VHDL).
 
-        init_py_val: Python value (int/list/dict/NamedTuple) for power-on reset, or
-        None for zero init. Stored in VariableInfo.init for VHDL.STATE_REG_TO_VHDL_INIT_STR.
+        init_py_val: Python value (int/list/dict/NamedTuple) for its initial value
+        (power-up and reset value), or None for zero init. Stored in
+        VariableInfo.init for VHDL.STATE_REG_TO_VHDL_INIT_STR.
+        reset_mode: Reg[T, RESET] "reset", Reg[T, NO_RESET] "no_reset", else None.
+        init_explicit: declared with `= value` in user or library source
+        (CHECK_ASIC_REGISTER_INITS).
         """
         var_info = LOGIC.VariableInfo()
         var_info.name = var_name
@@ -6429,6 +6508,8 @@ class FuncElaborator:
         var_info.init = init_py_val  # None → WIRE_TO_VHDL_NULL_STR; else Python value
         var_info.is_volatile = False
         var_info.is_static_local = True
+        var_info.reset_mode = reset_mode
+        var_info.init_explicit = init_explicit
 
         self.logic.state_regs[var_name] = var_info
         self.logic.uses_nonvolatile_state_regs = True
@@ -6747,6 +6828,23 @@ class WireDecl(NamedTuple):
     binding: object = None  # the _Clock it carries (pin: Input[uint1_t] = clk)
 
 
+class ResetDecl(NamedTuple):
+    """One reset binding, `rst: Input[uint1_t] = make_reset()` or a Wire, in
+    ParserState.pypeline_resets[wire key] (_discover_global_wires)."""
+
+    reset: object  # its pypeline._Reset, which clocks and MAIN(reset=) name
+    kind: str  # "Input" (a top-level pin) or "Wire" (driven by one MAIN)
+    bare_name: str  # the declared Python name
+    loc: str  # where it is declared: "top.py:12"
+
+
+class MainReset(NamedTuple):
+    """A MAIN's reset, in ParserState.main_resets[MAIN] (_assign_resets)."""
+
+    source: str  # the reset's wire key (an Input pin or a Wire)
+    policy: str  # its reset_registers: "requested" or "all"
+
+
 class GlobalInstDecl:
     """One global instance declaration, Inst[f] (this class) or Fifo[T]
     (GlobalFifoDecl), in ParserState.pypeline_global_insts[key]. Found by
@@ -6775,6 +6873,9 @@ class GlobalInstDecl:
         # An async FIFO's clock crossing (main_name, then no MAIN), else None
         self.crossing = None
         self.no_added_latency_reason = ann.kind_name  # its MAIN's func_no_added_latency
+        # The MAINs of the functions using its wire (_check_global_insts),
+        # checked against its reset by _assign_resets
+        self.user_mains = []
 
     def describe(self):
         """How messages and timing reports name it: global instance alu0 [top.py:5]."""
@@ -7108,6 +7209,7 @@ def _discover_global_wires(tree, module_globals, parser_state, name_prefix=None)
         else:
             continue
         clock_binding = None
+        reset_binding = None
         fifo_init = None
         if kind == "Fifo":
             # A Fifo[T]'s initializer is its hardware, never optional
@@ -7129,6 +7231,28 @@ def _discover_global_wires(tree, module_globals, parser_state, name_prefix=None)
                 f"({_decl_loc_str(module_globals, node)}) takes no initializer: "
                 f"write '{node.target.id}: {ann_val}'"
             )
+        elif node.value is not None and isinstance(
+            module_globals.get(node.target.id), _Reset
+        ):
+            reset_binding = module_globals[node.target.id]
+            if kind not in ("Input", "Wire"):
+                raise ElaborationError(
+                    f"Global {kind} '{node.target.id}' "
+                    f"({_decl_loc_str(module_globals, node)}) cannot carry a "
+                    f"reset: bind make_reset() to an Input (a top-level pin) or a "
+                    f"Wire (driven by one MAIN)"
+                )
+            if ann_val.is_async or ann_val.clock is not None or getattr(
+                ann_val, "volatile", False
+            ):
+                raise ElaborationError(
+                    f"Global {kind} '{node.target.id}' "
+                    f"({_decl_loc_str(module_globals, node)}) carries a reset: "
+                    f"it takes no ASYNC, VOLATILE or clock marker. A reset is "
+                    f"synchronous to the clock of each MAIN it resets; "
+                    f"synchronize an asynchronous source in a MAIN on that clock "
+                    f"and bind make_reset() to the Wire it drives."
+                )
         elif node.value is not None:
             maybe_clock = module_globals.get(node.target.id)
             if isinstance(maybe_clock, _Clock):
@@ -7275,6 +7399,24 @@ def _discover_global_wires(tree, module_globals, parser_state, name_prefix=None)
             parser_state.pypeline_wire_decls[reg_name] = parser_state.pypeline_wire_decls[
                 reg_name
             ]._replace(binding=clock_binding)
+        if reset_binding is not None:
+            if var_info.type_name != "uint1_t":
+                raise ElaborationError(
+                    f"Global {kind} '{bare_name}' "
+                    f"({_decl_loc_str(module_globals, node)}) carries a reset "
+                    f"and must be uint1_t, got {var_info.type_name}"
+                )
+            for other_key, other in parser_state.pypeline_resets.items():
+                if other.reset is reset_binding:
+                    raise ElaborationError(
+                        f"The reset {reset_binding!r} is bound twice: to "
+                        f"'{other.bare_name}' ({other.loc}) and to '{bare_name}' "
+                        f"({_decl_loc_str(module_globals, node)}). Bind each "
+                        f"make_reset() once."
+                    )
+            parser_state.pypeline_resets[reg_name] = ResetDecl(
+                reset_binding, kind, bare_name, _decl_loc_str(module_globals, node)
+            )
     # The Python names of the clocks this module makes or imports, for messages
     # and the crossing report: the first name found for each clock (a pin or
     # wire bound to a clock is named after the pin, not the clock)
@@ -7713,6 +7855,10 @@ def _check_global_insts(parser_state):
                 users[fname] = accesses
         hardware = decl.hardware()
         ends = decl.check_users(parser_state, users, hardware)
+        func_mains = _func_mains(parser_state)
+        decl.user_mains = sorted(
+            {m for user in users for m in func_mains.get(user, ())} - {decl.main_name}
+        )
         _module, ports, bindings = hardware
         names = _global_inst_py_names(ports, bindings)
         for p, path in _global_inst_paths(ports, bindings):
@@ -8141,6 +8287,320 @@ def _check_clock_crossings(parser_state):
         return (src, int(line) if line.isdigit() else 0, row.name, str(row.read_clock))
 
     parser_state.pypeline_clock_crossings = sorted(rows.values(), key=order)
+
+
+def _design_clocks(parser_state):
+    """Every _Clock the design names: its @MAINs' clocks and its wires'
+    clock markers and bindings (what _assign_clocks checks for agreement)."""
+    clocks = [
+        fn._pypeline_main.clock
+        for fn in _pypeline_mod._main_registry
+        if fn._pypeline_main.clock is not None
+    ]
+    for decl in parser_state.pypeline_wire_decls.values():
+        clocks += [c for c in (decl.ann.clock, decl.binding) if c is not None]
+    return clocks
+
+
+def _reset_regs_below(parser_state, main, mode):
+    """[(func, register)] of the state registers marked `mode` ("reset":
+    Reg[T, RESET]) in the functions instanced below the MAIN `main`."""
+    found = []
+    for func, mains in sorted(_func_mains(parser_state).items()):
+        if main not in mains:
+            continue
+        logic = parser_state.FuncLogicLookupTable.get(func)
+        for reg, info in sorted((logic.state_regs if logic else {}).items()):
+            if getattr(info, "reset_mode", None) == mode:
+                found.append((func, reg))
+    return found
+
+
+def _assign_resets(parser_state):
+    """Give every MAIN with a reset its entry in main_resets: MainReset(the
+    reset's wire key, its reset_registers policy).
+
+    A registered @MAIN takes its MAIN(reset=), else the primary reset of the
+    clock it runs on (pypeline._resolve_main_reset). A global instance's MAIN
+    and a same-clock global FIFO's take their clock's primary reset under
+    "all" (pypeline._global_inst_main_reset); an async FIFO's side MAINs take
+    none. Then these are ElaborationErrors:
+
+    - a reset given to make_clock or MAIN(reset=) but bound to no wire
+    - a MAIN with reset_registers="all", or a Reg[T, RESET] below it, but no
+      reset
+    - a MAIN reset by a reset that a function below it drives
+    - a reset_registers="all" user MAIN at either end of an async global
+      FIFO, or using a global instance or same-clock FIFO that resets with
+      another reset
+    - a reset pin used on two clocks, or a reset Wire driven on another
+      clock than a MAIN it resets ("Clocks" in pypeline_guide.md#resets)
+
+    A MAIN "uses" its reset under "all", or under "requested" with a
+    Reg[T, RESET] below it. A reset no MAIN uses and no function reads gets
+    a NOTE; a reset pin is then dropped, so it makes no port. A raw vhdl()
+    function without reset= under an "all" MAIN gets a NOTE: it keeps its
+    state. Runs after _check_global_insts, so every MAIN has its clock."""
+    resets = parser_state.pypeline_resets
+    clocks = _design_clocks(parser_state)
+    key_of = {id(d.reset): k for k, d in resets.items()}
+
+    def key_for(reset, what):
+        key = key_of.get(id(reset))
+        if key is None:
+            raise ElaborationError(
+                f"{what} names {reset!r}, which is bound to no wire. Bind it on "
+                f"the line that makes it: `rst: Input[uint1_t] = make_reset()` "
+                f"(a pin) or `rst: Wire[uint1_t] = make_reset()` (driven by a "
+                f"MAIN)."
+            )
+        return key
+
+    for clk in clocks:
+        if clk.reset is not None:
+            key_for(clk.reset, f"make_clock(...) at {clk.origin}")
+    primaries = _pypeline_mod._clock_primary_resets(clocks)
+    infos = {fn._pypeline_main.name: fn._pypeline_main for fn in _pypeline_mod._main_registry}
+    decl_mains = {}  # MAIN -> the global instance declaration whose hardware it holds
+    for decl in parser_state.pypeline_global_insts.values():
+        for main in decl.main_names:
+            decl_mains[main] = decl
+    func_mains = _func_mains(parser_state)
+    table = parser_state.FuncLogicLookupTable
+
+    parser_state.main_resets = {}
+    for main in sorted(parser_state.main_mhz):
+        clock = _main_clock(parser_state, main)
+        decl = decl_mains.get(main)
+        if decl is not None:
+            if decl.crossing is not None:
+                continue  # an async FIFO's side MAIN: not reset
+            reset, policy = _pypeline_mod._global_inst_main_reset(clock, primaries)
+            what = f"{decl.describe()}"
+        elif main in infos:
+            info = infos[main]
+            reset, policy = _pypeline_mod._resolve_main_reset(info, clock, primaries)
+            what = f"@MAIN '{main}' ({info.origin})"
+        else:
+            continue
+        if reset is None:
+            if decl is None and policy == "all":
+                raise ElaborationError(
+                    f"{what} has reset_registers=\"all\" but no reset: its "
+                    f"clock {_clock_str(parser_state, clock)} has no primary "
+                    f"reset and it names none. Give one with "
+                    f"make_clock(..., reset=rst) or MAIN(..., reset=rst)."
+                )
+            requested = _reset_regs_below(parser_state, main, "reset")
+            if requested:
+                func, reg = requested[0]
+                raise ElaborationError(
+                    f"Register '{reg}' in '{func}' is Reg[T, RESET], but {what} "
+                    f"has no reset: its clock {_clock_str(parser_state, clock)} "
+                    f"has no primary reset and it names none. Give one with "
+                    f"make_clock(..., reset=rst) or MAIN(..., reset=rst)."
+                )
+            continue
+        key = key_for(reset, what)
+        parser_state.main_resets[main] = MainReset(key, policy)
+
+    def uses(main):
+        entry = parser_state.main_resets[main]
+        return entry.policy == "all" or bool(_reset_regs_below(parser_state, main, "reset"))
+
+    users = {}  # reset key -> [MAIN] using it
+    for main in sorted(parser_state.main_resets):
+        if uses(main):
+            users.setdefault(parser_state.main_resets[main].source, []).append(main)
+
+    def reset_desc(key):
+        d = resets[key]
+        return f"reset '{d.bare_name}' ({d.loc})"
+
+    # A MAIN is not reset by logic below it
+    for key, mains in users.items():
+        for func in sorted(table):
+            if key not in table[func].write_only_global_wires:
+                continue
+            for main in func_mains.get(func, ()):
+                if main in mains:
+                    raise ElaborationError(
+                        f"MAIN '{main}' is reset by {reset_desc(key)}, which "
+                        f"'{func}' drives below it: a reset would reset the logic "
+                        f"that ends it. Drive the reset from another MAIN that "
+                        f"this reset does not reset."
+                    )
+
+    # Global instances and FIFOs reset with their clock's reset
+    for dkey in sorted(parser_state.pypeline_global_insts):
+        decl = parser_state.pypeline_global_insts[dkey]
+        own = parser_state.main_resets.get(decl.main_name)
+        for user_main in decl.user_mains:
+            entry = parser_state.main_resets.get(user_main)
+            if entry is None or entry.policy != "all":
+                continue
+            if decl.crossing is not None:
+                raise ElaborationError(
+                    f"MAIN '{user_main}' uses {decl.describe()}, an async FIFO, "
+                    f"with reset_registers=\"all\": an async FIFO is not reset, "
+                    f"so a reset would leave words of before the reset in it. "
+                    f"Use reset_registers=\"requested\" in the MAINs at its ends, "
+                    f"with Reg[T, RESET] for the registers that must reset."
+                )
+            if own is None or own.source != entry.source:
+                theirs = "no reset" if own is None else reset_desc(own.source)
+                raise ElaborationError(
+                    f"MAIN '{user_main}' resets with {reset_desc(entry.source)} "
+                    f"under reset_registers=\"all\", but it uses "
+                    f"{decl.describe()}, which resets with its clock's primary "
+                    f"reset ({theirs}). Make {reset_desc(entry.source)} the "
+                    f"clock's reset: make_clock(..., reset=...)."
+                )
+
+    # Clocks: a reset is synchronous to the clock of each MAIN it resets
+    for key in sorted(users):
+        rdecl = resets[key]
+        if rdecl.kind == "Input":
+            seen = {}  # clock -> what is on it
+            for main in users[key]:
+                seen.setdefault(_main_clock(parser_state, main), f"MAIN '{main}' (reset)")
+            for func in sorted(table):
+                if key in table[func].global_wire_read_paths:
+                    for main in func_mains.get(func, ()):
+                        seen.setdefault(
+                            _main_clock(parser_state, main),
+                            f"{func}() at {_wire_access_loc(parser_state, func, key)}",
+                        )
+            if len(seen) > 1:
+                (c1, w1), (c2, w2) = sorted(seen.items(), key=str)[:2]
+                raise ElaborationError(
+                    f"Reset pin '{rdecl.bare_name}' ({rdecl.loc}) is used on two "
+                    f"clocks: {_clock_str(parser_state, c1)} by {w1} and "
+                    f"{_clock_str(parser_state, c2)} by {w2}. A reset is "
+                    f"synchronous to one clock. Synchronize it into each other "
+                    f"clock in a MAIN there and reset that clock's MAINs with the "
+                    f"result:\n"
+                    f"  {rdecl.bare_name}_in: Input[uint1_t, ASYNC]\n"
+                    f"  other_rst: Wire[uint1_t] = make_reset()\n"
+                    f"  @MAIN(other_clk)\n"
+                    f"  def other_rst_sync():\n"
+                    f"      s0: Reg[uint1_t]\n"
+                    f"      s1: Reg[uint1_t]\n"
+                    f"      other_rst = s1\n"
+                    f"      s1 = s0\n"
+                    f"      s0 = {rdecl.bare_name}_in"
+                )
+            continue
+        for func in sorted(table):
+            if key not in table[func].write_only_global_wires:
+                continue
+            for wmain in func_mains.get(func, ()):
+                wclk = _main_clock(parser_state, wmain)
+                for main in users[key]:
+                    rclk = _main_clock(parser_state, main)
+                    if rclk != wclk:
+                        raise ElaborationError(
+                            f"Reset Wire '{rdecl.bare_name}' ({rdecl.loc}) is "
+                            f"driven on {_clock_str(parser_state, wclk)} by "
+                            f"{func}() and resets MAIN '{main}' on "
+                            f"{_clock_str(parser_state, rclk)}. A reset is "
+                            f"synchronous to the clock it resets: drive a reset "
+                            f"Wire on that clock, from two registers on it that "
+                            f"synchronize an ASYNC source."
+                        )
+
+    # Unused resets
+    for key in sorted(resets):
+        if key in users:
+            continue
+        if any(key in table[f].global_wire_read_paths for f in table):
+            continue
+        rdecl = resets[key]
+        if rdecl.kind == "Input":
+            parser_state.global_vars.pop(key, None)
+            parser_state.input_wires.discard(key)
+            parser_state.pypeline_wire_decls.pop(key, None)
+            del resets[key]
+            _print_clock_message_once(
+                f"NOTE: reset '{rdecl.bare_name}' ({rdecl.loc}) resets no "
+                f"register and nothing reads it: it makes no port."
+            )
+        else:
+            _print_clock_message_once(
+                f"NOTE: reset '{rdecl.bare_name}' ({rdecl.loc}) resets no register."
+            )
+
+    # Raw VHDL that keeps its state under "all"
+    for func in sorted(table):
+        logic = table[func]
+        if logic.vhdl_module_text is None or logic.vhdl_reset is not None:
+            continue
+        for main in func_mains.get(func, ()):
+            entry = parser_state.main_resets.get(main)
+            if entry is not None and entry.policy == "all":
+                _print_clock_message_once(
+                    f"NOTE: '{func}' is raw vhdl() without reset=\"sync\": it "
+                    f"keeps its state when MAIN '{main}' resets "
+                    f"(reset_registers=\"all\")."
+                )
+                break
+
+
+def CHECK_ASIC_REGISTER_INITS(parser_state, target):
+    """On an ASIC target (`target`, a part or tool name; see
+    SYN.TARGET_HAS_REGISTER_POWER_UP_VALUES) registers have no power-up
+    values, so a register's explicit `= value` holds only if a reset sets it:
+    every Reg[T] declared with one (VariableInfo.init_explicit) must, in every
+    instance, reset under its MAIN's reset_registers policy -- the rule of
+    VHDL.STATE_REG_RESETS. Otherwise an ElaborationError lists each such
+    register with its MAIN and the fixes. A manual `if rst:` does not count.
+    A compiler-generated initial value that does not reset (AUTO_FSM's
+    one-hot idle bit, st1h_r = 1) gets a warning, once per function: whether
+    one exists depends on the encoding the FSM search picks."""
+    failures = []
+    for func in sorted(parser_state.FuncToInstances):
+        logic = parser_state.FuncLogicLookupTable.get(func)
+        if logic is None:
+            continue
+        for reg in sorted(logic.state_regs):
+            info = logic.state_regs[reg]
+            explicit = getattr(info, "init_explicit", False)
+            generated = (
+                not explicit
+                and info.init is not None
+                and _is_generated_source(getattr(logic.ast_meta, "src_file", None))
+            )
+            if not (explicit or generated):
+                continue
+            for inst in sorted(parser_state.FuncToInstances[func]):
+                policy = VHDL.GET_INST_RESET_POLICY(inst, parser_state)
+                if VHDL.STATE_REG_RESETS(reg, logic, policy):
+                    continue
+                main = inst.split(LOGIC.SUBMODULE_MARKER)[0]
+                if generated:
+                    _print_clock_message_once(
+                        f"WARNING: compiler-generated '{func}' (an AUTO_FSM's "
+                        f"one-hot state, say) starts in its initial state "
+                        f"('{reg}') only through a reset on the ASIC target "
+                        f"{target}, and MAIN '{main}' does not reset it: give "
+                        f"that MAIN a reset and reset_registers=\"all\"."
+                    )
+                    break
+                failures.append((func, reg, main, policy))
+    if not failures:
+        return
+    lines = "\n".join(
+        f"  '{reg}' in '{func}', under MAIN '{main}' "
+        f"({'no reset' if policy is None else 'reset_registers=' + repr(policy)})"
+        for func, reg, main, policy in failures
+    )
+    raise ElaborationError(
+        f"The ASIC target {target} gives registers no power-up value, so an "
+        f"initial value holds only if a reset sets it. These registers have an "
+        f"initial value but do not reset:\n{lines}\n"
+        f"Reset them (a reset with MAIN(..., reset_registers=\"all\"), or "
+        f"Reg[T, RESET] = value), or drop the initial value."
+    )
 
 
 def _check_clock_bindings(parser_state):
@@ -9518,6 +9978,9 @@ def _PARSE_FILE_ONCE(py_file, run_syn_initial_hooks=False, resolved_part=None):
 
     # ── Global instances: check their users, add each FIFO's MAINs ──
     _check_global_insts(parser_state)
+
+    # ── Each MAIN's reset and reset_registers policy; reset rules ──
+    _assign_resets(parser_state)
 
     # ── No global wire crosses clocks but through a crossing; list crossings ──
     _check_clock_crossings(parser_state)

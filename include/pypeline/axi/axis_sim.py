@@ -68,6 +68,7 @@ class AxisSimSource:
         self.n = n
         self._queue = deque()
         self._current = None  # bytes remaining of the in-flight frame, or None
+        self._frame = None  # the whole in-flight frame, for restart()
         self._pause_iter = None
 
     def send_nowait(self, frame):
@@ -130,11 +131,17 @@ class AxisSimSource:
             eod=[0],
         )
 
+    def restart(self):
+        """Send the in-flight frame again from its first beat: a reset of the
+        receiver lost the beats it had accepted."""
+        if self._frame is not None:
+            self._current = self._frame
+
     def step(self, ready):
         if self._current is None:
             if not self._queue:
                 return self._null_word()
-            self._current = self._queue.popleft()
+            self._current = self._frame = self._queue.popleft()
 
         if self._paused():
             return self._null_word()
@@ -158,7 +165,7 @@ class AxisSimSource:
 
         if ready:
             if eod:
-                self._current = None
+                self._current = self._frame = None
             else:
                 self._current = self._current[self.n :]
 
@@ -191,6 +198,11 @@ class AxisSimSink:
         self.n = n
         self.scoreboard = scoreboard
         self._queue = deque()
+        self._current = bytearray()
+
+    def drop_partial(self):
+        """Forget the beats of an unfinished frame: a reset of the sender
+        restarts it."""
         self._current = bytearray()
 
     def step(self, word):
@@ -284,9 +296,12 @@ class ConvergedAxisSimSource:
     accepted. This wrapper splits the cycle in two:
 
         drive(pause=False)   from @sim_input: the word to present this cycle
-        commit(ready)        from @sim_output: the converged ready; advances
+        commit(ready, reset=0)
+                             from @sim_output: the converged ready; advances
                              only on a real transfer, returns True if one
-                             happened
+                             happened. While the receiver's reset is 1 no
+                             transfer happens, and the frame in flight is
+                             sent again from its first beat.
 
     `drive(pause=True)` inserts a gap only between accepted beats: an already
     presented (stalled) beat is held unchanged until accepted, as AXIS
@@ -312,7 +327,12 @@ class ConvergedAxisSimSource:
         self._held = bool(self._offered.stream.valid)
         return self._offered
 
-    def commit(self, ready):
+    def commit(self, ready, reset=0):
+        if int(reset):
+            self._source.restart()
+            self._held = False
+            self._offered = None
+            return False
         accepted = bool(self._offered is not None and self._offered.stream.valid and ready)
         if accepted:
             self._source.step(1)
@@ -322,13 +342,15 @@ class ConvergedAxisSimSource:
 
 
 class ConvergedAxisSimSink:
-    """AXIS sink that may backpressure: `step(word, ready, sideband=None)`
-    from `@sim_output` with the converged output word and the ready the
-    testbench drove this cycle. Only real transfers (valid & ready) reach the
-    wrapped `AxisSimSink` (and its scoreboard), and a stalled beat must stay
-    exactly the same -- data, keep, eod and the optional `sideband` value
+    """AXIS sink that may backpressure: `step(word, ready, sideband=None,
+    reset=0)` from `@sim_output` with the converged output word and the ready
+    the testbench drove this cycle. Only real transfers (valid & ready) reach
+    the wrapped `AxisSimSink` (and its scoreboard), and a stalled beat must
+    stay exactly the same -- data, keep, eod and the optional `sideband` value
     (e.g. a status bit beside the stream) -- until accepted, or an
-    `AssertionError` is raised. Counts `accepted_beats` and `stalled_cycles`.
+    `AssertionError` is raised. While the sender's reset is 1 no transfer
+    happens and an unfinished frame is dropped (its sender starts it again).
+    Counts `accepted_beats` and `stalled_cycles`.
     """
 
     def __init__(self, axis_intrf, n, scoreboard=None):
@@ -338,7 +360,11 @@ class ConvergedAxisSimSink:
         self.accepted_beats = 0
         self.stalled_cycles = 0
 
-    def step(self, word, ready=1, sideband=None):
+    def step(self, word, ready=1, sideband=None, reset=0):
+        if int(reset):
+            self._stalled = None
+            self._sink.drop_partial()
+            return
         stream = word.stream
         payload = (
             tuple(int(stream.data.frag.data[i]) for i in range(self._n)),

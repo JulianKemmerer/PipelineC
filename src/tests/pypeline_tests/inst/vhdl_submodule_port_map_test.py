@@ -8,6 +8,9 @@ one back off the whole entity text. The chain alternates a two-input stateless
 call with a stateful one (leading clk + CLOCK_ENABLE items), and each port map
 is checked item by item: a stray or missing separator changes the item list.
 
+A second chain resets every register (reset_registers="all"): each stateful
+port map then has the parent's RESET right after its clock enable.
+
 This checks the text, not the speed.
 """
 
@@ -30,10 +33,12 @@ PORT_MAP_RE = re.compile(
 )
 
 
-def _write_chain(directory: str, count: int) -> str:
+def _write_chain(directory: str, count: int, reset: bool = False) -> str:
     path = Path(directory) / "port_map_chain.py"
     lines = [
         "from pypeline import *",
+        "",
+        "rst: Input[uint1_t] = make_reset()" if reset else "",
         "",
         "@hw_func",
         "def step(x: uint16_t, y: uint16_t) -> uint16_t:",
@@ -45,7 +50,7 @@ def _write_chain(directory: str, count: int) -> str:
         "    total = total + x",
         "    return total",
         "",
-        "@MAIN",
+        '@MAIN(reset=rst, reset_registers="all")' if reset else "@MAIN",
         "def chain(x: uint16_t) -> uint16_t:",
         "    y: uint16_t = x",
     ]
@@ -57,11 +62,39 @@ def _write_chain(directory: str, count: int) -> str:
     return str(path)
 
 
-def _expected_port_map(inst: str) -> list:
+def _expected_port_map(inst: str, reset: bool = False) -> list:
     if inst.startswith("step_"):
         return [f"{inst}_x", f"{inst}_y", f"{inst}_return_output"]
     assert inst.startswith("acc_"), inst
-    return ["clk", f"{inst}_CLOCK_ENABLE", f"{inst}_x", f"{inst}_return_output"]
+    # The reset follows the clock enable, straight from the parent's RESET
+    resets = ["RESET"] if reset else []
+    return ["clk", f"{inst}_CLOCK_ENABLE"] + resets + [f"{inst}_x", f"{inst}_return_output"]
+
+
+def _chain_port_maps(count: int, reset: bool) -> tuple:
+    """(entity text, port maps) of the chain MAIN's entity."""
+    with tempfile.TemporaryDirectory() as directory:
+        state = PY_TO_LOGIC.PARSE_FILE(_write_chain(directory, count, reset))
+        root = next(
+            name
+            for name in state.main_mhz
+            if state.LogicInstLookupTable[name].func_name == "chain"
+        )
+        logic = state.LogicInstLookupTable[root]
+        timing = AUTO_PIPELINE.GET_ZERO_ADDED_CLKS_TIMING_PARAMS_LOOKUP(state)
+        text = VHDL.WRITE_LOGIC_ENTITY(root, logic, None, state, timing, return_text=True)
+    return text, PORT_MAP_RE.findall(text)
+
+
+def test_reset_port_follows_clock_enable():
+    """Under reset_registers="all" each stateful child gets the parent's RESET
+    after its clock enable; stateless children get none."""
+    count = 8
+    text, port_maps = _chain_port_maps(count, reset=True)
+    assert " RESET : in std_logic;" in text
+    assert len(port_maps) == count, len(port_maps)
+    for inst, items in port_maps:
+        assert items.split(",\n") == _expected_port_map(inst, reset=True), (inst, items)
 
 
 def test_every_submodule_port_map_is_exact():

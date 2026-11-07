@@ -182,8 +182,9 @@ class BufferTap(_EpochTap):
     see `stream_fifo_capacity_beats`).
 
     Occupancy survives a phase reset; counters do not, so a phase boundary
-    cannot silently invent an empty buffer. No hardware occupancy counter or
-    extra registers are introduced.
+    cannot silently invent an empty buffer. A reset of the buffer's hardware
+    does empty it (emptied(), called by stream_perf_probe). No hardware
+    occupancy counter or extra registers are introduced.
     """
 
     kind = "buffer"
@@ -195,6 +196,12 @@ class BufferTap(_EpochTap):
 
     def _commit(self, args):
         self.note(*args)
+
+    def emptied(self):
+        """The buffer itself was reset to empty (a hardware reset, or a new
+        simulation): commit the samples before it, count from zero after it."""
+        self.flush()
+        self.occupancy = 0
 
     def reset(self):
         self.cycles = 0

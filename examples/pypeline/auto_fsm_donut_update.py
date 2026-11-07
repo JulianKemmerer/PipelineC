@@ -30,10 +30,13 @@ full-rate rendering design.
 from pypeline import (
     AUTO_FSM,
     MAIN,
+    RESET,
+    Input,
     NamedTuple,
     Reg,
     hw_func,
     int16_t,
+    make_reset,
     struct,
     uint1_t,
     uint32_t,
@@ -132,8 +135,13 @@ def next_orientation(s: orientation_t) -> orientation_t:
 # One tag, constructed once at module level and captured by the @MAIN below.
 UPDATE_FSM = AUTO_FSM(next_orientation)
 
+# The reset pin. It resets only the orientation (Reg[T, RESET] below): on an
+# ASIC, which has no register power-up values, its starting pose holds only
+# through a reset.
+rst: Input[uint1_t] = make_reset()
 
-@MAIN(CLOCK_MHZ)
+
+@MAIN(CLOCK_MHZ, reset=rst)
 def auto_fsm_donut_update() -> orientation_t:
     """Drives one update per frame and holds the result for the renderer.
 
@@ -151,7 +159,7 @@ def auto_fsm_donut_update() -> orientation_t:
     else:
         frame_ctr += 1
 
-    state: Reg[orientation_t] = orientation_t(
+    state: Reg[orientation_t, RESET] = orientation_t(
         sB=0,
         cB=16384,
         sA=11583,

@@ -241,7 +241,10 @@ They share two `SIM.py` helpers:
   (`DUMP_PIPELINEC_DEBUG(dut)` prints them all);
 - `test_<top>.py`, a single-clock testbench (multiple clocks raise `NotImplementedError`)
   that drives the clock to `'0'` before its first rising edge, so the first logged
-  `Clock: 0` is a real edge, then runs `--run N` cycles;
+  `Clock: 0` is a real edge, then runs `--run N` cycles. It drives each reset pin
+  (`SimGenInfo.reset_inputs`: the Pypeline reset `Input`s still top-level ports) to 1
+  before the first edge and to 0 after it, the pulse native simulation drives
+  ([guide](pypeline_guide.md#resets-in-simulation));
 - a `Makefile` from `GET_MAKEFILE_TEXT`. GHDL is the only supported simulator (`--ghdl`,
   `--std=08`, plus `-frelaxed` when `AUTO_PIPELINE.RAM_REQUIRES_RELAXED_VHDL`).
 

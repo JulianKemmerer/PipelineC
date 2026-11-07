@@ -1075,6 +1075,30 @@ constants of a function writing two compound wires:
 
 The global FIFO tests above also cover the generic instance code on its FIFO kind.
 
+## Reset coverage
+
+Synchronous resets ([guide](pypeline_guide.md#resets)):
+
+| Test | Category | What it covers |
+|---|---|---|
+| `reset_api_unit_test` | `unit` | `make_reset` styles and their `NotImplementedError`s; `Reg[T, RESET/NO_RESET]` with a `MULTI_CYCLE` role in any order and the `TypeError`s; `make_clock(reset=)`, its read-only `.reset` outside the identity, two primary resets of one clock; `MAIN(reset=, reset_registers=)` argument errors; `_resolve_main_reset` and `_global_inst_main_reset`; the `reset` rename |
+| `reset_elab_test` | `elab_introspect` | `main_resets`; `RESET` on exactly the entities that reset, per-policy entities of one function and the reset-free one keeping its plain-design name; `NO_RESET` kept out; `"requested"` resetting only marked registers; raw `vhdl(..., reset="sync")` with the port or the constant; the notes for raw VHDL without `reset=` and for an unused reset pin (dropped); global instances and same-clock FIFOs on their clock's reset, unreset and unrenamed without one; every reset error (no reset, own reset, unbound, binding forms, a pin on two clocks, a `Wire` on another clock, `vhdl(reset=)` values, a raw argument named `reset`, an `"all"` user with another reset, an `"all"` async FIFO end); the ASIC initializer rule case by case and its `SYN.RESOLVE_BUILD_TARGET` hook |
+| `reset_sim_timeline_test` | `native_sim` | the cycle-0 pulse of a reset pin and `--run N`, an unchanged reset-free timeline, no pulse for a pin a `@sim_input` drives, a reset `Wire` from its logic, `sim_call` with resets inactive |
+| `self_check_reset_regs_test` | `native_vs_vhdl_sim` (`--comb`) | a pin reset pulsed in cycle 0 and a generator's reset `Wire`: scalar, signed, array, struct and enum initializers, `"all"` and `"requested"`, `NO_RESET`, one function reset in one MAIN and not another, a reset in a cycle a clock-enabled call is skipped, mirrored by manual `if rst:` logic |
+| `self_check_reset_pipeline_test` | `native_vs_vhdl_sim` (`--comb`, and sky130) | a fixed-latency `AUTO_PIPELINE`'s stage and raw operator registers: no stale valid after a reset |
+| `self_check_reset_fsm_test` | `native_vs_vhdl_sim` (`--comb`, and sky130) | a scheduled `AUTO_FSM` reset mid-request returns to idle and restarts; no result of the cancelled case |
+| `self_check_reset_global_inst_test` | `native_vs_vhdl_sim` (`--comb`) | `Inst[f]` of a counter and of an `AUTO_PIPELINE`, and a same-clock `Fifo[T]`, reset with their clock's reset |
+| `self_check_reset_ram_test` | `native_vs_vhdl_sim` (`--comb`) | a RAM reset keeps its contents, cancels a read in flight and the write at the reset edge |
+| `self_check_reset_stream_lib_test` | `native_vs_vhdl_sim` (`--comb`) | reset equivalence of a stream FIFO and two skid buffers: a chain reset mid-traffic matches one held in reset until then |
+| `multi_clock_reset_ghdl_test` | `multi_clock` (no synthesis) | `multi_clock_reset_design.py`: each domain's MAINs, global instance and FIFO map their domain's reset; GHDL resets each domain in turn while the other keeps counting |
+| `multi_clock_reset_synth_open_tools_test`, `multi_clock_reset_synth_vivado_test` | `multi_clock` (open_tools, Vivado) | the same design `--comb` on ECP5 and Artix-7: both clocks meet timing, both per-policy entities are built |
+| `vhdl_submodule_port_map_test` | `unit` | `RESET` after `CLOCK_ENABLE` in each stateful child's port map |
+| `double_parse_file_test` | `elab_introspect` | two parses give the same `main_resets` and per-policy entity names |
+
+Reset-free behavior is the default and stays in every other test. These keep no reset
+on purpose: Layer-1 `sim_call` scripts (`sim_call` has every reset inactive), C designs,
+`known_issues` reproducers, and tests whose subject is reset-free timing.
+
 ## Factory-made MAIN coverage
 
 `@MAIN`s made in code with `MAIN(fn, name=...)` ([guide](pypeline_guide.md#mains-made-in-code-mainfn-name)):

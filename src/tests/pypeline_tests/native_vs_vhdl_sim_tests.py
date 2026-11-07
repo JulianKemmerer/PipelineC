@@ -64,6 +64,25 @@ COMB_TEST_FILES = [
     # A named clock on a pin (SYS_CLK carries clk_50p0_sys): the cocotb
     # testbench drives the pin as its one clock
     ("self_check_named_clock_pin_test.py", INST_DIR, []),
+    # Synchronous resets of user registers: a pin reset pulsed in cycle 0 and
+    # a reset Wire from a generator MAIN; "all" and "requested" policies,
+    # NO_RESET, one function per-policy, reset of a skipped clock-enabled call
+    ("self_check_reset_regs_test.py", INST_DIR, []),
+    # Reset of a fixed-latency AUTO_PIPELINE's stage and raw operator registers:
+    # no stale valid comes out after a reset
+    ("self_check_reset_pipeline_test.py", INST_DIR, []),
+    # Reset of an AUTO_FSM's caller while a request is in flight (the call site
+    # is a passthrough under --comb; the sky130 entry below builds the FSM)
+    ("self_check_reset_fsm_test.py", INST_DIR, []),
+    # Global instances (Inst[f] of a counter and of an AUTO_PIPELINE) and a
+    # same-clock Fifo[T] reset with their clock's reset, with no keyword
+    ("self_check_reset_global_inst_test.py", INST_DIR, []),
+    # A RAM reset: contents kept, a read in flight cancelled, the write at the
+    # reset edge suppressed
+    ("self_check_reset_ram_test.py", INST_DIR, []),
+    # Reset equivalence of stream library blocks (stream FIFO, skid buffers):
+    # one chain reset mid-traffic matches one held in reset until then
+    ("self_check_reset_stream_lib_test.py", INST_DIR, []),
     # Global instances, Inst[f]: a combinational instance driven from two
     # MAINs, two instances of one counter, a skid buffer instance with
     # backpressure, an AUTO_PIPELINE(f, latency=2) instance and a make_ram
@@ -254,6 +273,11 @@ NON_COMB_TEST_FILES = [
         INST_DIR,
         ["--pipeline_min_effort", "0"],
     ),
+    # The same reset of a pipeline, with the sweep's sky130 build
+    ("self_check_reset_pipeline_test.py", INST_DIR, ["--pipeline_min_effort", "0"]),
+    # A scheduled AUTO_FSM reset mid-request: it returns to idle (its one-hot
+    # state to its idle bit) and restarts, with no result of the cancelled case
+    ("self_check_reset_fsm_test.py", INST_DIR, []),
     # Typed physical operation boundaries and genuine bit-internal cuts on a
     # flat/hierarchical fork-join pair with bypass/fanout alignment.
     (

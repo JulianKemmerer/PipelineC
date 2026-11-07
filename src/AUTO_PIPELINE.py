@@ -248,6 +248,15 @@ class TimingParams:
                 ("mcp", AUTO_MULTI_CYCLE.MCP_IMPLEMENTATION_VERSION,
                  tuple(sorted(Logic.mcp_tuples))),
             )
+        # An entity with a RESET port holds its MAIN's reset policy's logic
+        # (VHDL.GET_RESET_BLOCK_TEXT): one function reset under one MAIN and
+        # not under another is two entities. Reset-free entities add nothing,
+        # so their names do not change.
+        if VHDL.LOGIC_NEEDS_RESET(inst_name, Logic, parser_state, TimingParamsLookupTable):
+            rv += (
+                ("reset", VHDL.RESET_IMPLEMENTATION_VERSION,
+                 VHDL.GET_INST_RESET_POLICY(inst_name, parser_state)),
+            )
         # Only lowest level raw VHDL modules with no submodules include slices
         if len(Logic.submodule_instances) > 0:
             # Not raw hdl, slices dont guarentee describe pipeline structure
@@ -433,6 +442,9 @@ def DEL_PIPELINE_CACHES():
     _GET_ZERO_ADDED_CLKS_PIPELINE_MAP_cache.clear()
 
 
+# (func name, its instance's reset policy) -> the entity hash ext of the
+# function at zero added clocks (GET_ZERO_ADDED_CLKS_TIMING_PARAMS_LOOKUP):
+# the hash depends on the policy (RECURSIVE_GET_IO_REGS_AND_NO_SUBMODULE_SLICES)
 _GET_ZERO_CLK_HASH_EXT_LOOKUP_cache = {}
 
 
@@ -493,12 +505,14 @@ def GET_ZERO_ADDED_CLKS_TIMING_PARAMS_LOOKUP(parser_state):
                 )
                 bad_fixed_latency_when_cant_slice_func_names.add(logic_i.func_name)
         # Write cache
-        if logic_i.func_name in _GET_ZERO_CLK_HASH_EXT_LOOKUP_cache:
-            timing_params_i.hash_ext = _GET_ZERO_CLK_HASH_EXT_LOOKUP_cache[
-                logic_i.func_name
-            ]
+        hash_key = (
+            logic_i.func_name,
+            VHDL.GET_INST_RESET_POLICY(logic_inst_name, parser_state),
+        )
+        if hash_key in _GET_ZERO_CLK_HASH_EXT_LOOKUP_cache:
+            timing_params_i.hash_ext = _GET_ZERO_CLK_HASH_EXT_LOOKUP_cache[hash_key]
         else:
-            _GET_ZERO_CLK_HASH_EXT_LOOKUP_cache[logic_i.func_name] = (
+            _GET_ZERO_CLK_HASH_EXT_LOOKUP_cache[hash_key] = (
                 timing_params_i.GET_HASH_EXT(
                     ZeroAddedClocksTimingParamsLookupTable, parser_state
                 )

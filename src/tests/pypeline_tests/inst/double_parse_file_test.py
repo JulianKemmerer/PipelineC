@@ -150,6 +150,29 @@ def test_user_names_design_reparses():
     assert "(via " in sites["triple"] and "user_names_design.py:" in sites["triple"], sites
 
 
+def test_reset_design_reparses():
+    # Resets name hardware: one function reset under one MAIN and not under
+    # another is two entities (the reset policy is in the entity hash). Both
+    # parses must give the same main_resets and the same entity names.
+    import AUTO_PIPELINE
+    import VHDL
+
+    def entity_names(ps):
+        timing = AUTO_PIPELINE.GET_ZERO_ADDED_CLKS_TIMING_PARAMS_LOOKUP(ps)
+        return {
+            inst: VHDL.GET_ENTITY_NAME(inst, ps.LogicInstLookupTable[inst], timing, ps)
+            for inst in sorted(ps.FuncToInstances["counter"])
+        }
+
+    path = os.path.join(INST_DIR, "self_check_reset_regs_test.py")
+    ps1 = PY_TO_LOGIC.PARSE_FILE(path)
+    resets1, names1 = dict(ps1.main_resets), entity_names(ps1)
+    ps2 = PY_TO_LOGIC.PARSE_FILE(path)
+    assert dict(ps2.main_resets) == resets1, (ps2.main_resets, resets1)
+    assert entity_names(ps2) == names1, (entity_names(ps2), names1)
+    assert len(set(names1.values())) == 2, names1  # reset and reset-free entities
+
+
 def test_design_source_is_frozen_across_reparses():
     # pypelinec re-parses the design in later AUTO_PIPELINE passes, possibly
     # hours later. Edits to design files in the meantime must not reach those
@@ -230,5 +253,6 @@ if __name__ == "__main__":
     test_auto_goal_split_design_reparses()
     test_var_ref_naming_design_reparses()
     test_user_names_design_reparses()
+    test_reset_design_reparses()
     test_design_source_is_frozen_across_reparses()
     print("All double PARSE_FILE tests passed.")

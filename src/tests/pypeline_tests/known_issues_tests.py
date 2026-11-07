@@ -61,6 +61,34 @@ SWEEP_FLOAT32_BLOCKED = {
 
 def get_tests() -> list:
     tests = []
+    # Native sim: `~q` of a Wire[uint1_t] written from a comparison is always
+    # truthy (the wire holds a Python bool; ~True is -2), unlike the hardware's
+    # one-bit NOT. Inventory entry 48 (issue TBD).
+    tests.append(
+        Test(
+            name="native_invert_compare_wire_known_issue",
+            category="known_issues",
+            cmd=[INST_DIR / "native_invert_compare_wire_test.py"],
+            expect_fail=True,
+        )
+    )
+    # AUTO_PIPELINE(f, latency=2) of a function that reads a global wire cannot
+    # place its cuts ("realized 1 clock(s)"); with the wire's value as a
+    # constant it can. Inventory entry 47 (issue TBD).
+    tests.append(
+        Test(
+            name="fixed_latency_global_read_known_issue",
+            category="known_issues",
+            cmd=[
+                PYPELINEC,
+                INST_DIR / "fixed_latency_global_read_design.py",
+                "--comb",
+                "--no_synth",
+            ],
+            needs_out_dir=True,
+            expect_fail=True,
+        )
+    )
     # AUTO_PIPELINE(imported_f): the instance label is the bare name, the
     # func_name module-prefixed, so path attribution misses the region root
     # and the sweep replans blindly (WireGuard without its body wrappers).

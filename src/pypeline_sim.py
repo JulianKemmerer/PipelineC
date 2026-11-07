@@ -195,7 +195,8 @@ def run_sim(
     if design_params:
         _check_built_design_params(design_params, built_hardware_from)
 
-    wire_info, inst_decls = _discover_wire_names(module)
+    design_wires = _discover_wire_names(module)
+    wire_info, inst_decls = design_wires
 
     # Reset and initialise all wire and register state.
     pypeline.sim_reset()
@@ -206,17 +207,20 @@ def run_sim(
     # Each global instance and FIFO runs as the MAIN the compiler makes for
     # it, built by the same generator and registered like any made @MAIN.
     # Native sim runs one clock, so a FIFO's is single-clock too.
+    inst_mains = set()
     for mod, bare_name, ann in inst_decls:
         mod_globals = vars(mod)
         hardware = ann.hardware(bare_name, mod_globals.get(bare_name))
         main_name = pypeline._global_inst_main_name(mod.__name__, bare_name, ann)
-        pypeline._register_main(
-            pypeline._make_global_inst_main(
-                main_name, bare_name, ann, hardware, mod_globals
-            ),
-            None,
-            main_name,
-            f"{ann.kind_name} {bare_name}",
+        inst_mains.add(
+            pypeline._register_main(
+                pypeline._make_global_inst_main(
+                    main_name, bare_name, ann, hardware, mod_globals
+                ),
+                None,
+                main_name,
+                f"{ann.kind_name} {bare_name}",
+            )
         )
 
     mains = list(pypeline._main_registry)
@@ -229,6 +233,7 @@ def run_sim(
     duplicate = pypeline._duplicate_main_names(mains)
     if duplicate is not None:
         sys.exit(f"ERROR: {duplicate}")
+    _sim_reset_table(mains, inst_mains, design_wires)
 
     # A @MAIN's arguments are top-level input ports with no driver in native sim:
     # they read as typed zeros, like an undriven Input[T] (see _call_main).
@@ -336,8 +341,12 @@ def run_sim(
                 )
             print("Clock: ", cycle, flush=True)
             cycles_run = cycle + 1
+            if cycle < 2:
+                _drive_reset_pulse(cycle)
             try:
                 _run_clock_cycle(mains, main_arg_types, cycle)
+                if cycle == 0:
+                    _check_global_inst_resets(inst_decls, inst_mains)
             except pypeline.SimFinish:
                 print("")
                 print(f"sim_finish() called — stopping early at cycle {cycle}")
@@ -529,8 +538,10 @@ def _run_clock_cycle(mains: list, main_arg_types: dict, cycle: int) -> None:
         finally:
             pypeline._sim_current_main = None
 
-    # Commit all register writes simultaneously — the simulated clock edge.
+    # Commit all register writes simultaneously — the simulated clock edge —
+    # then the synchronous resets of that edge.
     pypeline._sim_reg_flush_buffer()
+    pypeline._sim_apply_resets()
 
     # Push this cycle's collected pipelined-MAIN write-sets into their delay
     # queues (deepcopy: entries must not alias objects the design mutates
@@ -538,6 +549,47 @@ def _run_clock_cycle(mains: list, main_arg_types: dict, cycle: int) -> None:
     for info in pypeline._sim_pipelined_main_info.values():
         info["queue"].append(copy.deepcopy(info["collector"]))
         info["collector"].clear()
+
+
+def _check_global_inst_resets(inst_decls, inst_mains) -> None:
+    """A reset_registers="all" MAIN that reads a global instance's or FIFO's
+    wire must reset with that instance's reset, its clock's primary reset (the
+    rule PY_TO_LOGIC._assign_resets enforces). Checked once, after cycle 0,
+    when the wires' readers are known."""
+    resets = pypeline._sim_root_resets
+    prefix = pypeline._SIM_MAIN_FRAME_PREFIX
+    for mod, bare_name, ann in inst_decls:
+        wire = f"{mod.__name__}.{bare_name}"
+        main_name = pypeline._global_inst_main_name(mod.__name__, bare_name, ann)
+        own = resets.get(prefix + main_name)
+        for reader in sorted(
+            pypeline._sim_wire_readers.get(wire, ()), key=lambda f: f._pypeline_main.name
+        ):
+            if reader in inst_mains:
+                continue
+            entry = resets.get(prefix + reader._pypeline_main.name)
+            if entry is None or entry[1] != "all":
+                continue
+            if own is None or own[0] != entry[0]:
+                sys.exit(
+                    f"ERROR: @MAIN '{reader._pypeline_main.name}' resets with "
+                    f"{entry[0]} under reset_registers=\"all\", but it uses "
+                    f"{ann.kind_name} {bare_name}, which resets with its clock's "
+                    f"primary reset ({'none' if own is None else own[0]}). Make "
+                    f"{entry[0]} the clock's reset: make_clock(..., reset=...)."
+                )
+
+
+def _drive_reset_pulse(cycle: int) -> None:
+    """The default reset pulse: before cycle 0 each reset Input pin is set to
+    1, and before cycle 1 to 0 -- unless Python code (a @sim_input, a
+    testbench MAIN) wrote it in cycle 0, which then drives it. HDL simulation
+    drives the same pulse (SIM.SimGenInfo.reset_inputs)."""
+    for wire, driven in pypeline._sim_reset_inputs.items():
+        if cycle == 0:
+            pypeline._sim_wire_state[wire] = pypeline._sim_cast(1, pypeline.uint1_t)
+        elif not driven:
+            pypeline._sim_wire_state[wire] = pypeline.sim_zero(pypeline.uint1_t)
 
 
 def _convergence_loop(mains: list, main_arg_types: dict, cycle: int) -> None:
@@ -581,6 +633,15 @@ def _convergence_loop(mains: list, main_arg_types: dict, cycle: int) -> None:
                         queued.add(reader)
 
 
+class _DesignWires(tuple):
+    """What _discover_wire_names found: unpacks as (wires, insts); .resets
+    holds (sim name, its _Reset, "Input" or "Wire") for each reset binding and
+    .clocks every _Clock a wire is marked with or bound to."""
+
+    resets = ()
+    clocks = ()
+
+
 def _discover_wire_names(module) -> tuple:
     """Return (wires, insts): (qualified_name, inner_ctype) for all
     Wire/Input/Output/Inst/Fifo in module and imported sub-modules,
@@ -588,6 +649,7 @@ def _discover_wire_names(module) -> tuple:
     Inst[f] / Fifo[T] declaration. Names are module-qualified ("<module>.<wire>",
     matching pypeline.py's _GlobalWireRewriter) so two unrelated modules
     declaring a same-named Wire[T] (e.g. both calling it "key") don't collide.
+    The result also carries the reset bindings and wire clocks (_DesignWires).
     """
     import types
 
@@ -595,6 +657,8 @@ def _discover_wire_names(module) -> tuple:
     result: list = []
     result_keys: set = set()
     insts: list = []
+    resets: list = []
+    clocks: list = []
 
     def _scan(mod):
         if id(mod) in seen_ids:
@@ -610,6 +674,14 @@ def _discover_wire_names(module) -> tuple:
                     result_keys.add(qualified)
                     if isinstance(ann, pypeline._GlobalInstType):
                         insts.append((mod, name, ann))
+                    value = vars(mod).get(name)
+                    if isinstance(value, pypeline._Reset):
+                        kind = "Input" if isinstance(ann, pypeline._InputType) else "Wire"
+                        resets.append((qualified, value, kind))
+                    elif isinstance(value, pypeline._Clock):
+                        clocks.append(value)
+                    if getattr(ann, "clock", None) is not None:
+                        clocks.append(ann.clock)
                 if ann.volatile:
                     pypeline._sim_wire_volatile.add(qualified)
         for attr in vars(mod).values():
@@ -617,7 +689,56 @@ def _discover_wire_names(module) -> tuple:
                 _scan(attr)
 
     _scan(module)
-    return result, insts
+    found = _DesignWires((result, insts))
+    found.resets = tuple(resets)
+    found.clocks = tuple(clocks)
+    return found
+
+
+def _sim_reset_table(mains, inst_mains, design_wires) -> None:
+    """Fill pypeline._sim_root_resets and _sim_reset_inputs for a run of
+    `mains` (@MAIN wrappers; `inst_mains` the global instances' among them):
+    each MAIN's reset and reset_registers policy, by the rules elaboration
+    uses (pypeline._resolve_main_reset, _global_inst_main_reset). Native sim
+    runs one clock, so a bare MAIN runs on the design's one named clock."""
+    clocks = list(design_wires.clocks) + [
+        fn._pypeline_main.clock for fn in mains if fn._pypeline_main.clock is not None
+    ]
+    conflict = pypeline._clock_conflict(clocks)
+    if conflict is not None:
+        sys.exit(f"ERROR: {conflict}")
+    primaries = pypeline._clock_primary_resets(clocks)
+    named = {fn._pypeline_main.clock.identity for fn in mains if fn._pypeline_main.clock}
+    run_clock = next(iter(named)) if len(named) == 1 else (None, None)
+    wire_of = {id(reset): name for name, reset, _kind in design_wires.resets}
+    for name, _reset, kind in design_wires.resets:
+        if kind == "Input":
+            pypeline._sim_reset_inputs[name] = False
+    for fn in mains:
+        info = fn._pypeline_main
+        identity = info.clock.identity if info.clock is not None else run_clock
+        if fn in inst_mains:
+            reset, policy = pypeline._global_inst_main_reset(identity, primaries)
+        else:
+            reset, policy = pypeline._resolve_main_reset(info, identity, primaries)
+        if reset is None:
+            if policy == "all" and fn not in inst_mains:
+                sys.exit(
+                    f"ERROR: @MAIN '{info.name}' ({info.origin}) has "
+                    f"reset_registers=\"all\" but no reset: its clock has no "
+                    f"primary reset and it names none. Give one with "
+                    f"make_clock(..., reset=rst) or MAIN(..., reset=rst)."
+                )
+            continue
+        wire = wire_of.get(id(reset))
+        if wire is None:
+            sys.exit(
+                f"ERROR: @MAIN '{info.name}' ({info.origin}) resets with "
+                f"{reset!r}, which is bound to no wire. Bind it on the line that "
+                f"makes it: `rst: Input[uint1_t] = make_reset()`."
+            )
+        root = pypeline._SIM_MAIN_FRAME_PREFIX + info.name
+        pypeline._sim_root_resets[root] = (wire, policy)
 
 
 def _evict_design_modules():

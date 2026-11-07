@@ -124,6 +124,15 @@ complete result type at `.return_t`. Each returned function carries its interfac
 `.t`, `.n_bytes` and the sizes), so a caller never has to rebuild a type to declare a
 port.
 
+**Resets.** Every block resets with its caller's `@MAIN`
+([Resets](../../../docs/pypeline_guide.md#resets)): under `reset_registers="all"` a
+reset returns it to its power-up state, with nothing valid on its output and its FIFOs
+empty (a stream RAM keeps its contents and cancels its requests); under the default
+`"requested"` nothing in it resets. A reset drops a transfer in its cycle. The native
+AXI-Stream models in `axi/axis_sim.py` take the reset each cycle
+(`ConvergedAxisSimSource.commit(ready, reset=)`, `ConvergedAxisSimSink.step(...,
+reset=)`): no transfer counts during it, and a frame cut by it is sent again whole.
+
 ## Tests
 
 | File | Covers |

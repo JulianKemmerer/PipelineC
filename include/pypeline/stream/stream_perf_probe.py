@@ -144,10 +144,22 @@ def _note_state(name, value, names, epoch):
     REGISTRY.tap(_qualified(name), StateTap).sample(epoch, (value, names))
 
 
+# Reserved _sim_reg_state key prefix (+ tap name) marking a probed buffer's
+# instance as live: a reset of the buffer's MAIN deletes it with the buffer's
+# own state (pypeline._sim_apply_resets), and the tap then counts from empty.
+_BUFFER_LIVE_KEY = "__stream_perf_buffer__"
+
+
 def _note_occupancy(name, in_valid, in_ready, out_valid, out_ready, capacity, epoch):
     if not REGISTRY.any_enabled():
         return
-    REGISTRY.tap(_qualified(name), BufferTap).sample(
+    tap = REGISTRY.tap(_qualified(name), BufferTap)
+    inst_path = pypeline._sim_current_inst_path()
+    key = _BUFFER_LIVE_KEY + name
+    if pypeline._sim_reg_read(inst_path, key, None) is None:
+        tap.emptied()
+    pypeline._sim_reg_write(inst_path, key, 1)
+    tap.sample(
         epoch, (bool(in_valid and in_ready), bool(out_valid and out_ready), capacity)
     )
 

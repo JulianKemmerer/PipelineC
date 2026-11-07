@@ -124,6 +124,8 @@ Within each group, bugs that affect both front ends come first, problems in the 
 | 44 | [#380][i380] | Both | The top level's global-wire connections come out in a hash-dependent order, so `top.vhd` changes between builds | Yes |
 | 45 | [#381][i381] | Both | After the sweep meets timing, a failed trim trial is kept and the build ends TIMING NOT MET | Yes |
 | 46 | TBD | Both | A hierarchy with inferred multiplies is sliced as if its DSP leaves shrank with it: a Karatsuba body needs 10–34 stages where ~5 would do | Yes, Vivado |
+| 47 | TBD | Python | `AUTO_PIPELINE(f, latency=N)` of a function that reads a global wire cannot place its cuts | Yes |
+| 48 | TBD | Python | Native sim: `~` of a one-bit wire written from a comparison is always true | Yes |
 
 ## Wrong hardware, or simulation disagrees with hardware
 
@@ -792,3 +794,33 @@ Within each group, bugs that affect both front ends come first, problems in the 
 [d342]: https://github.com/JulianKemmerer/PipelineC/discussions/342
 [p310]: https://github.com/JulianKemmerer/PipelineC/pull/310
 [p374]: https://github.com/JulianKemmerer/PipelineC/pull/374
+
+### 47. TBD: a fixed-latency `AUTO_PIPELINE` of a function that reads a global wire cannot place its cuts
+
+- **Front ends:** Python.
+- **What happens:** `AUTO_PIPELINE(scale, latency=2)`, where `scale` reads a global
+  `Wire` (`return (x * gain + x) + (x + 1)`), stops the build with "cannot build the
+  requested latency -- realized 1 clock(s) after planning 2, 3, 4, 5, 6 register
+  position(s)", with or without synthesis (`--comb --no_synth` on PyRTL timing). The same
+  function with `gain` a constant builds both cuts.
+- **Workaround:** pass the wire's value to the function as an argument.
+- **Where to look:** the aligned global read of a pipelined function
+  (`AUTO_PIPELINE.ALIGNED_GLOBAL_READS`, sampled with the arguments) and the fixed-latency
+  cut placement that counts register positions.
+- **Reproduce:** `known_issues_tests.py` `fixed_latency_global_read_known_issue`
+  (`inst/fixed_latency_global_read_design.py`, `--comb --no_synth`, expect-fail).
+
+### 48. TBD: native sim: `~` of a one-bit wire written from a comparison is always true
+
+- **Front ends:** Python (native simulation only).
+- **What happens:** with `q: Wire[uint1_t]` written as `q = t >= 2`, `if ~q:` is taken in
+  every cycle of native simulation: the wire holds the comparison's Python `bool`, and
+  `~True` is `-2`, which is truthy. In hardware `~q` is the one-bit NOT, so native and HDL
+  simulation disagree from the cycle the comparison is true.
+- **Workaround:** test `q == 0`, or assign the comparison to a typed local first
+  (`c: uint1_t = t >= 2`).
+- **Where to look (suspected, not traced):** `pypeline._sim_wire_write` stores the
+  value as given; casting a write to the wire's type, as typed locals are
+  (`_TypedAnnAssignRewriter`), would make `~` the one-bit NOT.
+- **Reproduce:** `known_issues_tests.py` `native_invert_compare_wire_known_issue`
+  (`inst/native_invert_compare_wire_test.py`, expect-fail).

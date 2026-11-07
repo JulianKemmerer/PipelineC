@@ -9,15 +9,24 @@ from typing import NamedTuple
 
 from pypeline import (
     MAIN,
+    Input,
     Reg,
     hw_func,
     int32_t,
+    make_reset,
     sim_call,
     sim_reset,
     struct,
+    uint1_t,
     uint8_t,
     uint32_t,
 )
+
+# A register's initializer is also its reset value, and the sky130 build
+# (synth_device_models) requires initialized registers to reset: the MAINs
+# with initializers reset every register with rst. sim_call runs with every
+# reset inactive, so the checks below see only the initial values.
+rst: Input[uint1_t] = make_reset()
 
 
 # ── inline struct for struct-init tests ─────────────────────────────────────
@@ -43,7 +52,7 @@ class nested_flags_t(NamedTuple):
 # ── hardware functions ───────────────────────────────────────────────────────
 
 
-@MAIN
+@MAIN(reset=rst, reset_registers="all")
 def counter_from_10() -> uint32_t:
     """Scalar register initialised to 10; first return value is 11."""
     cnt: Reg[uint32_t] = 10
@@ -59,7 +68,7 @@ def counter_default() -> uint32_t:
     return cnt
 
 
-@MAIN
+@MAIN(reset=rst, reset_registers="all")
 def signed_counter() -> int32_t:
     """Signed register initialised to -5; first return value is -4."""
     n: Reg[int32_t] = -5
@@ -67,21 +76,21 @@ def signed_counter() -> int32_t:
     return n
 
 
-@MAIN
+@MAIN(reset=rst, reset_registers="all")
 def array_reg_read_init() -> uint8_t:
     """Array register initialised to [10, 20, 30, 40]; returns buf[0] unmodified."""
     buf: Reg[uint8_t[4]] = [10, 20, 30, 40]
     return buf[0]
 
 
-@MAIN
+@MAIN(reset=rst, reset_registers="all")
 def struct_reg_init_dict() -> uint32_t:
     """Struct register dict style {x:3, y:7}; first return is 10."""
     pt: Reg[reg_point_t] = {"x": 3, "y": 7}
     return pt.x + pt.y
 
 
-@MAIN
+@MAIN(reset=rst, reset_registers="all")
 def struct_reg_init_ctor() -> uint32_t:
     """Struct register constructor style reg_point_t(x=5, y=2); first return is 7."""
     pt: Reg[reg_point_t] = reg_point_t(x=5, y=2)

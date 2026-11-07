@@ -73,6 +73,14 @@ trying to override it.
 part-less design keeps today's behavior; nothing about this backend is
 default-on.
 
+**Initialized registers must reset.** A sky130 cell library is an ASIC's, whose
+registers have no power-up value, so a Pypeline register's `= value` holds only
+through a reset. With this backend (or PyRTL) declared, a register declared with an
+explicit initializer that does not reset under its `@MAIN`'s `reset_registers` policy
+stops the build before any file is written
+([`SYN_DESIGN.md` §2](SYN_DESIGN.md#2-choosing-a-tool),
+[guide](pypeline_guide.md#asic-targets)).
+
 ## 2. How it works
 
 One file, three sections, in dependency order:

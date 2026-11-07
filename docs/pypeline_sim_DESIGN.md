@@ -1694,6 +1694,27 @@ all latch simultaneously at the clock edge.
    final converged value.
 2. **Simultaneous flush:** `_sim_reg_flush_buffer()` copies all buffered entries to
    `_sim_reg_state` in one operation after the final pass.
+3. **Synchronous resets:** `_sim_apply_resets()` runs right after the flush: the resets
+   of the same clock edge ([guide](pypeline_guide.md#resets)). `pypeline_sim._sim_reset_table`
+   fills `_sim_root_resets` (root frame → reset wire, `reset_registers` policy) by the
+   rules elaboration uses (`pypeline._resolve_main_reset`, and
+   `_global_inst_main_reset` for global instances' MAINs, bare, so on the run's one
+   clock). For each root whose reset wire converged to 1, the entries below it that reset
+   are deleted, so the next read returns the register's initializer: a `Reg[T, RESET]`
+   always, a plain register and the simulator's own state (AUTO_PIPELINE delay lines and
+   their delayed writes, AUTO_FSM state, sim models) only under `"all"`, and a
+   `"no_reset"` entry never. `_sim_reg_modes` holds the modes that are not the policy's:
+   `_build_reg_sim_func` passes `"reset"`/`"no_reset"` for marked registers to
+   `_sim_reg_write`, and `_call_sim_model` passes `"no_reset"` for the model of a raw
+   `vhdl()` function without `reset=` (its cell's second item, from
+   `_raw_vhdl_keeps_state`). A model with an `on_reset()` method (the RAM models) has it
+   called instead of being deleted. Under `"all"` a pipelined pure MAIN's delay queue is
+   cleared too. A `Reg[T, RESET]` written in a run whose MAIN has no reset raises.
+4. **The reset pulse:** `pypeline_sim._drive_reset_pulse` sets every reset `Input` to 1
+   before cycle 0 and to 0 before cycle 1, unless Python code wrote it in cycle 0
+   (`_sim_wire_write` marks `_sim_reset_inputs`). After cycle 0,
+   `_check_global_inst_resets` holds a `"all"` MAIN reading a global instance's or FIFO's
+   wire to that instance's reset. `sim_call` has no roots, so every reset is inactive.
 
 ### `@sim_output` — Controlled Side Effects
 

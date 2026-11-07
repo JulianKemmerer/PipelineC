@@ -38,6 +38,12 @@ The larger reduction is **whole-aggregate SSA with explicit extract/insert opera
 
 A session-owned function descriptor should hold frozen AST, annotations, closure bindings, source origins and operator scope. Latency-dependent Python still needs re-execution when it changes topology; optimize reuse of unaffected functions rather than promising to eliminate all reparses. The [scoped-registration defect](pypeline_COMPLEXITY_REVIEW.md#duplication-and-simplification) makes lifecycle cleanup urgent.
 
+Two name-resolution gaps found while adding resets (tree after that feature):
+
+- `_discover_global_wires` reads only the top-level `AnnAssign` nodes of a module body, so a global declared inside a module-level `if`/`try` (a fallback for host-side imports, say) is invisible to elaboration while native sim, which reads `__annotations__`, still sees it. WireGuard's `wireguard_env.py` needed stand-ins in its `except ImportError` branch to keep its reset pin top-level. Discovery could walk module-level `if`/`try` blocks the way conditional-import discovery does.
+- `_try_eval_const` evaluates a name against module globals, so a global wire whose module global holds what it is bound to (a `_Reset`, a clock pin's `_Clock`) folded to that Python object: `if rst:` built always-true logic. `_refs_bound_wire` now declines those. A `Fifo[T]`'s initializer object is in the same position and escapes only because its attribute reads raise (suspected latent hazard).
+- Only `reset` among the compiler's implicit entity port names is renamed by `_sanitize_vhdl_name` (`_IMPLICIT_PORT_NAMES`); a user local or argument named `clk` or `CLOCK_ENABLE` still collides with the entity's port of that name (suspected; not reproduced).
+
 ## Validation
 
 Use branch/loop partial struct writes, nested arrays, dynamic indices, hardware-local shadowing and custom operators as differential cases. Verify exceptions preserve original helper diagnostics and helpers are not evaluated repeatedly after classification. Compare cold/warm/reparsed builds, emitted type identities, source locations and clock crossing reports. The [constant-evaluation probe](REVIEW_EXPERIMENTS.md#constant-evaluation-outcomes) is a method-level experiment, not a complete design compile.

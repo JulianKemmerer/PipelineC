@@ -523,6 +523,9 @@ class Logic:
         # Is this logic completely replaced with raw vhdl module text?
         # (non-pipelineable global func like) None if not, else the literal text.
         self.vhdl_module_text = None
+        # Pypeline vhdl(text, reset="sync"): the raw text resets its registers
+        # with RESET (VHDL.LOGIC_NEEDS_RESET); None: it keeps its state
+        self.vhdl_reset = None
         # Quoted printf format string for a printf-builtin instance's own standalone Logic()
         # (set by BUILD_C_BUILT_IN_SUBMODULE_FUNC_LOGIC from the containing func's
         # submodule_instance_to_printf_format_string below). Frontend-agnostic: both the C
@@ -674,6 +677,7 @@ class Logic:
         rv.is_vhdl_func = self.is_vhdl_func
         rv.is_vhdl_expr = self.is_vhdl_expr
         rv.vhdl_module_text = self.vhdl_module_text
+        rv.vhdl_reset = self.vhdl_reset
         rv.printf_format_string = self.printf_format_string
         rv.sim_assert_msg = self.sim_assert_msg
         rv.is_new_style_bit_manip = self.is_new_style_bit_manip
@@ -830,6 +834,8 @@ class Logic:
             self.vhdl_module_text = self.vhdl_module_text
         else:
             self.vhdl_module_text = logic_b.vhdl_module_text
+        if self.vhdl_reset is None:
+            self.vhdl_reset = logic_b.vhdl_reset
 
         # Printf format string keep whichever is set (same pattern as vhdl_module_text)
         if (self.printf_format_string is not None) and (
@@ -2660,6 +2666,9 @@ def GLOBAL_VAR_IS_SHARED(var_name, parser_state):
     # Clock wires assumed shared
     if var_name in parser_state.clk_mhz:
         return True
+    # So are Pypeline reset wires: the top reads them for MAINs' RESET ports
+    if var_name in getattr(parser_state, "pypeline_resets", ()):
+        return True
     # Otherwise check where used
     if var_name not in parser_state.global_vars:
         return False
@@ -3414,6 +3423,12 @@ class ParserState:
         # Global wires whose clock rules the front end checked leaf by leaf
         # (Pypeline): VHDL.WRITE_MULTIMAIN_TOP skips its whole-wire check for them
         self.wire_clocks_checked = set()
+        # Pypeline resets (make_reset): reset wire key -> PY_TO_LOGIC ResetDecl
+        # (its _Reset, its kind of declaration, where it is declared)
+        self.pypeline_resets = {}
+        # MAIN name -> PY_TO_LOGIC MainReset (its reset wire key and its
+        # reset_registers policy), for each MAIN with a reset (_assign_resets)
+        self.main_resets = {}
         self.input_wires = set()
         self.output_wires = set()
         self.clk_mhz = {}
@@ -3553,6 +3568,8 @@ class ParserState:
         rv.pypeline_clock_syn_mhz = dict(self.pypeline_clock_syn_mhz)
         rv.pypeline_clock_crossings = list(self.pypeline_clock_crossings)
         rv.wire_clocks_checked = set(self.wire_clocks_checked)
+        rv.pypeline_resets = dict(self.pypeline_resets)
+        rv.main_resets = dict(self.main_resets)
         rv.input_wires = set(self.input_wires)
         rv.output_wires = set(self.output_wires)
         rv.clk_mhz = dict(self.clk_mhz)
@@ -3583,6 +3600,12 @@ class VariableInfo:
         # "aligned" (Pypeline Wire: read with the args, written with the return),
         # "volatile" (Pypeline Wire[T, VOLATILE]: read per consumer stage, written when ready).
         self.pipeline_timing = "legacy"
+        # Pypeline Reg[T, RESET] / Reg[T, NO_RESET] state registers: "reset",
+        # "no_reset"; None: its MAIN's reset_registers policy decides
+        self.reset_mode = None
+        # Pypeline state register declared with an explicit `= value` in user or
+        # library source (not compiler-generated): PY_TO_LOGIC.CHECK_ASIC_REGISTER_INITS
+        self.init_explicit = False
 
 
 def RECURSIVE_FIND_MAIN_FUNCS(

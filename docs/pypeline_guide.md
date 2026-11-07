@@ -34,8 +34,9 @@ For getting started information see the [README](README.md).
 
 **Part II — Temporal behavior**
 
-18. [Multi-Cycle Paths: `MULTI_CYCLE[...]`](#multi-cycle-paths-multi_cycle)
-19. [Automatic (HLS-like) Implementation](#automatic-hls-like-implementation)
+18. [Resets](#resets)
+19. [Multi-Cycle Paths: `MULTI_CYCLE[...]`](#multi-cycle-paths-multi_cycle)
+20. [Automatic (HLS-like) Implementation](#automatic-hls-like-implementation)
     - [`AUTO_PIPELINE(...)`](#auto_pipeline)
       - [`AUTO_PIPELINE_RAM`](#auto_pipeline_ram)
     - [`AUTO_MULTI_CYCLE(...)`](#auto_multi_cycle)
@@ -44,42 +45,42 @@ For getting started information see the [README](README.md).
 
 **Part III — Ports and streams**
 
-20. [Keep-Tagged Lanes: `kept_data_bus_t`](#keep-tagged-lanes-kept_data_bus_t)
-21. [N-Dimensional Stream Fragments: `ndarray_fragment_t`](#n-dimensional-stream-fragments-ndarray_fragment_t)
-22. [Streams: `stream_t`](#streams-stream_t)
-23. [Bidirectional Ports: `@interface`](#bidirectional-ports-interface)
-24. [AXI-Stream: `axis_t`](#axi-stream-axis_t)
-25. [Byte-Stream Serialization: `make_serializer` / `make_deserializer`](#byte-stream-serialization-make_serializer--make_deserializer)
-26. [Struct ↔ AXI-Stream: `make_axis_to_type` / `make_type_to_axis`](#struct--axi-stream-make_axis_to_type--make_type_to_axis)
-27. [Host Type Export Declarations](#host-type-export-declarations)
-28. [FIFOs: `make_stream_fifo`](#fifos-make_stream_fifo)
-29. [RAMs: `make_ram` / `make_stream_ram`](#rams-make_ram--make_stream_ram)
-30. [Skid Buffers: `make_skid_buffer`](#skid-buffers-make_skid_buffer)
-31. [Pipelined Stream Wrappers: `make_stream_auto_pipeline`](#pipelined-stream-wrappers-make_stream_auto_pipeline)
-32. [Multi-Cycle Stream Wrapper: `make_stream_multi_cycle`](#multi-cycle-stream-wrapper-make_stream_multi_cycle)
-33. [Combinational Optimization Stream Wrappers: `make_stream_auto_comb_area_opt` / `make_stream_auto_comb_delay_opt` (Experimental)](#combinational-optimization-stream-wrappers-make_stream_auto_comb_area_opt--make_stream_auto_comb_delay_opt-experimental)
-34. [Stream Wrapper for AUTO_FSM: `make_stream_auto_fsm` (Experimental)](#stream-wrapper-for-auto_fsm-make_stream_auto_fsm-experimental)
-35. [Stream Performance Measurement: Probes & Bottlenecks](#stream-performance-measurement-probes--bottlenecks)
+21. [Keep-Tagged Lanes: `kept_data_bus_t`](#keep-tagged-lanes-kept_data_bus_t)
+22. [N-Dimensional Stream Fragments: `ndarray_fragment_t`](#n-dimensional-stream-fragments-ndarray_fragment_t)
+23. [Streams: `stream_t`](#streams-stream_t)
+24. [Bidirectional Ports: `@interface`](#bidirectional-ports-interface)
+25. [AXI-Stream: `axis_t`](#axi-stream-axis_t)
+26. [Byte-Stream Serialization: `make_serializer` / `make_deserializer`](#byte-stream-serialization-make_serializer--make_deserializer)
+27. [Struct ↔ AXI-Stream: `make_axis_to_type` / `make_type_to_axis`](#struct--axi-stream-make_axis_to_type--make_type_to_axis)
+28. [Host Type Export Declarations](#host-type-export-declarations)
+29. [FIFOs: `make_stream_fifo`](#fifos-make_stream_fifo)
+30. [RAMs: `make_ram` / `make_stream_ram`](#rams-make_ram--make_stream_ram)
+31. [Skid Buffers: `make_skid_buffer`](#skid-buffers-make_skid_buffer)
+32. [Pipelined Stream Wrappers: `make_stream_auto_pipeline`](#pipelined-stream-wrappers-make_stream_auto_pipeline)
+33. [Multi-Cycle Stream Wrapper: `make_stream_multi_cycle`](#multi-cycle-stream-wrapper-make_stream_multi_cycle)
+34. [Combinational Optimization Stream Wrappers: `make_stream_auto_comb_area_opt` / `make_stream_auto_comb_delay_opt` (Experimental)](#combinational-optimization-stream-wrappers-make_stream_auto_comb_area_opt--make_stream_auto_comb_delay_opt-experimental)
+35. [Stream Wrapper for AUTO_FSM: `make_stream_auto_fsm` (Experimental)](#stream-wrapper-for-auto_fsm-make_stream_auto_fsm-experimental)
+36. [Stream Performance Measurement: Probes & Bottlenecks](#stream-performance-measurement-probes--bottlenecks)
 
 **Part IV — Multiple clock domains**
 
-36. [Clock Domains](#clock-domains)
-37. [Async Wires: `Wire[T, ASYNC]`](#async-wires-wiret-async)
-38. [Clock-Crossing FIFOs](#clock-crossing-fifos)
-39. [Building and Simulating Multi-Clock Designs](#building-and-simulating-multi-clock-designs)
+37. [Clock Domains](#clock-domains)
+38. [Async Wires: `Wire[T, ASYNC]`](#async-wires-wiret-async)
+39. [Clock-Crossing FIFOs](#clock-crossing-fifos)
+40. [Building and Simulating Multi-Clock Designs](#building-and-simulating-multi-clock-designs)
 
 **Part V — Escape hatches**
 
-40. [Raw VHDL Passthrough: `vhdl()`](#raw-vhdl-passthrough-vhdl)
-41. [Fixed User Pipelines: `@pipeline_latency`](#fixed-user-pipelines)
-42. [Just-Wires Synthesis Hint: `@wires`](#just-wires-synthesis-hint-wires)
+41. [Raw VHDL Passthrough: `vhdl()`](#raw-vhdl-passthrough-vhdl)
+42. [Fixed User Pipelines: `@pipeline_latency`](#fixed-user-pipelines)
+43. [Just-Wires Synthesis Hint: `@wires`](#just-wires-synthesis-hint-wires)
 
 **Part VI — Reference**
 
-43. [Simulation Reference](#simulation-reference)
-44. [DSP: Filters & Signal Conditioning](#dsp-filters--signal-conditioning)
-45. [Source Naming Rules](#source-naming-rules)
-46. [Limitations / Not Yet Supported](#limitations--not-yet-supported)
+44. [Simulation Reference](#simulation-reference)
+45. [DSP: Filters & Signal Conditioning](#dsp-filters--signal-conditioning)
+46. [Source Naming Rules](#source-naming-rules)
+47. [Limitations / Not Yet Supported](#limitations--not-yet-supported)
 
 ---
 
@@ -1055,7 +1056,8 @@ assigned by the end of the cycle is what latches at the *next* one.
 
 Annotate a local variable with `Reg[T]` inside a hardware function to declare a register
 of type `T`.
-The register is initialised to zero at power-on reset.
+Its initial value is zero: its power-up value on an FPGA, and the value a
+[reset](#resets) gives it.
 
 ```python
 from pypeline import Reg, uint32_t, uint1_t, hw_func
@@ -1114,17 +1116,18 @@ return prev        # returns the pre-update value
 
 ### Non-zero initial values
 
-An optional initialiser sets the power-on reset value:
+An optional initialiser sets the initial value (the power-up value, and the value a
+[reset](#resets) restores):
 
 ```python
-cnt: Reg[uint32_t] = 10                  # scalar — starts at 10 after reset
+cnt: Reg[uint32_t] = 10                  # scalar — starts at 10
 
 buf: Reg[uint8_t[4]] = [10, 20, 30, 40] # array — each element initialised
 
 pt:  Reg[point_t] = point_t(x=5, y=2)  # struct — NamedTuple constructor form
 ```
 
-Without an initialiser the register resets to zero.
+Without an initialiser the initial value is zero.
 
 A register does not have to be written. A read-only declaration is legal and behaves as
 a constant power-on value: zero without an initializer, or the declared initializer when
@@ -1200,7 +1203,7 @@ type as `T` — see
 | | `Reg[T]` | `Feedback[T]` |
 |---|---|---|
 | Storage | flip-flop (persists across cycles) | none (combinational only) |
-| Initial value | zero at reset | none |
+| Initial value | zero, or its initializer | none |
 | Clock edge | yes | no |
 
 Do not initialise a `Feedback[T]` wire at its declaration:
@@ -2918,6 +2921,11 @@ such a function is an error that points to
 **Simulation.** Native simulation runs each instance as the same compiler-made `@MAIN`, with
 its own state: two instances of one stateful function keep separate registers.
 
+**Reset.** An instance resets with its clock's primary reset (`make_clock(..., reset=)`),
+every register in it, as if its `@MAIN` had `reset_registers="all"`; on a clock without
+one it is not reset. The declaration takes no reset keyword. See
+[Resets and global instances](#resets-and-global-instances).
+
 ### `Fifo[T]` — global FIFOs
 
 A global FIFO is a buffer between a producer function and a consumer function anywhere in
@@ -3032,12 +3040,17 @@ to that function's `@MAIN`.
 [`@sim_model`](#sim_model--python-simulation-models-for-hardware-functions), and any other
 initializer through its own simulation.
 
+**Reset.** A global FIFO on one clock resets with that clock's primary reset, like a
+global instance: it empties. A FIFO between two clocks is not reset. See
+[Resets and global instances](#resets-and-global-instances).
+
 ---
 
 ### Part II — Temporal behavior
 
 An ordinary call is same-cycle combinational (Part I). The sections below cover choices
-about time and resource use. First comes `MULTI_CYCLE[...]`, a hand-written timing
+about time and resource use. First come resets, which put registers back to their initial
+values. Then comes `MULTI_CYCLE[...]`, a hand-written timing
 constraint that gives one slow register-to-register path `N` cycles to settle. Then come the
 **automatic** (HLS-like) constructs. `AUTO_PIPELINE` pipelines logic for throughput.
 `AUTO_MULTI_CYCLE` tunes a multi-cycle path's cycle count. `AUTO_COMB_AREA_OPT` reduces
@@ -3049,6 +3062,125 @@ Each one has a valid/ready stream wrapper in Part III, so neighboring hardware d
 to know which one it's talking to: `make_stream_auto_pipeline`, `make_stream_multi_cycle` /
 `make_stream_auto_multi_cycle`, `make_stream_auto_comb_area_opt`,
 `make_stream_auto_comb_delay_opt`, and `make_stream_auto_fsm`.
+
+## Resets
+
+A register's initial value (`count: Reg[uint8_t] = 3`, or zero without one) is its
+power-up value on an FPGA. A **reset** puts registers back to those values while the
+design runs: while the reset signal is 1 at a rising clock edge, each register it resets
+takes its initial value instead of its next value. Pypeline resets are synchronous and
+active high.
+
+### Declaring a reset: `make_reset()`
+
+Bind `make_reset()` to a module-level `uint1_t` `Input` (a top-level pin) or `Wire`
+(driven by one `@MAIN`), on the line that declares it:
+
+```python
+from pypeline import *
+
+rst: Input[uint1_t] = make_reset()     # the top-level pin rst
+clk = make_clock(100.0, reset=rst)     # rst is clk's primary reset
+```
+
+`make_clock(..., reset=)` makes the reset the clock's **primary reset**: every `@MAIN` on
+that clock has it unless it names another. `clk.reset` reads it back. A bare `@MAIN` uses
+the primary reset of the clock it is given (see
+[Which clock a bare `@MAIN` gets](#which-clock-a-bare-main-gets)).
+
+### Which registers reset: `reset_registers=`
+
+A reset being available resets nothing by itself. Each `@MAIN` says which registers below
+it reset:
+
+```python
+@MAIN(clk, reset_registers="all")   # every register below dut resets with rst
+def dut():
+    count: Reg[uint8_t] = 3           # resets to 3
+    hist: Reg[uint8_t, NO_RESET]      # never resets
+
+@MAIN(clk)                            # the default, "requested"
+def ctrl():
+    pc: Reg[uint32_t, RESET]          # resets with clk.reset
+    last: Reg[uint8_t]                # does not reset
+```
+
+- `reset_registers="requested"` (the default) resets only `Reg[T, RESET]` registers.
+- `reset_registers="all"` resets every register below the `@MAIN` except
+  `Reg[T, NO_RESET]` ones: your own `Reg[T]`s, the state inside library blocks (FIFOs,
+  skid buffers, RAM requests in flight), and the registers the compiler adds (pipeline
+  stages of `AUTO_PIPELINE`, an `AUTO_FSM`'s state, I/O registers).
+- `MAIN(..., reset=other)` resets with another reset; `MAIN(..., reset=None)` has none.
+
+The markers go in any order with a `MULTI_CYCLE` role: `Reg[T, RESET, MC.start]`. A
+function called from two `@MAIN`s resets under each one's choice; it becomes two hardware
+modules when the choices differ.
+
+In hardware code the reset's name is an ordinary `uint1_t` signal: `if rst:` is plain
+logic, and a register you clear that way is not reset in the sense above.
+
+### What a reset does
+
+- Each register that resets takes its initial value: its `= value`, else zero (the first
+  member for an enum). The reset has priority over a [clock enable](#clock-enable-via-if-around-a-call):
+  a register resets in a cycle its call is skipped.
+- A FIFO (`make_stream_fifo`, a same-clock global `Fifo[T]`) empties: no word is valid in
+  the cycle after the reset, and its write side shows free space.
+- A RAM keeps its contents. Requests in flight are cancelled, and the write at the reset
+  edge does not happen.
+- Global wires are combinational and are not reset. Where a reset design meets hardware
+  that is not reset (a top-level AXI-Stream port, say), gate `valid` and `ready`
+  yourself.
+- [Raw VHDL](#raw-vhdl-passthrough-vhdl) keeps its state unless it says
+  `vhdl(text, reset="sync")`, which lets the text use `RESET`.
+
+### Resets and global instances
+
+A global instance (`Inst[f]`) and a same-clock global FIFO run on one clock and reset with
+that clock's primary reset, under `"all"`. Their declarations take no reset keyword. A
+`reset_registers="all"` `@MAIN` that uses one must reset with the same reset; make it the
+clock's reset (`make_clock(..., reset=...)`). A global FIFO between two clocks is not
+reset, and a `reset_registers="all"` `@MAIN` at either end of one is an error.
+
+### Resets and clocks
+
+A reset is synchronous to the clock of each `@MAIN` it resets: a reset pin may reset
+`@MAIN`s on one clock only, and a reset `Wire` must be driven on the clock it resets.
+Bring an asynchronous source into a clock through two registers of that clock:
+
+```python
+BTN: Input[uint1_t, ASYNC]             # a button, synchronous to nothing
+cpu_rst: Wire[uint1_t] = make_reset()
+cpu_clk = make_clock(100.0, name="cpu", reset=cpu_rst)
+
+@MAIN(cpu_clk, reset=None)             # the synchronizer is not reset by its own output
+def btn_sync():
+    s0: Reg[uint1_t]
+    s1: Reg[uint1_t]
+    cpu_rst = s1
+    s1 = s0
+    s0 = BTN
+```
+
+A `@MAIN` cannot be reset by a reset that logic below it drives. An active-low reset is
+inverted the same way: `rst = ~rst_n` in the `@MAIN` that drives the reset `Wire`.
+
+### Resets in simulation
+
+Native simulation and the generated cocotb testbench drive a reset pin to 1 in cycle 0 and
+to 0 after it, so registers that reset start from their initial values. A reset pin that
+Python code drives (a `@sim_input`) gets no such pulse, and a reset `Wire` comes from its
+logic. `sim_call` runs with every reset inactive. Under a reset, `sim_print`,
+`sim_assert` and `@sim_output` keep running.
+
+### ASIC targets
+
+An ASIC has no register power-up values, so an initial value there holds only through a
+reset. When a design targets one (`PART("sky130")`, `--syn_tool device_models` or
+`--syn_tool pyrtl`), every register declared with `= value` must reset: its `@MAIN` has a
+reset and resets it (`reset_registers="all"`, or `Reg[T, RESET]`). Otherwise the build
+stops and names each such register. Registers without an initializer are not checked, nor
+is a build that names no part or tool.
 
 ## Multi-Cycle Paths: `MULTI_CYCLE[...]`
 
@@ -4899,7 +5031,7 @@ restores the old behaviour if a design needs that combinational path broken.
 Note that `registered_ready` is a **deserializer-only** knob. On the serializer
 (`make_type_to_axis`) the downstream `ready` is combinational on purpose and there is no
 option to break it — and that path is deeper than it looks, since it feeds the variable
-index of the buffer write. If a design needs it cut (a reset that must force `ready` to
+index of the buffer write. If a design needs it cut (logic that must force `ready` to
 drain the serializer, say), put a `mode="full"`
 [skid buffer](#skid-buffers-make_skid_buffer) downstream and drive the OR onto the
 slice's registered ready instead.
@@ -5069,13 +5201,10 @@ else — no write-pointer rewind, no "how full is it", no clear input. A buffer 
 any of those is built on [`make_ram`](#rams-make_ram--make_stream_ram) instead. With
 `make_fifo` itself, two consequences are worth designing around:
 
-* **A reset cannot clear a FIFO; it can only drain one** ([#349](https://github.com/JulianKemmerer/PipelineC/discussions/349)). The only way to empty an
-  instance is to clock its contents out, so a design whose reset must leave its buffers
-  empty has to force the read enable high for the duration (`data_ready |= rst`) and
-  **hold reset for at least the FIFO's depth in cycles** — at 125 MHz a 16K-deep FIFO
-  needs ~131 µs. A reset shorter than that leaves the buffer partly full, which is
-  usually worse than not resetting at all. Export the number
-  (`RST_MIN_HOLD_CYCLES = depth + slack`) rather than leaving it implicit.
+* **A reset empties a FIFO** under a `@MAIN` with `reset_registers="all"` and a reset
+  (see [Resets](#resets)): in one cycle, whatever its depth. Under the default
+  `"requested"` policy a FIFO is not reset, and the only way to empty it is to clock its
+  contents out.
 * **"Drop this packet" is built from two FIFOs plus a counter, not from a rewind.** A
   store-and-forward design that needs to discard a partially-written packet keeps the
   payload in one FIFO and one descriptor per completed packet in a second, then pops a
@@ -5180,6 +5309,9 @@ holds it. There is no per-port read enable. For a port that must stall on its ow
 - **Byte write enables.** `byte_write_enables=True` makes `wr_en` a `uint1_t[N // 8]` for a
   `uintN_t`/`intN_t` `elem_t` whose N is a multiple of 8. Bit `j` writes byte `j`, like
   `DECL_4BYTE_RAM_SP_RF_1`.
+- **Reset.** Under a `@MAIN` with `reset_registers="all"` (see [Resets](#resets)) a reset
+  cancels every request in flight and the write at the reset edge, and clears the read
+  registers. The memory keeps its contents.
 
 ### Initial contents: `init=`
 
@@ -5331,14 +5463,13 @@ call site.
 `n_slots` and `latency` hang off the returned function, alongside `.stream_intrf` / `.fwd_t` /
 `.fb_t` / `.data_t` / `.mode`, so a caller sizing a surrounding pipeline never re-derives them.
 
-**`"full"` is also what makes a downstream `ready` safe to override.** A reset that has
-to drain a block whose only exit is `ready` (a serializer, a FIFO — see
-[FIFOs](#fifos-make_stream_fifo)) wants to write `ready | rst`. Doing that straight onto
-a top-level pin puts a LUT in the path feeding that block's own ready logic, which can be
-far deeper than it looks: in `examples/pypeline/dsp/pdw` the same one-gate change cost
-**8.3 MHz** (128.5 → 120.2) because the serializer's ready feeds the variable index of a
-43-element buffer write. Putting a `mode="full"` slice in between moves the OR onto the
-slice's registered output ready instead, and costs one cycle.
+**`"full"` is also what makes a downstream `ready` safe to override.** Logic that drains
+a block whose only exit is `ready` (a serializer, say) writes `ready | drain`. Doing that
+straight onto a top-level pin puts a LUT in the path feeding that block's own ready logic,
+which can be far deeper than it looks: a serializer's ready feeds the variable index of
+its buffer write. Putting a `mode="full"` slice in between moves the OR onto the slice's
+registered output ready instead, and costs one cycle. A [reset](#resets) needs no such
+drain: it empties the blocks it resets.
 
 ### On AXI-Stream
 
@@ -6291,6 +6422,31 @@ so it's always treated as an opaque, zero-cycle-delay black box — same as C's
 those registers form a fixed pipeline, declare it with
 [`@pipeline_latency(N)`](#fixed-user-pipelines) so callers align around it.
 
+**Resets.** `vhdl(text, reset="sync")` lets the text use `RESET`, a `std_logic` that is
+1 while a [reset](#resets) is active, synchronous to `clk`:
+
+```python
+@hw_func
+def held(x: uint8_t) -> uint8_t:
+    vhdl("""
+signal r : unsigned(7 downto 0) := (others => '0');
+begin
+process(clk) begin
+  if rising_edge(clk) then
+    r <= x;
+    if RESET = '1' then r <= (others => '0'); end if;
+  end if;
+end process;
+return_output <= r;
+""", reset="sync")
+```
+
+Under a `@MAIN` with `reset_registers="all"` and a reset, `RESET` is that reset;
+elsewhere it is a constant `'0'`. Text without `reset=` keeps its state through a reset,
+and a note says so. A `vhdl()` function cannot have an argument named `reset`, which VHDL
+would read as the same name. A sim model of a `vhdl()` function without `reset=` keeps its
+state too; one with it is recreated, or has its `on_reset()` method called.
+
 **Simulating raw VHDL requires a model.** There is no general way to simulate arbitrary
 user-supplied VHDL text in Python, so calling a `vhdl(...)`-bodied function in simulation
 — directly or via `sim_call()` — raises `NotImplementedError`
@@ -6817,7 +6973,16 @@ tracks the row.
 | Source model | **Multiple clock domains** | Supported | `@MAIN`s on several clocks, named clocks from `make_clock`, clock pins, async wires and global FIFOs across clocks; see [Part IV](#part-iv--multiple-clock-domains). Every pair of different clocks is asynchronous. The rows below list what is not built yet | [#342](https://github.com/JulianKemmerer/PipelineC/discussions/342) |
 | Source model | **Related clocks** | Not supported | Clocks from one source with an integer ratio, whose paths between them would be timed. Until then every pair of different clocks is asynchronous, with untimed paths | [#342](https://github.com/JulianKemmerer/PipelineC/discussions/342) |
 | Source model | **Crossings between related clocks** | Not supported | Free-flowing integer-ratio crossings like PipelineC's `volatile` crossings. Use an async wire or a global FIFO | [#342](https://github.com/JulianKemmerer/PipelineC/discussions/342) |
-| Source model | **Resets across clocks** | Not supported | No reset domains or reset synchronizers, and a global FIFO cannot be cleared from either side | — |
+| Source model | **Resets** | Supported | Synchronous, active-high resets from a pin or a `Wire`, per clock and per `@MAIN`, with per-register markers; see [Resets](#resets). The rows below list what is not built yet | — |
+| Source model | **Asynchronous or active-low resets** | Not supported | `make_reset(kind="async")` and `make_reset(active="low")` raise `NotImplementedError`. Synchronize an asynchronous source with two registers and drive a reset `Wire`; invert an active-low one there | — |
+| Source model | **Resetting a global FIFO between clocks** | Not supported | An async `Fifo[T]` is not reset, and a `reset_registers="all"` `@MAIN` at either end of one is an error. Reset the ends with `Reg[T, RESET]` under `"requested"` | — |
+| Source model | **Another reset for a global instance** | Not supported | `Inst[f]` and a same-clock `Fifo[T]` always take their clock's primary reset | — |
+| Source model | **A reset value other than the initial value** | Not supported | A register resets to its initializer, which is also its power-up value; there is no separate `reset_to=`, and a struct or array register resets whole | — |
+| Source model | **Reset scopes and inferred reset pins** | Not supported | No `with` blocks of reset settings and no implied `reset_<clock>` ports: declare each reset with `make_reset()` | — |
+| Source model | **Synchronizers made for resets** | Not supported | The compiler inserts no reset synchronizer and does not check one; write the two registers yourself (see [Resets and clocks](#resets-and-clocks)) | — |
+| Source model | **Resets in simulation side effects and `sim_call`** | Not supported | `sim_print`, `sim_assert` and `@sim_output` run during a reset; `sim_call` runs with every reset inactive and has no reset procedure | — |
+| Source model | **Reset driving in other HDL simulators** | Not supported | Only native simulation and the generated cocotb testbench drive the cycle-0 reset pulse; the Verilator, CXXRTL, ModelSim and EDAPlay flows leave a reset pin to the user | — |
+| Source model | **ASIC checks beyond explicit initializers** | Not supported | On an ASIC target only registers with an explicit `= value` must reset. Registers without one, compiler-made initial values (an `AUTO_FSM`'s one-hot state gets a warning), raw VHDL signal initializers, RAM contents and builds with no target are not checked | — |
 | Source model | **Synchronizer crossings** | Not supported | Bit, pulse, Gray-code and handshake synchronizers as kinds of crossing. Use an async wire with registers in the reader, or a global FIFO | [#342](https://github.com/JulianKemmerer/PipelineC/discussions/342) |
 | Source model | **Synchronizer register markers** | Not supported | Registers cannot be tagged for vendor synchronizer attributes such as `ASYNC_REG`. Wrap a vendor cell such as `xpm_cdc_single` in a [`vhdl()`](#raw-vhdl-passthrough-vhdl) function | — |
 | Source model | **Crossings written in Pypeline** | Not supported | A crossing cannot be written as a sender function on one clock plus a receiver on another; crossings are async wires and global FIFOs | — |

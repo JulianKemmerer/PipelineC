@@ -556,6 +556,9 @@ class SimGenInfo:
         self.debug_input_to_vhdl_name = {}
         self.debug_output_to_vhdl_name = {}
         self.main_func_to_latency = {}
+        # Top-level reset pins (Pypeline make_reset() Inputs), which a generated
+        # testbench drives 1 before the first clock edge and 0 after it
+        self.reset_inputs = []
 
 
 def GET_SIM_GEN_INFO(parser_state, multimain_timing_params=None):
@@ -589,6 +592,13 @@ def GET_SIM_GEN_INFO(parser_state, multimain_timing_params=None):
     # Main func latencies
     sim_gen_info.main_func_to_latency = GET_MAIN_FUNC_LATENCIES(
         parser_state, multimain_timing_params
+    )
+
+    # Reset pins: the reset Inputs that are still top-level ports
+    sim_gen_info.reset_inputs = sorted(
+        key
+        for key, decl in getattr(parser_state, "pypeline_resets", {}).items()
+        if decl.kind == "Input" and key in parser_state.input_wires
     )
 
     return sim_gen_info

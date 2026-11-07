@@ -30,8 +30,8 @@ sys.path.insert(
 )
 
 from pypeline import (
-    MAIN, NamedTuple, Reg, Wire, sim_assert, sim_finish, sim_print, struct,
-    uint1_t, uint16_t, uint32_t,
+    MAIN, RESET, Input, NamedTuple, Reg, Wire, make_reset, sim_assert,
+    sim_finish, sim_print, struct, uint1_t, uint16_t, uint32_t,
 )
 
 from operators.soft_mult import make_inferred_mult, make_mult_karatsuba_inferred_leaves
@@ -67,13 +67,18 @@ NUM_CHECK = 30
 MAX_CYCLES = 200
 
 
-@MAIN
+# The checker's reset, pulsed in cycle 0: the sky130 build keeps the stimulus
+# seed below only through a reset.
+rst: Input[uint1_t] = make_reset()
+
+
+@MAIN(reset=rst)
 def karatsuba_checker() -> kp_t:
     count: Reg[uint16_t]
     seen: Reg[uint16_t]
     lat_reg: Reg[uint16_t]
     done: Reg[uint1_t]
-    x: Reg[uint32_t] = 0x9E3779B9
+    x: Reg[uint32_t, RESET] = 0x9E3779B9
     if done:
         sim_finish()
 

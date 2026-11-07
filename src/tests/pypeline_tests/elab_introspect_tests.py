@@ -253,6 +253,16 @@ def get_tests() -> list:
             cmd=[INST_DIR / "wiring_only_leaf_zero_delay_test.py"],
         )
     )
+    # Resets: main_resets, RESET ports and per-policy entity names, NO_RESET,
+    # raw vhdl(reset=), each reset error and note, and the ASIC initializer
+    # rule with its SYN.RESOLVE_BUILD_TARGET hook.
+    tests.append(
+        Test(
+            name="reset_elab_test",
+            category="elab_introspect",
+            cmd=[INST_DIR / "reset_elab_test.py"],
+        )
+    )
     # Calls PY_TO_LOGIC.PARSE_FILE twice in one process (what the
     # AUTO_PIPELINE pin-and-confirm driver loop does) and compares the
     # resulting parser_states -- guards the sys.modules eviction and

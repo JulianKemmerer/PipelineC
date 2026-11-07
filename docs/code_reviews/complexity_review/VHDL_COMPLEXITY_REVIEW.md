@@ -35,6 +35,10 @@ Mirrored read/write clock-crossing connection loops and similar normal/crossing 
 
 First produce typed `TopConnections`, `EntityInterface` and `PipelineLayout` data; then render them. A small VHDL builder for declarations, associations and statements would remove delimiter trimming and string surgery. Keep specialized raw templates where they materially express hardware. A generic templating engine alone would move the complexity into templates.
 
+The positional port order of a generated entity (`clk, CLOCK_ENABLE, RESET, global_to_module, module_to_global, inputs, outputs`) is spelled out separately at every site that writes it: the entity's port list and its parent's port map in `WRITE_LOGIC_ENTITY`, the MAIN instances in `WRITE_MULTIMAIN_TOP`, and the isolated wrapper `WRITE_LOGIC_TOP` (tree after the reset feature, which had to add `RESET` to all four; `vhdl_submodule_port_map_test.py` checks only the parent map). One `EntityInterface` record listing the ports and their order, rendered by both the declaration and every association, would make a new port a single change.
+
+The entity-name hash cache of `AUTO_PIPELINE.GET_ZERO_ADDED_CLKS_TIMING_PARAMS_LOOKUP` was keyed by function name alone, assuming every instance of a function renders one way at zero added clocks; per-instance reset policies broke that, and it is now keyed by (function, policy). Any further per-instance rendering input must join that key (suspected hazard; no other such input is known).
+
 Use content-addressed type dependencies and artifact manifests to reduce grow-only package and cache coupling over time. CIRCT's documented SystemVerilog path is an optional backend experiment; it does not directly replace the existing VHDL product.
 
 ## Validation

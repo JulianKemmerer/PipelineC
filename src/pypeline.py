@@ -157,6 +157,11 @@ _VHDL_RESERVED_WORDS = frozenset(
     }
 )
 
+# Names of ports the compiler adds to entities (the synchronous reset port
+# RESET, see make_reset), which VHDL reads as one with a user identifier of any
+# case: _sanitize_vhdl_name renames such identifiers like reserved words
+_IMPLICIT_PORT_NAMES = frozenset({"reset"})
+
 # Runs of underscores, which a VHDL basic identifier cannot contain
 _CONSEC_UNDERSCORES_RE = _re.compile(r"_{2,}")
 
@@ -168,7 +173,8 @@ def _sanitize_vhdl_name(name: str) -> str:
     1. Strip leading underscores; prepend 'v' if any were removed.
     2. Strip trailing underscores.
     3. Replace runs of 2+ consecutive underscores with a single '_'.
-    4. If the result is a VHDL reserved word (case-insensitive), append '_v'.
+    4. If the result is a VHDL reserved word or the name of a port the
+       compiler adds (RESET; case-insensitive), append '_v'.
     5. If empty after all stripping, return 'v'.
     """
     result = name.lstrip("_")
@@ -176,7 +182,8 @@ def _sanitize_vhdl_name(name: str) -> str:
         result = "v_" + result if result else "v"
     result = result.rstrip("_") or "v"
     result = _CONSEC_UNDERSCORES_RE.sub("_", result)
-    if result.lower() in _VHDL_RESERVED_WORDS:
+    lower = result.lower()
+    if lower in _VHDL_RESERVED_WORDS or lower in _IMPLICIT_PORT_NAMES:
         result = result + "_v"
     return result
 
@@ -2240,6 +2247,20 @@ def SYN_TOOL(tool_name: str):
     _syn_tool_registry = tool_name
 
 
+class _ClockResetDefault:
+    """The default of MAIN(reset=): the primary reset of the clock the MAIN
+    runs on (make_clock(..., reset=)), or no reset when that clock has none."""
+
+    def __repr__(self):
+        return "<the clock's reset>"
+
+
+_CLOCK_RESET = _ClockResetDefault()
+
+# MAIN(reset_registers=) values: which registers below the MAIN its reset resets
+_RESET_REGISTERS_POLICIES = ("requested", "all")
+
+
 class _MainInfo(typing.NamedTuple):
     """What MAIN() recorded about one @MAIN; its wrapper's _pypeline_main."""
 
@@ -2247,6 +2268,11 @@ class _MainInfo(typing.NamedTuple):
     named: bool  # given by name= or by the function's own @hw_func(name=)
     clock: "_Clock | None"  # the clock it names (a rate is its unnamed clock), None when bare
     origin: str  # where it was made, for messages: "top.py:23"
+    # Its reset: a make_reset() reset, None for none, or _CLOCK_RESET (its
+    # clock's primary reset); resolved by _resolve_main_reset
+    reset: object = _CLOCK_RESET
+    # Which registers that reset resets: "requested" (only Reg[T, RESET]) or "all"
+    reset_registers: str = "requested"
 
 
 def _frame_origin(frame):
@@ -2254,10 +2280,13 @@ def _frame_origin(frame):
     return f"{_os.path.basename(frame.f_code.co_filename)}:{frame.f_lineno}"
 
 
-def _register_main(func, clock, name, origin):
+def _register_main(
+    func, clock, name, origin, reset=_CLOCK_RESET, reset_registers="requested"
+):
     """Register func as the @MAIN `name` on `clock` (a _Clock; None: bare),
-    made at `origin`; returns its hw_func wrapper, which carries a _MainInfo as
-    _pypeline_main. Without a name the MAIN is named like its function:
+    made at `origin`, with its `reset` and `reset_registers` (MAIN(reset=,
+    reset_registers=), checked by _main_reset_args); returns its hw_func
+    wrapper, which carries a _MainInfo as _pypeline_main. Without a name the MAIN is named like its function:
     its @hw_func(name=) if it has one, else its module-prefixed Python name
     (_hw_func_name), as PY_TO_LOGIC names a top-level def. A given name is
     used verbatim: MAIN() checks a user's name= first, and a global
@@ -2288,7 +2317,9 @@ def _register_main(func, clock, name, origin):
         name = user_name or _hw_func_name(
             _module_prefix(wrapped.__module__), wrapped.__name__
         )
-    wrapped._pypeline_main = _MainInfo(name, named, clock, origin)
+    wrapped._pypeline_main = _MainInfo(
+        name, named, clock, origin, reset, reset_registers
+    )
     _main_registry.append(wrapped)
     return wrapped
 
@@ -2316,7 +2347,15 @@ def _duplicate_main_names(mains):
     return None
 
 
-def MAIN(func_or_clock=None, *, mhz=None, clock=None, name=None):
+def MAIN(
+    func_or_clock=None,
+    *,
+    mhz=None,
+    clock=None,
+    name=None,
+    reset=_CLOCK_RESET,
+    reset_registers="requested",
+):
     """Marks a function as a top-level hardware process.
 
     As a decorator::
@@ -2337,6 +2376,19 @@ def MAIN(func_or_clock=None, *, mhz=None, clock=None, name=None):
 
     Name the clock once: a rate or a clock, not both.
 
+    Resets (see make_reset)::
+
+        @MAIN(clk, reset_registers="all")   # every register below resets with clk.reset
+        @MAIN(clk)                          # only Reg[T, RESET] registers reset
+        @MAIN(clk, reset=gen_rst, reset_registers="all")  # another reset
+        @MAIN(clk, reset=None)              # no reset
+
+    reset= defaults to the primary reset of the MAIN's clock
+    (make_clock(..., reset=)); a bare MAIN uses the one of the clock it is
+    assigned. reset_registers="requested" (the default) resets only
+    Reg[T, RESET] registers; "all" resets every register below the MAIN but
+    Reg[T, NO_RESET] ones, the compiler's pipeline registers among them.
+
     A @MAIN is named after its function, module-prefixed in an imported
     module, unless name= gives its name verbatim. Its ports are
     <name>_<argument> and <name>_return_output. Two @MAINs with one name
@@ -2348,20 +2400,48 @@ def MAIN(func_or_clock=None, *, mhz=None, clock=None, name=None):
     if name is not None:
         _check_user_name(name, "MAIN")
     origin = _frame_origin(_sys._getframe(1))
+    _main_reset_args(reset, reset_registers, origin)
     if callable(func_or_clock):
         # Used as bare @MAIN, or called on a function
         return _register_main(
-            func_or_clock, _main_clock_arg(None, mhz, clock, origin), name, origin
+            func_or_clock,
+            _main_clock_arg(None, mhz, clock, origin),
+            name,
+            origin,
+            reset,
+            reset_registers,
         )
     # Used as @MAIN(100.0), @MAIN(clk), @MAIN(mhz=...), @MAIN(clock=...) or @MAIN(name=...)
     main_clock = _main_clock_arg(func_or_clock, mhz, clock, origin)
 
     def decorator(func):
         return _register_main(
-            func, main_clock, name, _frame_origin(_sys._getframe(1))
+            func,
+            main_clock,
+            name,
+            _frame_origin(_sys._getframe(1)),
+            reset,
+            reset_registers,
         )
 
     return decorator
+
+
+def _main_reset_args(reset, reset_registers, origin):
+    """Check MAIN(reset=, reset_registers=): a reset from make_reset(), None
+    or the default, and one of the reset_registers policies."""
+    if reset is not _CLOCK_RESET and reset is not None and not isinstance(reset, _Reset):
+        raise TypeError(
+            f"MAIN(reset={reset!r}) at {origin}: reset= takes a reset from "
+            f"make_reset() (the name it is bound to: `rst: Input[uint1_t] = "
+            f"make_reset()`, then reset=rst), or None for no reset"
+        )
+    if reset_registers not in _RESET_REGISTERS_POLICIES:
+        raise ValueError(
+            f"MAIN(reset_registers={reset_registers!r}) at {origin}: give "
+            f"\"requested\" (only Reg[T, RESET] registers reset, the default) or "
+            f"\"all\" (every register but Reg[T, NO_RESET] ones)"
+        )
 
 
 def _main_clock_arg(positional, mhz, clock, origin):
@@ -5870,13 +5950,34 @@ class AUTO_MULTI_CYCLE:
         return f"AUTO_MULTI_CYCLE({self.canonical_key}, {self.describe()}, {self._ncycles} cycles)"
 
 
+class _ResetMarker:
+    """`RESET` / `NO_RESET` -- optional markers of Reg[T, ...]. RESET: the
+    register resets with its MAIN's reset under either reset_registers policy;
+    NO_RESET: it does not, even under reset_registers="all". A plain Reg[T]
+    follows its MAIN's policy. See make_reset."""
+
+    def __init__(self, mode):
+        self.mode = mode  # "reset" or "no_reset": _RegType.reset_mode
+
+    def __repr__(self):
+        return "RESET" if self.mode == "reset" else "NO_RESET"
+
+
+RESET = _ResetMarker("reset")
+NO_RESET = _ResetMarker("no_reset")
+
+
 class _RegType:
-    """Produced by Reg[T] or Reg[T, MULTI_CYCLE[...].start/.end].
+    """Produced by Reg[T] or Reg[T, markers...]: a MULTI_CYCLE[...].start/.end
+    role and RESET or NO_RESET, in any order.
     Marks a variable as a hardware register (flip-flop)."""
 
-    def __init__(self, inner_ctype, multi_cycle_role=None):
+    def __init__(self, inner_ctype, multi_cycle_role=None, reset_mode=None):
         self.inner_ctype = inner_ctype  # a _CTypeMeta class or array ctype
         self.multi_cycle_role = multi_cycle_role  # _MultiCycleRole or None
+        # "reset" (Reg[T, RESET]), "no_reset" (Reg[T, NO_RESET]) or None: its
+        # MAIN's reset_registers policy decides
+        self.reset_mode = reset_mode
 
     def __str__(self):
         return f"Reg[{self.inner_ctype}]"
@@ -5887,23 +5988,46 @@ class _RegType:
 
 class _RegMeta(type):
     def __getitem__(cls, inner_type):
-        if isinstance(inner_type, tuple):
-            if len(inner_type) != 2 or not isinstance(inner_type[1], _MultiCycleRole):
+        if not isinstance(inner_type, tuple):
+            return _RegType(inner_type)
+        base_type, *markers = inner_type
+        role = reset = None
+        for m in markers:
+            if isinstance(m, _MultiCycleRole) and role is None:
+                role = m
+            elif isinstance(m, _ResetMarker) and reset is None:
+                reset = m
+            elif isinstance(m, _ResetMarker):
                 raise TypeError(
-                    "Reg[T, tag] second argument must be a MULTI_CYCLE[...].start "
-                    "or .end role"
+                    f"Reg[T, {reset!r}, {m!r}]: give RESET or NO_RESET, once"
                 )
-            base_type, role = inner_type
-            return _RegType(base_type, multi_cycle_role=role)
-        return _RegType(inner_type)
+            elif isinstance(m, _MultiCycleRole):
+                raise TypeError("Reg[T, ...] takes one MULTI_CYCLE[...] role")
+            else:
+                raise TypeError(
+                    f"Reg[T, ...] markers are a MULTI_CYCLE[...].start or .end "
+                    f"role and RESET or NO_RESET, got {m!r}"
+                )
+        return _RegType(
+            base_type,
+            multi_cycle_role=role,
+            reset_mode=None if reset is None else reset.mode,
+        )
 
 
 class Reg(metaclass=_RegMeta):
     """Marks a local variable as a hardware state register (persistent between cycles).
 
     Usage in hardware functions:
-        acc: Reg[uint32_t]      # register, initialized to 0 at power-on
+        acc: Reg[uint32_t]      # register, initial value 0
+        acc: Reg[uint32_t] = 5  # initial value 5: its FPGA power-up value
         acc = acc + data_in     # read current value; write sets next-cycle value
+
+    The initial value is also its reset value: a register that resets (see
+    make_reset) returns to it. Its MAIN's reset_registers policy says whether
+    it resets; markers override that:
+        pc: Reg[uint32_t, RESET]     # resets with its MAIN's reset
+        hist: Reg[uint8_t, NO_RESET] # never resets
 
     A register may also be tagged as one end of a multi-cycle timing path:
         MC = MULTI_CYCLE[32]
@@ -6911,7 +7035,7 @@ class _Clock:
     clock, checked for agreement across its objects by the compiler
     (_clock_conflict). The default clock, (None, None), has no object."""
 
-    def __init__(self, mhz, name=None, syn_mhz=None, origin=None):
+    def __init__(self, mhz, name=None, syn_mhz=None, origin=None, reset=None):
         if isinstance(mhz, bool) or not isinstance(mhz, (int, float)):
             raise TypeError(f"make_clock(mhz): mhz is a rate in MHz, got {mhz!r}")
         if mhz <= 0:
@@ -6933,6 +7057,14 @@ class _Clock:
         # Goal of synthesis-only tools (PipelineC's MAIN_SYN_MHZ), None: mhz
         self.syn_mhz = None if syn_mhz is None else float(syn_mhz)
         self.origin = origin  # where it was made, for messages: "top.py:12"
+        # Its primary reset (a _Reset), None: none. Not part of its identity;
+        # two resets for one clock are a conflict (_clock_conflict)
+        self._reset = reset
+
+    @property
+    def reset(self):
+        """The clock's primary reset (make_clock(..., reset=)), None if none."""
+        return self._reset
 
     @property
     def identity(self):
@@ -6956,10 +7088,62 @@ class _Clock:
             args.append(f"name={self.name!r}")
         if self.syn_mhz is not None:
             args.append(f"syn_mhz={self.syn_mhz!r}")
+        if self._reset is not None:
+            args.append(f"reset={self._reset!r}")
         return f"make_clock({', '.join(args)})"
 
 
-def make_clock(mhz, name=None, syn_mhz=None):
+class _Reset:
+    """A reset, made by make_reset(): bound to a module-level Input or Wire,
+    whose name is then the reset's signal (see make_reset)."""
+
+    def __init__(self, kind, active, origin):
+        self.kind = kind  # "sync": a reset edge resets registers at the clock edge
+        self.active = active  # "high": 1 resets
+        self.origin = origin  # where it was made, for messages: "top.py:12"
+
+    def __repr__(self):
+        return f"make_reset() ({self.origin})"
+
+
+def make_reset(kind="sync", active="high"):
+    """A synchronous, active-high reset, bound on the same line to a
+    module-level uint1_t Input (a top-level pin) or Wire (driven by one
+    MAIN)::
+
+        rst: Input[uint1_t] = make_reset()      # the top-level pin rst
+        clk = make_clock(100.0, reset=rst)      # clk's primary reset
+
+        @MAIN(clk, reset_registers="all")       # every register resets with rst
+        def dut(): ...
+
+        gen_rst: Wire[uint1_t] = make_reset()   # made by logic in some MAIN
+        @MAIN(clk, reset=gen_rst, reset_registers="all")
+        def other(): ...
+
+    While the reset is 1 at a rising clock edge, each register it resets
+    takes its initial value (its declaration's `= value`, else zero) instead
+    of its next value. The reset has priority over the clock enable. In
+    hardware code the bound name is an ordinary uint1_t signal: `if rst:`
+    is plain logic. Native and HDL simulation drive a reset Input to 1 in
+    cycle 0 and 0 after it. Only kind="sync", active="high" is supported.
+    """
+    if kind != "sync":
+        raise NotImplementedError(
+            f"make_reset(kind={kind!r}): only synchronous resets (kind=\"sync\") "
+            f"are supported. Synchronize an asynchronous reset with registers on "
+            f"its clock and bind the result to a Wire reset."
+        )
+    if active != "high":
+        raise NotImplementedError(
+            f"make_reset(active={active!r}): only active-high resets "
+            f"(active=\"high\") are supported. Invert an active-low reset in a "
+            f"MAIN that drives a Wire reset: `rst = ~rst_n`."
+        )
+    return _Reset(kind, active, _frame_origin(_sys._getframe(1)))
+
+
+def make_clock(mhz, name=None, syn_mhz=None, reset=None):
     """A clock of `mhz` MHz, for @MAIN(clk), @MAIN(clock=clk), clock markers
     (Wire[T, clk], Input[T, clk]) and clock bindings::
 
@@ -6974,18 +7158,37 @@ def make_clock(mhz, name=None, syn_mhz=None):
     unnamed clock of its rate, the one @MAIN(mhz) runs on, so
     `pll_clk: Input[uint1_t] = make_clock(85.0)` binds @MAIN(85.0)'s clock.
     syn_mhz= is the goal of tools that only synthesize. A clock bound to a pin
-    or a wire must be the clock of some @MAIN.
+    or a wire must be the clock of some @MAIN. reset= (a make_reset() reset)
+    is the clock's primary reset, which its @MAINs use unless they name
+    another (MAIN(reset=)); clk.reset reads it back.
     """
-    return _Clock(mhz, name, syn_mhz, _frame_origin(_sys._getframe(1)))
+    origin = _frame_origin(_sys._getframe(1))
+    if reset is not None and not isinstance(reset, _Reset):
+        raise TypeError(
+            f"make_clock(reset={reset!r}) at {origin}: reset= takes a reset "
+            f"from make_reset() (the name it is bound to)"
+        )
+    return _Clock(mhz, name, syn_mhz, origin, reset)
 
 
 def _clock_conflict(clocks):
     """The error message for the first conflict among `clocks` (_Clock
-    objects of one design): one clock given two syn_mhz values, or two names
-    of one rate that VHDL, ignoring case, reads as one. None when they agree."""
+    objects of one design): one clock given two syn_mhz values or two primary
+    resets, or two names of one rate that VHDL, ignoring case, reads as one.
+    None when they agree."""
     syn = {}
+    resets = {}
     by_port = {}
     for clk in clocks:
+        if clk.reset is not None:
+            prior = resets.setdefault(clk.identity, clk)
+            if prior.reset is not clk.reset:
+                return (
+                    f"Clock {clk.port_name} has two primary resets: "
+                    f"{prior.reset!r} (make_clock at {prior.origin}) and "
+                    f"{clk.reset!r} (make_clock at {clk.origin}). A clock has "
+                    f"one primary reset; give a MAIN another with MAIN(reset=)."
+                )
         if clk.syn_mhz is not None:
             prior = syn.setdefault(clk.identity, clk)
             if prior.syn_mhz != clk.syn_mhz:
@@ -7002,6 +7205,33 @@ def _clock_conflict(clocks):
                 f"one of them"
             )
     return None
+
+
+def _clock_primary_resets(clocks):
+    """{clock identity: its primary reset} of `clocks` (_Clock objects of one
+    design, agreeing by _clock_conflict). Elaboration (PY_TO_LOGIC
+    _assign_resets) and native sim build it from the same clocks."""
+    return {c.identity: c.reset for c in clocks if c.reset is not None}
+
+
+def _resolve_main_reset(info, clock_identity, clock_primaries):
+    """(reset, reset_registers) of the @MAIN `info` (a _MainInfo) running on
+    the clock `clock_identity` ((mhz, name)): its MAIN(reset=), else that
+    clock's primary reset in `clock_primaries` (_clock_primary_resets), else
+    None. One rule for elaboration and native sim."""
+    reset = info.reset
+    if reset is _CLOCK_RESET:
+        reset = clock_primaries.get(tuple(clock_identity))
+    return reset, info.reset_registers
+
+
+def _global_inst_main_reset(clock_identity, clock_primaries):
+    """(reset, reset_registers) of a global instance's MAIN (Inst[f]'s
+    <key>_INST, a same-clock Fifo[T]'s <key>_FIFO) on the clock
+    `clock_identity`: every register below it resets with that clock's
+    primary reset, or none when the clock has none. One rule for elaboration
+    and native sim."""
+    return clock_primaries.get(tuple(clock_identity)), "all"
 
 
 # ─────────────────────────────────────────────
@@ -7927,10 +8157,15 @@ def _host_reset() -> None:
 # ─────────────────────────────────────────────
 
 
-def vhdl(vhdl_text):
+def vhdl(vhdl_text, reset=None):
     """Raw VHDL passthrough: replaces the entire calling function's body with
     literal VHDL text spliced into the generated entity's architecture. Must be
     the only statement in the function body. Equivalent to C's __vhdl__("...").
+
+    reset="sync": the text may use RESET (std_logic, active high, synchronous
+    to clk) to reset its registers. It is the entity's RESET port under a
+    MAIN(reset_registers="all") with a reset, else a constant '0'. Without
+    reset=, the text keeps its state across a reset.
 
     Unlike the bit manipulation primitives above, there is no general way to
     simulate arbitrary user-supplied VHDL text in Python, so this function has
@@ -8042,6 +8277,7 @@ def sim_model(target, copy_state=True):
                 f"callable instance, not {type(model).__name__}"
             )
         cell[0] = (model, kind, copy_state)
+        cell[1] = _raw_vhdl_keeps_state(target)
         return model
 
     return _attach
@@ -8243,6 +8479,23 @@ _SIM_MAIN_FRAME_PREFIX = "MAIN:"
 # Register state keyed by instance path tuple.
 # _sim_reg_state[inst_path][reg_name] = current integer value (0 = reset default).
 _sim_reg_state = {}
+
+# Reset mode of the _sim_reg_state entries that do not follow their MAIN's
+# reset_registers policy: _sim_reg_modes[inst_path][reg_name] = "reset"
+# (Reg[T, RESET]) or "no_reset" (Reg[T, NO_RESET], a raw vhdl() model without
+# reset=). Written with the register (_sim_reg_write); read by _sim_apply_resets.
+_sim_reg_modes = {}
+
+# A pypeline_sim run's resets: root frame name (_SIM_MAIN_FRAME_PREFIX + MAIN
+# name) -> (its reset wire's sim name, its reset_registers policy), for each
+# MAIN with a reset (pypeline_sim._sim_reset_table). Empty outside a run, and
+# under sim_call: every reset inactive.
+_sim_root_resets = {}
+
+# A pypeline_sim run's reset Input pins: sim name -> True once Python code
+# (a @sim_input, a testbench MAIN) has written it. A pin nothing writes gets
+# the default pulse: 1 in cycle 0, 0 after (pypeline_sim.run_sim).
+_sim_reset_inputs = {}
 
 # Maximum convergence iterations for Feedback[T] simulation.
 # Combinatorial feedback must reach a fixed point in far fewer iterations than this.
@@ -8682,12 +8935,80 @@ def _sim_reg_read(inst_path, reg_name, default=0):
     return _sim_reg_state.get(inst_path, {}).get(reg_name, default)
 
 
-def _sim_reg_write(inst_path, reg_name, value):
-    """Update the register value, routing to buffer if buffering is active."""
+def _sim_reg_write(inst_path, reg_name, value, reset_mode=None):
+    """Update the register value, routing to buffer if buffering is active.
+    reset_mode: "reset" (Reg[T, RESET]) or "no_reset" (Reg[T, NO_RESET]) for a
+    register that does not follow its MAIN's reset_registers policy."""
+    if reset_mode is not None:
+        _sim_note_reset_mode(inst_path, reg_name, reset_mode)
     if _sim_reg_write_buffer is not None:
         _sim_reg_write_buffer.setdefault(inst_path, {})[reg_name] = value
     else:
         _sim_reg_state.setdefault(inst_path, {})[reg_name] = value
+
+
+def _sim_note_reset_mode(inst_path, reg_name, reset_mode):
+    """Record a register's reset mode (_sim_reg_modes). A Reg[T, RESET] in a
+    pypeline_sim run whose MAIN has no reset is an error, as in hardware
+    (PY_TO_LOGIC._assign_resets)."""
+    modes = _sim_reg_modes.setdefault(inst_path, {})
+    if reg_name in modes:
+        return
+    modes[reg_name] = reset_mode
+    if (
+        reset_mode == "reset"
+        and _sim_run_in_progress
+        and inst_path
+        and str(inst_path[0][0]).startswith(_SIM_MAIN_FRAME_PREFIX)
+        and inst_path[0][0] not in _sim_root_resets
+    ):
+        main = inst_path[0][0][len(_SIM_MAIN_FRAME_PREFIX) :]
+        raise RuntimeError(
+            f"Register '{reg_name}' is Reg[T, RESET], but @MAIN '{main}' has no "
+            f"reset: its clock has no primary reset and it names none. Give one "
+            f"with make_clock(..., reset=rst) or MAIN(..., reset=rst)."
+        )
+
+
+def _sim_apply_resets():
+    """The synchronous resets of one clock edge, right after the register
+    writes commit (_sim_reg_flush_buffer): below each MAIN whose reset wire
+    converged to 1 this cycle, the registers that reset go back to their
+    initial value -- their _sim_reg_state entry is deleted, so the next read
+    returns the declaration's initializer. Reg[T, RESET] registers always
+    reset; plain registers and the simulator's own state (delay lines,
+    AUTO_FSM state, sim models) only under reset_registers="all"; NO_RESET
+    entries never. A model with on_reset() has it called instead of being
+    recreated. Under "all" a pipelined pure MAIN's delayed writes are dropped
+    too."""
+    if not _sim_root_resets:
+        return
+    active = {}
+    for root, (wire, policy) in _sim_root_resets.items():
+        value = _sim_wire_state.get(wire)
+        if value is not None and int(value) == 1:
+            active[root] = policy
+    if not active:
+        return
+    for inst_path in list(_sim_reg_state):
+        policy = active.get(inst_path[0][0]) if inst_path else None
+        if policy is None:
+            continue
+        regs = _sim_reg_state[inst_path]
+        modes = _sim_reg_modes.get(inst_path, {})
+        for name in list(regs):
+            mode = modes.get(name)
+            if mode == "no_reset" or (mode is None and policy != "all"):
+                continue
+            if name == _SIM_MODEL_REG_KEY:
+                on_reset = getattr(regs[name], "on_reset", None)
+                if callable(on_reset):
+                    on_reset()
+                    continue
+            del regs[name]
+    for info in _sim_pipelined_main_info.values():
+        if active.get(_SIM_MAIN_FRAME_PREFIX + info["name"]) == "all":
+            info["queue"].clear()
 
 
 def _sim_wire_read(name: str):
@@ -8731,6 +9052,8 @@ def _sim_wire_write(name: str, value, claim_key=None) -> None:
     _sim_wire_state[name] = value
     if claim_key is not None:
         _sim_wire_claims.setdefault(claim_key, {}).setdefault(name, set()).add(())
+    if name in _sim_reset_inputs:
+        _sim_reset_inputs[name] = True
 
 
 def _sim_wire_current_or_zero(name: str):
@@ -8887,6 +9210,9 @@ def _sim_apply_delayed_writes(entries) -> None:
 def sim_reset():
     """Clear all simulated register and wire state."""
     _sim_reg_state.clear()
+    _sim_reg_modes.clear()
+    _sim_root_resets.clear()
+    _sim_reset_inputs.clear()
     _sim_wire_state.clear()
     _sim_wire_claims.clear()
     _sim_input_cache.clear()
@@ -10243,6 +10569,7 @@ def _build_reg_sim_func(fn):
     # Assign nodes by _TypedAnnAssignRewriter above, so only Reg[T]/Feedback[T] remain.
     reg_names = []
     reg_zeros = {}  # name → power-on default value, computed once at decoration time
+    reg_reset_modes = {}  # name → "reset" / "no_reset" (Reg[T, RESET] / NO_RESET)
     feedback_names = []
     feedback_zeros = {}  # name → typed zero bootstrap value (struct/array-aware)
     # Locals assigned via plain `name = expr` earlier in the body (e.g.
@@ -10290,6 +10617,8 @@ def _build_reg_sim_func(fn):
             continue
         if isinstance(ann_val, _RegType):
             reg_names.append(stmt.target.id)
+            if ann_val.reset_mode is not None:
+                reg_reset_modes[stmt.target.id] = ann_val.reset_mode
             if stmt.value is not None:
                 # Reg[T] = val: evaluate the init expression for the power-on default.
                 try:
@@ -10457,7 +10786,11 @@ def _build_reg_sim_func(fn):
     # e.g. on the _SIM_FEEDBACK_MAX_ITER RuntimeError path, which must not
     # leave the flag stuck suppressed for the rest of the simulation.
     finally_stmts = [
-        _ast.parse(f'_sim_reg_write(__ip__, "{name}", {name})').body[0]
+        _ast.parse(
+            f'_sim_reg_write(__ip__, "{name}", {name}, "{reg_reset_modes[name]}")'
+            if name in reg_reset_modes
+            else f'_sim_reg_write(__ip__, "{name}", {name})'
+        ).body[0]
         for name in reg_names
     ]
     if feedback_names:
@@ -10633,7 +10966,28 @@ def _sim_capture_call_loc(caller_f):
     return (caller_f.f_code.co_filename, caller_f.f_lineno, None, None)
 
 
-def _call_sim_model(model_entry, args, kwargs):
+def _raw_vhdl_keeps_state(fn):
+    """True if fn's body is a vhdl(text) call without reset=: its hardware
+    keeps its state when its MAIN resets, so its sim model does too
+    (_call_sim_model records it "no_reset")."""
+    try:
+        src = _textwrap.dedent(_inspect.getsource(_inspect.unwrap(fn)))
+        tree = _ast.parse(src)
+    except (OSError, TypeError, SyntaxError):
+        return False
+    func_def = next((n for n in tree.body if isinstance(n, _ast.FunctionDef)), None)
+    for stmt in func_def.body if func_def is not None else ():
+        call = stmt.value if isinstance(stmt, _ast.Expr) else None
+        if not isinstance(call, _ast.Call):
+            continue
+        callee = call.func
+        name = callee.id if isinstance(callee, _ast.Name) else getattr(callee, "attr", None)
+        if name == "vhdl":
+            return not any(kw.arg == "reset" for kw in call.keywords)
+    return False
+
+
+def _call_sim_model(model_entry, args, kwargs, keeps_state=False):
     """Evaluate an attached simulation model for the current hardware instance.
 
     hw_func delegates are simply called: the delegate's own wrapper manages its
@@ -10655,8 +11009,13 @@ def _call_sim_model(model_entry, args, kwargs):
     are convergence-safe there too: every pass reads the state committed at
     the last real clock edge, and only the final pass's buffered write lands
     in _sim_reg_state once the outermost sim_call returns.
+
+    keeps_state: the target is raw vhdl() without reset= (its model cell's
+    second item, _raw_vhdl_keeps_state): a reset leaves the model alone, as
+    it leaves the hardware (_sim_apply_resets).
     """
     model, kind, copy_state = model_entry
+    reset_mode = "no_reset" if keeps_state else None
     if kind == "hw_func":
         return model(*args, **kwargs)
     inst_path = _sim_current_inst_path()
@@ -10671,11 +11030,13 @@ def _call_sim_model(model_entry, args, kwargs):
             # would re-instantiate (and in-place mutation is not
             # convergence-safe regardless).
             _sim_reg_state.setdefault(inst_path, {})[_SIM_MODEL_REG_KEY] = committed
+            if reset_mode is not None:
+                _sim_note_reset_mode(inst_path, _SIM_MODEL_REG_KEY, reset_mode)
     if not copy_state:
         return committed(*args, **kwargs)
     working = _copy.deepcopy(committed)
     result = working(*args, **kwargs)
-    _sim_reg_write(inst_path, _SIM_MODEL_REG_KEY, working)
+    _sim_reg_write(inst_path, _SIM_MODEL_REG_KEY, working, reset_mode)
     return result
 
 
@@ -10837,10 +11198,11 @@ def _sim_type_wrap(fn):
     # (_sim_region_for): this wrapper, or exempt for @sim_input/@sim_output.
     _sim_only_body = getattr(fn, "_pypeline_sim_only", False)
 
-    # sim_model routing cell: sim_model(target) fills this one-element list
-    # with (model, kind, copy_state); every wrapper variant checks it per call
-    # (one is-None test on the no-model hot path).
-    _model_cell = [None]
+    # sim_model routing cell: sim_model(target) fills its first item with
+    # (model, kind, copy_state) and its second with whether the model keeps
+    # its state across a reset (_raw_vhdl_keeps_state); every wrapper variant
+    # checks the first per call (one is-None test on the no-model hot path).
+    _model_cell = [None, False]
 
     # Helper: cast args and kwargs to their annotated types, run the body, cast result.
     # Extracted so both wrapper variants share the same arg-casting logic.
@@ -10872,10 +11234,14 @@ def _sim_type_wrap(fn):
             if _model_cell[0] is not None:
                 if _sim_regions:
                     result = _sim_owned_body_call(
-                        wrapper, _call_sim_model, (_model_cell[0], new_args, new_kwargs), {}
+                        wrapper, _call_sim_model,
+                        (_model_cell[0], new_args, new_kwargs, _model_cell[1]),
+                        {},
                     )
                 else:
-                    result = _call_sim_model(_model_cell[0], new_args, new_kwargs)
+                    result = _call_sim_model(
+                        _model_cell[0], new_args, new_kwargs, _model_cell[1]
+                    )
             elif sim_body_fn is not None:
                 if _sim_regions:
                     result = _sim_owned_body_call(
@@ -10924,7 +11290,7 @@ def _sim_type_wrap(fn):
                             return _sim_owned_body_call(
                                 wrapper, _call_sim_model, (_model_cell[0], args, kwargs), {}
                             )
-                        return _call_sim_model(_model_cell[0], args, kwargs)
+                        return _call_sim_model(_model_cell[0], args, kwargs, _model_cell[1])
                     finally:
                         _sim_inst_stack.pop()
                 # See the matching comment in _run_body: scope key must be
@@ -10968,7 +11334,7 @@ def _sim_type_wrap(fn):
                             return _sim_owned_body_call(
                                 wrapper, _call_sim_model, (_model_cell[0], args, kwargs), {}
                             )
-                        return _call_sim_model(_model_cell[0], args, kwargs)
+                        return _call_sim_model(_model_cell[0], args, kwargs, _model_cell[1])
                     if sim_body_fn is None:
                         return fn(*args, **kwargs)
                     if _sim_regions:

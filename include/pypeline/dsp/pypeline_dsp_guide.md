@@ -13,6 +13,14 @@ PypelineC auto-pipelines to whatever depth the target FPGA/fmax needs, wrapped i
 valid/ready stream. **Pipeline depth is never hard-coded**, so the same source retargets
 any part instead of needing a per-vendor IP core.
 
+**Resets.** Every block resets with its caller's `@MAIN`
+([Resets](../../../docs/pypeline_guide.md#resets)): under `reset_registers="all"` its
+pipeline stages, filter history, FIFOs and ROM requests in flight return to their initial
+state; under the default `"requested"` nothing in it resets. The blocks with their own
+`rst` argument (`make_lut_nco`, `make_log2_db`, `make_lut_atan2`) keep it for designs
+without resets; with automatic reset, pass `rst=0` explicitly (an omitted default
+argument is [#386](https://github.com/JulianKemmerer/PipelineC/issues/386)).
+
 ## `make_fir` — single-rate filter
 
 DSP factories return one callable. Its `.return_t` is the complete call result;

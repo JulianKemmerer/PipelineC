@@ -162,6 +162,7 @@ See [auto-pipelined RAM compilation](AUTO_PIPELINE_DESIGN.md#ram-compiler-sweep-
   - [Clock assignment (`_assign_clocks`)](#clock-assignment-_assign_clocks)
   - [The crossing check (`_check_clock_crossings`)](#the-crossing-check-_check_clock_crossings)
   - [The crossing report](#the-crossing-report)
+  - [Resets (`_assign_resets`)](#resets-_assign_resets)
 - [`AUTO_PIPELINE(func, latency, start_latency, max_latency)` — Forced Submodule Pipelining](#auto_pipelinefunc-latency-start_latency-max_latency--forced-submodule-pipelining)
   - [Syntax — a callable tag object, not a wrapper around a call expression](#syntax--a-callable-tag-object-not-a-wrapper-around-a-call-expression)
   - [Validation](#validation)
@@ -2141,19 +2142,20 @@ Only the taken branch's hardware is emitted; the other branch produces no Logic(
 ## Registers (`Reg[T]`)
 
 A local variable annotated `Reg[T]` declares a hardware register — a value that persists
-across clock cycles. By default the register is initialised to zero at reset; an optional
-initializer expression provides a non-zero reset value.
+across clock cycles. Its initial value is zero; an optional initializer expression gives
+another. The initial value is the register's power-up value and the value a reset gives
+it ([Resets](#resets-_assign_resets)).
 
 ```python
 @MAIN
 def accumulator(data_in: uint32_t) -> uint32_t:
-    acc: Reg[uint32_t]       # register, reset value = 0 (default)
+    acc: Reg[uint32_t]       # register, initial value 0 (default)
     acc = acc + data_in      # read current value, compute next
     return acc
 
 @MAIN
 def counter_from_10() -> uint32_t:
-    cnt: Reg[uint32_t] = 10  # register, reset value = 10
+    cnt: Reg[uint32_t] = 10  # register, initial value 10
     cnt = cnt + 1
     return cnt
 ```
@@ -5041,6 +5043,60 @@ as `pin`. `_crossing_hardware` gives a row's hardware and depth:
 A design with no rows gets a log that says so. `AUTO_PIPELINE.WRITE_0_ADDED_CLKS_INIT_FILES`
 calls the writer for Pypeline builds, the first step that writes VHDL, when part and tool
 are known.
+
+### Resets (`_assign_resets`)
+
+[Guide](pypeline_guide.md#resets). A reset is a `pypeline._Reset` (`make_reset()`) bound
+to a module-level `uint1_t` `Input` or `Wire` on its declaration line.
+`_discover_global_wires` records each binding as a `ResetDecl` (the `_Reset`, `Input` or
+`Wire`, bare name, location) in `ParserState.pypeline_resets[wire key]`, and rejects a
+binding on an `Output`, `Inst` or `Fifo`, with an `ASYNC`, `VOLATILE` or clock marker,
+of another type than `uint1_t`, or of one `_Reset` twice. In hardware code the name means
+the wire: `_try_eval_const` declines an expression that reads a global wire whose module
+global holds its binding (`_refs_bound_wire`, also for clock pins), or `if rst:` would
+fold the truthy Python object.
+
+`_assign_resets(parser_state)` runs in `PARSE_FILE` after `_check_global_insts`, when every
+MAIN has its clock. It fills `ParserState.main_resets[MAIN] = MainReset(source, policy)`
+(reset wire key, `"requested"` or `"all"`) for each MAIN with a reset:
+
+- a registered `@MAIN` (`_main_registry`'s `_MainInfo`): `pypeline._resolve_main_reset`
+  with the clock primaries of every clock the design names (`_design_clocks`,
+  `pypeline._clock_primary_resets`);
+- a global instance's MAIN or a same-clock FIFO's (`decl.crossing is None`):
+  `pypeline._global_inst_main_reset`, its clock's primary reset under `"all"`; an async
+  FIFO's side MAINs get none.
+
+Native sim calls the same two `pypeline` functions, so both agree on every MAIN's reset.
+Then the rules, each an `ElaborationError`: a reset named by `make_clock` or
+`MAIN(reset=)` but bound to no wire; `"all"`, or a `Reg[T, RESET]` below the MAIN, with no
+reset; a MAIN whose reset a function below it drives; a `"all"` user MAIN
+(`GlobalInstDecl.user_mains`, filled by `_check_global_insts`) of an async FIFO, or of a
+global instance or same-clock FIFO that resets with another reset; a reset pin used on
+two clocks (MAINs it resets and functions reading it); a reset `Wire` driven on another
+clock than a MAIN it resets. A MAIN *uses* its reset under `"all"`, or under
+`"requested"` with a `Reg[T, RESET]` below it (`_reset_regs_below`). A reset no MAIN uses
+and no function reads gets a NOTE; a reset pin is then removed from `global_vars`,
+`input_wires` and `pypeline_wire_decls`, so it makes no port. A raw `vhdl()` function
+without `reset=` under an `"all"` MAIN gets a NOTE. Reset wires count as shared globals
+(`LOGIC.GLOBAL_VAR_IS_SHARED`), so a reset `Wire`'s writer exports it in
+`module_to_global` even when no function reads it.
+
+Per register, `_elab_ann_assign` passes `_RegType.reset_mode` (`Reg[T, RESET]` "reset",
+`Reg[T, NO_RESET]` "no_reset", else `None`) to `_declare_state_reg`, which stores it in
+`VariableInfo.reset_mode`, and sets `VariableInfo.init_explicit` for an `= value` outside
+compiler-generated source (`_is_generated_source`: the synthetic `/<marker>/` paths of
+`pypeline._GENERATED_SOURCE_DIR_MARKERS`). `_elab_vhdl_text_stmt` reads `vhdl(text,
+reset="sync")` into `Logic.vhdl_reset` and rejects a raw function argument named `reset`.
+`VHDL.LOGIC_NEEDS_RESET` and `VHDL.STATE_REG_RESETS` decide what resets from these
+([VHDL design](VHDL_DESIGN.md#resets)).
+
+**ASIC initializers.** `CHECK_ASIC_REGISTER_INITS(parser_state, target)` raises one error
+listing every `init_explicit` register, instance by instance, that does not reset under its
+MAIN's policy (`VHDL.STATE_REG_RESETS`), and warns once per function about a
+compiler-generated initial value (an `AUTO_FSM`'s one-hot `st1h_r = 1`) that does not.
+`SYN.RESOLVE_BUILD_TARGET` calls it for a declared ASIC target
+([SYN design](SYN_DESIGN.md#2-choosing-a-tool)).
 
 ---
 

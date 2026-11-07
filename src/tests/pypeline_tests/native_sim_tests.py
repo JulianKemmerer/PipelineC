@@ -642,6 +642,16 @@ def get_tests() -> list:
             cmd=[INST_DIR / "multi_rate_sim_refusal_test.py"],
         )
     )
+    # The native reset timeline under pypeline_sim.py: the cycle-0 pulse of a
+    # reset pin, no pulse for a Python-driven one, a reset Wire from its
+    # logic, an unchanged reset-free timeline, and sim_call with resets off.
+    tests.append(
+        Test(
+            name="reset_sim_timeline_test",
+            category="native_sim",
+            cmd=[INST_DIR / "reset_sim_timeline_test.py"],
+        )
+    )
     # @MAINs made in code under pypeline_sim.py: lanes from one factory keep
     # their own registers, wire elements and FIFO model state; duplicate MAIN
     # names stop the run; the multi-rate refusal names made MAINs; MAIN() in a

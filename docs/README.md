@@ -628,7 +628,9 @@ In both cases, the on-board always running clock is the input to the PLL. The PL
 instantiated in the same area of VHDL or Verilog as your original blinking demo. The
 output clock(s) from the PLL can be used once the PLL's "locked" signal is asserted.
 Typically "not locked" is used as a reset condition, holding the design in reset until
-the PLL is stable.
+the PLL is stable. In Pypeline, synchronize `locked` into the PLL's output clock with two
+registers in a `@MAIN`, drive a reset `Wire` with its inverse, and make that the clock's
+reset ([Resets](pypeline_guide.md#resets)).
 
 #### Synthesis and place-and-route reports
 

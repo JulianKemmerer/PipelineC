@@ -574,7 +574,13 @@ repeat-the-sweep one:
    write sound ("same filename ⇒ same rendered content"). The module's own
    name is deliberately not in its tuple (it's already in every filename),
    so leaf tuples — and therefore previously cached leaf synthesis logs —
-   are unaffected. The confirmation's verdict feeds the driver's
+   are unaffected. An instance with a `RESET` port
+   (`VHDL.LOGIC_NEEDS_RESET`) adds `("reset", RESET_IMPLEMENTATION_VERSION,
+   policy)`, since its text holds that reset policy's logic; reset-free
+   instances add nothing, so their names do not change
+   ([VHDL design](VHDL_DESIGN.md#resets)). The zero-added-clocks hash cache
+   (`GET_ZERO_ADDED_CLKS_TIMING_PARAMS_LOOKUP`) is keyed by function name and
+   the instance's reset policy for the same reason. The confirmation's verdict feeds the driver's
    TIMING-NOT-MET exit gate via `sweep_timing_failures` (empty on met; a
    failed confirmation falls back to the full sweep, whose own result then
    governs). The confirmation also records its measurements in

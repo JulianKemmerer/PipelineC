@@ -60,15 +60,19 @@ generic map(
   ready_out => return_output.data_in_ready(0),
   data_out => dout_slv,
   valid_out => return_output.data_out_valid(0),
-  ready_in => ready_for_data_out(0) and CLOCK_ENABLE(0)
+  ready_in => ready_for_data_out(0) and CLOCK_ENABLE(0),
+  rst => RESET
 );
 """
 
+    # reset="sync": under a MAIN(reset_registers="all") with a reset, a reset
+    # empties the FIFO (its power-up state); otherwise RESET is '0'. The sim
+    # model needs nothing for it: a reset recreates it, empty.
     @hw_func
     def fifo(
         ready_for_data_out: uint1_t, data_in: data_t, data_in_valid: uint1_t
     ) -> fifo_t:
-        vhdl(vhdl_text)
+        vhdl(vhdl_text, reset="sync")
 
     @sim_model(fifo)
     class _FifoFwftModel:

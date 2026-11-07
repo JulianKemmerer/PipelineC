@@ -148,7 +148,7 @@ def make_stream_ram(
     core_src = (
         "@hw_func\n"
         f"def {core_name}({core_params}) -> CORE_OUT_T:\n"
-        "    vhdl(VHDL_TEXT)\n"
+        '    vhdl(VHDL_TEXT, reset="sync")\n'
     )
     core_ns = {
         "hw_func": hw_func,

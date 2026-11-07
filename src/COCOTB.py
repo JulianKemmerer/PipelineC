@@ -187,6 +187,15 @@ def DUMP_PIPELINEC_DEBUG(dut):\n"""
         # Finite --run N never triggers this path (the loop simply completes),
         # so it keeps the plain, unmodified @cocotb.test().
         test_decorator_args = "expect_error=SimFailure" if run_all else ""
+        # Reset pins: 1 before the first clock edge, 0 after it, the pulse native
+        # sim drives (pypeline_sim._drive_reset_pulse). GHDL names are lower case.
+        reset_assert = "".join(
+            f"    dut.{name.lower()}.value = 1\n" for name in sim_gen_info.reset_inputs
+        )
+        reset_release = "".join(
+            f"        if i == 0:\n            dut.{name.lower()}.value = 0\n"
+            for name in sim_gen_info.reset_inputs
+        )
         py_text = f'''
 import cocotb
 from cocotb.result import SimFailure
@@ -209,7 +218,7 @@ async def my_first_test(dut):
     # take their first real clock edge one full loop iteration later, at what
     # gets printed as "Clock: 1" -- a one-cycle-late log label vs. native sim.
     dut.{clock_name}.value = 0
-    # Settle the '0' with a real (if tiny) time advance -- a delta-only
+{reset_assert}    # Settle the '0' with a real (if tiny) time advance -- a delta-only
     # NextTimeStep() was not enough to get GHDL/VPI to commit the '0' before
     # the '1' assignment below; an actual Timer wait is.
     await Timer(1, units="ps")
@@ -221,7 +230,7 @@ async def my_first_test(dut):
     print("^End Clock: ", cycle, flush=True)
     for i in {remaining_cycles_expr}:
         dut.{clock_name}.value = 0
-        await Timer({int(round(ns/2*1000))}, units="ps")
+{reset_release}        await Timer({int(round(ns/2*1000))}, units="ps")
         print("")
         print("Clock: ", i+1, flush=True)
         DUMP_PIPELINEC_DEBUG(dut)

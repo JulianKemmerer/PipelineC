@@ -7,9 +7,12 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), "../../.."))
 from pypeline import (
     AUTO_PIPELINE,
     MAIN,
+    RESET,
+    Input,
     NamedTuple,
     Reg,
     Wire,
+    make_reset,
     hw_func,
     pipeline_latency,
     sim_assert,
@@ -29,11 +32,16 @@ def delay_one(x: uint16_t) -> uint16_t:
     return result
 
 
+# The checker's reset: pulsed in cycle 0, so `saved` below, whose initial value
+# the sky130 build only keeps through a reset, holds 9 through cycle 1 too.
+rst: Input[uint1_t] = make_reset()
+
+
 @pipeline_latency(1)
-def initialized_delay(x: uint16_t, reset: uint1_t) -> uint16_t:
-    saved: Reg[uint16_t] = 9
+def initialized_delay(x: uint16_t, clear: uint1_t) -> uint16_t:
+    saved: Reg[uint16_t, RESET] = 9
     result: uint16_t = saved
-    if reset:
+    if clear:
         saved = 9
     else:
         saved = x
@@ -41,10 +49,10 @@ def initialized_delay(x: uint16_t, reset: uint1_t) -> uint16_t:
 
 
 @hw_func
-def enabled_join(x: uint16_t, enable: uint1_t, reset: uint1_t) -> uint16_t:
+def enabled_join(x: uint16_t, enable: uint1_t, clear: uint1_t) -> uint16_t:
     delayed: uint16_t
     if enable:
-        delayed = initialized_delay(x, reset)
+        delayed = initialized_delay(x, clear)
     return delayed + x
 
 
@@ -94,7 +102,7 @@ def pipeline_latency_ap_compute():
     ap_output_sample = ap(input_sample)
 
 
-@MAIN
+@MAIN(reset=rst)
 def pipeline_latency_checker() -> sample_t:
     count: Reg[uint16_t]
     seen: Reg[uint16_t]
@@ -105,12 +113,13 @@ def pipeline_latency_checker() -> sample_t:
     if done:
         sim_finish()
     # These local calls stay outside the auto-pipelined regions. Check the
-    # initial register value and synchronous reset, then a clock-enabled
-    # fixed child whose mux control and bypass need one clock of alignment.
+    # initial register value, the reset in cycle 0 and a manual clear in
+    # cycle 8, then a clock-enabled fixed child whose mux control and bypass
+    # need one clock of alignment.
     initial_input: uint16_t = count + 100
     initial: uint16_t = initialized_delay(initial_input, count == 8)
     initial_expected: uint16_t = count + 99
-    if (count == 0) | (count == 9):
+    if (count <= 1) | (count == 9):
         initial_expected = 9
     sim_assert(initial == initial_expected, "fixed register initialization/reset")
     enabled_input: uint16_t = count + 40
@@ -119,7 +128,8 @@ def pipeline_latency_checker() -> sample_t:
     if (count > 0) & ~done:
         enabled_expected: uint16_t = count + 39
         if count & 1:
-            if count == 9:
+            # The reset in cycle 0 and the clear in cycle 8 leave 9 behind
+            if (count == 1) | (count == 9):
                 enabled_expected += 9
             else:
                 enabled_expected += count + 39

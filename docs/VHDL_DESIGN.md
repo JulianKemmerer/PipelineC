@@ -39,6 +39,7 @@ STA.
 - [Type conversion on a mismatched connection](#type-conversion-on-a-mismatched-connection)
 - [Flat code and hierarchy](#flat-code-and-hierarchy)
 - [Top-level clocks and records](#top-level-clocks-and-records)
+- [Resets](#resets)
 - [Raw/manual VHDL and fixed boundaries](#rawmanual-vhdl-and-fixed-boundaries)
 - [Synthesis boundary and verification](#synthesis-boundary-and-verification)
 - [Entity text is a function of its name](#entity-text-is-a-function-of-its-name)
@@ -173,8 +174,9 @@ text.
 `GET_ENTITY_NAME` names the timing-specific shape. Generated combinational
 entities use names of the form `func_<latency>CLK_<hash>`. The hash includes
 the timing structure that affects rendered content: local slices, exact
-integer bit-boundary groups, I/O registers, and referenced child entity
-identities. Identical shapes are
+integer bit-boundary groups, I/O registers, multi-cycle tuples, the reset
+policy of an entity with a `RESET` port ([Resets](#resets)), and referenced
+child entity identities. Identical shapes are
 reused; different placements cannot alias merely because their total latency
 matches.
 
@@ -357,6 +359,50 @@ PipelineC does not synthesize an output-ready port where the source interface
 has none. Verification for such an interface can cover continuous-valid
 traffic, input bubbles, ordering, latency, and flush, but must not claim
 output-backpressure coverage.
+
+## Resets
+
+Pypeline resets ([guide](pypeline_guide.md#resets),
+[elaboration](PY_TO_LOGIC_DESIGN.md#resets-_assign_resets)) are synchronous and active
+high. `ParserState.main_resets` gives each MAIN with a reset its reset wire and policy;
+`GET_INST_RESET_POLICY(inst, parser_state)` reads an instance's from its root MAIN (the
+first token of its name), `None` without one (always for the C front end).
+
+- **Which registers.** `STATE_REG_RESETS(reg, Logic, policy)`: a `Reg[T, RESET]` under
+  any policy, a plain `Reg[T]` under `"all"`, a `Reg[T, NO_RESET]` never. Under `"all"`
+  the entity's pipeline stage registers (`REG_STAGE*`), its raw operator pipeline
+  (`manual_registers_r`) and its I/O banks (`io_registers_r`) reset too.
+- **The port.** `LOGIC_NEEDS_RESET(inst, Logic, parser_state, timing)` is true when the
+  instance or one below it holds state that resets under its policy: under `"all"`, a
+  nonzero latency, a resetting state register or raw `vhdl(..., reset="sync")`; under
+  `"requested"`, a `Reg[T, RESET]`. Clock crossings, simulation built-ins, tool
+  primitives and C memories never need it. It is computed per instance, since policy
+  and latency both are, with no memo. Such an entity has `RESET : in std_logic` after
+  `CLOCK_ENABLE`, in the positional order `clk, CLOCK_ENABLE, RESET, global_to_module,
+  module_to_global, inputs, outputs`, at every site that writes it: the entity
+  (`WRITE_LOGIC_ENTITY`), its parent's port map (the parent's `RESET`, straight through,
+  not clock enabled), the MAIN instance in `WRITE_MULTIMAIN_TOP`, and the isolated top
+  `WRITE_LOGIC_TOP`, which registers `RESET` like an input.
+- **The source.** `MAIN_RESET_SOURCE_TEXT(main, parser_state)` maps a MAIN's port to its
+  reset pin's bit, or to the bit its reset `Wire`'s one writer instance drives into
+  `module_to_global`, the routing user clock wires take. No reset port is tied to a
+  constant.
+- **The logic.** `GET_RESET_BLOCK_TEXT` renders `if RESET = '1' then ... end if;` inside
+  the register process's `rising_edge`, after the clock-enable block, so a reset wins over
+  the clock enable. State registers take `STATE_REG_TO_VHDL_INIT_STR` (their initializer),
+  stage registers `WIRE_TO_VHDL_NULL_STR`, and `manual_registers_r` the function
+  `manual_registers_RESET` (`GET_MANUAL_REGISTERS_RESET_FUNC_TEXT`), which zeroes every
+  field of every stage of `raw_hdl_variables_t`: vectors to `(others => '0')`, named types
+  by the operator's C wire type. Under `"all"` the I/O bank becomes a process that resets
+  it to `io_registers_NULL`.
+- **Names.** An entity with the port holds its policy's reset logic, so
+  `AUTO_PIPELINE.TimingParams.RECURSIVE_GET_IO_REGS_AND_NO_SUBMODULE_SLICES` adds
+  `("reset", RESET_IMPLEMENTATION_VERSION, policy)` to its hash: one function reset under
+  one MAIN and not under another is two entities, and a reset-free entity's name does not
+  change. Raising `RESET_IMPLEMENTATION_VERSION` renames every resetting entity.
+- **Raw VHDL.** A `vhdl(text, reset="sync")` entity without the port gets
+  `constant RESET : std_logic := '0';` ahead of its text, so its text always names
+  `RESET`.
 
 ## Raw/manual VHDL and fixed boundaries
 

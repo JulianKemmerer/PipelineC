@@ -508,12 +508,30 @@ def RESOLVE_PART_AND_TOOL(
     return part, tool
 
 
+def TARGET_HAS_REGISTER_POWER_UP_VALUES(part, tool_name):
+    """Whether a build's declared target gives registers power-up values.
+    False for an ASIC: the part selects DEVICE_MODELS (sky130...) or the tool
+    is device_models or pyrtl. None when neither part nor tool is declared
+    (the PyRTL timing fallback of PART_SET_TOOL is no declaration). True for
+    an FPGA. Reads names only: a declared target counts where its tool is not
+    installed."""
+    if tool_name is not None and TOOL_MODULES.get(tool_name) in (DEVICE_MODELS, PYRTL):
+        return False
+    if part is not None:
+        return PART_TO_TOOL(part) is not DEVICE_MODELS
+    if tool_name is None:
+        return None
+    return True
+
+
 def RESOLVE_BUILD_TARGET(
     parser_state, src_file, cli_part, cli_tool, check_bitstream_tools
 ):
     """Settle a build's target right after the first parse, before any file is
     written (AUTO_PIPELINE.WRITE_0_ADDED_CLKS_INIT_FILES is the first step to
-    consume the tool).
+    consume the tool). On an ASIC target (TARGET_HAS_REGISTER_POWER_UP_VALUES)
+    a .py design's explicitly initialized registers must reset
+    (PY_TO_LOGIC.CHECK_ASIC_REGISTER_INITS).
 
     Part and tool come from all four sources (--part / PART(...), --syn_tool /
     SYN_TOOL(...)) now that the design's own values are known: errors on any
@@ -537,7 +555,14 @@ def RESOLVE_BUILD_TARGET(
     )
     if src_file.endswith(".py"):
         import AUTO_PIPELINE
+        import PY_TO_LOGIC
 
+        tool_name = cli_tool if cli_tool is not None else parser_state.syn_tool_name
+        if TARGET_HAS_REGISTER_POWER_UP_VALUES(parser_state.part, tool_name) is False:
+            # An ASIC keeps an initial value only through a reset
+            PY_TO_LOGIC.CHECK_ASIC_REGISTER_INITS(
+                parser_state, parser_state.part or tool_name
+            )
         parser_state = AUTO_PIPELINE.RAM_PREPARE_TARGET(parser_state, src_file)
     if (
         check_bitstream_tools

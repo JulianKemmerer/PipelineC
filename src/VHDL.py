@@ -201,6 +201,17 @@ def INIT_PYTHON_VAL_TO_VHDL_INIT_STR(py_val, c_type, logic, parser_state):
     Mirrors INIT_C_AST_NODE_TO_VHDL_INIT_STR but takes Python values instead of C AST nodes.
     SimVal (from @struct construction) subclasses int, so the scalar branch handles it.
     """
+    # Enum: its member's VHDL literal, found by value (an IntEnum member's
+    # str() is "color_t.BLUE", which VHDL cannot name)
+    if (
+        isinstance(py_val, int)
+        and not isinstance(py_val, bool)
+        and LOGIC.C_TYPE_IS_ENUM(c_type, parser_state)
+    ):
+        members = parser_state.enum_info_dict[c_type].id_to_int_val
+        literal = next(m for m, v in members.items() if v == int(py_val))
+        return CONST_VAL_STR_TO_VHDL(literal, c_type, parser_state)
+
     # Scalar integer — also covers SimVal (subclass of int) and negatives (str(-5)=="-5")
     if isinstance(py_val, int) and not isinstance(py_val, bool):
         return CONST_VAL_STR_TO_VHDL(str(py_val), c_type, parser_state)
@@ -412,6 +423,29 @@ def BUILD_MULTI_WRITER_REGIONS(base_c_type, writer_to_driven_paths, parser_state
 
     recurse(base_c_type, (), "")
     return regions
+
+
+def MAIN_RESET_SOURCE_TEXT(main_func, parser_state):
+    """The top-level std_logic a MAIN instance's RESET port maps to: its
+    reset pin's bit, or the bit its reset Wire's one writer instance drives
+    into module_to_global (the routing user clock wires take)."""
+    key = parser_state.main_resets[main_func].source
+    if key in parser_state.input_wires:
+        return key + "(0)"
+    writers = sorted(
+        func
+        for func, logic in parser_state.FuncLogicLookupTable.items()
+        if key in logic.write_only_global_wires
+        and func in parser_state.FuncToInstances
+    )
+    insts = sorted(i for w in writers for i in parser_state.FuncToInstances[w])
+    if len(insts) != 1:
+        raise Exception(f"Reset wire {key} needs one writer instance, has {insts}")
+    toks = insts[0].split(LOGIC.SUBMODULE_MARKER)
+    text = "module_to_global." + toks[0]
+    for tok in toks[1:]:
+        text += "." + WIRE_TO_VHDL_NAME(tok)
+    return text + "." + key + "(0)"
 
 
 def WRITE_MULTIMAIN_TOP(parser_state, multimain_timing_params, is_final_top=False):
@@ -858,6 +892,12 @@ begin
         main_needs_clk_en = LOGIC.LOGIC_NEEDS_CLOCK_ENABLE(
             main_func_logic, parser_state
         )
+        main_needs_reset = LOGIC_NEEDS_RESET(
+            main_func,
+            main_func_logic,
+            parser_state,
+            multimain_timing_params.TimingParamsLookupTable,
+        )
         main_needs_global_to_module = LOGIC.LOGIC_NEEDS_GLOBAL_TO_MODULE(
             main_func_logic, parser_state
         )  # , multimain_timing_params.TimingParamsLookupTable)
@@ -875,6 +915,9 @@ begin
         # Clock enable
         if main_needs_clk_en:
             port_text += "to_unsigned(1,1),\n"
+        # Reset
+        if main_needs_reset:
+            port_text += MAIN_RESET_SOURCE_TEXT(main_func, parser_state) + ",\n"
         # Clock cross in
         if main_needs_global_to_module:
             port_text += "global_to_module." + main_func + ",\n"
@@ -1908,6 +1951,8 @@ def GET_BLACKBOX_MODULE_TEXT(inst_name, Logic, parser_state, TimingParamsLookupT
     )
 
     # Register inputs
+    if needs_reset:
+        rv += "   " + RESET_PORT_NAME + "_input_reg <= " + RESET_PORT_NAME + ";\n"
     for input_name in Logic.inputs:
         # Get type for input
         vhdl_type_str = WIRE_TO_VHDL_TYPE_STR(input_name, Logic, parser_state)
@@ -1965,6 +2010,9 @@ def WRITE_LOGIC_TOP(
         inst_name, Logic, parser_state, TimingParamsLookupTable
     )
     needs_clk_en = LOGIC.LOGIC_NEEDS_CLOCK_ENABLE(Logic, parser_state)
+    needs_reset = LOGIC_NEEDS_RESET(
+        inst_name, Logic, parser_state, TimingParamsLookupTable
+    )
     needs_global_to_module = LOGIC.LOGIC_NEEDS_GLOBAL_TO_MODULE(
         Logic, parser_state
     )  # , TimingParamsLookupTable)
@@ -1996,6 +2044,9 @@ def WRITE_LOGIC_TOP(
 
     rv += "port(" + "\n"
     rv += " clk : in std_logic;" + "\n"
+    # Reset, registered like an input below so synthesis keeps the reset logic
+    if needs_reset:
+        rv += " " + RESET_PORT_NAME + " : in std_logic;\n"
 
     # Clock cross as needed
     if needs_global_to_module:
@@ -2078,6 +2129,12 @@ def WRITE_LOGIC_TOP(
                 + WIRE_TO_VHDL_NAME(input_name, Logic)
                 + """_input_reg : signal is "true";\n"""
             )
+
+    if needs_reset:
+        rv += "signal " + RESET_PORT_NAME + "_input_reg : std_logic := '0';\n"
+        if not is_final_top:
+            for attr, val in (("syn_keep", "true"), ("keep", '"true"'), ("dont_touch", '"true"')):
+                rv += f"attribute {attr} of {RESET_PORT_NAME}_input_reg : signal is {val};\n"
 
     rv += "\n"
 
@@ -2189,6 +2246,8 @@ def WRITE_LOGIC_TOP(
             port_text += "clk,\n"
         if needs_clk_en:
             port_text += "to_unsigned(1,1),\n"
+        if needs_reset:
+            port_text += RESET_PORT_NAME + "_input_reg,\n"
         # Clock cross as needed
         if needs_global_to_module:
             port_text += " global_to_module_input_reg,\n"
@@ -4637,6 +4696,79 @@ def LOGIC_NEEDS_CLOCK(inst_name, Logic, parser_state, TimingParamsLookupTable):
     return needs_clk
 
 
+# Version of the reset logic an entity's text holds. It is part of the name of
+# every entity with a RESET port (AUTO_PIPELINE's entity hash), so changing
+# what the reset logic renders renames those entities and their caches.
+RESET_IMPLEMENTATION_VERSION = 1
+# The synchronous reset port of an entity that resets (LOGIC_NEEDS_RESET)
+RESET_PORT_NAME = "RESET"
+
+
+def GET_INST_RESET_POLICY(inst_name, parser_state):
+    """The reset_registers policy of the MAIN above `inst_name` ("all" or
+    "requested"), or None when that MAIN has no reset (Pypeline
+    _assign_resets; always None for the C front end)."""
+    main_resets = getattr(parser_state, "main_resets", None)
+    if not main_resets:
+        return None
+    entry = main_resets.get(inst_name.split(LOGIC.SUBMODULE_MARKER)[0])
+    return None if entry is None else entry.policy
+
+
+def STATE_REG_RESETS(state_reg, Logic, policy):
+    """True if the state register resets under `policy`: Reg[T, RESET]
+    always, a plain Reg[T] under "all", Reg[T, NO_RESET] never."""
+    mode = getattr(Logic.state_regs[state_reg], "reset_mode", None)
+    if mode == "reset":
+        return policy is not None
+    return mode is None and policy == "all"
+
+
+def _LOGIC_HAS_RESET_STATE(inst_name, Logic, policy, parser_state, TimingParamsLookupTable):
+    """True if the instance or one below it holds state that resets under
+    `policy` (LOGIC_NEEDS_RESET)."""
+    if Logic.is_vhdl_func or Logic.is_vhdl_expr or Logic.is_clock_crossing:
+        return False
+    if Logic.is_c_built_in and LOGIC.IS_SIM_CTRL_FUNC_NAME(Logic.func_name):
+        return False
+    if Logic.vhdl_module_text is not None:
+        return policy == "all" and getattr(Logic, "vhdl_reset", None) == "sync"
+    if SYN.FUNC_IS_PRIMITIVE(Logic.func_name, parser_state) or LOGIC.IS_MEM(Logic):
+        return False
+    if any(STATE_REG_RESETS(r, Logic, policy) for r in Logic.state_regs):
+        return True
+    if policy == "all":
+        latency = TimingParamsLookupTable[inst_name].GET_TOTAL_LATENCY(
+            parser_state, TimingParamsLookupTable
+        )
+        if latency > 0:
+            return True
+    for inst in Logic.submodule_instances:
+        instance_name = inst_name + LOGIC.SUBMODULE_MARKER + inst
+        submodule_logic = parser_state.LogicInstLookupTable[instance_name]
+        if _LOGIC_HAS_RESET_STATE(
+            instance_name, submodule_logic, policy, parser_state, TimingParamsLookupTable
+        ):
+            return True
+    return False
+
+
+def LOGIC_NEEDS_RESET(inst_name, Logic, parser_state, TimingParamsLookupTable):
+    """True if the instance's entity has a RESET port: something in or below
+    it resets under its MAIN's reset_registers policy. Under "all": any
+    register (pipeline stage, IO, raw operator or Reg[T] state, not
+    Reg[T, NO_RESET]) or raw vhdl(..., reset="sync"); under "requested":
+    a Reg[T, RESET]. Per instance: one function under two MAINs can need it
+    in one and not the other, and its entity name says which
+    (AUTO_PIPELINE's entity hash)."""
+    policy = GET_INST_RESET_POLICY(inst_name, parser_state)
+    if policy is None:
+        return False
+    return _LOGIC_HAS_RESET_STATE(
+        inst_name, Logic, policy, parser_state, TimingParamsLookupTable
+    )
+
+
 def LOGIC_NEEDS_REGS(inst_name, Logic, parser_state, TimingParamsLookupTable):
     timing_params = TimingParamsLookupTable[inst_name]
     return (
@@ -4972,6 +5104,9 @@ def WRITE_LOGIC_ENTITY(
         inst_name, Logic, parser_state, TimingParamsLookupTable
     )
     needs_clk_en = LOGIC.LOGIC_NEEDS_CLOCK_ENABLE(Logic, parser_state)
+    needs_reset = LOGIC_NEEDS_RESET(
+        inst_name, Logic, parser_state, TimingParamsLookupTable
+    )
     needs_global_to_module = LOGIC.LOGIC_NEEDS_GLOBAL_TO_MODULE(
         Logic, parser_state
     )  # , TimingParamsLookupTable)
@@ -5044,6 +5179,10 @@ def WRITE_LOGIC_ENTITY(
             " " + LOGIC.CLOCK_ENABLE_NAME + " : in unsigned(0 downto 0);" + "\n"
         )
 
+    # Synchronous reset
+    if needs_reset:
+        port_text += " " + RESET_PORT_NAME + " : in std_logic;" + "\n"
+
     # Clock cross inputs?
     if needs_global_to_module:
         port_text += (
@@ -5114,6 +5253,9 @@ def WRITE_LOGIC_ENTITY(
         )
     # VHDL func replaces arch decl and body
     elif Logic.vhdl_module_text is not None:
+        # vhdl(text, reset="sync") reads RESET: the port, or reset never asserted
+        if getattr(Logic, "vhdl_reset", None) == "sync" and not needs_reset:
+            rv += "constant " + RESET_PORT_NAME + " : std_logic := '0';\n"
         rv += Logic.vhdl_module_text
     # Printf another special case woo?
     # `is_c_built_in` guard is required, not just the name-prefix check: these
@@ -5195,6 +5337,12 @@ def WRITE_LOGIC_ENTITY(
                 submodule_needs_clk_en = LOGIC.LOGIC_NEEDS_CLOCK_ENABLE(
                     submodule_logic, parser_state
                 )
+                submodule_needs_reset = LOGIC_NEEDS_RESET(
+                    instance_name,
+                    submodule_logic,
+                    parser_state,
+                    TimingParamsLookupTable,
+                )
                 submodule_needs_global_to_module = LOGIC.LOGIC_NEEDS_GLOBAL_TO_MODULE(
                     submodule_logic, parser_state
                 )
@@ -5222,6 +5370,9 @@ def WRITE_LOGIC_ENTITY(
                         + LOGIC.CLOCK_ENABLE_NAME
                     )
                     port_map_items.append(WIRE_TO_VHDL_NAME(ce_wire, Logic))
+                # Reset: the parent's, straight through (not clock enabled)
+                if submodule_needs_reset:
+                    port_map_items.append(RESET_PORT_NAME)
                 # Clock cross in
                 if submodule_needs_global_to_module:
                     port_map_items.append(
@@ -6237,6 +6388,7 @@ def GET_PIPELINE_ARCH_DECL_TEXT(
     # Raw vhdl still uses write pipe
     wrote_variables_t = False
     wrote_variables_NULL = False
+    raw_hdl_wires_decl_text = ""  # the fields of raw_hdl_variables_t
     if is_raw_hdl:
         # Type for wires/variables
         varables_t_pre = ""
@@ -6252,6 +6404,7 @@ def GET_PIPELINE_ARCH_DECL_TEXT(
             rv += text
             rv += "end record;\n"
             wrote_variables_t = True
+            raw_hdl_wires_decl_text = text
         rv += """
 -- Type for this modules register pipeline
 type raw_hdl_register_pipeline_t is array(0 to ADDED_PIPELINE_LATENCY) of raw_hdl_variables_t;
@@ -6529,6 +6682,14 @@ end function;\n
   return rv;
 end function;\n
 """
+        if (
+            wrote_variables_t
+            and GET_INST_RESET_POLICY(inst_name, parser_state) == "all"
+            and LOGIC_NEEDS_RESET(inst_name, Logic, parser_state, TimingParamsLookupTable)
+        ):
+            rv += GET_MANUAL_REGISTERS_RESET_FUNC_TEXT(
+                raw_hdl_wires_decl_text, Logic, parser_state
+            )
 
     if needs_manual_regs:
         rv += """-- Manual (not auto pipeline) registers and signals for this function\n"""
@@ -7082,8 +7243,27 @@ def GET_PIPELINE_LOGIC_COMB_PROCESS_TEXT(
     """
     rv += "end process;\n"
 
+    reset_policy = (
+        GET_INST_RESET_POLICY(inst_name, parser_state)
+        if LOGIC_NEEDS_RESET(inst_name, Logic, parser_state, TimingParamsLookupTable)
+        else None
+    )
+    reset_all = reset_policy == "all"
+
     # Register IO regs, only delaying signals clock enable - not responding to them
-    if has_io_regs:
+    if has_io_regs and reset_all:
+        rv += """-- Register IO reg signal
+process(clk) is
+begin
+ if rising_edge(clk) then
+  io_registers_r <= io_registers;
+  if """ + RESET_PORT_NAME + """ = '1' then
+   io_registers_r <= io_registers_NULL;
+  end if;
+ end if;
+end process;
+"""
+    elif has_io_regs:
         rv += """-- Register IO reg signal
 io_registers_r <= io_registers when rising_edge(clk);
 """
@@ -7139,6 +7319,16 @@ begin
 
         if needs_clk_en:
             rv += " end if;\n"
+        if reset_policy is not None:
+            rv += GET_RESET_BLOCK_TEXT(
+                Logic,
+                parser_state,
+                reset_policy,
+                needs_manual_regs,
+                []
+                if is_raw_hdl
+                else _REG_STAGE_SIGNALS(Logic, pipeline_latency, pipeline_hdl_params),
+            )
         rv += """ end if;
 end process;
 """
@@ -7184,6 +7374,104 @@ end process;
             rv += ";\n"
 
     return rv
+
+
+# One field of a raw operator's raw_hdl_variables_t record: "  name : type;"
+_RAW_HDL_FIELD_RE = re.compile(r"^\s*(\w+)\s*:\s*([^;]+?)\s*;")
+
+
+def GET_MANUAL_REGISTERS_RESET_FUNC_TEXT(raw_hdl_wires_decl_text, Logic, parser_state):
+    """manual_registers_RESET: a raw operator's pipeline registers
+    (manual_registers_t) with every field of every stage zero, the value
+    GET_RESET_BLOCK_TEXT resets them to. `raw_hdl_wires_decl_text` is the
+    field list of raw_hdl_variables_t (RAW_VHDL.GET_RAW_HDL_WIRES_DECL_TEXT);
+    a field of a named type is one of the operator's wires, nulled by its C type."""
+    assigns = ""
+    for line in raw_hdl_wires_decl_text.splitlines():
+        if line.strip().startswith("--"):
+            continue
+        m = _RAW_HDL_FIELD_RE.match(line)
+        if m is None:
+            continue
+        field, vhdl_type = m.group(1), m.group(2).strip()
+        base = vhdl_type.split("(")[0].strip().lower()
+        if base in ("unsigned", "signed", "std_logic_vector"):
+            null = "(others => '0')"
+        elif base == "std_logic":
+            null = "'0'"
+        elif base == "boolean":
+            null = "false"
+        elif base in ("integer", "natural"):
+            null = "0"
+        elif field in Logic.wire_to_c_type:
+            null = C_TYPE_STR_TO_VHDL_NULL_STR(Logic.wire_to_c_type[field], parser_state)
+        else:
+            raise Exception(
+                f"No reset value for raw operator field {field} : {vhdl_type} "
+                f"in {Logic.func_name}"
+            )
+        assigns += f"  rv.raw_hdl_pipeline(i).{field} := {null};\n"
+    return (
+        "\n-- The raw operator pipeline registers' reset value\n"
+        "function manual_registers_RESET return manual_registers_t is\n"
+        " variable rv : manual_registers_t;\n"
+        "begin\n"
+        " for i in 0 to ADDED_PIPELINE_LATENCY loop\n"
+        + assigns
+        + " end loop;\n"
+        " return rv;\n"
+        "end function;\n\n"
+    )
+
+
+def _REG_STAGE_SIGNALS(Logic, pipeline_latency, pipeline_hdl_params):
+    """[(REG_STAGE<n>_<wire> signal, wire)] of the pipeline stage registers,
+    in the order the register process writes them."""
+    signals = []
+    for stage in range(0, pipeline_latency):
+        for wire_name in pipeline_hdl_params.wires_to_decl:
+            start_stage, end_stage = pipeline_hdl_params.wire_to_reg_stage_start_end[
+                wire_name
+            ]
+            if start_stage is None or end_stage is None:
+                continue
+            if stage in range(start_stage, end_stage + 1):
+                signals.append(
+                    (f"REG_STAGE{stage}_{WIRE_TO_VHDL_NAME(wire_name, Logic)}", wire_name)
+                )
+    return signals
+
+
+def GET_RESET_BLOCK_TEXT(Logic, parser_state, policy, needs_manual_regs, stage_signals):
+    """The synchronous reset of an entity's register process, after its clock
+    enable block so the reset has priority: each register that resets under
+    `policy` takes its initial value. Under "requested", the Reg[T, RESET]
+    registers; under "all", every state register but Reg[T, NO_RESET] ones,
+    the pipeline stage registers `stage_signals` and the raw operator
+    pipeline (manual_registers_RESET). Empty when none reset here."""
+    lines = []
+    for state_reg in Logic.state_regs:
+        if STATE_REG_RESETS(state_reg, Logic, policy):
+            lines.append(
+                WIRE_TO_VHDL_NAME(state_reg, Logic)
+                + " <= "
+                + STATE_REG_TO_VHDL_INIT_STR(state_reg, Logic, parser_state)
+                + ";"
+            )
+    if policy == "all":
+        if needs_manual_regs:
+            lines.append("manual_registers_r <= manual_registers_RESET;")
+        for signal, wire_name in stage_signals:
+            lines.append(
+                signal + " <= " + WIRE_TO_VHDL_NULL_STR(wire_name, Logic, parser_state) + ";"
+            )
+    if not lines:
+        return ""
+    text = " if " + RESET_PORT_NAME + " = '1' then\n"
+    for line in lines:
+        text += "     " + line + "\n"
+    text += " end if;\n"
+    return text
 
 
 def GET_C_ENTITY_PROCESS_STAGES_TEXT(

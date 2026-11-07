@@ -101,7 +101,8 @@ one paragraph per change.
 - [`PART()` and `@MAIN` Pragmas](#part-and-main-pragmas)
   - [`PART(part_string)`](#partpart_string)
   - [`@MAIN` / `MAIN(fn)` — Registering MAINs](#main--mainfn--registering-mains)
-  - [`make_clock(mhz, name=, syn_mhz=)` — Clocks](#make_clockmhz-name-syn_mhz--clocks)
+  - [`make_clock(mhz, name=, syn_mhz=, reset=)` — Clocks](#make_clockmhz-name-syn_mhz-reset--clocks)
+  - [`make_reset()` — Resets](#make_reset--resets)
   - [`AUTO_PIPELINE(func, latency=None, start_latency=None, max_latency=None)` — Forced Submodule Pipelining with `.latency`](#auto_pipelinefunc-latencynone-start_latencynone-max_latencynone--forced-submodule-pipelining-with-latency)
   - [`AUTO_COMB_AREA_OPT(func)` — Zero-Cycle Resource Sharing](#auto_comb_area_optfunc--zero-cycle-resource-sharing)
   - [`AUTO_FSM(func)` — Resource-Shared State Machines with `.latency`](#auto_fsmfunc--resource-shared-state-machines-with-latency)
@@ -141,10 +142,11 @@ one paragraph per change.
   - [Type Invariant](#type-invariant)
 - [`concat(*args)` — Bit Concatenation](#concatargs--bit-concatenation)
   - [`BIT_MANIP_FUNC_NAMES`](#bit_manip_func_names)
-- [`vhdl(text)` — Raw VHDL Passthrough](#vhdltext--raw-vhdl-passthrough)
+- [`vhdl(text)` — Raw VHDL Passthrough](#vhdltext-resetnone--raw-vhdl-passthrough)
 - [Reference: `pypeline.py` Public API](#reference-pypelinepy-public-api)
 - [Tests](#tests)
 - [History](#history)
+  - [Reset syntax](#reset-syntax)
   - [FSM-owned pipeline placement and native simulation](#fsm-owned-pipeline-placement-and-native-simulation)
   - [Multi-clock syntax](#multi-clock-syntax)
 
@@ -870,8 +872,14 @@ The five annotation types and what they mean conceptually:
 ### `Reg[T]` / `_RegType`
 
 Declares a **hardware register** (D flip-flop). Persists across clock cycles.
-- Default reset value: zero
-- Optional initializer: `cnt: Reg[uint32_t] = 10` sets power-on reset value
+- Default initial value: zero
+- Optional initializer: `cnt: Reg[uint32_t] = 10` sets the initial value: the FPGA
+  power-up value and the value a reset loads
+- Optional markers `RESET` / `NO_RESET` (`_ResetMarker`, `_RegType.reset_mode` "reset" /
+  "no_reset"): the register resets under either `reset_registers` policy, or under none;
+  a plain `Reg[T]` follows its MAIN's policy. `_RegMeta.__getitem__` takes the markers and
+  a `MULTI_CYCLE` role in any order; two reset markers are a `TypeError`
+  ([Resets](#make_reset--resets))
 - Valid only inside hardware function bodies
 - Implies clock-enable behaviour: writes inside `if` only latch when condition is true
 - `@hw_func` (or `@MAIN`) required for simulation infrastructure to engage
@@ -1236,8 +1244,11 @@ mhz, clock, origin)` turns the clock arguments into one `_Clock` or None: at mos
 positional rate or clock, `mhz=` and `clock=` (two are a `TypeError`, "names its clock
 twice"), and a rate becomes `_Clock(rate, origin=origin)`, the unnamed clock of that rate.
 A positional value that is not a number, a clock or a function is a `TypeError`, as is a
-`clock=` that is not a clock. Every form ends in `_register_main(func, clock, name,
-origin)`, where `origin` is `"file.py:line"` of the `MAIN()` call or the decorator, from
+`clock=` that is not a clock. `reset=` (a `_Reset`, `None`, or the default `_CLOCK_RESET`:
+the clock's primary reset) and `reset_registers=` (`"requested"` or `"all"`) are checked by
+`_main_reset_args` and stored in `_MainInfo.reset` / `.reset_registers`
+([Resets](#make_reset--resets)). Every form ends in `_register_main(func, clock, name,
+origin, reset, reset_registers)`, where `origin` is `"file.py:line"` of the `MAIN()` call or the decorator, from
 the caller's frame (`_frame_origin`).
 `_register_main`:
 
@@ -1273,10 +1284,11 @@ Consumers of the record: PY_TO_LOGIC elaborates each MAIN under `.name` on clock
 `.name` for root frames, its refusals and build results, and `.clock` for the
 multi-clock refusal; `stream_perf_probe` labels a `named` MAIN's taps by `.name`.
 
-### `make_clock(mhz, name=, syn_mhz=)` — Clocks
+### `make_clock(mhz, name=, syn_mhz=, reset=)` — Clocks
 
-`make_clock(mhz, name=None, syn_mhz=None)` returns a `_Clock` with `mhz`, `name`,
-`syn_mhz` and `origin` (`"file.py:line"` of the call), the Python equivalent of
+`make_clock(mhz, name=None, syn_mhz=None, reset=None)` returns a `_Clock` with `mhz`,
+`name`, `syn_mhz`, `origin` (`"file.py:line"` of the call) and the read-only `reset`, its
+primary reset ([Resets](#make_reset--resets)), the Python equivalent of
 PipelineC's `MAIN_MHZ` groups, `MAIN_SYN_MHZ` and `CLK_MHZ`
 ([guide](pypeline_guide.md#declaring-a-clock-make_clock)):
 
@@ -1289,8 +1301,9 @@ PipelineC's `MAIN_MHZ` groups, `MAIN_SYN_MHZ` and `CLK_MHZ`
 - **Checks.** `mhz` and `syn_mhz` are positive numbers, and `name` matches
   `_CLOCK_NAME_RE` (letters and digits, single underscores between them), since it
   becomes part of a VHDL identifier. `_clock_conflict(clocks)` gives the message for a
-  design's first conflict: one clock with two `syn_mhz` values, or two names of one rate
-  that differ only in case. The compiler raises it.
+  design's first conflict: one clock with two `syn_mhz` values or two primary resets, or
+  two names of one rate that differ only in case. The compiler raises it. `reset` is not
+  part of the identity.
 
 A clock is used by `@MAIN(clk)` / `MAIN(fn, clock=clk)`, as a [wire
 marker](#wire-markers-volatile-async-and-clocks), and as the initializer of a global
@@ -1304,6 +1317,32 @@ a global wire's bound value, only its annotation, so a binding is inert there.
 Board modules name their clocks the same way:
 [`include/pypeline/board/arty/clocks.py`](../include/pypeline/board/arty/clocks.py) binds
 `clk100 = make_clock(100.0)` to the pin `CLK100MHZ`.
+
+
+### `make_reset()` — Resets
+
+`make_reset(kind="sync", active="high")` returns a `_Reset` (`kind`, `active`, `origin`);
+any other `kind` or `active` raises `NotImplementedError` naming the workaround. Like a
+clock, it is bound on its declaration line to a module-level `uint1_t` `Input` or `Wire`,
+which `PY_TO_LOGIC._discover_global_wires` reads off the live module namespace
+([elaboration](PY_TO_LOGIC_DESIGN.md#resets-_assign_resets)). A `_Reset` reaches MAINs as
+a clock's primary reset (`make_clock(reset=)`) or `MAIN(reset=)`.
+
+Two pure functions give a MAIN its reset, so elaboration (`_assign_resets`) and native
+sim (`pypeline_sim._sim_reset_table`) agree: `_resolve_main_reset(info, clock_identity,
+clock_primaries)` returns `(reset, reset_registers)` from a `_MainInfo` and its clock
+(`clock_primaries` from `_clock_primary_resets(clocks)`), and
+`_global_inst_main_reset(clock_identity, clock_primaries)` gives a global instance's MAIN
+its clock's primary reset under `"all"`.
+
+`_sanitize_vhdl_name` renames an identifier `reset` (any case, `_IMPLICIT_PORT_NAMES`)
+like a VHDL reserved word, since VHDL reads it as the `RESET` port the compiler adds. A
+global `Input`/`Output` named `reset` is not affected: top-level ports and record fields
+do not collide with an entity's port.
+
+Native simulation state for resets (`_sim_reg_modes`, `_sim_root_resets`,
+`_sim_reset_inputs`, `_sim_apply_resets`) is described in
+[pypeline_sim_DESIGN.md](pypeline_sim_DESIGN.md#register-commit-timing).
 
 ### `AUTO_PIPELINE(func, latency=None, start_latency=None, max_latency=None)` — Forced Submodule Pipelining with `.latency`
 
@@ -2605,7 +2644,7 @@ BIT_MANIP_FUNC_NAMES = frozenset({
 
 ---
 
-## `vhdl(text)` — Raw VHDL Passthrough
+## `vhdl(text, reset=None)` — Raw VHDL Passthrough
 
 Like the bit-manipulation primitives above, `vhdl` is a real top-level function in
 `pypeline.py` that the elaborator (`PY_TO_LOGIC.py`) recognizes structurally by name and
@@ -2614,11 +2653,17 @@ simulate arbitrary user-supplied VHDL text in Python, so `vhdl`'s body unconditi
 raises:
 
 ```python
-def vhdl(vhdl_text):
+def vhdl(vhdl_text, reset=None):
     raise NotImplementedError(
         "vhdl(...) has no attached simulation model. ..."
     )
 ```
+
+`reset="sync"` lets the text use the `std_logic` `RESET`
+([guide](pypeline_guide.md#raw-vhdl-passthrough-vhdl)); the elaborator stores it in
+`Logic.vhdl_reset`. `_raw_vhdl_keeps_state(fn)` reads a target's source when a model is
+attached (`sim_model`), so the model of a raw function without `reset=` keeps its state
+through a reset, as its hardware does.
 
 This means a function whose body is `vhdl(...)` elaborates to hardware normally, but
 cannot be exercised through `sim_call()`/`pypeline_sim.py`/a direct call — doing so
@@ -2646,8 +2691,10 @@ shared `Logic.vhdl_module_text` field (also used by the C frontend's `__vhdl__("
 | `make_int_t(n)` | Dynamically creates `intN_t` for arbitrary bit width `n` |
 | `NamedTuple` | Re-export of `typing.NamedTuple` |
 | `@struct` | Adds `__class_getitem__`, stamps canonical `_pypeline_ctype_name`, wraps scalar fields in sim |
-| `@MAIN` / `MAIN(fn, name=, mhz=, clock=)` | Registers a function as a hardware entry point, also one made in code; implies `@hw_func`; records its name and clock and appends to `_main_registry` |
-| `make_clock(mhz, name=, syn_mhz=)` / `_Clock` | A clock, identified by rate and name; for `@MAIN(clk)`, wire markers and pin/wire bindings ([`make_clock`](#make_clockmhz-name-syn_mhz--clocks)) |
+| `@MAIN` / `MAIN(fn, name=, mhz=, clock=, reset=, reset_registers=)` | Registers a function as a hardware entry point, also one made in code; implies `@hw_func`; records its name, clock and reset and appends to `_main_registry` |
+| `make_clock(mhz, name=, syn_mhz=, reset=)` / `_Clock` | A clock, identified by rate and name, with its primary reset; for `@MAIN(clk)`, wire markers and pin/wire bindings ([`make_clock`](#make_clockmhz-name-syn_mhz-reset--clocks)) |
+| `make_reset(kind=, active=)` / `_Reset` | A synchronous active-high reset, bound to an `Input` or `Wire` ([`make_reset`](#make_reset--resets)) |
+| `RESET` / `NO_RESET` | `Reg[T, ...]` markers: reset under any policy / never ([`Reg[T]`](#regt--_regtype)) |
 | `param(name, default, *, type, choices, help, env)` | Declares a build parameter and returns its value for this build: `-D NAME=VALUE`, else environment variable `env` (only when given and set), else `default` ([Design Parameters](#design-parameters-param--d)) |
 | `SET_DESIGN_PARAMS`, `PARSE_DESIGN_PARAM_DEFINES`, `CHECK_DESIGN_PARAM_USE`, `DESIGN_PARAM_REPORT`, `DESIGN_PARAM_LIST_TEXT`, `PRINT_DESIGN_PARAM_BANNER_ONCE` | Driver side of `param()`: install and parse the `-D` table, check how the design uses injected names after an import, and produce the `source_provenance.json` record, the `--list_params` text and the build banner |
 | `@sim_output` | Marks a function as simulation output-only; no-op during convergence passes; executes in final pass per cycle |
@@ -2664,7 +2711,7 @@ shared `Logic.vhdl_module_text` field (also used by the C frontend's `__vhdl__("
 | `MULTI_CYCLE` / `_MultiCycleTag` / `_MultiCycleRole` | `MULTI_CYCLE[ncycles]` tag; `.start`/`.end` attach to `Reg[T, tag]` declarations to relax setup timing between them (equivalent to `#pragma MULTI_CYCLE`) |
 | `wires` | Marks a function as pure rewiring/bit-casting with no real delay; implies `@hw_func`; stacks with `@MAIN` in either order (equivalent to `#pragma FUNC_WIRES`) |
 | `pipeline_latency(cycles)` | Declares an existing fixed user pipeline; implies `@hw_func`; callers align around its latency (equivalent to `#pragma FUNC_LATENCY`) |
-| `Reg` / `_RegType` | Register descriptor; `Reg[T]` declares a stateful register; optional init value (`Reg[T] = val`); optional `Reg[T, tag]` multi-cycle role |
+| `Reg` / `_RegType` | Register descriptor; `Reg[T]` declares a stateful register; optional init value (`Reg[T] = val`); optional markers: a multi-cycle role and `RESET` / `NO_RESET` |
 | `Feedback` / `_FeedbackType` | Feedback wire descriptor; `Feedback[T]` declares a combinatorial feedback wire (no flip-flop) |
 | `Wire` / `_WireType` | Global wire descriptor; `Wire[T]` at module level declares a shared combinatorial wire (one writer) |
 | `VOLATILE`, `ASYNC` | Wire markers: not aligned in pipelined functions; readable on other clocks ([Wire markers](#wire-markers-volatile-async-and-clocks)) |
@@ -2690,7 +2737,7 @@ shared `Logic.vhdl_module_text` field (also used by the C frontend's `__vhdl__("
 | `array_to_uint_be/le`, `uint_to_array_be/le` | Array ↔ integer packing primitives (hardware + sim) |
 | `concat(*args)` | Bit concatenation — works in hardware (→ `TUPLE_CONCAT`) and simulation (→ typed `SimVal`) |
 | `BIT_MANIP_FUNC_NAMES` | Frozenset of function names intercepted as built-in bit manipulation by the elaborator |
-| `vhdl(text)` | Raw VHDL passthrough — recognized structurally by name in `PY_TO_LOGIC._elab_stmt`, never called during elaboration; the real function only runs when called outside elaboration (directly, via `sim_call()`, or via `pypeline_sim.py`) and raises `NotImplementedError` unless a simulation model is attached via `sim_model` |
+| `vhdl(text, reset=None)` | Raw VHDL passthrough; `reset="sync"` gives the text `RESET` — recognized structurally by name in `PY_TO_LOGIC._elab_stmt`, never called during elaboration; the real function only runs when called outside elaboration (directly, via `sim_call()`, or via `pypeline_sim.py`) and raises `NotImplementedError` unless a simulation model is attached via `sim_model` |
 | `sim_model(target, copy_state=True)` | Attaches a Python simulation model to an `@hw_func`/`@MAIN` function (exactly one per target): an `@hw_func` delegate with matching signature, or a class/callable holding arbitrary per-instance state with Reg-like deepcopy-commit timing; sim-only, invisible to elaboration (see `pypeline_sim_DESIGN.md`) |
 | `sim_zero(ctype)` | Returns a zero-initialized simulation value for any pypeline ctype (scalar/struct/array) — the same value `Reg[T]` uses for its reset default; a public wrapper around `_make_sim_zero` for `sim_model` authors needing a typed placeholder (e.g. an empty buffer/queue's output slot) |
 | `_make_ctype(name)` | Dynamically creates C type class objects (used by `make_uint_t`, array subscript, etc.) |
@@ -2784,6 +2831,36 @@ excluded from the default category set — see [pypeline_TESTS.md](pypeline_TEST
 Every category module can also be run standalone.
 
 ## History
+
+### Reset syntax
+
+The reset API of the [guide](pypeline_guide.md#resets) keeps three decisions apart:
+which signal is available (`make_reset()`, `make_clock(reset=)`, `MAIN(reset=)`), which
+registers participate (`reset_registers=`, `Reg[T, RESET]` / `Reg[T, NO_RESET]`) and what
+value reset loads (the initializer). The alternatives below lost, for these reasons:
+
+- **One `reset=` / `auto_reset=` switch** for both the signal and participation: a
+  design must be able to read a reset, or have one available, without every register
+  resetting; and a register list should not depend on which signal is chosen.
+- **A separate reset value** (`reset_to=`, or a `reset=`/`reset_value=` pair on `Reg`):
+  with one value, every register that resets is in its power-up state after a reset,
+  so one oracle covers power-up and reset. It can be added later.
+- **A reset bound to a definition** (`@hw_func(reset=...)`, a `with_reset(func, ...)`
+  binding, a `reg(...)` declaration helper): reusable functions inherit their caller
+  MAIN's reset and policy; a definition naming a concrete signal cannot be reused.
+- **`with` scopes** selecting a reset or policy for a region: not needed by the three
+  designs that drove the feature (PDW, WireGuard, a StreamSoC port), and they hide what
+  resets where. They can be added later.
+- **A second, policy-gated reset port** beside `RESET`, so one entity could serve
+  every policy: hardware readers do not recognize such a port, and it is a signal
+  tied to a constant in most instances.
+- **A VHDL generic for the policy:** one entity name would then cover two different
+  pieces of hardware, so every name-keyed cache and the sweep's attribution would need
+  the generic's value; generated entities have no generics. The policy is an element of
+  the entity's hash instead, the mechanism I/O-register flags and multi-cycle tuples
+  already use.
+- **Draining FIFOs** (holding reset for a FIFO's depth while forcing its read side), the
+  workaround before resets existed: a reset empties a FIFO in one cycle.
 
 ### FSM-owned pipeline placement and native simulation
 
