@@ -1,0 +1,510 @@
+diff -ruN '--exclude=generated-files' '--exclude=__pycache__' '--exclude=*.pyc' a/src/chacha20/chacha20_pipeline_shared.py b/src/chacha20/chacha20_pipeline_shared.py
+--- a/src/chacha20/chacha20_pipeline_shared.py	2026-11-07 09:40:45.000000000 -0500
++++ b/src/chacha20/chacha20_pipeline_shared.py	2026-11-07 12:02:59.707233087 -0500
+@@ -88,7 +88,7 @@
+ 
+ 
+ # Round-robin request arbitration and result routing around one shared pipeline.
+-@MAIN(wireguard_env.TARGET_MHZ)
++@MAIN(wireguard_env.wg_clk, reset_registers=wireguard_env.WG_REGS)
+ def chacha20_pipeline_shared():
+     pipeline_in_ready: Feedback[uint1_t]
+     pipeline_out: Feedback[chacha_shared_pipeline_out_stream_intrf.stream_t]
+diff -ruN '--exclude=generated-files' '--exclude=__pycache__' '--exclude=*.pyc' a/src/chacha20poly1305/chacha20poly1305_decrypt_hw_io.py b/src/chacha20poly1305/chacha20poly1305_decrypt_hw_io.py
+--- a/src/chacha20poly1305/chacha20poly1305_decrypt_hw_io.py	2026-11-07 09:40:45.000000000 -0500
++++ b/src/chacha20poly1305/chacha20poly1305_decrypt_hw_io.py	2026-11-07 12:03:07.431196743 -0500
+@@ -54,7 +54,7 @@
+ decrypt_m_verified: Output[uint1_t]
+ 
+ 
+-@MAIN(wireguard_env.TARGET_MHZ)
++@MAIN(wireguard_env.wg_clk, reset_registers=wireguard_env.WG_REGS)
+ @wires
+ def chacha20poly1305_decrypt_io_wires():
+     # Unpack the input stream; lane 0 is the least significant byte/keep bit.
+diff -ruN '--exclude=generated-files' '--exclude=__pycache__' '--exclude=*.pyc' a/src/chacha20poly1305/chacha20poly1305_encrypt_hw_io.py b/src/chacha20poly1305/chacha20poly1305_encrypt_hw_io.py
+--- a/src/chacha20poly1305/chacha20poly1305_encrypt_hw_io.py	2026-11-07 09:40:45.000000000 -0500
++++ b/src/chacha20poly1305/chacha20poly1305_encrypt_hw_io.py	2026-11-07 12:03:07.435196723 -0500
+@@ -51,7 +51,7 @@
+ encrypt_m_axis_tready: Input[uint1_t]
+ 
+ 
+-@MAIN(wireguard_env.TARGET_MHZ)
++@MAIN(wireguard_env.wg_clk, reset_registers=wireguard_env.WG_REGS)
+ @wires
+ def chacha20poly1305_encrypt_io_wires():
+     # Unpack the input stream; lane 0 is the least significant byte/keep bit.
+diff -ruN '--exclude=generated-files' '--exclude=__pycache__' '--exclude=*.pyc' a/src/chacha20poly1305/decrypt_dataflow.py b/src/chacha20poly1305/decrypt_dataflow.py
+--- a/src/chacha20poly1305/decrypt_dataflow.py	2026-11-07 09:40:45.000000000 -0500
++++ b/src/chacha20poly1305/decrypt_dataflow.py	2026-11-07 12:02:59.707233087 -0500
+@@ -30,7 +30,7 @@
+ )
+ 
+ 
+-@MAIN(wireguard_env.TARGET_MHZ)
++@MAIN(wireguard_env.wg_clk, reset_registers=wireguard_env.WG_REGS)
+ def decrypt_dataflow():
+     # Connect the core's forward and feedback halves explicitly at the port boundary.
+     r = decrypt_dataflow_core(
+diff -ruN '--exclude=generated-files' '--exclude=__pycache__' '--exclude=*.pyc' a/src/chacha20poly1305/decrypt_perf_tb.py b/src/chacha20poly1305/decrypt_perf_tb.py
+--- a/src/chacha20poly1305/decrypt_perf_tb.py	2026-11-07 09:40:45.000000000 -0500
++++ b/src/chacha20poly1305/decrypt_perf_tb.py	2026-11-07 12:02:59.707233087 -0500
+@@ -71,7 +71,8 @@
+     _runner.note_in(valid=valid, ready=ready,
+                     keep_count=_keep_count(incoming) if valid else 0,
+                     eod=int(incoming.data.eod[0]))
+-    _src.commit(ready)
++    rst = wireguard_env.wg_rst if wireguard_env.USE_RESET else 0
++    _src.commit(ready, reset=rst)
+     stream = chacha20poly1305_decrypt_ports.axis_out_if.stream
+     # is_verified_out is constant for the whole output packet, so sampling it
+     # when the frame completes is equivalent to checking every beat.
+@@ -82,7 +83,7 @@
+         keep_count=_keep_count(stream) if valid else 0,
+         eod=1 if stream.data.eod[0] else 0,
+     )
+-    _snk.step(aead_axis_intrf.fwd_t(stream))
++    _snk.step(aead_axis_intrf.fwd_t(stream), reset=rst)
+     result = _snk.check_nowait()
+     if result is not None:
+         idx = result.get("idx", "?")
+@@ -112,7 +113,7 @@
+     _runner.tick()
+ 
+ 
+-@MAIN(wireguard_env.TARGET_MHZ)
++@MAIN(wireguard_env.wg_clk)
+ @wires
+ def decrypt_perf_tb() -> aead_axis_intrf.fwd_t:
+     key: uint8_t[CHACHA20_KEY_SIZE] = common.KEY
+diff -ruN '--exclude=generated-files' '--exclude=__pycache__' '--exclude=*.pyc' a/src/chacha20poly1305/decrypt_syn_tb.py b/src/chacha20poly1305/decrypt_syn_tb.py
+--- a/src/chacha20poly1305/decrypt_syn_tb.py	2026-11-07 09:40:45.000000000 -0500
++++ b/src/chacha20poly1305/decrypt_syn_tb.py	2026-11-07 12:02:59.707233087 -0500
+@@ -107,7 +107,7 @@
+ 
+ # Counters, ROM selection and stream source/sink are real testbench hardware.
+ # Time this MAIN normally rather than falsely declaring it wires-only.
+-@MAIN(wireguard_env.TARGET_MHZ)
++@MAIN(wireguard_env.wg_clk, reset_registers=wireguard_env.WG_REGS)
+ def decrypt_syn_tb() -> aead_axis_intrf.fwd_t:
+     # Test vectors
+     key: uint8_t[CHACHA20_KEY_SIZE] = KEY
+diff -ruN '--exclude=generated-files' '--exclude=__pycache__' '--exclude=*.pyc' a/src/chacha20poly1305/decrypt_tb.py b/src/chacha20poly1305/decrypt_tb.py
+--- a/src/chacha20poly1305/decrypt_tb.py	2026-11-07 09:40:45.000000000 -0500
++++ b/src/chacha20poly1305/decrypt_tb.py	2026-11-07 12:02:59.707233087 -0500
+@@ -71,11 +71,14 @@
+     "out_packet_idx": 0,  # count of packets checked so far; read externally by
+     # chacha20poly1305_tb.py's finish-checker to know when to sim_finish()
+     "cycle": 0,
++    "started": [],  # (ciphertext+tag, plaintext, meta) per packet, for resends
++    "resent": 0,  # packets sent again after a mid-run reset
+ }
+ 
+ _scoreboard = Scoreboard()
+ _src = common.ConvergedAxisSource(aead_axis_intrf, AEAD_BEAT_BYTES)
+ _snk = common.ConvergedAxisSink(aead_axis_intrf, AEAD_BEAT_BYTES, scoreboard=_scoreboard)
++common.SOURCES.append(_src)
+ 
+ 
+ def _generate_packet(rng: random.Random, packet_idx: int) -> dict:
+@@ -122,9 +125,9 @@
+         idx = _dec_state["in_packet_idx"]
+         pkt = _generate_packet(_dec_state["rng"], idx)
+         _dec_state["gen_log"].append((len(pkt["plaintext"]), pkt["expected_verified"]))
+-        _scoreboard.expect(
+-            pkt["plaintext"], idx=idx, expected_verified=pkt["expected_verified"]
+-        )
++        meta = {"idx": idx, "expected_verified": pkt["expected_verified"]}
++        _dec_state["started"].append((pkt["ciphertext"] + pkt["tag"], pkt["plaintext"], meta))
++        _scoreboard.expect(pkt["plaintext"], **meta)
+         # Xilinx-style packed AXIS framing (issue #44): the tag immediately
+         # follows the ciphertext bytes, no padding gap -- AxisSimSource
+         # derives keep as a plain trailing-only partial final beat.
+@@ -163,7 +166,9 @@
+ @sim_output
+ def check_out():
+     _dec_state["cycle"] += 1
+-    _src.commit(chacha20poly1305_decrypt_ports.axis_in_if.ready)
++    # No transfer while the DUT is in reset; a frame it cut is sent again
++    rst = wireguard_env.wg_rst if wireguard_env.USE_RESET else 0
++    _src.commit(chacha20poly1305_decrypt_ports.axis_in_if.ready, reset=rst)
+     out = chacha20poly1305_decrypt_ports.axis_out_if.stream
+     # is_verified_out rides alongside the whole output packet (constant for
+     # its duration), so sampling it once when the frame completes below is
+@@ -171,7 +176,15 @@
+     got_verified = chacha20poly1305_decrypt_ports.is_verified_out
+     _snk.step(aead_axis_intrf.fwd_t(out),
+               ready=chacha20poly1305_decrypt_ports.axis_out_if.ready,
+-              sideband=got_verified)
++              sideband=got_verified, reset=rst)
++    if int(rst):
++        # Every packet not yet checked is lost: send them again, in order
++        # (counted after cycle 0, whose reset loses nothing yet sent)
++        n = common.resend_lost(
++            _src, _scoreboard, _dec_state["started"], _dec_state["out_packet_idx"])
++        if _dec_state["cycle"] > 1:
++            _dec_state["resent"] += n
++        return
+     result = _snk.check_nowait()
+     if result is None:
+         return
+@@ -209,10 +222,11 @@
+         f"Decrypt: simulation ended with {_dec_state['out_packet_idx']} of {NUM_TOTAL_PACKETS} "
+         f"packets checked ({_scoreboard.pending()} still expected)"
+     )
+-    sim_print(f"Decrypt: all {NUM_TOTAL_PACKETS} packets PASSED")
++    resent = f", {_dec_state['resent']} sent again after a reset" if _dec_state["resent"] else ""
++    sim_print(f"Decrypt: all {NUM_TOTAL_PACKETS} packets PASSED{resent}")
+ 
+ 
+-@MAIN(wireguard_env.TARGET_MHZ)
++@MAIN(wireguard_env.wg_clk)
+ @wires
+ def decrypt_tb() -> aead_axis_intrf.fwd_t:
+     key: uint8_t[CHACHA20_KEY_SIZE] = common.KEY
+diff -ruN '--exclude=generated-files' '--exclude=__pycache__' '--exclude=*.pyc' a/src/chacha20poly1305/encrypt_dataflow.py b/src/chacha20poly1305/encrypt_dataflow.py
+--- a/src/chacha20poly1305/encrypt_dataflow.py	2026-11-07 09:40:45.000000000 -0500
++++ b/src/chacha20poly1305/encrypt_dataflow.py	2026-11-07 12:02:59.707233087 -0500
+@@ -30,7 +30,7 @@
+ )
+ 
+ 
+-@MAIN(wireguard_env.TARGET_MHZ)
++@MAIN(wireguard_env.wg_clk, reset_registers=wireguard_env.WG_REGS)
+ def encrypt_dataflow():
+     # Connect the core's forward and feedback halves explicitly at the port boundary.
+     r = encrypt_dataflow_core(
+diff -ruN '--exclude=generated-files' '--exclude=__pycache__' '--exclude=*.pyc' a/src/chacha20poly1305/encrypt_perf_tb.py b/src/chacha20poly1305/encrypt_perf_tb.py
+--- a/src/chacha20poly1305/encrypt_perf_tb.py	2026-11-07 09:40:45.000000000 -0500
++++ b/src/chacha20poly1305/encrypt_perf_tb.py	2026-11-07 12:02:59.707233087 -0500
+@@ -67,7 +67,8 @@
+     _runner.note_in(valid=valid, ready=ready,
+                     keep_count=_keep_count(incoming) if valid else 0,
+                     eod=int(incoming.data.eod[0]))
+-    _src.commit(ready)
++    rst = wireguard_env.wg_rst if wireguard_env.USE_RESET else 0
++    _src.commit(ready, reset=rst)
+     stream = chacha20poly1305_encrypt_ports.axis_out_if.stream
+     valid = 1 if stream.valid else 0
+     _runner.note_out(
+@@ -75,7 +76,7 @@
+         keep_count=_keep_count(stream) if valid else 0,
+         eod=1 if stream.data.eod[0] else 0,
+     )
+-    _snk.step(aead_axis_intrf.fwd_t(stream))
++    _snk.step(aead_axis_intrf.fwd_t(stream), reset=rst)
+     result = _snk.check_nowait()
+     if result is not None:
+         message = None
+@@ -97,7 +98,7 @@
+     _runner.tick()
+ 
+ 
+-@MAIN(wireguard_env.TARGET_MHZ)
++@MAIN(wireguard_env.wg_clk)
+ @wires
+ def encrypt_perf_tb() -> aead_axis_intrf.fwd_t:
+     key: uint8_t[CHACHA20_KEY_SIZE] = common.KEY
+diff -ruN '--exclude=generated-files' '--exclude=__pycache__' '--exclude=*.pyc' a/src/chacha20poly1305/encrypt_syn_tb.py b/src/chacha20poly1305/encrypt_syn_tb.py
+--- a/src/chacha20poly1305/encrypt_syn_tb.py	2026-11-07 09:40:45.000000000 -0500
++++ b/src/chacha20poly1305/encrypt_syn_tb.py	2026-11-07 12:02:59.707233087 -0500
+@@ -102,7 +102,7 @@
+ # This testbench has real registers, counters and stream source/sink logic.
+ # Keep it a timed MAIN; @wires would falsely promise no logic or registers.
+ # CSR constants do not change that requirement.
+-@MAIN(wireguard_env.TARGET_MHZ)
++@MAIN(wireguard_env.wg_clk, reset_registers=wireguard_env.WG_REGS)
+ def encrypt_syn_tb() -> aead_axis_intrf.fwd_t:
+     # Test vectors
+     key: uint8_t[CHACHA20_KEY_SIZE] = KEY
+diff -ruN '--exclude=generated-files' '--exclude=__pycache__' '--exclude=*.pyc' a/src/chacha20poly1305/encrypt_tb.py b/src/chacha20poly1305/encrypt_tb.py
+--- a/src/chacha20poly1305/encrypt_tb.py	2026-11-07 09:40:45.000000000 -0500
++++ b/src/chacha20poly1305/encrypt_tb.py	2026-11-07 12:02:59.707233087 -0500
+@@ -70,11 +70,14 @@
+     "out_packet_idx": 0,  # count of packets checked so far; read externally by
+     # chacha20poly1305_tb.py's finish-checker to know when to sim_finish()
+     "cycle": 0,
++    "started": [],  # (plaintext, ciphertext+tag, meta) per packet, for resends
++    "resent": 0,  # packets sent again after a mid-run reset
+ }
+ 
+ _scoreboard = Scoreboard()
+ _src = common.ConvergedAxisSource(aead_axis_intrf, AEAD_BEAT_BYTES)
+ _snk = common.ConvergedAxisSink(aead_axis_intrf, AEAD_BEAT_BYTES, scoreboard=_scoreboard)
++common.SOURCES.append(_src)
+ 
+ 
+ @sim_input
+@@ -91,6 +94,7 @@
+             bytes(common.KEY), bytes(common.NONCE), aad_bytes, plaintext
+         )
+         _enc_state["gen_log"].append(length)
++        _enc_state["started"].append((plaintext, ciphertext + tag, {"idx": idx}))
+         _scoreboard.expect(ciphertext + tag, idx=idx)
+         _src.send(plaintext)
+         _enc_state["in_packet_idx"] += 1
+@@ -126,9 +130,19 @@
+ @sim_output
+ def check_out():
+     _enc_state["cycle"] += 1
+-    _src.commit(chacha20poly1305_encrypt_ports.axis_in_if.ready)
++    # No transfer while the DUT is in reset; a frame it cut is sent again
++    rst = wireguard_env.wg_rst if wireguard_env.USE_RESET else 0
++    _src.commit(chacha20poly1305_encrypt_ports.axis_in_if.ready, reset=rst)
+     _snk.step(aead_axis_intrf.fwd_t(chacha20poly1305_encrypt_ports.axis_out_if.stream),
+-              ready=chacha20poly1305_encrypt_ports.axis_out_if.ready)
++              ready=chacha20poly1305_encrypt_ports.axis_out_if.ready, reset=rst)
++    if int(rst):
++        # Every packet not yet checked is lost: send them again, in order
++        # (counted after cycle 0, whose reset loses nothing yet sent)
++        n = common.resend_lost(
++            _src, _scoreboard, _enc_state["started"], _enc_state["out_packet_idx"])
++        if _enc_state["cycle"] > 1:
++            _enc_state["resent"] += n
++        return
+     result = _snk.check_nowait()
+     if result is None:
+         return
+@@ -158,10 +172,11 @@
+         f"Encrypt: simulation ended with {_enc_state['out_packet_idx']} of {common.NUM_RANDOM_PACKETS} "
+         f"packets checked ({_scoreboard.pending()} still expected)"
+     )
+-    sim_print(f"Encrypt: all {common.NUM_RANDOM_PACKETS} packets PASSED")
++    resent = f", {_enc_state['resent']} sent again after a reset" if _enc_state["resent"] else ""
++    sim_print(f"Encrypt: all {common.NUM_RANDOM_PACKETS} packets PASSED{resent}")
+ 
+ 
+-@MAIN(wireguard_env.TARGET_MHZ)
++@MAIN(wireguard_env.wg_clk)
+ @wires
+ def encrypt_tb() -> aead_axis_intrf.fwd_t:
+     key: uint8_t[CHACHA20_KEY_SIZE] = common.KEY
+diff -ruN '--exclude=generated-files' '--exclude=__pycache__' '--exclude=*.pyc' a/src/chacha20poly1305/tb_common_sim.py b/src/chacha20poly1305/tb_common_sim.py
+--- a/src/chacha20poly1305/tb_common_sim.py	2026-11-07 09:40:45.000000000 -0500
++++ b/src/chacha20poly1305/tb_common_sim.py	2026-11-07 12:02:59.711233068 -0500
+@@ -29,6 +29,38 @@
+ STRESS = param("TB_STRESS", False, help="random testbenches: 20 directed packets, input gaps and output backpressure")
+ 
+ 
++# Mid-run resets (-D TB_MID_RESETS=60,140): chacha20poly1305_tb.py pulses wg_rst
++# for one cycle at the first cycle at or after each of these in which some
++# packet is part way into the DUT (and in cycle 0, as the simulator otherwise
++# would). A reset loses every packet not yet checked, so each random testbench
++# sends those again, in order, and expects each once (resend_lost below).
++MID_RESETS = tuple(
++    int(c)
++    for c in str(param("TB_MID_RESETS", "", help="random testbenches: cycles of mid-packet wg_rst pulses, e.g. 60,140")).split(",")
++    if c.strip()
++)
++# The reset driver's schedule and record: requested cycles not yet reached,
++# and the cycles a mid-run reset fired in
++RESET_STATE = {"cycle": 0, "pending": list(MID_RESETS), "fired": []}
++# Each random testbench's ConvergedAxisSource, so the driver can tell whether
++# a packet is part way in
++SOURCES = []
++
++
++def resend_lost(src, scoreboard, started, n_checked):
++    """After a reset: forget what `src` and `scoreboard` hold, then send again
++    every packet started (`started`: (frame, expected, meta) per packet, in
++    order) and not yet checked (the first `n_checked` were). Returns how many
++    were sent again."""
++    src.clear()
++    scoreboard.clear()
++    lost = started[n_checked:]
++    for frame, expected, meta in lost:
++        scoreboard.expect(expected, **meta)
++        src.send(frame)
++    return len(lost)
++
++
+ def input_paused(direction, cycle):
+     offset = 0 if direction == "encrypt" else 9
+     return STRESS and (cycle + offset) % 37 < 6
+diff -ruN '--exclude=generated-files' '--exclude=__pycache__' '--exclude=*.pyc' a/src/chacha20poly1305_perf_tb.py b/src/chacha20poly1305_perf_tb.py
+--- a/src/chacha20poly1305_perf_tb.py	2026-11-07 09:40:45.000000000 -0500
++++ b/src/chacha20poly1305_perf_tb.py	2026-11-07 12:02:59.711233068 -0500
+@@ -67,7 +67,7 @@
+ 
+ # @wires: nothing here to synthesize/measure a path delay for -- see
+ # chacha20poly1305_syn_tb.py's matching checker comment.
+-@MAIN(wireguard_env.TARGET_MHZ)
++@MAIN(wireguard_env.wg_clk)
+ @wires
+ def shared_perf_tb_finish_checker():
+     check_all_done()
+diff -ruN '--exclude=generated-files' '--exclude=__pycache__' '--exclude=*.pyc' a/src/chacha20poly1305_syn_tb.py b/src/chacha20poly1305_syn_tb.py
+--- a/src/chacha20poly1305_syn_tb.py	2026-11-07 09:40:45.000000000 -0500
++++ b/src/chacha20poly1305_syn_tb.py	2026-11-07 12:02:59.711233068 -0500
+@@ -52,7 +52,7 @@
+ # ever reaching the is_c_built_in/IS_SIM_CTRL_FUNC_NAME check that only
+ # applies to the sim_finish() submodule instance itself, not its containing
+ # MAIN).
+-@MAIN(wireguard_env.TARGET_MHZ)
++@MAIN(wireguard_env.wg_clk, reset_registers=wireguard_env.WG_REGS)
+ @wires
+ def syn_tb_finish_checker():
+     done: uint1_t = 1
+diff -ruN '--exclude=generated-files' '--exclude=__pycache__' '--exclude=*.pyc' a/src/chacha20poly1305_tb.py b/src/chacha20poly1305_tb.py
+--- a/src/chacha20poly1305_tb.py	2026-11-07 09:40:45.000000000 -0500
++++ b/src/chacha20poly1305_tb.py	2026-11-07 12:02:59.711233068 -0500
+@@ -16,7 +16,7 @@
+ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+ import wireguard_env
+ 
+-from pypeline import MAIN, PART, sim_finish, sim_output, wires
++from pypeline import MAIN, PART, final, sim_finish, sim_input, sim_output, sim_print, wires
+ 
+ PART("xc7a200tffg1156-2")  # Artix 7 200T
+ 
+@@ -50,7 +50,38 @@
+ # chacha20poly1305_syn_tb.py's matching checker comment (this variant never
+ # reaches real synthesis anyway, per the module docstring, but marking it
+ # keeps the pattern consistent with the syn_tb checker).
+-@MAIN(wireguard_env.TARGET_MHZ)
++@sim_input
++def drive_reset():
++    """wg_rst: 1 in cycle 0, as the simulator's own pulse would be, and for
++    one cycle at the first cycle at or after each -D TB_MID_RESETS cycle in
++    which some packet is part way into the DUT."""
++    state = common.RESET_STATE
++    n = state["cycle"]
++    fire = n == 0
++    if state["pending"] and n >= state["pending"][0] and any(
++        s.in_frame() for s in common.SOURCES
++    ):
++        state["pending"].pop(0)
++        state["fired"].append(n)
++        fire = True
++    wireguard_env.wg_rst = 1 if fire else 0
++    state["cycle"] = n + 1
++
++
++@final(sim=True)
++def check_resets():
++    state = common.RESET_STATE
++    assert not state["pending"], (
++        f"tb: requested mid-packet resets {state['pending']} never fired "
++        f"(fired: {state['fired']})"
++    )
++    if state["fired"]:
++        sim_print(f"tb: mid-packet resets in cycles {state['fired']}")
++
++
++@MAIN(wireguard_env.wg_clk)
+ @wires
+ def tb_finish_checker():
++    if wireguard_env.USE_RESET:
++        drive_reset()
+     check_done()
+diff -ruN '--exclude=generated-files' '--exclude=__pycache__' '--exclude=*.pyc' a/src/poly1305/poly1305_mcp_shared.py b/src/poly1305/poly1305_mcp_shared.py
+--- a/src/poly1305/poly1305_mcp_shared.py	2026-11-07 09:40:45.000000000 -0500
++++ b/src/poly1305/poly1305_mcp_shared.py	2026-11-07 12:02:59.711233068 -0500
+@@ -249,7 +249,7 @@
+ decrypt_epilogue_out_if: Wire[epilogue_out_intrf]
+ 
+ 
+-@MAIN(wireguard_env.TARGET_MHZ)
++@MAIN(wireguard_env.wg_clk, reset_registers=wireguard_env.WG_REGS)
+ def poly1305_prologue_shared():
+     o = prologue_arbiter(
+         prologue_in_intrf.fwd_t(encrypt_prologue_in_if.stream),
+@@ -263,7 +263,7 @@
+     decrypt_prologue_out_if.stream = o.decrypt_out_if.stream
+ 
+ 
+-@MAIN(wireguard_env.TARGET_MHZ)
++@MAIN(wireguard_env.wg_clk, reset_registers=wireguard_env.WG_REGS)
+ def poly1305_epilogue_shared():
+     o = epilogue_arbiter(
+         epilogue_in_intrf.fwd_t(encrypt_epilogue_in_if.stream),
+diff -ruN '--exclude=generated-files' '--exclude=__pycache__' '--exclude=*.pyc' a/src/poly1305_paired_tb.py b/src/poly1305_paired_tb.py
+--- a/src/poly1305_paired_tb.py	2026-11-07 09:40:45.000000000 -0500
++++ b/src/poly1305_paired_tb.py	2026-11-07 12:02:59.711233068 -0500
+@@ -211,7 +211,7 @@
+ 
+ 
+ if MODE == "mac":
+-    @MAIN(wireguard_env.TARGET_MHZ)
++    @MAIN(wireguard_env.wg_clk)
+     @wires
+     def paired_mac_tb() -> poly1305_auth_tag_stream_intrf.fwd_t:
+         in_if.stream = drive_word()
+@@ -240,7 +240,7 @@
+ 
+     from pypeline import uint_to_array_le
+ 
+-    @MAIN(wireguard_env.TARGET_MHZ)
++    @MAIN(wireguard_env.wg_clk)
+     @wires
+     def paired_prep_tb() -> aead_axis_intrf.fwd_t:
+         in_if.stream = drive_word()
+@@ -269,7 +269,7 @@
+     def drive_tag_ready() -> uint8_t:
+         return int(state["cycle"] % 53 >= 41)
+ 
+-    @MAIN(wireguard_env.TARGET_MHZ)
++    @MAIN(wireguard_env.wg_clk)
+     @wires
+     def paired_tags_tb() -> aead_axis_intrf.fwd_t:
+         strip_ready: Feedback[aead_axis_intrf.fb_t]
+diff -ruN '--exclude=generated-files' '--exclude=__pycache__' '--exclude=*.pyc' a/src/poly1305_pipelined_syn_tb.py b/src/poly1305_pipelined_syn_tb.py
+--- a/src/poly1305_pipelined_syn_tb.py	2026-11-07 09:40:45.000000000 -0500
++++ b/src/poly1305_pipelined_syn_tb.py	2026-11-07 12:02:59.711233068 -0500
+@@ -500,6 +500,6 @@
+         return tag
+ 
+ 
+-@MAIN(wireguard_env.TARGET_MHZ)
++@MAIN(wireguard_env.wg_clk, reset_registers=wireguard_env.WG_REGS)
+ def poly1305_pipelined_syn_tb() -> uint128_t:
+     return run_testbench()
+diff -ruN '--exclude=generated-files' '--exclude=__pycache__' '--exclude=*.pyc' a/src/wireguard_env.py b/src/wireguard_env.py
+--- a/src/wireguard_env.py	2026-11-07 09:40:45.000000000 -0500
++++ b/src/wireguard_env.py	2026-11-07 12:02:59.711233068 -0500
+@@ -15,7 +15,7 @@
+ import sys
+ 
+ try:
+-    from pypeline import DesignParamError, param
++    from pypeline import DesignParamError, Input, make_clock, make_reset, param, uint1_t
+ except ImportError:
+     # Host-side tools can resolve profiles without PypelineC installed.
+     DesignParamError = ValueError
+@@ -23,6 +23,18 @@
+     def param(name, default=None, **_kwargs):
+         return default
+ 
++    class Input:  # stands in for the wg_rst declaration below
++        def __class_getitem__(cls, item):
++            return None
++
++    uint1_t = None
++
++    def make_reset(**_kwargs):
++        return None
++
++    def make_clock(*_args, **_kwargs):
++        return None
++
+ 
+ IMPLEMENTATIONS = ("pipelined", "legacy")
+ DESIGNS = ("encrypt", "decrypt", "shared")
+@@ -392,6 +404,17 @@
+ POLY1305_EPILOGUE_MAX_LATENCY = _PROFILE["epilogue_cap"]
+ TARGET_MHZ = float(_PROFILE["target_mhz"])
+ 
++# ─── Reset ──────────────────────────────────────────────────────────────────
++# One synchronous reset, the pin wg_rst, resets every register of the DUT and
++# of the resources both directions share (reset_registers=WG_REGS). Always
++# declared: with -D RESET=0 the clock has no reset, nothing uses wg_rst, and it
++# makes no port. Testbench MAINs keep the default "requested" policy.
++USE_RESET = param("RESET", True, type=bool,
++                  help="synchronous reset pin wg_rst for every DUT register")
++wg_rst: Input[uint1_t] = make_reset()
++wg_clk = make_clock(TARGET_MHZ, reset=wg_rst if USE_RESET else None)
++WG_REGS = "all" if USE_RESET else "requested"
++
+ 
+ # ─── sys.path bootstrap ─────────────────────────────────────────────────────
+ 
