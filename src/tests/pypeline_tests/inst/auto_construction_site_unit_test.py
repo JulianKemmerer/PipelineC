@@ -161,13 +161,14 @@ def test_goal_text_is_clock_port_style():
 
 # A testbench on one clock whose AUTO_PIPELINE reads .latency at import
 TB_SOURCE = """
-from pypeline import AUTO_PIPELINE, MAIN, Reg, hw_func, uint8_t
+from pypeline import AUTO_PIPELINE, MAIN, Input, Reg, hw_func, make_reset, uint1_t, uint8_t
 @hw_func
 def work(x: uint8_t) -> uint8_t:
     return x + 1
 AP = AUTO_PIPELINE(work, name="core")
 DEPTH = AP.latency
-@MAIN({goal})
+rst: Input[uint1_t] = make_reset()  # every register resets, pulsed in cycle 0
+@MAIN({goal}, reset=rst, reset_registers="all")
 def tb():
     r: Reg[uint8_t]
     r = AP(r)

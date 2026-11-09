@@ -28,7 +28,7 @@ sys.path.insert(
         "pypeline",
     ),
 )
-from pypeline import MAIN, Reg, sim_assert, sim_finish, sim_print, uint1_t, uint32_t
+from pypeline import Input, MAIN, make_reset, Reg, sim_assert, sim_finish, sim_print, uint1_t, uint32_t
 
 from fifo import make_fifo
 
@@ -38,7 +38,12 @@ NUM_VALUES = len(STIMULUS)
 fifo_fwft = make_fifo(uint32_t, NUM_VALUES)
 
 
-@MAIN
+# Synchronous reset pin (pulsed in cycle 0 by the simulators): every @MAIN
+# resets every register with it
+rst: Input[uint1_t] = make_reset()
+
+
+@MAIN(reset=rst, reset_registers="all")
 def self_check_fifo():
     push_idx: Reg[uint32_t]
     pop_idx: Reg[uint32_t]

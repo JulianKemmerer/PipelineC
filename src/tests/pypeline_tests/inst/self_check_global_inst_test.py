@@ -31,6 +31,9 @@ from pypeline import (
     sim_print,
     uint1_t,
     uint8_t,
+    Input,
+    make_clock,
+    make_reset,
 )
 from ram import make_ram
 from stream.skid_buffer import make_skid_buffer
@@ -70,19 +73,25 @@ cycle: Wire[uint8_t]  # the checker's cycle count, for the other MAINs
 checksum: Output[uint8_t]
 
 
-@MAIN
+# Synchronous reset pin (pulsed in cycle 0 by the simulators), the reset of
+# the design's clock: every @MAIN and global instance resets with it
+rst: Input[uint1_t] = make_reset()
+clk = make_clock(25.0, reset=rst)
+
+
+@MAIN(clk, reset_registers="all")
 def drive_a():
     adder.a = cycle
     c1.step = 1
     c2.step = 10
 
 
-@MAIN
+@MAIN(clk, reset_registers="all")
 def drive_b():
     adder.b = 5
 
 
-@MAIN
+@MAIN(clk, reset_registers="all")
 def producer():
     n: Reg[uint8_t]
     sb.stream_in_if.stream.data = n
@@ -91,7 +100,7 @@ def producer():
         n += 1
 
 
-@MAIN
+@MAIN(clk, reset_registers="all")
 def checker():
     t: Reg[uint8_t]
     got: Reg[uint8_t]  # words taken from sb so far

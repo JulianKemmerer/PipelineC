@@ -18,6 +18,7 @@ from pypeline import (
     Input,
     int16_t,
     int32_t,
+    make_reset,
     uint1_t,
     uint16_t,
     uint32_t,
@@ -39,13 +40,13 @@ amplitude: Input[int16_t]
 freq: Input[int32_t]
 chirp_rate: Input[int32_t]
 noise_amp: Input[uint16_t]
-# A real port rather than a tied 0, so the reset's own fanout (it reaches every
-# register in the block, including the LFSRs and the phase accumulator) is part
-# of what this check measures.
-rst: Input[uint1_t]
+# A real reset pin rather than none, so the reset's own fanout (under
+# reset_registers="all" it reaches every register in the block, including the
+# LFSRs and the phase accumulator) is part of what this check measures.
+rst: Input[uint1_t] = make_reset()
 
 
-@MAIN(125.0)
+@MAIN(125.0, reset=rst, reset_registers="all")
 def pulse_gen_top() -> out_stream_t:
     return pulse_gen(
         pri=pri,
@@ -54,5 +55,4 @@ def pulse_gen_top() -> out_stream_t:
         freq=freq,
         chirp_rate=chirp_rate,
         noise_amp=noise_amp,
-        rst=rst,
     )

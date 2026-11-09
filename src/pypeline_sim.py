@@ -545,7 +545,8 @@ def _run_clock_cycle(mains: list, main_arg_types: dict, cycle: int) -> None:
 
     # Push this cycle's collected pipelined-MAIN write-sets into their delay
     # queues (deepcopy: entries must not alias objects the design mutates
-    # in later cycles) and start fresh collectors for the next cycle.
+    # in later cycles) and start fresh collectors for the next cycle. After
+    # a reset of the MAIN, _sim_apply_resets has made its collector zeros.
     for info in pypeline._sim_pipelined_main_info.values():
         info["queue"].append(copy.deepcopy(info["collector"]))
         info["collector"].clear()
@@ -687,6 +688,9 @@ def _discover_wire_names(module) -> tuple:
         for attr in vars(mod).values():
             if isinstance(attr, types.ModuleType):
                 _scan(attr)
+            elif isinstance(attr, pypeline._Clock) and all(attr is not c for c in clocks):
+                # a make_clock(rate, reset=) no MAIN names: @MAIN(rate)'s clock
+                clocks.append(attr)
 
     _scan(module)
     found = _DesignWires((result, insts))

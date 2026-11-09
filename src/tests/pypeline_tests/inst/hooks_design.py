@@ -6,7 +6,8 @@ native, cocotb+GHDL).
 Every hook appends its name to EVENTS and prints a "HOOK: <name>" marker, so a
 test can check both what ran and in what order. The HOOKS_TEST_MODE design
 parameter (-D HOOKS_TEST_MODE=...) picks a variant:
-  finish       -- the counter calls sim_finish() on cycle NUM_CYCLES-1
+  finish       -- the counter calls sim_finish() on cycle NUM_CYCLES (the
+                  reset in cycle 0 holds it at 0 for one extra cycle)
   cutoff       -- no sim_finish(); the run ends at --run N
   assert       -- @sim_output fails an assert on cycle 2
   final_raises -- like finish, and the @final(sim) hook raises
@@ -32,6 +33,9 @@ from pypeline import (
     sim_output,
     uint8_t,
     wires,
+    Input,
+    make_reset,
+    uint1_t,
 )
 
 MODE = param("HOOKS_TEST_MODE", "finish")
@@ -103,9 +107,14 @@ def observe():
         assert False, "observe: deliberate sim assert"
 
 
+# Synchronous reset pin (pulsed in cycle 0 by the simulators): every @MAIN
+# resets every register with it
+rst: Input[uint1_t] = make_reset()
+
+
 # Registered before the counter so the sim_finish() cycle's @sim_output still runs.
 # @wires: no hardware at all, so nothing for a synthesis run to time.
-@MAIN
+@MAIN(reset=rst, reset_registers="all")
 @wires
 def hooks_tb():
     drive()
@@ -116,7 +125,7 @@ CALL_FROM_HW = MODE == "call_from_hw"
 count_out: Output[uint8_t]
 
 
-@MAIN
+@MAIN(reset=rst, reset_registers="all")
 def hooks_counter():
     n: Reg[uint8_t]
     if n == FINISH_AT:

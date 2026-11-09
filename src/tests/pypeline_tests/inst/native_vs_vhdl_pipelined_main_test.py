@@ -43,6 +43,8 @@ from pypeline import (
     uint1_t,
     uint8_t,
     uint16_t,
+    Input,
+    make_reset,
 )
 
 
@@ -55,6 +57,9 @@ class pm_stream_t(NamedTuple):
 
 in_wire: Wire[pm_stream_t]
 out_wire: Wire[pm_stream_t]
+# Synchronous reset pin (pulsed in cycle 0 by the simulators): every @MAIN
+# resets every register with it, the pipelined MAIN's stage registers too
+rst: Input[uint1_t] = make_reset()
 
 
 @hw_func
@@ -65,7 +70,7 @@ def heavy(x: uint8_t) -> uint8_t:
 # Pure comb MAIN: no Reg/Feedback state, so the whole MAIN is one cut subtree
 # and the planner slices it to meet 50 MHz (same double-division cone as
 # sweep_comb_test.py, proven under the PYRTL software timing model).
-@MAIN(50.0)
+@MAIN(50.0, reset=rst, reset_registers="all")
 def pipelined_pure_main():
     v: pm_stream_t = in_wire
     o: pm_stream_t
@@ -85,7 +90,7 @@ MAX_CYCLES = 200
 # Returns the observed pipeline output as a real top-level port: without any
 # output, the sweep's per-iteration top synthesis (yosys/PYRTL timing check)
 # prunes the entire design as unobserved and the timing analysis fails.
-@MAIN
+@MAIN(reset=rst, reset_registers="all")
 def pm_checker() -> pm_stream_t:
     count: Reg[uint16_t]
     seen: Reg[uint16_t]

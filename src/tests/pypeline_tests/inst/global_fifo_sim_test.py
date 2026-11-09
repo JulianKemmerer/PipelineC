@@ -51,7 +51,12 @@ received: Wire[uint1_t[5]]  # element i: consumer i got every word
 pushed_back: Wire[uint1_t[4]]  # element i: producer i saw ready low
 
 
-@MAIN
+# The imported module's clock, whose reset pin (pulsed in cycle 0 by the
+# simulators) every @MAIN and global instance resets with
+clk = sub.clk
+
+
+@MAIN(clk, reset_registers="all")
 def a_producer():
     t: Reg[uint8_t]
     n: Reg[uint8_t]
@@ -67,7 +72,7 @@ def a_producer():
     t += 1
 
 
-@MAIN
+@MAIN(clk, reset_registers="all")
 def a_consumer():
     t: Reg[uint8_t]
     n: Reg[uint8_t]
@@ -80,7 +85,7 @@ def a_consumer():
     t += 1
 
 
-@MAIN
+@MAIN(clk, reset_registers="all")
 def b_producer():
     t: Reg[uint8_t]
     n: Reg[uint8_t]
@@ -96,7 +101,7 @@ def b_producer():
     t += 1
 
 
-@MAIN
+@MAIN(clk, reset_registers="all")
 def b_consumer():
     t: Reg[uint8_t]
     n: Reg[uint8_t]
@@ -111,7 +116,7 @@ def b_consumer():
     t += 1
 
 
-@MAIN
+@MAIN(clk, reset_registers="all")
 def c_producer():
     t: Reg[uint8_t]
     n: Reg[uint8_t]
@@ -127,7 +132,7 @@ def c_producer():
     t += 1
 
 
-@MAIN
+@MAIN(clk, reset_registers="all")
 def c_consumer():
     t: Reg[uint8_t]
     n: Reg[uint8_t]
@@ -140,7 +145,7 @@ def c_consumer():
     t += 1
 
 
-@MAIN
+@MAIN(clk, reset_registers="all")
 def d_producer():
     t: Reg[uint8_t]
     n: Reg[uint8_t]
@@ -156,7 +161,7 @@ def d_producer():
     t += 1
 
 
-@MAIN
+@MAIN(clk, reset_registers="all")
 def d_consumer():
     t: Reg[uint8_t]
     n: Reg[uint8_t]
@@ -169,7 +174,7 @@ def d_consumer():
     t += 1
 
 
-@MAIN
+@MAIN(clk, reset_registers="all")
 def e_consumer():
     t: Reg[uint8_t]
     n: Reg[uint8_t]
@@ -185,7 +190,7 @@ def e_consumer():
     t += 1
 
 
-@MAIN
+@MAIN(clk, reset_registers="all")
 def checker():
     t: Reg[uint16_t]
     sim_assert(t < 200, "global_fifo_sim: a FIFO did not deliver every word")

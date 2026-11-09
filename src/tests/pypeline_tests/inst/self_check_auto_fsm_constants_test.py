@@ -19,6 +19,8 @@ from pypeline import (
     uint4_t,
     uint8_t,
     uint16_t,
+    Input,
+    make_reset,
 )
 
 # Boundary values include sign extension and unsigned wrap.
@@ -50,7 +52,12 @@ def constant_work(x: input_t) -> uint16_t:
 FSM = AUTO_FSM(constant_work)
 
 
-@MAIN(5.0)
+# Synchronous reset pin (pulsed in cycle 0 by the simulators): every @MAIN
+# resets every register with it
+rst: Input[uint1_t] = make_reset()
+
+
+@MAIN(5.0, reset=rst, reset_registers="all")
 def self_check_auto_fsm_constants() -> uint16_t:
     idx: Reg[uint4_t]
     busy: Reg[uint1_t]

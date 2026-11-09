@@ -21,6 +21,9 @@ from pypeline import (  # noqa: E402
     struct,
     uint8_t,
     uint16_t,
+    Input,
+    make_reset,
+    uint1_t,
 )
 from stream.stream_auto_pipeline import make_stream_auto_pipeline  # noqa: E402
 from stream.stream_multi_cycle import make_stream_auto_multi_cycle  # noqa: E402
@@ -75,7 +78,12 @@ triple_stream = make_stream_auto_pipeline(triple, name="triple")
 triple_mcp = make_stream_auto_multi_cycle(triple, name="triple_mcp")
 
 
-@MAIN
+# Synchronous reset pin (pulsed in cycle 0 by the simulators): every @MAIN
+# resets every register with it
+rst: Input[uint1_t] = make_reset()
+
+
+@MAIN(reset=rst, reset_registers="all")
 def user_names_main(x: uint8_t, y: uint16_t, z: uint16_t) -> uint16_t:
     p = pair4_t(a=add3(x), b=add5(x))
     m: mode_t = mode_t.RUN

@@ -37,6 +37,8 @@ from pypeline import (
     struct,
     uint1_t,
     uint4_t,
+    Input,
+    make_reset,
 )
 
 NUM_CASES = 6
@@ -68,7 +70,12 @@ def mixed_ops(x: case_t) -> int16_t:
 OPS_FSM = AUTO_FSM(mixed_ops)
 
 
-@MAIN(25.0)
+# Synchronous reset pin (pulsed in cycle 0 by the simulators): every @MAIN
+# resets every register with it
+rst: Input[uint1_t] = make_reset()
+
+
+@MAIN(25.0, reset=rst, reset_registers="all")
 def self_check_auto_fsm() -> int16_t:
     # Returning the last result gives the design a real output port. Without
     # one, synthesis optimizes the whole self-contained state machine away and

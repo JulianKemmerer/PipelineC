@@ -18,12 +18,17 @@ sys.path.insert(
     0, os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "..", "..")
 )
 
-from pypeline import MAIN, Reg, sim_assert, sim_finish, sim_print, uint8_t
+from pypeline import Input, MAIN, make_reset, Reg, sim_assert, sim_finish, sim_print, uint1_t, uint8_t
 
 NUM_COUNTS = 10
 
 
-@MAIN
+# Synchronous reset pin (pulsed in cycle 0 by the simulators): every @MAIN
+# resets every register with it
+rst: Input[uint1_t] = make_reset()
+
+
+@MAIN(reset=rst, reset_registers="all")
 def self_check_counter():
     n: Reg[uint8_t]
     sim_assert(n < NUM_COUNTS, f"counter exceeded expected range: {n}")

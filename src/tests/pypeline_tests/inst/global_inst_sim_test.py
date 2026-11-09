@@ -71,29 +71,34 @@ received: Wire[uint1_t]  # the consumer got every word through sb
 pushed_back: Wire[uint1_t]  # the producer saw sb's ready low
 
 
-@MAIN
+# The imported module's clock, whose reset pin (pulsed in cycle 0 by the
+# simulators) every @MAIN and global instance resets with
+clk = sub.clk
+
+
+@MAIN(clk, reset_registers="all")
 def drive_a():
     adder.a = cycle
     c1.step = 1
     c2.step = 10
 
 
-@MAIN
+@MAIN(clk, reset_registers="all")
 def drive_b():
     adder.b = cycle + cycle
 
 
-@MAIN
+@MAIN(clk, reset_registers="all")
 def read_sum():
     sim_assert(adder.out == cycle * 3, f"adder: got {adder.out} at {cycle}")
 
 
-@MAIN
+@MAIN(clk, reset_registers="all")
 def read_sum_again():
     sim_assert(adder.out == cycle + cycle + cycle, "adder: second reader differs")
 
 
-@MAIN
+@MAIN(clk, reset_registers="all")
 def producer():
     t: Reg[uint8_t]
     n: Reg[uint8_t]
@@ -109,7 +114,7 @@ def producer():
     t += 1
 
 
-@MAIN
+@MAIN(clk, reset_registers="all")
 def consumer():
     t: Reg[uint8_t]
     n: Reg[uint8_t]
@@ -125,7 +130,7 @@ def consumer():
     t += 1
 
 
-@MAIN
+@MAIN(clk, reset_registers="all")
 def checker():
     t: Reg[uint8_t]
     tens: Reg[uint8_t]  # 10 * t, wrapping like c2's own register

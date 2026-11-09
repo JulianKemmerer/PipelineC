@@ -51,7 +51,7 @@ sys.path.insert(
     ),
 )
 
-from pypeline import MAIN, Reg, hw_func, sim_assert, sim_finish, sim_print, uint8_t, uint32_t
+from pypeline import hw_func, Input, MAIN, make_reset, Reg, sim_assert, sim_finish, sim_print, uint1_t, uint32_t, uint8_t
 from operators.soft_mult import make_soft_mult_carry_save
 
 NUM_COUNTS = 4
@@ -84,7 +84,12 @@ mult4 = make_soft_mult_carry_save(uint8_t, uint8_t, max_width=4)
 EXPECTED_ACC = 549
 
 
-@MAIN
+# Synchronous reset pin (pulsed in cycle 0 by the simulators): every @MAIN
+# resets every register with it
+rst: Input[uint1_t] = make_reset()
+
+
+@MAIN(reset=rst, reset_registers="all")
 def self_check_loop_unpack():
     n: Reg[uint8_t]
 

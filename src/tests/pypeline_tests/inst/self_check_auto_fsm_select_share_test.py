@@ -25,6 +25,8 @@ from pypeline import (
     uint17_t,
     uint32_t,
     uint34_t,
+    Input,
+    make_reset,
 )
 from operators.soft_mult import make_inferred_mult
 
@@ -203,7 +205,12 @@ if FUSE.schedule is not None:
     assert FUSE.schedule["cleanup"]["fused_pairs"] > 0
 
 
-@MAIN(5.0)
+# Synchronous reset pin (pulsed in cycle 0 by the simulators): every @MAIN
+# resets every register with it
+rst: Input[uint1_t] = make_reset()
+
+
+@MAIN(5.0, reset=rst, reset_registers="all")
 def self_check_auto_fsm_select_share() -> uint32_t:
     index: Reg[uint4_t]
     busy: Reg[uint1_t]

@@ -220,6 +220,7 @@ Each returns a `ParsedTimingReport`: `orig_text` (the tool log) and
 | `path_delay_ns` | the worst path's delay; per cycle for a multi-cycle path |
 | `path_group`, `source_ns_per_clock` | the clock group and its launch-edge period |
 | `start_reg_name`, `end_reg_name`, `netlist_resources` | endpoint and resource names, for attribution (approximate, see [`SWEEP_DESIGN.md`](SWEEP_DESIGN.md#3-the-refinement-loop)) |
+| `start_port_name` (optional) | the top-level input port a path starts at, when `start_reg_name` is None — DEVICE_MODELS only; other tools name such a port in `start_reg_name` |
 | `launch_clock_to_q_ns`, `combinational_delay_ns`, `setup_ns` (optional) | a decomposition of `path_delay_ns`; DEVICE_MODELS provides it, and it becomes the timing-components sidecar of §6 |
 | area fields (optional) | measured cell area (`total_cell_area`, `area_unit`, ...) — DEVICE_MODELS only |
 
@@ -312,15 +313,17 @@ Names in other tools' formats match no MAIN, an empty result. The sweep
 uses this to tell a MAIN that owns a path from one it only crosses
 ([`SWEEP_DESIGN.md` §3](SWEEP_DESIGN.md#3-the-refinement-loop)).
 
-Three helpers place a path inside one instance, in any case and through a flattening
-tool's `$flatten\` prefix (`_PATH_HIERARCHY` normalizes a name for both):
-`PATH_ENDS_IN_MAIN` (both ends inside a MAIN's entity, for global instance and FIFO
-MAINs), `PATH_ENDS_IN_INSTANCE(path_report, label)` (both ends inside the top-level
-instance `label`, such as an async global FIFO's `clk_cross` instance `rx_FIFO`) and
+Four helpers place a path or a name inside one instance, in any case and through a
+flattening tool's `$flatten\` prefix (`_PATH_HIERARCHY` normalizes a name for all of
+them): `PATH_ENDS_IN_MAIN` (both ends inside a MAIN's entity, for global instance and
+FIFO MAINs) and `NAME_IN_MAIN(name, main_inst, ...)` (one end),
+`PATH_ENDS_IN_INSTANCE(path_report, label)` (both ends inside the top-level instance
+`label`, such as an async global FIFO's `clk_cross` instance `rx_FIFO`) and
 `NAME_IN_INSTANCE(name, label)` (one end). A name is inside `label` only when a hierarchy
 separator follows it, so the MAIN `rx_FIFO_wr` is not inside the crossing `rx_FIFO`. The
-sweep uses them in `GET_MAIN_INSTS_FOR_PATH_REPORT`
-([`SWEEP_DESIGN.md` §4](SWEEP_DESIGN.md#4-feature-specific-feedback-in-the-loop)).
+sweep uses them in `GET_MAIN_INSTS_FOR_PATH_REPORT` and `RESET_DISTRIBUTION_PATH`
+([`SWEEP_DESIGN.md` §4](SWEEP_DESIGN.md#4-feature-specific-feedback-in-the-loop),
+[§3](SWEEP_DESIGN.md#3-the-refinement-loop)).
 
 
 ## 5. Scoped synthesis and delay estimates
@@ -415,7 +418,9 @@ declared pipeline latency. Its HDL and state remain in whole-design synthesis.
 
 `ESTIMATE_HIER_PATH_DELAYS` composes zero-clock pipeline-map critical paths
 bottom-up and marks `delay_is_estimated`. It never writes estimates to the
-measured delay cache. A zero-only wrapper around an estimated child remains
+measured delay cache. It skips raw text and primitives (no submodules): a primitive's
+estimate is modeled from measured widths (`PrimitiveDelayModel`), and it has no
+pipeline map to compose, so re-estimating after a `MEASURE_DELAYS` keeps it. A zero-only wrapper around an estimated child remains
 estimated too, so a later opaque-text measurement propagates through it.
 Usable existing measurements can replace estimates
 without new synthesis ([stored measurements](#stored-measurements)), but an

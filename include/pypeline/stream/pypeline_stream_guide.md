@@ -132,6 +132,10 @@ empty (a stream RAM keeps its contents and cancels its requests); under the defa
 AXI-Stream models in `axi/axis_sim.py` take the reset each cycle
 (`ConvergedAxisSimSource.commit(ready, reset=)`, `ConvergedAxisSimSink.step(...,
 reset=)`): no transfer counts during it, and a frame cut by it is sent again whole.
+A reset also loses whatever the DUT held, so a testbench that resets mid-run sends
+those frames again itself: `ConvergedAxisSimSource.in_frame()` says a frame is part way
+in, `.clear()` forgets the frame in flight and the queue, and `Scoreboard.clear()` the
+pending expectations, before the lost frames are sent and expected again in order.
 
 ## Tests
 

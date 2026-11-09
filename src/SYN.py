@@ -1244,16 +1244,25 @@ def PATH_ENDS_IN_MAIN(path_report, main_inst, parser_state, TimingParamsLookupTa
     `$flatten\\rx_fifo_0clk_d60bc461.\\fifo_hardware_...`)."""
     if path_report.start_reg_name is None or path_report.end_reg_name is None:
         return False
+    return NAME_IN_MAIN(
+        path_report.start_reg_name, main_inst, parser_state, TimingParamsLookupTable
+    ) and NAME_IN_MAIN(
+        path_report.end_reg_name, main_inst, parser_state, TimingParamsLookupTable
+    )
+
+
+def NAME_IN_MAIN(name, main_inst, parser_state, TimingParamsLookupTable):
+    """True if a timing report's cell name is inside main_inst's entity
+    (PATH_ENDS_IN_MAIN's test for one end)."""
+    if name is None:
+        return False
     entity = VHDL.GET_ENTITY_NAME(
         main_inst,
         parser_state.LogicInstLookupTable[main_inst],
         TimingParamsLookupTable,
         parser_state,
     ).lower()
-
-    return _PATH_HIERARCHY(path_report.start_reg_name).startswith(
-        entity
-    ) and _PATH_HIERARCHY(path_report.end_reg_name).startswith(entity)
+    return _PATH_HIERARCHY(name).startswith(entity)
 
 
 def _PATH_HIERARCHY(name):
@@ -3295,6 +3304,10 @@ def ESTIMATE_HIER_PATH_DELAYS(funcs_to_estimate, parser_state, quiet=False):
         logic = parser_state.FuncLogicLookupTable[logic_func_name]
         if logic.vhdl_module_text is not None:
             # Its zero estimate has no inspectable pipeline map to compose.
+            continue
+        if not logic.submodule_instances:
+            # A primitive (its delay modeled from measured widths): nothing
+            # below it to derive a delay from, so it keeps its estimate.
             continue
         if logic_func_name not in parser_state.FuncToInstances:
             continue

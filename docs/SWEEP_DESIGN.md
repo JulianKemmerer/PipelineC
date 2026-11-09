@@ -1173,6 +1173,24 @@ explicitly during the sweep:
   path endpoints and feeds the `TIMING NOT MET` failure exit above;
 - a failing path attributed to an unpipelinable func stops the sweep with
   the culprit named and the reason (`unpipelinable_hotspot`);
+- a failing path that is a reset's fanout stops each MAIN on it at once
+  (`reset_distribution: reset <name> from <source>, to the registers it
+  resets in <MAIN>`), with a WARNING printed once per path: pipeline
+  registers cannot be added to a reset, since every register it resets sees
+  it in the same cycle. The exception is a plan with an earlier iteration
+  that achieved more (`RESET_PATH_STOPS_PLAN`): the fanout then grew with the
+  registers added since, the earlier iteration shows the reset is not the
+  MAIN's limit, and the path keeps the normal feedback (a region mini-sweep,
+  say, can then find a better placement). `RESET_DISTRIBUTION_PATH` decides it from the path's
+  ends: the end is in a MAIN with that reset (`ParserState.main_resets`),
+  the start is the reset's pin (outside every MAIN, by its port or input
+  buffer name, or the `start_port_name` a tool reports for a path with no
+  start register) or is in the one MAIN driving the reset `Wire`. A source MAIN
+  whose other global wires reach the reset MAIN, directly or through other
+  MAINs (each taken as passing every wire it reads to every wire it writes in
+  the same cycle), could be carrying that data instead, so such a path keeps
+  the normal feedback. The MAIN's iteration record carries the description
+  as `reset_distribution`;
 - a failing path between registers of a MAIN with nothing cuttable that only
   crosses other MAINs' unregisterable logic (`crossing`, above) fails under
   its owner. The reason is `nothing_auto_pipelinable: path crosses <MAIN>

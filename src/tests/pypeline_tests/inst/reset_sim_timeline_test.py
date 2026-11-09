@@ -4,7 +4,8 @@ checked.
 
 - The default pulse: a reset pin is 1 in cycle 0 and 0 after it, so a
   Reg[T, RESET] holds its initial value through cycle 1; --run N still runs N
-  cycles.
+  cycles. A MAIN named by rate takes the reset of a make_clock of that rate
+  that no MAIN names.
 - A design without resets has the timeline it always had.
 - A reset pin that Python code drives (a @sim_input) gets no default pulse.
 - A reset Wire comes from its logic, never from the pulse.
@@ -63,6 +64,18 @@ def test_default_pulse():
     )
     assert rows == [(0, 7), (1, 7), (2, 8), (3, 9), (4, 10)], rows
     print("test_default_pulse PASS")
+
+
+def test_rate_main_takes_an_unnamed_clocks_reset():
+    # make_clock(100.0, reset=rst) that no MAIN names is still the clock
+    # @MAIN(100.0) runs on, so its Reg[T, RESET] gets the pulse
+    rows = _run(
+        "rst: Input[uint1_t] = make_reset()\nclk = make_clock(100.0, reset=rst)\n"
+        + _COUNTER.replace("@MAIN(clk)", "@MAIN(100.0)"),
+        4,
+    )
+    assert rows == [(0, 7), (1, 7), (2, 8), (3, 9)], rows
+    print("test_rate_main_takes_an_unnamed_clocks_reset PASS")
 
 
 def test_reset_free_timeline_unchanged():

@@ -5107,6 +5107,8 @@ class MainSweepPlan:
         # (func_name, reason) when the critical path was attributed to a
         # func auto-pipelining cannot subdivide
         self.unpipelinable_blame = None
+        # RESET_DISTRIBUTION_DESCRIPTION when a reset's fanout stopped the plan
+        self.reset_distribution_blame = None
         self.history = []  # dicts for sweep_history.json
         # Independent AUTO_PIPELINE regions under this main (see
         # ENFORCE_AUTO_PIPELINE_REGIONS), including clock-driven plain tags.
@@ -6339,6 +6341,115 @@ def ASYNC_FIFO_SIDES_FOR_PATH(decl, path_report, parser_state):
     return sides or set(decl.main_names)
 
 
+def RESET_DISTRIBUTION_PATH(path_report, parser_state, params):
+    """(reset, source MAIN inst or None, reset MAIN inst) when a timing path
+    can only be a reset's distribution: it ends in a MAIN that resets with
+    `reset` (ParserState.main_resets), and it starts at that reset's pin
+    (source None, the pin's name outside every MAIN, or the input port a
+    tool reports as `start_port_name`) or in the one MAIN that
+    drives that reset Wire while no other global wire it drives reaches the
+    reset MAIN, directly or through any other MAIN (each taken as passing
+    every wire it reads to every wire it writes, as its logic may do in the
+    same cycle). A reset takes no pipeline registers (each register it resets
+    sees it in the same cycle), so the sweep reports such a path instead of
+    pipelining its MAINs. None for any other path, including one the source
+    MAIN's other wires could carry."""
+    main_resets = getattr(parser_state, "main_resets", None) or {}
+    start, end = path_report.start_reg_name, path_report.end_reg_name
+    if start is None:
+        # A tool that names no start register for a path from a top-level
+        # input reports the input port separately (DEVICE_MODELS)
+        start = getattr(path_report, "start_port_name", None)
+    if not main_resets or start is None or end is None:
+        return None
+    tpl = params.TimingParamsLookupTable
+
+    def main_of(name):
+        for main_inst in sorted(parser_state.main_mhz, key=len, reverse=True):
+            if SYN.NAME_IN_MAIN(name, main_inst, parser_state, tpl):
+                return main_inst
+        return None
+
+    def wires(main_inst, attr):
+        found = set()
+        for func, insts in parser_state.FuncToInstances.items():
+            if any(i.split(LOGIC.SUBMODULE_MARKER)[0] == main_inst for i in insts):
+                found.update(getattr(parser_state.FuncLogicLookupTable[func], attr))
+        return found
+
+    reset_main = main_of(end)
+    if reset_main not in main_resets:
+        return None
+    reset = main_resets[reset_main].source
+    start_main = main_of(start)
+    if reset in parser_state.input_wires:
+        pin = re.escape(reset.lower())
+        if start_main is None and re.match(pin + r"($|[^a-z0-9_]|_ibuf)", start.lower()):
+            return reset, None, reset_main
+        return None
+    drivers = wires(start_main, "write_only_global_wires") if start_main else set()
+    if start_main is None or start_main == reset_main or reset not in drivers:
+        return None
+    reads = {m: wires(m, "read_only_global_wires") for m in parser_state.main_mhz}
+    carried = frontier = drivers - {reset}
+    while frontier:
+        reached = set()
+        for main_inst in parser_state.main_mhz:
+            if main_inst not in (start_main, reset_main) and reads[main_inst] & frontier:
+                reached |= wires(main_inst, "write_only_global_wires")
+        frontier = reached - carried
+        carried = carried | frontier
+    if carried & (reads[reset_main] - {reset}):
+        return None
+    return reset, start_main, reset_main
+
+
+def RESET_PATH_STOPS_PLAN(plan, curr_mhz):
+    """Whether a failing RESET_DISTRIBUTION_PATH at curr_mhz stops `plan`:
+    unless an earlier iteration of the plan achieved more. Then the reset's
+    fanout grew with the registers added since that iteration, and that
+    iteration shows the reset is not the MAIN's limit, so the sweep's normal
+    feedback goes on (and it keeps its best result)."""
+    achieved = round(curr_mhz, 3)
+    return not any(
+        (record.get("achieved_mhz") or 0.0) > achieved for record in plan.history
+    )
+
+
+def RESET_DISTRIBUTION_DESCRIPTION(reset_path, parser_state):
+    """One line naming a RESET_DISTRIBUTION_PATH: the reset, where it comes
+    from and the MAIN it resets."""
+    reset, source, reset_main = reset_path
+    func = parser_state.LogicInstLookupTable[reset_main].func_name
+    origin = (
+        "its pin" if source is None
+        else f"{parser_state.LogicInstLookupTable[source].func_name}, which drives it"
+    )
+    return f"reset {reset} from {origin}, to the registers it resets in {func}"
+
+
+def PRINT_RESET_DISTRIBUTION(printed, reset_path, curr_mhz, target_mhz, parser_state):
+    """Say once per sweep and reset path why a failing path is not
+    pipelined: it is the reset's fanout (RESET_DISTRIBUTION_PATH)."""
+    if reset_path in printed:
+        return
+    printed.add(reset_path)
+    reset, source, reset_main = reset_path
+    fix = (
+        f"bring {reset} in through registers of a MAIN that drives a reset Wire"
+        if source is None
+        else "register it again in "
+        f"{parser_state.LogicInstLookupTable[source].func_name}, nearer its users"
+    )
+    print(
+        f"[sweep] WARNING: a failing {curr_mhz:.2f} MHz path ({target_mhz:.2f} MHz goal) "
+        f"is the distribution of {RESET_DISTRIBUTION_DESCRIPTION(reset_path, parser_state)}. "
+        f"Pipeline registers cannot be added to a reset: {fix}, or lower the clock "
+        "goal. Keeping best result.",
+        flush=True,
+    )
+
+
 def GLOBAL_INST_MAINS(parser_state):
     """{MAIN name: PY_TO_LOGIC.GlobalInstDecl} of a design's global instances
     and FIFOs (Inst[f], Fifo[T]): each MAIN holding a declaration's hardware
@@ -6903,6 +7014,8 @@ def DO_PLANNED_THROUGHPUT_SWEEP(parser_state, multimain_timing_params):
 
     # (main inst, path evidence key) crossing NOTEs already printed
     printed_crossings = set()
+    # RESET_DISTRIBUTION_PATH results already reported
+    printed_reset_paths = set()
     while True:
         iteration += 1
         # Did an AUTO_MULTI_CYCLE count change this iteration (needs another syn run)
@@ -6913,6 +7026,8 @@ def DO_PLANNED_THROUGHPUT_SWEEP(parser_state, multimain_timing_params):
         planless_auto_multi_cycle_blame = {}
         # main inst -> the MAINs its kept failing (as written) path crosses
         planless_crossing = {}
+        # main inst -> RESET_DISTRIBUTION_DESCRIPTION of its kept failing path
+        planless_reset_distribution = {}
         # Fresh zero-clock table, then locks, then planned cuts
         tpl = AUTO_PIPELINE.GET_ZERO_ADDED_CLKS_TIMING_PARAMS_LOOKUP(parser_state)
         for plan in plans.values():
@@ -7366,6 +7481,9 @@ def DO_PLANNED_THROUGHPUT_SWEEP(parser_state, multimain_timing_params):
                 if len(main_insts) > 1
                 else None
             )
+            reset_path = RESET_DISTRIBUTION_PATH(
+                path_report, parser_state, multimain_timing_params
+            )
             if len(main_insts) == 0:
                 print(
                     "Path group:",
@@ -7404,6 +7522,58 @@ def DO_PLANNED_THROUGHPUT_SWEEP(parser_state, multimain_timing_params):
                     plan_own_scores[main_inst] = min(
                         plan_own_scores.get(main_inst, score), score
                     )
+                if reset_path is not None and not met and (
+                    main_inst not in plans
+                    or RESET_PATH_STOPS_PLAN(plans[main_inst], curr_mhz)
+                ):
+                    # A reset's fanout (RESET_DISTRIBUTION_PATH): no plan can
+                    # register it. Report it, stop this MAIN's plan.
+                    PRINT_RESET_DISTRIBUTION(
+                        printed_reset_paths, reset_path, curr_mhz, target_mhz,
+                        parser_state,
+                    )
+                    blame = RESET_DISTRIBUTION_DESCRIPTION(reset_path, parser_state)
+                    fields = {
+                        "iter": iteration,
+                        "main": main_logic.func_name,
+                        "goal_mhz": target_mhz,
+                        "achieved_mhz": round(curr_mhz, 3),
+                        "met": False,
+                        "reset_distribution": blame,
+                    }
+                    if main_inst not in plans:
+                        if _KEEP_WORST_PLANLESS(
+                            planless_results, main_inst, curr_mhz, met, target_mhz
+                        ):
+                            planless_crossing.pop(main_inst, None)
+                            planless_reset_distribution[main_inst] = blame
+                            iter_records[main_inst] = RECORD_SWEEP_ITERATION(
+                                main_logic.func_name, target_mhz,
+                                {**fields, "action": "as_written"},
+                            )
+                        continue
+                    if main_inst in handled_plans:
+                        continue
+                    handled_plans.add(main_inst)
+                    plan = plans[main_inst]
+                    plan.needs_replan = False
+                    plan.met_timing = False
+                    plan.last_achieved_mhz = curr_mhz
+                    plan.last_worst_path = path_report
+                    plan.stopped_reason = "reset_distribution"
+                    plan.reset_distribution_blame = blame
+                    record = RECORD_SWEEP_ITERATION(
+                        main_logic.func_name,
+                        target_mhz,
+                        {
+                            **fields,
+                            "cuts": PLAN_TOTAL_CUTS(plan),
+                            "action": "stop(reset distribution)",
+                        },
+                    )
+                    plan.history.append(record)
+                    iter_records[main_inst] = record
+                    continue
                 if auto_multi_cycle_group is not None and not met:
                     # The critical path is an AUTO_MULTI_CYCLE multi-cycle path: more
                     # cycles (not more pipelining) is the remedy, and this is
@@ -7495,6 +7665,7 @@ def DO_PLANNED_THROUGHPUT_SWEEP(parser_state, multimain_timing_params):
                         continue
                     crossed = DESCRIBE_CROSSING(path_report, roles, parser_state) if roles else ""
                     planless_crossing.pop(main_inst, None)
+                    planless_reset_distribution.pop(main_inst, None)
                     if crossed and not met:
                         planless_crossing[main_inst] = crossed
                     iter_records[main_inst] = RECORD_SWEEP_ITERATION(
@@ -8480,6 +8651,8 @@ def DO_PLANNED_THROUGHPUT_SWEEP(parser_state, multimain_timing_params):
         if plan.unpipelinable_blame is not None:
             blamed_func, blame_reason = plan.unpipelinable_blame
             why += f": {blamed_func}, {blame_reason}"
+        if plan.stopped_reason == "reset_distribution":
+            why += f": {plan.reset_distribution_blame}"
         timing_failures.append((main_func_name, plan.target_mhz, achieved, why))
     # Mains with a goal but no plan (nothing cuttable) whose last timing
     # report failed also count
@@ -8493,6 +8666,8 @@ def DO_PLANNED_THROUGHPUT_SWEEP(parser_state, multimain_timing_params):
                     (
                         f"auto_multi_cycle_latency_limit: {planless_auto_multi_cycle_blame[main_inst]}"
                         if main_inst in planless_auto_multi_cycle_blame
+                        else f"reset_distribution: {planless_reset_distribution[main_inst]}"
+                        if main_inst in planless_reset_distribution
                         else "nothing_auto_pipelinable"
                         + (
                             f": path crosses {planless_crossing[main_inst]}"

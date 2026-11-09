@@ -48,6 +48,8 @@ from pypeline import (
     uint6_t,
     uint8_t,
     uint16_t,
+    Input,
+    make_reset,
 )
 
 NUM_CASES = 35  # lcm(5, 7): every selector of both muxes, many lane values
@@ -146,7 +148,12 @@ EXPECTED_CHAIN = [_ref_chain(c) for c in range(NUM_CASES)]
 LANE_FIELD = [[k & 3, (k >> 2) & 3, ~k & 3, (k >> 1) & 3] for k in range(7)]
 
 
-@MAIN(25.0)
+# Synchronous reset pin (pulsed in cycle 0 by the simulators): every @MAIN
+# resets every register with it
+rst: Input[uint1_t] = make_reset()
+
+
+@MAIN(25.0, reset=rst, reset_registers="all")
 def self_check_auto_fsm_array_mux() -> uint8_t:
     # A real output port keeps synthesis from deleting the logic.
     last: Reg[uint8_t]

@@ -28,8 +28,7 @@ proxy measurements remain explicitly identified in [Synthesis checks](#synthesis
 * [Top-Level Ports](#top-level-ports)
   * [Reset](#reset)
     * [Two domains, and the bring-up sequence they exist for](#two-domains-and-the-bring-up-sequence-they-exist-for)
-    * [Block, drain, clear](#block-drain-clear)
-    * [What reset does not reach](#what-reset-does-not-reach)
+    * [What a reset does](#what-a-reset-does)
   * [Control registers (`pdw_ctrl_t`)](#control-registers-pdw_ctrl_t)
 * [Record formats](#record-formats)
   * [Mapping to gr-pdw's record](#mapping-to-gr-pdws-record)
@@ -209,8 +208,8 @@ The measurement engine defaults to ROM atan2, with
 `PDW_ATAN2_METHOD=cordic|rom` selecting either implementation, and uses automatic
 ROMs for the two logarithm converters. It joins frequency, power, noise and PRI
 when all result queues have a head for the same candidate. Packet release waits
-for the corresponding measurement. Reset blocks output, drains storage and clears
-PRI history. Power and conjugate products retain DSP multipliers; filters,
+for the corresponding measurement. A reset empties storage and the joins and
+clears PRI history. Power and conjugate products retain DSP multipliers; filters,
 accumulation, thresholds and PRI remain arithmetic. Their wide, runtime inputs
 make direct truth tables impractical, and their existing operations already fit
 DSP or carry-chain hardware. The nonlinear sine, logarithm and angle functions
@@ -340,9 +339,9 @@ Every channel carries an active-high `*_axis_rst` — seven in all. They OR into
 one `global_rst`, one register stage behind the pins (`RST_LATENCY`, exported
 from `top.py`). That register is a fanout break, not a metastability
 synchroniser: these resets are synchronous to the design clock, but the reset
-reaches the detector's input valid, a 320-bit control-register mux, packet and alignment FIFO
-read enables and a few dozen register clears — more than a seven-input OR of
-pins should drive combinationally in a design with ~2 ns of margin.
+reaches the detector's input valid and every register of the datapath — more
+than a seven-input OR of pins should drive combinationally in a design with
+~2 ns of margin.
 
 > ⚠ **Tie an unused channel's reset LOW.** A channel whose reset a platform
 > holds asserted because the host never opened it holds the *entire* design in
@@ -353,7 +352,7 @@ pins should drive combinationally in a design with ~2 ns of margin.
 The control register file follows **`tx0_s_axis_rst` alone**, not the combined
 reset. That is what makes a staged bring-up possible:
 
-1. all seven resets asserted — everything held, buffers draining;
+1. all seven resets asserted — everything held, buffers empty;
 2. `tx0_s_axis_rst` deasserts — the register file is live, the datapath is not;
 3. the host writes one `pdw_ctrl_t` frame — configuration lands;
 4. the remaining six deassert — **the datapath starts already configured**.
@@ -365,80 +364,61 @@ design starts from and become purely a power-on safety state. If the control
 channel drops mid-session the datapath resets with it, which is the right
 response given its configuration has just reverted to defaults.
 
-### Block, drain, clear
+### What a reset does
 
-**Block.** The generator's and the detector's input valids are gated. One gate
-stops the whole detector: `pulse_detect` drives both paths from the same input
-stream, and every piece of state behind it — the hysteresis SM, the noise
-estimator, the phasor accumulators, `toa_counter` — advances only on an accepted
-sample. All four master `tvalid`s (and their `tlast`s) are gated too, so no drain
-traffic is ever visible outside.
+`global_rst` and `ctrl_rst` are Pypeline resets
+([guide](../../../../docs/pypeline_guide.md#resets)). `global_rst` is the
+125 MHz clock's reset, and the generator's and the detector's `@MAIN`s reset
+with it under `reset_registers="all"`; the control register file's `@MAIN` resets
+with `ctrl_rst`. So a reset returns **every register** below those `@MAIN`s to
+its initial value in the cycle after it is asserted: this project's own state,
+the packet, descriptor, measurement and delay-line FIFOs (emptied), the record
+serializers and skid buffers, the measurement joins, the filters' history and
+the NCO, CORDIC and `log2_db` pipelines. ROM contents are kept. Nothing drains,
+so a reset of any length, a single cycle included, leaves the datapath exactly
+as it is at power-on. `rst_main`, which drives both resets, is not reset.
 
-The generator's NCO is also fed zero amplitude while reset is held. That matters
-because of the bring-up order below: the configuration lands while the datapath
-is still in reset, and reset pins the PRI counter at 0, which is *inside* a
-pulse. Without the gate, the NCO pipeline fills with the carrier during reset and
-the first pulse after release comes out a pipeline-fill interval wider than
-commanded — enough to fail `pdw_verify`'s width check on pulse 0 of every hardware
-run. The NCO now also blocks requests/valid and drains its alignment queues;
-the generator uses zero carrier while NCO valid is low, since an empty FIFO's
-payload may still contain old RAM data. `pdw_tb.py` could not see the original
-reset-fill problem, because it lands its configuration on the
-release cycle itself. `pulse_gen_tb.py`'s `pulse_gen_reset_tb` checks a live
-configuration at power-on and a mid-run reset after FIFO addresses have wrapped,
-including the silent refill interval and the first pulse's exact width.
+**Block.** Beyond that, reset only gates what meets hardware that is not reset:
+the generator's and the detector's input valids, and all four master `tvalid`s
+(and their `tlast`s). AXI forbids `tvalid` during reset, and a host must not see
+a previous session's records on a channel it has just opened.
 
-**Drain.** While reset is asserted every FIFO read enable is forced and the
-buffers empty into the bit bucket — not a convenience but the only mechanism
-available, since `make_fifo` has no flush. Each block forces its own read enables
-(`data_ready |= rst` and friends), so the packet path drains with no help from
-the consumer: `pdw_reset_test.py` holds the packet port's ready low for the whole
-reset window and still gets a byte-exact drain. Because the drain is only as fast
-as the data, **reset must be held** — emptying a full packet FIFO takes its depth
-in cycles, ~131 µs at 125 MHz, and `top.py` exports `RST_MIN_HOLD_CYCLES`
-(16448). The host holds reset for at least 50 ms at startup and resync; a shorter
-platform pulse can leave buffers partly full and must not be treated as a flush.
+Three pairings hold because the whole datapath is under one reset:
 
-**The two record serializers** are the one part the read-enable trick cannot
-reach: their `buf`/`fill` empty only through `tready`. Each therefore sits behind
-a fully-registered AXIS skid buffer (`make_axis_skid_buffer`, `mode="full"`), so
-reset can force that ready unconditionally. That slice is load-bearing: driving
-the serializer's ready straight from `pin | rst` measured **−8.3 MHz** (128.5 →
-120.2). See
-[the guide](../../../../docs/pypeline_guide.md#skid-buffers-make_skid_buffer).
-
-**Clear.** Every register in this project's own code returns to its power-on
-value. Two pairings in that list are not optional:
-
-* **`gate_armed` with the delay-line drain.** Path B's delay is
-  self-establishing — however many pushes happen before the first drain, latched
-  when the sticky `gate_armed` first sets. Drain the line without clearing
-  `gate_armed` and the alignment is destroyed silently, with no symptom but wrong
-  packet contents. `pdw_reset_test.py` has that as a negative control.
+* **`gate_armed` with the delay line.** Path B's delay is self-establishing —
+  however many pushes happen before the first drain, latched when the sticky
+  `gate_armed` first sets. The reset clears `gate_armed` and empties the
+  delay-line FIFO together; a design where only one of them resets loses the
+  alignment silently, with no symptom but wrong packet contents.
 * **`prev_toa`/`have_prev` with `toa_counter`.** PRI is `toa - prev_toa`.
-  Clearing the counter while leaving `prev_toa` holding a value from the previous
-  epoch makes the first pulse after release report a wrapped, enormous PRI as
-  though it were real. Cleared together, it reports `STATUS_PRI_INVALID`, exactly
+  Clearing the counter while `prev_toa` held a value from the previous epoch
+  would make the first pulse after release report a wrapped, enormous PRI as
+  though it were real. Reset together, it reports `STATUS_PRI_INVALID`, exactly
   as the first pulse after power-on does.
+* **The generator's NCO pipeline with its PRI counter.** The configuration lands
+  while the datapath is still in reset (see the bring-up order), and reset pins
+  the PRI counter at 0, which is *inside* a pulse, so the NCO is fed the carrier
+  for as long as reset lasts. Its pipeline resets on every one of those cycles,
+  and the generator emits zero carrier while the NCO's valid is low (an emptied
+  ROM queue's payload may still hold old data), so the first pulse after release
+  has its commanded width. If the pipeline kept its contents, that pulse would
+  come out a pipeline-fill interval wider — enough to fail `pdw_verify`'s width
+  check on pulse 0 of every hardware run. `pdw_tb.py` cannot see this, because it
+  lands its configuration on the release cycle itself; `pulse_gen_tb.py`'s
+  `pulse_gen_reset_tb` checks a live configuration at power-on and a mid-run
+  reset after the queues have wrapped, including the silent refill interval and
+  the first pulse's exact width.
 
 Since `toa_counter` restarts, **TOA is not unique across a session**: two pulses
 in different reset epochs can carry the same TOA. A host correlating pulses
 across a channel reopen needs its own epoch counter.
 
-### What reset does not reach
-
-`magnitude`, `dc_block`, `moving_avg` and the NCO/CORDIC/`log2_db` pipelines are
-library blocks in `include/pypeline/dsp/`, which this project does not put a
-reset into. The pipelines are valid-gated and self-flush, but `dc_block`'s
-running mean and `moving_avg`'s window are *frozen* by the input gate and thaw
-still holding pre-reset power.
-
-The visible consequence: for a sample or two after release the conditioned power
-reads high and the SM declares a tiny pulse that never happened. `min_width` is
-exactly the mechanism for it, so a deployment that sets `min_width` at all never
-sees it — but one leaving it at 0 will see one spurious short PDW after each
-mid-stream reset. `pdw_reset_test.py` measures the artifact (2 samples) and
-asserts it stays below the `min_width` used there.
+`pdw_reset_test.py` checks a reset landing **mid-pulse** (a packet part written,
+its descriptor not pushed, the hysteresis SM in `PULSE`): a copy of the datapath
+reset there matches, cycle for cycle, a copy held in reset until then. Nothing of
+the interrupted pulse survives, the restarted pulses report PRI invalid then a
+real PRI, and with glitch rejection off there is no release artifact: the
+filters' history resets, so no frozen pre-reset power is read after release.
 
 ## Control registers (`pdw_ctrl_t`)
 
@@ -488,11 +468,11 @@ PRI counter pinned at 0 (so it starts from a defined phase the instant a real PR
 is written), and the thresholds sit at their maximum so the hysteresis SM cannot
 leave IDLE. Zero thresholds would instead declare one continuous pulse forever.
 
-Reset for this block is `tx0_s_axis_rst` alone. While it is asserted the
-registers are pinned to the defaults, so a frame arriving then is decoded and
-discarded; the deserializer is flushed at the same time, so a host torn down
-mid-frame cannot leave a byte prefix that joins up with the next frame into a
-struct that is wrong but perfectly well formed.
+Reset for this block is `tx0_s_axis_rst` alone (`ctrl_rst`). While it is
+asserted the registers are pinned to the defaults (their initial value) and the
+byte limiter and deserializer are held empty, so a frame arriving then is never
+decoded, and a host torn down mid-frame cannot leave a byte prefix that joins up
+with the next frame into a struct that is wrong but perfectly well formed.
 
 # Record formats
 
@@ -724,11 +704,9 @@ dependency is introduced.
 It bounds unmatched work, like Path B's `delay_depth`; it is not an exact delay.
 Leave capacity for FIFO warm-up as well as branch skew. One result per enabled
 clock is sustained once the branches are flowing. FIFO reads and writes now
-both honor clock enable, matching native simulation. Reset blocks writes/output,
-drains every queue independently and clears PRI history; the existing minimum
-reset hold remains sufficient for the default design. There is no new FIFO reset
-primitive. Overflow is sticky, asserts in simulation and reaches the hardware
-alarm; reset is required after any word loss.
+both honor clock enable, matching native simulation. A reset empties every queue
+and clears PRI history. Overflow is sticky, asserts in simulation and reaches the
+hardware alarm; reset is required after any word loss.
 
 These factories no longer query automatic `.latency` during construction, so
 alignment no longer forces latency-dependent re-elaboration. The compiler still
@@ -740,11 +718,13 @@ giving seventeen clocks (nineteen with the default fourteen-iteration CORDIC).
 Queues add storage and a little transport delay in exchange for removing the
 per-path delay bookkeeping. They do not make the arithmetic smaller by themselves.
 
-Converter calls now take explicit `rst` (use `0` when unused) and report
+The converters keep their own `rst` input for designs without resets; this
+design resets them with their `@MAIN` and passes `rst=0` (an omitted default is
+[#386](https://github.com/JulianKemmerer/PipelineC/issues/386)). They report
 `.overflow`. Two compiler limitations encountered here have focused reproducers
 in `known_issues_tests.py`: omitted hardware default arguments leave ports
 undriven, and nested record names beginning `signed_` take the wrong VHDL scalar
-conversion path. Calls pass reset explicitly and the NCO uses `amplitudes_t`.
+conversion path. The NCO uses `amplitudes_t`.
 The existing enum-name workaround is unchanged.
 
 # Host software (AirStack / SoapySDR)
@@ -875,15 +855,15 @@ or control frame is exactly ten CS16 elements.
 
 The two reset domains exist for this sequence, and it is not optional:
 
-1. nothing activated — all resets asserted, buffers draining;
+1. nothing activated — all resets asserted, buffers empty;
 2. `activateStream(TX,0)` **alone** — control block live, datapath still held;
 3. write one `pdw_ctrl_t` frame — config lands, datapath still held;
 4. activate RX0, RX1, TX1 — datapath starts **already configured**.
 
 Step 4 also gives the capture loop its RX0/RX1 lockstep for free: because
 `global_rst` is the OR, nothing is emitted until every stream is open, so both
-streams start empty whatever order they activate in. Hold reset at least
-`RST_MIN_HOLD_CYCLES` (16448, ≈132 µs at 125 MHz) before re-activating.
+streams start empty whatever order they activate in. A reset of any length
+empties the datapath, so re-activating needs no minimum hold.
 
 ## Framing, without an end-of-burst on receive
 
@@ -1101,9 +1081,9 @@ still needs to be distinguished from gain settings or gating in the TX path.
 For platform reset behavior, consult the
 [BitStream reset/time documentation](https://docs.deepwave.ai/AirStack/Bitstream/programming_guide/#time-api).
 In this project, `tx0_s_axis_rst` clears the configuration and participates in
-`global_rst`. Preserving just the registers would not fix a reset that partially
-drains packet storage. Keep the existing reset/drain contract; if an unexpected
-reset occurs, capture it with an ILA and restart with a full drain.
+`global_rst`. Any reset leaves the datapath as at power-on, with packet storage
+empty; if an unexpected reset occurs, capture it with an ILA and restart the
+streams.
 
 **Rung 4 — a record appears.** `--stage capture`, RX0/RX1/TX1 activated and TX1
 primed. *Failures in likelihood order:* nothing at all → rung 3, then the ×4096
@@ -1181,9 +1161,9 @@ Everything lives flat in this directory. Hardware first, then host-side.
 | `pulse_detect_tb.py` | Bare hysteresis FSM, hand-fed a power stream — elastic, valid_only, and CW/`max_width`-cap variants | `sim_assert`, hardware-generated stimulus |
 | `pulse_extract_tb.py` | The engine alone, hand-fed synthetic gate streams — accept path + PDW/packet ordering, glitch reject, CW reject, `status_flags`, long-stall backpressure | `sim_assert`, hardware-generated stimulus |
 | `pulse_measure_test.py` | The measurement engine over its full input range, where a width or normalization mistake shows up (`pdw_tb.py` only covers the levels the real detector happens to produce) | `sim_call` vs a bit-exact model |
-| `pdw_ctrl_test.py` | Reset defaults, apply latency (measured, then checked against the advertised attribute), ready never dropping, back-to-back writes, and the two malformed cases — a padded frame whose excess must be dropped and a runt that must leave the registers untouched, neither desyncing the frame after it; plus reset, and an abandoned frame flushed rather than joined to the next | `sim_call`, `type_to_bytes` + `AxisSimSource` |
+| `pdw_ctrl_test.py` | Power-up defaults, apply latency (measured, then checked against the advertised attribute), ready never dropping, back-to-back writes, and the two malformed cases — a padded frame whose excess must be dropped and a runt that must leave the registers untouched, neither desyncing the frame after it. Its reset is checked in `pdw_reset_test.py` | `sim_call`, `type_to_bytes` + `AxisSimSource` |
 | `pulse_extract_alignment_test.py` | 28 candidates with independently delayed frequency responses, live noise changing between candidates, glitch/CW rejection and accepted-pulse PRI; exact records and packets, with no `freq_latency` attribute | `sim_call`, ROM and CORDIC |
-| `pdw_reset_test.py` | Reset semantics for the composed datapath — a reset landing **mid-pulse**: nothing emitted for the interrupted pulse, its buffered samples drained rather than prepended to the next packet, TOA and PRI restarting, and the release artifact bounded below `min_width`. Both the drain term and the `gate_armed` clear have negative controls | `sim_call` on `pulse_detect` + `pulse_extract` wired as `top.py` wires them |
+| `pdw_reset_test.py` | Reset semantics, under the real `reset_registers="all"` reset — each of three blocks in two copies, one reset mid-activity and one held in reset until then, which must then agree cycle for cycle. The composed datapath (`pulse_detect` + `pulse_extract` wired as `top.py` wires them) is reset **mid-pulse**: nothing of the interrupted pulse survives, the restarted pulses report PRI invalid then a real PRI, each packet has its record's length, and with glitch rejection off there is no release artifact. `pdw_ctrl` refuses a frame during reset, returns to `CTRL_DEFAULTS` and drops an abandoned frame's bytes; the alarm abandons an alarm in flight | `@MAIN`s with `sim_assert`, native and GHDL |
 | `pdw_alarm_test.py` | The alarm alone. Its job is to destroy a known number of ADC samples, so the property tested is "exactly N samples were dropped", not "tready went low" — and those diverge only when the input is **gapped**. Carries its own negative control: the same stimulus through a deliberately-wrong cycle-counting model, asserted to get a different answer | `sim_call` |
 | `pdw_verify_test.py` | That `pdw_verify.py` actually catches a wrong record. Mostly negative controls: corrupt one field, assert the check for **that** field fails and the others do not. Also generates `pypeline_host_types.py` and checks the host files compose with it | numpy, synthetic pulses |
 | `airt_pdw_replay_test.py` | `airt_pdw_test.py`'s capture loop with no radio — the framing, `validate_record`, the resync paths, what an OVERFLOW is reported as, and `--alarm-test`'s pass and fail, served from a `--record` file | numpy, `pdw_verify_test`'s helpers |
@@ -1314,7 +1294,7 @@ From the repository root:
 ```sh
 # sim_call and host-side tests
 for method in rom cordic; do
-  for t in pulse_measure_test pdw_reset_test pulse_extract_alignment_test; do
+  for t in pulse_measure_test pulse_extract_alignment_test; do
     PDW_ATAN2_METHOD=$method python3 examples/pypeline/dsp/pdw/$t.py || break 2
   done
 done
@@ -1322,6 +1302,7 @@ for t in pdw_ctrl_test pdw_alarm_test pdw_verify_test airt_pdw_replay_test airt_
   python3 examples/pypeline/dsp/pdw/$t.py || break
 done
 # Block testbenches
+python3 src/pypelinec examples/pypeline/dsp/pdw/pdw_reset_test.py --sim --comb --run all
 python3 src/pypelinec examples/pypeline/dsp/pdw/pulse_gen_tb.py --sim --comb --run 600
 python3 src/pypelinec examples/pypeline/dsp/pdw/pulse_detect_tb.py --sim --comb --run 500
 for method in rom cordic; do
@@ -1352,10 +1333,10 @@ It complements the capture-file replay tests, which do not execute `run()`.
 
 | File | Checks |
 |---|---|
-| `pulse_gen_synth_top.py` | Generator alone, including its NCO. `rst` is a real port, so the reset's fanout to every register is measured rather than optimised away |
-| `pulse_detect_synth_top.py` | Hysteresis FSM alone (elastic, the heavier path), `rst` likewise a real port |
-| `pulse_measure_synth_top.py` | Measurement alone, exposing all inputs and outputs for CORDIC/ROM timing and area comparisons |
-| `pulse_extract_synth_top.py` | Engine alone at the real 16K FIFO depth, including its angle and logarithm converters. `rst` drains packet and alignment FIFOs, so it sits directly in the release path |
+| `pulse_gen_synth_top.py` | Generator alone, including its NCO. `rst` is a real reset pin (`reset_registers="all"`), so the reset's fanout to every register is measured rather than optimised away |
+| `pulse_detect_synth_top.py` | Hysteresis FSM alone (elastic, the heavier path), `rst` likewise a real reset pin |
+| `pulse_measure_synth_top.py` | Measurement alone, exposing all inputs and outputs for CORDIC/ROM timing and area comparisons, with a real reset pin |
+| `pulse_extract_synth_top.py` | Engine alone at the real 16K FIFO depth, including its angle and logarithm converters. `rst`, a real reset pin, reaches the FIFOs' pointers and the store FSM, so it sits directly in the release path |
 | `top.py` | Everything composed: all seven AXIS ports, both record serializers, the control deserializer, the broadcast interlock and the seven-input reset OR |
 
 These are not redundant with the native-sim testbenches: native sim never emits
@@ -1398,15 +1379,22 @@ with manual NCO/log ROMs and CORDIC atan2:
 
 | Build | PDW MHz | Generator/control MHz | LUTs | Registers | RAMB18 | RAMB36 | DSPs |
 |---|---:|---:|---:|---:|---:|---:|---:|
-| Self-timed ROM (**current**) | 127.600 | 137.212 | 9,172 | 4,709 | 11 | 29 | 12 |
+| Automatic reset (**current**) | 133.049 | 140.115 | 8,550 | 4,660 | 11 | 29 | 12 |
+| Self-timed ROM, reset-only drain logic | 127.600 | 137.212 | 9,172 | 4,709 | 11 | 29 | 12 |
 | Previous latency-counted ROM | 132.873 | 134.264 | 8,532 | 4,195 | 7 | 25 | 12 |
 
-All four mains meet 125 MHz and the design fits; reset has a measured lower bound
-of 125 MHz in the whole-design report. All six automatic ROMs select one cycle.
+The current row is the same flow (Vivado 2019.2, `xc7a200tffg1156-2`) after the move to
+automatic resets: `reset_registers="all"` resets every register, so the drain terms,
+forced readies and `if rst:` clears are gone (−622 LUTs, −49 registers), while each
+register's reset is a synchronous reset on the flip-flop. `ctrl_main` reports
+246.488 MHz. All four mains meet 125 MHz on the first iteration with no added cuts,
+and the design fits; no failing path is a reset's distribution. All six automatic ROMs
+select one cycle.
 The queue implementation adds 640 LUTs, 514 registers, four RAMB18s and four
 RAMB36s; DSP count is unchanged. Alignment is simpler to maintain, with some
-extra storage and transport delay. The retained PDW margin is about 0.16 ns at
-125 MHz. These are synthesis results, not routed AirStack timing.
+extra storage and transport delay. The retained PDW margin is about 0.48 ns at
+125 MHz (0.16 ns before the reset change). These are synthesis results, not routed
+AirStack timing.
 
 The [self-timed measurement artifact](../../../../src/tests/pypeline_tests/qor/pdw_self_timed_vivado_200t.json)
 retains the command, signatures, selected RAM plans, clocks, resources and

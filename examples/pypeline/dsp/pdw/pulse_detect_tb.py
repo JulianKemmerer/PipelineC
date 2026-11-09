@@ -35,7 +35,7 @@ Run:
 
 import pdw_paths  # noqa: F401  (puts include/pypeline on sys.path)
 
-from pypeline import MAIN, Reg, sim_assert, uint1_t, uint3_t, uint32_t
+from pypeline import MAIN, Reg, sim_assert, uint1_t, uint3_t, uint32_t, Input, make_reset
 
 from pulse_detect import make_pulse_detect_fsm
 
@@ -66,7 +66,12 @@ data_t = make_fixed_t(32, 0, signed=False)  # README's uint32_t power format
 pulse_detect_e = make_pulse_detect_fsm(data_t)
 
 
-@MAIN(125.0)
+# Synchronous reset pin (pulsed in cycle 0 by the simulators): every @MAIN
+# resets every register with it
+rst: Input[uint1_t] = make_reset()
+
+
+@MAIN(125.0, reset=rst, reset_registers="all")
 def pulse_detect_elastic_tb():
     sample_index: Reg[uint32_t]
     phase: uint32_t = sample_index % TEST_PRI
@@ -90,7 +95,6 @@ def pulse_detect_elastic_tb():
         threshold_high=data_t(val=THRESHOLD_HIGH),
         threshold_low=data_t(val=THRESHOLD_LOW),
         max_width=MAX_WIDTH_NORMAL,
-        rst=0,  # this testbench never resets
     )
 
     accepted: uint1_t = in_stream.valid & o.stream_in_if.ready
@@ -169,7 +173,7 @@ def pulse_detect_elastic_tb():
 pulse_detect_vo = make_pulse_detect_fsm(data_t, handshake="valid_only")
 
 
-@MAIN(125.0)
+@MAIN(125.0, reset=rst, reset_registers="all")
 def pulse_detect_valid_only_tb():
     phase: Reg[uint32_t]  # free-running: valid_only can never be held off
     x: uint32_t = HIGH_POWER
@@ -188,7 +192,6 @@ def pulse_detect_valid_only_tb():
         threshold_high=data_t(val=THRESHOLD_HIGH),
         threshold_low=data_t(val=THRESHOLD_LOW),
         max_width=MAX_WIDTH_NORMAL,
-        rst=0,  # this testbench never resets
     )
 
     if phase == (TEST_PRI - 1):
@@ -262,7 +265,7 @@ CW_MAX_WIDTH = 32
 pulse_detect_cw = make_pulse_detect_fsm(data_t)
 
 
-@MAIN(125.0)
+@MAIN(125.0, reset=rst, reset_registers="all")
 def pulse_detect_cw_tb():
     in_stream: pulse_detect_cw.in_intrf.stream_t
     in_stream.valid = 1
@@ -274,7 +277,6 @@ def pulse_detect_cw_tb():
         threshold_high=data_t(val=THRESHOLD_HIGH),
         threshold_low=data_t(val=THRESHOLD_LOW),
         max_width=CW_MAX_WIDTH,
-        rst=0,  # this testbench never resets
     )
 
     sim_assert((~o.gate_last) | o.gate_valid, "gate_last without gate_valid (CW)")

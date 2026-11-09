@@ -28,6 +28,11 @@ CCN is a branch-count heuristic, not a defect count. File hash and reproducible 
 3. **Path ownership and decisions** — MAIN role queries, failure classification and synthesis observations. A path can cross a MAIN without being repairable by adding latency there. The current crossing/endpoint distinction is valuable. Its repeated use in feedback, confirmation and reporting creates opportunities for inconsistent interpretations.
 4. **Persistent latency evidence** — `RESOLVE_LATENCY_MEMORY`, subtree digests, hints and concrete locks. Reparse changes instance labels and sometimes types. Reusable memory needs semantic compatibility, while an exact lock needs physical compatibility. Restoring either by an insufficient key can silently overconstrain a new design.
 5. **Accounting and termination** — `RECORD_SYNTHESIS_OBSERVATION` (9237–9403), implementation signatures and synthesis budgets. Planning attempts, actual tool calls and reused observations are distinct. A repeated physical implementation should not consume unnecessary tool runs or falsely imply progress.
+   - Observed on the working tree on top of `deac5d21`: the plateau stop (`AT_PLATEAU`) needs a flat fmax, so a falling one does not end the sweep. The case was `sweep_floor_detect_design.py` on sky130, built with a reset pin under `reset_registers="all"` (`-D SWEEP_FLOOR_DETECT_MHZ=100`).
+   - fmax went 49.78 → 44.94 → 34.54 → 23.10 MHz while cuts grew 26 → 65: each replan's registers lengthened the reset pin's fanout net, which was the critical path. `RESET_DISTRIBUTION_PATH` names those paths, but `RESET_PATH_STOPS_PLAN` keeps the feedback, as iteration 5 did better.
+   - Eight more replans then reused the same implementation without a tool run, and the sweep stopped at iteration 17 (`no_realized_change`).
+   - The best result, 49.78 MHz, was kept. The cost was three wasted, growing syntheses (1:16, 1:48 and 3:14) and eight planning iterations.
+   - Suspected gap: no stop for "more cuts, lower fmax" over consecutive iterations, for whatever net (a reset, a clock enable, a select) grows with the register count.
 
 ## Duplication and simplification
 

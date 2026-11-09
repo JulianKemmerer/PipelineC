@@ -8979,8 +8979,14 @@ def _sim_apply_resets():
     reset; plain registers and the simulator's own state (delay lines,
     AUTO_FSM state, sim models) only under reset_registers="all"; NO_RESET
     entries never. A model with on_reset() has it called instead of being
-    recreated. Under "all" a pipelined pure MAIN's delayed writes are dropped
-    too."""
+    recreated.
+
+    Under "all" a pipelined region's delayed global writes are replaced by
+    typed zeros, as hardware's stage registers hold null after the edge: an
+    AUTO_PIPELINE call site's committed write line, and a pipelined pure
+    MAIN's queue together with this cycle's collector, which pypeline_sim
+    pushes into the queue after this call. Both publish zeros for the next N
+    cycles; the writes of the reset cycle itself never appear."""
     if not _sim_root_resets:
         return
     active = {}
@@ -9005,10 +9011,35 @@ def _sim_apply_resets():
                 if callable(on_reset):
                     on_reset()
                     continue
+            if name == _SIM_AP_WRITES_KEY:
+                zeros = _sim_zero_write_set(*regs[name])
+                regs[name] = [_copy.deepcopy(zeros) for _ in regs[name]]
+                continue
             del regs[name]
     for info in _sim_pipelined_main_info.values():
         if active.get(_SIM_MAIN_FRAME_PREFIX + info["name"]) == "all":
+            zeros = _sim_zero_write_set(info["collector"], *info["queue"])
             info["queue"].clear()
+            info["queue"].extend(
+                _copy.deepcopy(zeros) for _ in range(info["latency"] - 1)
+            )
+            info["collector"][:] = zeros
+
+
+def _sim_zero_write_set(*write_sets):
+    """A write-set of typed zeros for every (wire, lens path) these
+    write-sets write, in first-written order: what a pipelined region
+    publishes while its stage registers hold their null reset value."""
+    paths = {}
+    for entries in write_sets:
+        for name, path, _value in entries:
+            paths.setdefault((name, path), None)
+    zeros = []
+    for name, path in paths:
+        ctype = _sim_ctype_at_path(_sim_wire_ctype.get(name), path)
+        if ctype is not None:
+            zeros.append((name, path, _make_sim_zero(ctype)))
+    return zeros
 
 
 def _sim_wire_read(name: str):

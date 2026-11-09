@@ -16,10 +16,17 @@ from pypeline import (
     uint1_t,
     uint8_t,
     wires,
+    Input,
+    make_reset,
 )
 
 
-@MAIN
+# Synchronous reset pin (pulsed in cycle 0 by the simulators): every @MAIN
+# resets every register with it
+rst: Input[uint1_t] = make_reset()
+
+
+@MAIN(reset=rst, reset_registers="all")
 def dangle_test(c: uint1_t) -> uint8_t:
     r: Reg[uint8_t]
     if c:

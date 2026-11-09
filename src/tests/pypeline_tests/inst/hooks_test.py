@@ -51,10 +51,15 @@ def _check_order(events, n_outputs):
     assert not any(e.startswith("syn_") for e in events), events
 
 
+# The counter's sim_finish() cycle: NUM_CYCLES (5) counting cycles after the
+# reset cycle 0
+FINISH_OUTPUTS = 6
+
+
 def test_sim_finish():
     events, err = _run("finish", pypeline_sim.RUN_ALL)
     assert err is None, err
-    _check_order(events, n_outputs=5)
+    _check_order(events, n_outputs=FINISH_OUTPUTS)
 
 
 def test_run_n_cutoff():
@@ -74,7 +79,7 @@ def test_final_hook_error_raised_after_all_finals():
     events, err = _run("final_raises", pypeline_sim.RUN_ALL)
     assert isinstance(err, AssertionError), err
     assert "deliberate hook failure" in str(err), err
-    _check_order(events, n_outputs=5)
+    _check_order(events, n_outputs=FINISH_OUTPUTS)
 
 
 def test_sim_finish_in_hook():

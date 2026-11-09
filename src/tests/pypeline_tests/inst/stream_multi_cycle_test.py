@@ -28,6 +28,8 @@ from pypeline import (
     sim_reset,
     uint1_t,
     uint32_t,
+    Input,
+    make_reset,
 )
 
 from stream.stream import make_stream_interface
@@ -63,7 +65,15 @@ divider_mcp = make_stream_multi_cycle(divider, 16)
 
 
 # ── examples/mcp/mcp_divider.c's main() FSM, driving divider_mcp directly ──
-@MAIN(100.0)
+
+# Synchronous reset pin (pulsed in cycle 0 by the simulators): every @MAIN
+# resets every register with it
+from pypeline import Input, make_reset, uint1_t  # noqa: E402
+
+rst: Input[uint1_t] = make_reset()
+
+
+@MAIN(100.0, reset=rst, reset_registers="all")
 @hw_func
 def mcp_divider_test_fsm() -> uint1_t:
     x: Reg[uint32_t] = 2

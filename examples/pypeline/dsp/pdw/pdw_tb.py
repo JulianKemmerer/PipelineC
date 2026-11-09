@@ -39,8 +39,8 @@ first out-of-reset cycle with the generator's LFSRs at their seeds, exactly as
 the hardware does.
 
 Two things are checked about reset itself (see `check_reset`): a POISON frame
-sent at cycle 0, entirely inside the control reset, must be decoded and thrown
-away; and phase 0's values must be live by `RST_RELEASE`. The second is the one
+sent at cycle 0, entirely inside the control reset, must never be decoded; and
+phase 0's values must be live by `RST_RELEASE`. The second is the one
 that matters -- without it the two reset domains could quietly collapse into one
 and only surface as a golden mismatch thousands of cycles later.
 
@@ -170,7 +170,7 @@ CTRL_APPLY_OFFSET = CTRL_BEATS - 1 + CTRL_LAT
 # all seven. That is what lets this schedule configure the device BEFORE the
 # datapath starts, which is the sequence a real host should use:
 #
-#   0                     all seven asserted -- held, and buffers drain
+#   0                     all seven asserted -- held, buffers empty
 #   CTRL_RST_HOLD         tx0_s_axis_rst drops; ctrl block live one cycle later
 #   CTRL_FRAME0_AT        phase 0's frame goes out, datapath still held
 #   RST_HOLD              the remaining six drop
@@ -594,7 +594,7 @@ for _i, _ph in enumerate(PHASES):
     CTRL_FRAMES[_start] = (_i, type_to_bytes(pdw_ctrl_t, _phase_ctrl(_ph)))
 
 # The POISON frame: a well-formed write sent at cycle 0, entirely inside the
-# control block's own reset, which must be decoded and then thrown away. Its
+# control block's own reset, which must never be decoded. Its
 # values are chosen to be loud if they ever leaked -- thresholds low enough to
 # declare a pulse immediately and an amplitude large enough to see -- so a
 # failure shows up as detected pulses that the golden model never predicted,
@@ -1354,7 +1354,7 @@ def check_reset():
     """Both halves of the staged bring-up, checked directly on the wire.
 
     NEGATIVE: the poison frame -- a well-formed write sent at cycle 0, wholly
-    inside the control block's reset -- must be decoded and thrown away, and no
+    inside the control block's reset -- must never be decoded, and no
     master port may assert tvalid while the datapath is held.
 
     POSITIVE, and the more interesting one: phase 0's configuration must be

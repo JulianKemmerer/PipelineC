@@ -38,6 +38,8 @@ from pypeline import (
     uint1_t,
     uint8_t,
     uint16_t,
+    Input,
+    make_reset,
 )
 
 from stream.stream import make_stream_interface
@@ -75,14 +77,19 @@ lanes_t, lane_sum = make_lane_sum(CAPACITY)
 LANE_SUM_FSM = AUTO_FSM(lane_sum)
 
 
-@MAIN(100.0)
+# Synchronous reset pin (pulsed in cycle 0 by the simulators): every @MAIN
+# resets every register with it
+rst: Input[uint1_t] = make_reset()
+
+
+@MAIN(100.0, reset=rst, reset_registers="all")
 def latency_sized_core_top(
     stream_in_if: uint8_stream_intrf.fwd_t, stream_out_if: uint8_stream_intrf.fb_t
 ) -> div_core.return_t:
     return div_core(stream_in_if, stream_out_if)
 
 
-@MAIN(100.0)
+@MAIN(100.0, reset=rst, reset_registers="all")
 def latency_sized_fsm_top(start: uint1_t, x: lanes_t) -> uint16_t:
     s: LANE_SUM_FSM.in_stream_t
     s.data = x

@@ -9,12 +9,14 @@ from pypeline import *
 # check the pre-synthesis reporting line, and this keeps that fast.
 CLK_RATE_MHZ = 300.0
 PART("sky130_fd_sc_hvl")
-clk: Input[uint1_t] = make_clock(CLK_RATE_MHZ)
+# Synchronous reset pin, the clock's reset: every pipeline register resets
+rst: Input[uint1_t] = make_reset()
+clk: Input[uint1_t] = make_clock(CLK_RATE_MHZ, reset=rst)
 a: Input[uint34_t]
 b: Input[uint34_t]
 c: Output[uint34_t]
 
 
-@MAIN(CLK_RATE_MHZ)
+@MAIN(CLK_RATE_MHZ, reset_registers="all")
 def split_model_design():
     c = a - b

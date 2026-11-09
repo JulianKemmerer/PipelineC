@@ -575,7 +575,8 @@ def buffer_tap_errors(phase, buffers, taps_required=False, settled=True):
     `buffers` maps a buffer's full tap prefix (`<label>/<tap_name>`, whose taps
     are `.occupancy`, `.in`, `.out`) to its configured capacity in beats.
     Checks the measured capacity, no overflow, transfer conservation
-    (start + accepted - retired == end), that occupancy agrees with the in/out
+    (start + accepted - retired - discarded == end, where discarded counts
+    beats a reset of the buffer dropped), that occupancy agrees with the in/out
     handshake taps, and -- when the phase ended `settled` (fully drained) --
     that nothing was left buffered. A missing occupancy tap is an error only
     when `taps_required`.
@@ -594,7 +595,8 @@ def buffer_tap_errors(phase, buffers, taps_required=False, settled=True):
         if counts.get("high_water_beats", 0) > capacity:
             errors.append(label + ": buffer overflow")
         if counts.get("start_occupancy", 0) + counts.get("accepted_beats", 0) - counts.get(
-                "retired_beats", 0) != counts.get("end_occupancy"):
+                "retired_beats", 0) - counts.get("discarded_beats", 0) != counts.get(
+                "end_occupancy"):
             errors.append(label + ": buffer transfer conservation failed")
         if settled and counts.get("end_occupancy") != 0:
             errors.append(label + ": settled phase left buffered data")

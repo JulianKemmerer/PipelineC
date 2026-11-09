@@ -50,6 +50,8 @@ from pypeline import (
     uint8_t,
     uint16_t,
     uint32_t,
+    Input,
+    make_reset,
 )
 
 from ram import make_ram
@@ -124,34 +126,39 @@ rom_p0_in_t = rom.p0_in_t
 # ── Synthesis tops (synth_tests.py builds this file with --comb) ──
 
 
-@MAIN
+# Synchronous reset pin (pulsed in cycle 0 by the simulators): every @MAIN
+# resets every register with it
+rst: Input[uint1_t] = make_reset()
+
+
+@MAIN(reset=rst, reset_registers="all")
 def ram_test_sp(p0: sp_ram_p0_in_t) -> sp_ram.return_t:
     return sp_ram(p0)
 
 
-@MAIN
+@MAIN(reset=rst, reset_registers="all")
 def ram_test_lut(p0: lut_ram_p0_in_t, p1: lut_ram_p1_in_t) -> lut_ram.return_t:
     return lut_ram(p0, p1)
 
 
-@MAIN
+@MAIN(reset=rst, reset_registers="all")
 def ram_test_tdp(p0: tdp_ram_p0_in_t, p1: tdp_ram_p1_in_t) -> tdp_ram.return_t:
     return tdp_ram(p0, p1)
 
 
-@MAIN
+@MAIN(reset=rst, reset_registers="all")
 def ram_test_regfile(
     p0: regfile_p0_in_t, p1: regfile_p1_in_t, p2: regfile_p2_in_t
 ) -> regfile.return_t:
     return regfile(p0, p1, p2)
 
 
-@MAIN
+@MAIN(reset=rst, reset_registers="all")
 def ram_test_cpu_mem(p0: cpu_mem_p0_in_t) -> cpu_mem.return_t:
     return cpu_mem(p0)
 
 
-@MAIN
+@MAIN(reset=rst, reset_registers="all")
 def ram_test_rom(p0: rom_p0_in_t) -> rom.return_t:
     return rom(p0)
 

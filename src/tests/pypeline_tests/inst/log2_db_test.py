@@ -31,7 +31,7 @@ import math
 import random
 
 import pypeline as py
-from pypeline import MAIN, sim_call, sim_reset, uint1_t, param
+from pypeline import MAIN, sim_call, sim_reset, uint1_t, param, Input, make_reset
 from AUTO_PIPELINE import RamPlan
 
 from fixed_point import make_fixed_t
@@ -68,17 +68,22 @@ METHODS = (
 )
 
 
-@MAIN(125.0)
+# Synchronous reset pin (pulsed in cycle 0 by the simulators): every @MAIN
+# resets every register with it
+rst: Input[uint1_t] = make_reset()
+
+
+@MAIN(125.0, reset=rst, reset_registers="all")
 def log2_db_main(v: power_t, valid_in: uint1_t) -> log2_db.return_t:
     return log2_db(v, valid_in, 0)
 
 
-@MAIN(125.0)
+@MAIN(125.0, reset=rst, reset_registers="all")
 def log2_db_mean_main(v: mean_t, valid_in: uint1_t) -> log2_db_mean.return_t:
     return log2_db_mean(v, valid_in, 0)
 
 
-@MAIN(125.0)
+@MAIN(125.0, reset=rst, reset_registers="all")
 def log2_db_pwl_main(v: power_t, valid_in: uint1_t) -> log2_db_pwl.return_t:
     return log2_db_pwl(v, valid_in, 0)
 

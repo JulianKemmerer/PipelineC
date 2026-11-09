@@ -10,7 +10,7 @@ sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), ".."
 sys.path.insert(
     0, os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "..", "..", "..", "include", "pypeline")
 )
-from pypeline import MAIN, hw_func, param, uint8_t  # noqa: E402
+from pypeline import MAIN, hw_func, param, uint8_t, Input, make_reset, uint1_t  # noqa: E402
 
 from stream.stream import make_stream_interface  # noqa: E402
 from stream.stream_auto_pipeline import make_stream_auto_pipeline  # noqa: E402
@@ -36,7 +36,12 @@ core_pipeline = make_stream_auto_pipeline(
 
 
 
-@MAIN(param("LATENCY_MEMORY_GOAL", 100.0, type=float))
+# Synchronous reset pin (pulsed in cycle 0 by the simulators): every @MAIN
+# resets every register with it
+rst: Input[uint1_t] = make_reset()
+
+
+@MAIN(param("LATENCY_MEMORY_GOAL", 100.0, type=float), reset=rst, reset_registers="all")
 def latency_memory_stale_top(
     stream_in_if: uint8_stream_intrf.fwd_t, stream_out_if: uint8_stream_intrf.fb_t
 ) -> core_pipeline.return_t:

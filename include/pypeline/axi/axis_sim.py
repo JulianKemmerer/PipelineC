@@ -137,6 +137,22 @@ class AxisSimSource:
         if self._frame is not None:
             self._current = self._frame
 
+    def clear(self):
+        """Forget the in-flight frame and every queued one (a testbench that
+        sends again what a reset lost, in its own order)."""
+        self._queue.clear()
+        self._current = None
+        self._frame = None
+
+    def in_frame(self):
+        """True while a frame is part way through: some of its beats were
+        accepted, not all."""
+        return (
+            self._current is not None
+            and self._frame is not None
+            and len(self._current) < len(self._frame)
+        )
+
     def step(self, ready):
         if self._current is None:
             if not self._queue:
@@ -269,6 +285,11 @@ class Scoreboard:
     def pending(self):
         return len(self._queue)
 
+    def clear(self):
+        """Drop every pending expectation (a testbench whose DUT was reset
+        expects again what it sends again)."""
+        self._queue.clear()
+
     def check(self, got):
         if not self._queue:
             return {
@@ -321,6 +342,16 @@ class ConvergedAxisSimSource:
 
     def idle(self):
         return self._source.idle()
+
+    def in_frame(self):
+        """True while a frame is part way into the receiver."""
+        return self._source.in_frame()
+
+    def clear(self):
+        """Forget the in-flight frame and every queued one."""
+        self._source.clear()
+        self._held = False
+        self._offered = None
 
     def drive(self, pause=False):
         self._offered = self._null if pause and not self._held else self._source.step(0)

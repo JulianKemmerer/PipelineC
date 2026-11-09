@@ -1,6 +1,6 @@
 # pyright: reportInvalidTypeForm=none
 """One shared helper in two MAINs, tagged bodies, MCPs, and untagged gaps."""
-from pypeline import AUTO_PIPELINE, MAIN, PART, Reg, hw_func, uint16_t, uint32_t
+from pypeline import AUTO_PIPELINE, MAIN, PART, Reg, hw_func, uint16_t, uint32_t, Input, make_reset, uint1_t
 from stream.stream import make_stream_interface
 from stream.stream_multi_cycle import make_stream_auto_multi_cycle, make_stream_multi_cycle
 
@@ -49,7 +49,12 @@ auto_mcp = make_stream_auto_multi_cycle(prologue)
 fixed_mcp = make_stream_multi_cycle(epilogue, 3)
 
 
-@MAIN(80.0)
+# Synchronous reset pin (pulsed in cycle 0 by the simulators): every @MAIN
+# resets every register with it
+rst: Input[uint1_t] = make_reset()
+
+
+@MAIN(80.0, reset=rst, reset_registers="all")
 def main_a(x: uint16_t) -> uint16_t:
     state: Reg[uint16_t]
     state = x
@@ -60,7 +65,7 @@ def main_a(x: uint16_t) -> uint16_t:
     return AP_BODY(x) ^ helper(state) ^ bridge(x) ^ mcp.stream_out_if.stream.data
 
 
-@MAIN(80.0)
+@MAIN(80.0, reset=rst, reset_registers="all")
 def main_b(x: uint16_t) -> uint16_t:
     state: Reg[uint16_t]
     state = x

@@ -17,6 +17,8 @@ from pypeline import (
     uint8_t,
     sim_call,
     sim_reset,
+    Input,
+    make_reset,
 )
 
 data_t = uint8_t
@@ -86,7 +88,12 @@ def valid_ready_pipeline_test(
     return o
 
 
-@MAIN(50.0)
+# Synchronous reset pin (pulsed in cycle 0 by the simulators): every @MAIN
+# resets every register with it
+rst: Input[uint1_t] = make_reset()
+
+
+@MAIN(50.0, reset=rst, reset_registers="all")
 def auto_pipelined_submodules_main(
     pipeline_in: stream_t, pipeline_out_ready: uint1_t
 ) -> valid_ready_pipeline_test_t:

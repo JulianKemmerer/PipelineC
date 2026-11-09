@@ -27,6 +27,8 @@ from pypeline import (
     uint1_t,
     uint8_t,
     uint16_t,
+    Input,
+    make_reset,
 )
 
 
@@ -40,7 +42,12 @@ def delay3(x: uint16_t) -> uint16_t:
     return result
 
 
-@MAIN
+# Synchronous reset pin (pulsed in cycle 0 by the simulators): every @MAIN
+# resets every register with it
+rst: Input[uint1_t] = make_reset()
+
+
+@MAIN(reset=rst, reset_registers="all")
 def single_stateful_main_fixed_latency() -> uint16_t:
     c: Reg[uint8_t]
     done: Reg[uint1_t]

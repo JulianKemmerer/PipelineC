@@ -33,6 +33,9 @@ from pypeline import (
     sim_finish,
     sim_print,
     uint8_t,
+    Input,
+    make_reset,
+    uint1_t,
 )
 from stream.stream_fifo import make_stream_fifo
 
@@ -45,6 +48,11 @@ acc: Wire[uint8_t]
 digest: Output[uint8_t]
 
 
+# Synchronous reset pin (pulsed in cycle 0 by the simulators): every @MAIN
+# resets every register with it
+rst: Input[uint1_t] = make_reset()
+
+
 def make_counter_lane(i):
     @hw_func
     def counter_lane():
@@ -55,7 +63,10 @@ def make_counter_lane(i):
     return counter_lane
 
 
-counter_lanes = [MAIN(make_counter_lane(i), name=f"counter{i}") for i in range(3)]
+counter_lanes = [
+    MAIN(make_counter_lane(i), name=f"counter{i}", reset=rst, reset_registers="all")
+    for i in range(3)
+]
 
 F = make_stream_fifo(uint8_t, 4)
 
@@ -75,8 +86,8 @@ def make_fifo_lane(i, word):
     return fifo_lane
 
 
-MAIN(make_fifo_lane(0, 7), name="fifo_a")
-MAIN(make_fifo_lane(1, 9), name="fifo_b")
+MAIN(make_fifo_lane(0, 7), name="fifo_a", reset=rst, reset_registers="all")
+MAIN(make_fifo_lane(1, 9), name="fifo_b", reset=rst, reset_registers="all")
 
 
 def make_writer(k):
@@ -90,14 +101,16 @@ def make_writer(k):
 add5 = make_writer(5)
 
 
-@MAIN
+
+
+@MAIN(reset=rst, reset_registers="all")
 def drive():
     t: Reg[uint8_t]
     add5(t)
     t += 1
 
 
-@MAIN
+@MAIN(reset=rst, reset_registers="all")
 def check():
     c: Reg[uint8_t]
     if c < N_CYCLES:

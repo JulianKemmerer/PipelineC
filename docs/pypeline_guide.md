@@ -3084,9 +3084,13 @@ clk = make_clock(100.0, reset=rst)     # rst is clk's primary reset
 ```
 
 `make_clock(..., reset=)` makes the reset the clock's **primary reset**: every `@MAIN` on
-that clock has it unless it names another. `clk.reset` reads it back. A bare `@MAIN` uses
-the primary reset of the clock it is given (see
-[Which clock a bare `@MAIN` gets](#which-clock-a-bare-main-gets)).
+that clock has it unless it names another, `@MAIN(100.0)` as much as `@MAIN(clk)`, since an
+unnamed `make_clock(100.0)` is the clock `@MAIN(100.0)` runs on. `clk.reset` reads it back.
+A bare `@MAIN` uses the primary reset of the clock it is given (see
+[Which clock a bare `@MAIN` gets](#which-clock-a-bare-main-gets)). The default clock, the
+one bare `@MAIN`s run on when no clock is named or inferred, has no `make_clock` and so no
+primary reset: its `@MAIN`s can name a reset with `MAIN(reset=)`, but its global
+instances and FIFOs cannot reset. Name the clock (`make_clock(rate, reset=rst)`) for that.
 
 ### Which registers reset: `reset_registers=`
 
@@ -3127,7 +3131,9 @@ logic, and a register you clear that way is not reset in the sense above.
 - A FIFO (`make_stream_fifo`, a same-clock global `Fifo[T]`) empties: no word is valid in
   the cycle after the reset, and its write side shows free space.
 - A RAM keeps its contents. Requests in flight are cancelled, and the write at the reset
-  edge does not happen.
+  edge does not happen. Only valid bits reset: `rd_data` keeps its last value, so read it
+  with its `valid`. No reset reaches the memory or the registers beside it, so the RAM
+  still maps to block RAM.
 - Global wires are combinational and are not reset. Where a reset design meets hardware
   that is not reset (a top-level AXI-Stream port, say), gate `valid` and `ready`
   yourself.
@@ -6977,6 +6983,7 @@ tracks the row.
 | Source model | **Asynchronous or active-low resets** | Not supported | `make_reset(kind="async")` and `make_reset(active="low")` raise `NotImplementedError`. Synchronize an asynchronous source with two registers and drive a reset `Wire`; invert an active-low one there | — |
 | Source model | **Resetting a global FIFO between clocks** | Not supported | An async `Fifo[T]` is not reset, and a `reset_registers="all"` `@MAIN` at either end of one is an error. Reset the ends with `Reg[T, RESET]` under `"requested"` | — |
 | Source model | **Another reset for a global instance** | Not supported | `Inst[f]` and a same-clock `Fifo[T]` always take their clock's primary reset | — |
+| Source model | **A reset for the default clock** | Not supported | Bare `@MAIN`s on the default clock (no clock named or inferred) have no `make_clock` to carry a primary reset, so global instances and FIFOs there do not reset | Name the clock: `make_clock(rate, reset=rst)` |
 | Source model | **A reset value other than the initial value** | Not supported | A register resets to its initializer, which is also its power-up value; there is no separate `reset_to=`, and a struct or array register resets whole | — |
 | Source model | **Reset scopes and inferred reset pins** | Not supported | No `with` blocks of reset settings and no implied `reset_<clock>` ports: declare each reset with `make_reset()` | — |
 | Source model | **Synchronizers made for resets** | Not supported | The compiler inserts no reset synchronizer and does not check one; write the two registers yourself (see [Resets and clocks](#resets-and-clocks)) | — |

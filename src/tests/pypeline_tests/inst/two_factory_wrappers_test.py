@@ -16,7 +16,7 @@ sys.path.insert(
         "pypeline",
     ),
 )
-from pypeline import MAIN, hw_func, int16_t, int32_t, sim_call, sim_reset, uint1_t, uint32_t
+from pypeline import MAIN, hw_func, int16_t, int32_t, sim_call, sim_reset, uint1_t, uint32_t, Input, make_reset
 
 from stream.stream import make_stream_interface
 from stream.stream_multi_cycle import make_stream_multi_cycle
@@ -70,14 +70,20 @@ a_mcp = make_stream_multi_cycle(round_a, 2)
 b_mcp = make_stream_multi_cycle(round_b, 2)
 
 
-@MAIN(50.0)
+# Synchronous reset pins, one per clock (pulsed in cycle 0 by the simulators):
+# every @MAIN resets every register with its clock's pin
+rst_50: Input[uint1_t] = make_reset()
+rst: Input[uint1_t] = make_reset()  # the bare MAINs' default clock
+
+
+@MAIN(50.0, reset=rst_50, reset_registers="all")
 def a_main(
     stream_in_if: uint32_stream_intrf.fwd_t, stream_out_if: a_mcp.out_fb_t
 ) -> a_mcp.return_t:
     return a_mcp(stream_in_if, stream_out_if)
 
 
-@MAIN(50.0)
+@MAIN(50.0, reset=rst_50, reset_registers="all")
 def b_main(
     stream_in_if: uint32_stream_intrf.fwd_t, stream_out_if: b_mcp.out_fb_t
 ) -> b_mcp.return_t:
@@ -133,12 +139,12 @@ dot_a = make_dot(COEFFS_A)
 dot_b = make_dot(COEFFS_B)
 
 
-@MAIN
+@MAIN(reset=rst, reset_registers="all")
 def dot_a_main(arr: int16_t[4]) -> int32_t:
     return dot_a(arr)
 
 
-@MAIN
+@MAIN(reset=rst, reset_registers="all")
 def dot_b_main(arr: int16_t[4]) -> int32_t:
     return dot_b(arr)
 

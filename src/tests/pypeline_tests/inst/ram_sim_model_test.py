@@ -37,7 +37,7 @@ sys.path.insert(
         "pypeline",
     ),
 )
-from pypeline import MAIN, Reg, Wire, sim_output, uint32_t
+from pypeline import MAIN, Reg, Wire, sim_output, uint32_t, Input, make_reset, uint1_t
 
 from ram import make_ram
 from stream.stream_ram import make_stream_ram
@@ -60,7 +60,15 @@ sacc_next: Wire[uint32_t]
 
 # Registered (and so queued) before the adder and the driver: each cycle these
 # first evaluate against the previous cycle's acc_next / inc.
-@MAIN
+
+# Synchronous reset pin (pulsed in cycle 0 by the simulators): every @MAIN
+# resets every register with it
+from pypeline import Input, make_reset, uint1_t  # noqa: E402
+
+rst: Input[uint1_t] = make_reset()
+
+
+@MAIN(reset=rst, reset_registers="all")
 def ram_acc_main():
     req: acc_in_t
     req.addr = 2
@@ -71,7 +79,7 @@ def ram_acc_main():
     acc_now = resp.p0.rd_data
 
 
-@MAIN
+@MAIN(reset=rst, reset_registers="all")
 def ram_stream_acc_main():
     req: sacc_req_stream_t
     req.valid = 1
@@ -84,13 +92,13 @@ def ram_stream_acc_main():
     sacc_now = resp.p0_resp_if.stream.data.rd_data
 
 
-@MAIN
+@MAIN(reset=rst, reset_registers="all")
 def ram_acc_adder():
     acc_next = acc_now + inc
     sacc_next = sacc_now + inc
 
 
-@MAIN
+@MAIN(reset=rst, reset_registers="all")
 def ram_acc_driver():
     n: Reg[uint32_t]
     inc = n + 1
@@ -110,7 +118,7 @@ def check_acc(cycle, now, stream_now):
     )
 
 
-@MAIN
+@MAIN(reset=rst, reset_registers="all")
 def ram_acc_checker():
     n: Reg[uint32_t]
     check_acc(n, acc_now, sacc_now)

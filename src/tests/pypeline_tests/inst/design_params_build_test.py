@@ -94,8 +94,9 @@ def main():
     assert "design_params_injected_main_x : in unsigned(11 downto 0)" in vhdl_text(injected_dir)
     assert "to_unsigned(3," in vhdl_text(injected_dir)
 
-    # Native simulation sees the values, from either driver
-    expected = [f"DESIGN_PARAMS_SIM count={c} STEP=2 TAG=7" for c in (0, 2, 4, 6)]
+    # Native simulation sees the values, from either driver (the reset in
+    # cycle 0 holds the count at 0 for one extra cycle)
+    expected = [f"DESIGN_PARAMS_SIM count={c} STEP=2 TAG=7" for c in (0, 0, 2, 4, 6)]
     for cmd in (
         [PYPELINE_SIM, SIM_DESIGN, "--run", "all", "-D", "STEP=2", "-D", "TAG=7"],
         [PYPELINEC, SIM_DESIGN, "--sim", "--comb", "--run", "all", "--out_dir",

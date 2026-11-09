@@ -55,8 +55,8 @@ from pypeline import NamedTuple, Reg, hw_func, struct, uint1_t, uint32_t
 def make_error_alarm(drop_samples=4096, max_cycles=1 << 20):
     """Build the alarm. Returns error_alarm, with its complete return type at error_alarm.return_t.
 
-        error_alarm(trig: uint1_t, en: uint1_t, in_valid: uint1_t,
-                    rst: uint1_t) -> error_alarm_t
+        error_alarm(trig: uint1_t, en: uint1_t, in_valid: uint1_t)
+            -> error_alarm_t
 
     `trig` is the OR of every condition worth reporting, plus the test bit.
     `in_valid` is the guarded stream's tvalid -- read ONLY to decide whether a
@@ -74,6 +74,11 @@ def make_error_alarm(drop_samples=4096, max_cycles=1 << 20):
     into a dead-radio fault. The internal `seen` register is what limits a
     standing trigger to a single alarm. It clears when the trigger goes away,
     which is also what lets CTRL_FLAG_ALARM_TEST fire again by toggling.
+
+    RESET. It has no reset input: called under a `reset_registers="all"`
+    @MAIN (top.py's pdw_main), a reset returns its counters and `seen` to 0,
+    so an alarm in flight is abandoned -- the reset is already the recovery
+    the alarm was reporting the need for.
     """
     assert max_cycles > drop_samples, (
         f"max_cycles ({max_cycles}) is the backstop for an input that never "
@@ -90,9 +95,7 @@ def make_error_alarm(drop_samples=4096, max_cycles=1 << 20):
         firing: uint1_t
 
     @hw_func
-    def error_alarm(
-        trig: uint1_t, en: uint1_t, in_valid: uint1_t, rst: uint1_t
-    ) -> error_alarm_t:
+    def error_alarm(trig: uint1_t, en: uint1_t, in_valid: uint1_t) -> error_alarm_t:
         o: error_alarm_t
         # Counts DOWN from drop_samples, one per sample actually dropped.
         drops: Reg[uint32_t]
@@ -103,7 +106,7 @@ def make_error_alarm(drop_samples=4096, max_cycles=1 << 20):
         # the combinational path to `ready`, which would be a loop through the
         # platform.
         active: uint1_t = (drops != 0) & (cycles != 0)
-        start: uint1_t = en & trig & (~seen) & (~active) & (~rst)
+        start: uint1_t = en & trig & (~seen) & (~active)
 
         o.active = active
         o.ready = ~active
@@ -122,14 +125,6 @@ def make_error_alarm(drop_samples=4096, max_cycles=1 << 20):
         # Re-arm once the trigger goes away. Placed after the start above so a
         # trigger that is still asserted cannot clear its own `seen`.
         if ~trig:
-            seen = 0
-
-        # Reset LAST, so it wins over everything, exactly as packet_store's
-        # does. An alarm in flight is abandoned: reset is already the recovery
-        # the alarm was reporting the need for.
-        if rst:
-            drops = 0
-            cycles = 0
             seen = 0
         return o
 

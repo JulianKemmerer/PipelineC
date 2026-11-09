@@ -16,7 +16,7 @@ sys.path.insert(
         "pypeline",
     ),
 )
-from pypeline import MAIN, uint32_t, sim_call, sim_reset
+from pypeline import MAIN, uint32_t, sim_call, sim_reset, Input, make_reset, uint1_t
 
 from stream.stream_fifo import make_stream_fifo
 
@@ -27,7 +27,12 @@ uint32_plain_t = stream_fifo.stream_intrf.stream_t
 CAPACITY = 8
 
 
-@MAIN
+# Synchronous reset pin (pulsed in cycle 0 by the simulators): every @MAIN
+# resets every register with it
+rst: Input[uint1_t] = make_reset()
+
+
+@MAIN(reset=rst, reset_registers="all")
 def stream_fifo_test_top(
     in_stream_if: stream_fifo.fwd_t, out_stream_if: stream_fifo.fb_t
 ) -> stream_fifo.return_t:

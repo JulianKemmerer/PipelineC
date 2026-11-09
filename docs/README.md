@@ -630,7 +630,9 @@ output clock(s) from the PLL can be used once the PLL's "locked" signal is asser
 Typically "not locked" is used as a reset condition, holding the design in reset until
 the PLL is stable. In Pypeline, synchronize `locked` into the PLL's output clock with two
 registers in a `@MAIN`, drive a reset `Wire` with its inverse, and make that the clock's
-reset ([Resets](pypeline_guide.md#resets)).
+reset ([Resets](pypeline_guide.md#resets)), as both board examples' `top.py`
+([pico-ice](../examples/pypeline/pico_ice/top.py), [Arty](../examples/pypeline/arty/top.py))
+do.
 
 #### Synthesis and place-and-route reports
 
@@ -649,9 +651,10 @@ Synthesis tells you how your HDL compiled down into FPGA resources. The
   like so:
 
 ```
-   Number of cells:                120
-     $scopeinfo                     11
+   Number of cells:                121
+     $scopeinfo                     10
      SB_CARRY                       30
+     SB_DFF                          2
      SB_DFFESR                       1
      SB_DFFSR                       32
      SB_LUT4                        45
@@ -662,7 +665,7 @@ Synthesis tells you how your HDL compiled down into FPGA resources. The
 
 ```
 Info: Device utilisation:
-Info:              ICESTORM_LC:      49/   5280     0%
+Info:              ICESTORM_LC:      50/   5280     0%
 Info:             ICESTORM_RAM:       0/     30     0%
 Info:                    SB_IO:      26/     96    27%
 Info:                    SB_GB:       2/      8    25%

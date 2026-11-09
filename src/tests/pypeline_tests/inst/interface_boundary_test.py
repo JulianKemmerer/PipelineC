@@ -53,6 +53,8 @@ from pypeline import (
     sim_reset,
     hw_arg_types,
     hw_return_type,
+    Input,
+    make_reset,
 )
 from interface.interface import interface
 from interface.interface_func import make_hw_func_from_interface_func
@@ -166,14 +168,19 @@ def wrapper_twin(
     return o
 
 
-@MAIN
+# Synchronous reset pin (pulsed in cycle 0 by the simulators): every @MAIN
+# resets every register with it
+rst: Input[uint1_t] = make_reset()
+
+
+@MAIN(reset=rst, reset_registers="all")
 def top_boundary(
     in_data: uint8_t, in_valid: uint1_t, limit: uint8_t, downstream_ready: uint1_t
 ) -> wrapper_t:
     return wrapper(in_data, in_valid, limit, downstream_ready)
 
 
-@MAIN
+@MAIN(reset=rst, reset_registers="all")
 def top_boundary_twin(
     in_data: uint8_t, in_valid: uint1_t, limit: uint8_t, downstream_ready: uint1_t
 ) -> wrapper_t:

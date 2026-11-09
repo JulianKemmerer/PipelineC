@@ -27,6 +27,9 @@ from pypeline import (
     struct,
     uint8_t,
     uint16_t,
+    Input,
+    make_reset,
+    uint1_t,
 )
 
 
@@ -47,19 +50,24 @@ w2: Wire[cd_t]
 cycle: Wire[uint8_t]  # the checker's cycle count
 
 
-@MAIN
+# Synchronous reset pin (pulsed in cycle 0 by the simulators): every @MAIN
+# resets every register with it
+rst: Input[uint1_t] = make_reset()
+
+
+@MAIN(reset=rst, reset_registers="all")
 def drive_first_fields():
     w1.a = cycle
     w2.c = cycle + 1
 
 
-@MAIN
+@MAIN(reset=rst, reset_registers="all")
 def drive_second_fields():
     w1.b = 3
     w2.d = 300
 
 
-@MAIN
+@MAIN(reset=rst, reset_registers="all")
 def checker():
     t: Reg[uint8_t]
     cycle = t

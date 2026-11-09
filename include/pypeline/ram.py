@@ -625,17 +625,14 @@ def ram_vhdl_text(cfg, handshake):
             s(f"    if {p.sig}_en = '1' then")
             body.extend("      " + line for line in stmts)
             s("    end if;")
-    # A reset (vhdl(..., reset="sync")) cancels every request in flight and
-    # clears the read registers; the memory keeps its contents. It is after
-    # the stage enables, so it wins over them.
-    cleared = []
-    for p in layouts:
-        cleared += [p.b(stage) for stage in range(1, L + 1)]
-        if p.readable and L > R:
-            cleared += [f"{p.sig}_rd{stage}" for stage in range(R + 1, L + 1)]
+    # A reset (vhdl(..., reset="sync")) cancels every request in flight by
+    # clearing the stage valid bits only, after the stage enables so it wins
+    # over them. The memory, the read data registers and the address/data
+    # bits of the stages keep no reset, so the RAM still maps to block RAM.
+    cleared = [p.b(stage) + f"({p.valid_bit})" for p in layouts for stage in range(1, L + 1)]
     if cleared:
         s("    if RESET = '1' then")
-        body.extend(f"      {name} <= (others => '0');" for name in cleared)
+        body.extend(f"      {name} <= '0';" for name in cleared)
         s("    end if;")
     s("  end if;")
     s("end process;")
@@ -712,9 +709,13 @@ def ram_model_class(cfg, handshake, port_out_types, out_t, resp_stream_types=Non
 
         def on_reset(self):
             # A reset (pypeline._sim_apply_resets) cancels the requests in
-            # flight and the writes of its clock edge; the memory stays.
+            # flight (their valid bits) and the writes of its clock edge. The
+            # memory, read data and request address/data stay, as in the VHDL.
             self.pending = []
-            self.stages = [[empty] * L for _ in kinds]
+            self.stages = [
+                [((0,) + bundle[1:], rd) for bundle, rd in stages]
+                for stages in self.stages
+            ]
 
         def __deepcopy__(self, memo):
             mem = self.mem
@@ -1010,7 +1011,7 @@ def _auto_pipeline_ram_vhdl(cfg, plan):
         s(f"{p.b(0)} <= {' & '.join(parts)};")
         for stage in range(1, L + 1):
             c(f"{p.b(stage)} <= {p.b(stage-1)};")
-            cleared.append((p.b(stage), "(others => '0')"))
+            cleared.append((f"{p.b(stage)}({p.valid_bit})", "'0'"))
 
         root = f"rq_p{p.i}_d0_n0"
         d(f"signal {root} : std_logic_vector({p.bw-1} downto 0);")
@@ -1034,7 +1035,7 @@ def _auto_pipeline_ram_vhdl(cfg, plan):
                 )
                 emit = c if level <= plan.request_levels else s
                 if level <= plan.request_levels:
-                    cleared.append((name, "(others => '0')"))
+                    cleared.append((f"{name}({p.valid_bit})", "'0'"))
                 emit(
                     f"{name}({p.valid_bit-1} downto 0) <= {parent}({p.valid_bit-1} downto 0);"
                 )
@@ -1135,7 +1136,9 @@ def _auto_pipeline_ram_vhdl(cfg, plan):
             body.extend("      " + line for line in statements)
             s("    end if;")
             # A reset (vhdl(..., reset="sync")) cancels the requests in flight,
-            # over the clock enable; the memory keeps its contents.
+            # over the clock enable, by clearing valid bits only: the memory,
+            # read data and request address/data registers keep no reset, so
+            # they still map to block RAM and its neighboring registers.
             if statements is clocked and cleared:
                 s("    if RESET = '1' then")
                 body.extend(f"      {name} <= {value};" for name, value in cleared)
@@ -1191,7 +1194,15 @@ def _auto_pipeline_ram_vhdl(cfg, plan):
             s(
                 f"      if {enabled(p)} then history_p{p.i}(0) := {address(p)}; else history_p{p.i}(0) := -1; end if;"
             )
-    s("    end if;\n  end if;\nend process;")
+    s("    end if;")
+    if gap > 1:
+        # A reset cancels every write not yet in the memory (the model's
+        # on_reset clears recent_writes the same way)
+        s("    if RESET = '1' then")
+        for p in writers:
+            s(f"      history_p{p.i} := (others => -1);")
+        s("    end if;")
+    s("  end if;\nend process;")
     s("-- synthesis translate_on")
     return "\n".join(decl) + "\nbegin\n" + "\n".join(body) + "\n"
 

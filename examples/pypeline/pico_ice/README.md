@@ -80,8 +80,9 @@ The Makefile uses that one variable to:
    rather than the default rate-derived name such as `clk_25p0`.
 3. Tell `nextpnr-ice40` the target clock rate (`--freq $(PLL_CLK_MHZ)`).
 
-The PLL's `locked` output is the `pll_locked` input; [top.py](top.py) holds its logic in
-reset until it goes high. [vga_top.py](vga_top.py) needs the 25 MHz VGA pixel clock and
+The PLL's `locked` output is the `pll_locked` input. [top.py](top.py) passes it through two
+registers into a reset `Wire`, `pll_rst`, the reset of `pll_clk`, so its logic is held in
+[reset](../../../docs/pypeline_guide.md#resets) until the lock is stable. [vga_top.py](vga_top.py) needs the 25 MHz VGA pixel clock and
 stops with an error for any other `PLL_CLK_MHZ`.
 
 If the design does not meet timing at `PLL_CLK_MHZ`, `nextpnr` fails with an error like:

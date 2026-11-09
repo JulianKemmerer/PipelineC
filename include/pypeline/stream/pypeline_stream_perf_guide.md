@@ -168,7 +168,9 @@ trimmed-window rate would describe the burst, not the block.
 **Buffer taps**:
 - `capacity_beats`, `high_water_beats`;
 - `start_occupancy` / `end_occupancy` (occupancy survives a phase reset; counters do not);
-- `accepted_beats` / `retired_beats`, `simultaneous_cycles`, `full_cycles`, `empty_cycles`.
+- `accepted_beats` / `retired_beats`, `simultaneous_cycles`, `full_cycles`, `empty_cycles`;
+- `discarded_beats`: beats a reset of the buffer's MAIN dropped (its occupancy when the
+  reset emptied it), so `start + accepted - retired - discarded == end`.
 
 A buffer tap raises if occupancy ever leaves `0..capacity`.
 

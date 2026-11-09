@@ -32,7 +32,7 @@ sys.path.insert(
         "pypeline",
     ),
 )
-from pypeline import MAIN, sim_call, sim_reset, uint8_t, uint16_t
+from pypeline import MAIN, sim_call, sim_reset, uint8_t, uint16_t, Input, make_reset, uint1_t
 
 from stream.stream_ram import make_stream_ram
 
@@ -48,14 +48,19 @@ comb = make_stream_ram(uint8_t, 4, ports=("w", "r"), read_latency=0)
 sdp = make_stream_ram(uint8_t, 16, ports=("w", "r"), read_latency=1, in_regs=1)
 
 
-@MAIN
+# Synchronous reset pin (pulsed in cycle 0 by the simulators): every @MAIN
+# resets every register with it
+rst: Input[uint1_t] = make_reset()
+
+
+@MAIN(reset=rst, reset_registers="all")
 def stream_ram_test_bram(
     p0_req_if: bram.p0_req_intrf.fwd_t, p0_resp_if: bram.p0_resp_intrf.fb_t
 ) -> bram.return_t:
     return bram(p0_req_if, p0_resp_if)
 
 
-@MAIN
+@MAIN(reset=rst, reset_registers="all")
 def stream_ram_test_comb(
     p0_req_if: comb.p0_req_intrf.fwd_t,
     p0_resp_if: comb.p0_resp_intrf.fb_t,
@@ -65,7 +70,7 @@ def stream_ram_test_comb(
     return comb(p0_req_if, p0_resp_if, p1_req_if, p1_resp_if)
 
 
-@MAIN
+@MAIN(reset=rst, reset_registers="all")
 def stream_ram_test_sdp(
     p0_req_if: sdp.p0_req_intrf.fwd_t,
     p0_resp_if: sdp.p0_resp_intrf.fb_t,

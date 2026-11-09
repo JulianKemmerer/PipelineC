@@ -3221,6 +3221,9 @@ class FuncElaborator:
                             getattr(callee, "_pypeline_ctype_name", None)
                             or callee.__name__
                         )
+                        # No annotation names the type here: register it (a
+                        # factory's struct may appear in no annotation yet)
+                        _register_struct_recursive(callee, self.parser_state)
                         hw_name = self._hw_name(python_name)
                         self._declare_var(hw_name, struct_ctype, target)
                         self._elab_compound_init(hw_name, stmt.value, stmt.value)
@@ -7424,6 +7427,12 @@ def _discover_global_wires(tree, module_globals, parser_state, name_prefix=None)
     for name, value in module_globals.items():
         if isinstance(value, _Clock) and not name.startswith("_") and name not in declared:
             parser_state.pypeline_clock_names.setdefault(value.identity, name)
+        # Every clock object, so a make_clock(rate, reset=) that no MAIN names
+        # still gives @MAIN(rate), the same clock, its primary reset
+        if isinstance(value, _Clock) and all(
+            value is not c for c in parser_state.pypeline_module_clocks
+        ):
+            parser_state.pypeline_module_clocks.append(value)
 
 
 # ─────────────────────────────────────────────
@@ -8290,8 +8299,10 @@ def _check_clock_crossings(parser_state):
 
 
 def _design_clocks(parser_state):
-    """Every _Clock the design names: its @MAINs' clocks and its wires'
-    clock markers and bindings (what _assign_clocks checks for agreement)."""
+    """Every _Clock the design names: its @MAINs' clocks, its wires' clock
+    markers and bindings (what _assign_clocks checks for agreement), and the
+    clock objects in its modules' globals, which a MAIN may run on by rate
+    (make_clock(100.0, reset=rst) is the clock @MAIN(100.0) runs on)."""
     clocks = [
         fn._pypeline_main.clock
         for fn in _pypeline_mod._main_registry
@@ -8299,7 +8310,7 @@ def _design_clocks(parser_state):
     ]
     for decl in parser_state.pypeline_wire_decls.values():
         clocks += [c for c in (decl.ann.clock, decl.binding) if c is not None]
-    return clocks
+    return clocks + list(getattr(parser_state, "pypeline_module_clocks", []))
 
 
 def _reset_regs_below(parser_state, main, mode):

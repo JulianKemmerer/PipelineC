@@ -35,6 +35,8 @@ from pypeline import (
     uint1_t,
     uint8_t,
     uint16_t,
+    Input,
+    make_reset,
 )
 
 
@@ -61,7 +63,12 @@ START_CHECK = LAT + 2
 NUM_CYCLES_RUN = LAT + 30
 
 
-@MAIN(10.0)
+# Synchronous reset pin (pulsed in cycle 0 by the simulators): every @MAIN
+# resets every register with it
+rst: Input[uint1_t] = make_reset()
+
+
+@MAIN(10.0, reset=rst, reset_registers="all")
 def fixed_ap_tb() -> fixed_ap_stream_t:
     count: Reg[uint16_t]
 

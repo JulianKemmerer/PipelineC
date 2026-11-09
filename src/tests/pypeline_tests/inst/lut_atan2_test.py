@@ -20,6 +20,8 @@ from pypeline import (
     sim_assert,
     sim_print,
     sim_finish,
+    Input,
+    make_reset,
 )
 from dsp.lut_atan2 import make_lut_atan2, golden_lut_atan2
 from AUTO_PIPELINE import RamPlan
@@ -72,7 +74,12 @@ DEGENERATE = tuple(int(x == 0 and y == 0) for x, y in VECTORS)
 COUNT = len(VECTORS)
 
 
-@MAIN(125.0)
+# Synchronous reset pin (pulsed in cycle 0 by the simulators): every @MAIN
+# resets every register with it
+rst: Input[uint1_t] = make_reset()
+
+
+@MAIN(125.0, reset=rst, reset_registers="all")
 def lut_atan2_check() -> uint16_t:
     xs: input_t[COUNT] = XS
     ys: input_t[COUNT] = YS

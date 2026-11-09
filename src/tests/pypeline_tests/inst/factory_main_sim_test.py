@@ -29,6 +29,8 @@ PYPELINE_SIM = os.path.join(SRC_DIR, "pypeline_sim.py")
 COUNTER_LANES = """
 from pypeline import *
 
+rst: Input[uint1_t] = make_reset()  # every register resets; pulsed in cycle 0
+
 
 def make_lane(i):
     @hw_func
@@ -40,7 +42,7 @@ def make_lane(i):
     return lane
 
 
-lanes = [MAIN(make_lane(i), name=f"lane{i}") for i in range(3)]
+lanes = [MAIN(make_lane(i), name=f"lane{i}", reset=rst, reset_registers="all") for i in range(3)]
 """
 
 ELEMENT_LANES = """
@@ -76,6 +78,7 @@ from stream.stream_fifo import make_stream_fifo
 
 F = make_stream_fifo(uint8_t, 4)
 outs: Wire[uint8_t[2]]
+rst: Input[uint1_t] = make_reset()  # every register resets; pulsed in cycle 0
 
 
 def make_fifo_lane(i, word):
@@ -90,8 +93,8 @@ def make_fifo_lane(i, word):
     return fifo_lane
 
 
-MAIN(make_fifo_lane(0, 7), name="fa")
-MAIN(make_fifo_lane(1, 9), name="fb")
+MAIN(make_fifo_lane(0, 7), name="fa", reset=rst, reset_registers="all")
+MAIN(make_fifo_lane(1, 9), name="fb", reset=rst, reset_registers="all")
 
 
 @sim_output
@@ -176,10 +179,11 @@ def _sim(tmpdir, name, text, cycles=4):
 def test_counter_lanes_keep_their_own_registers(tmpdir):
     code, out = _sim(tmpdir, "counter_lanes.py", COUNTER_LANES)
     assert code == 0, out
-    # Lane i counts by its own step, i + 1, cycle after cycle
+    # Lane i counts by its own step, i + 1, cycle after cycle, from the end of
+    # the cycle-0 reset (cycle 1 shows the reset value again)
     for i in range(3):
         seen = [line for line in out.splitlines() if line.startswith(f"lane{i} ")]
-        want = [f"lane{i} n={c * (i + 1)}" for c in range(4)]
+        want = [f"lane{i} n={max(c - 1, 0) * (i + 1)}" for c in range(4)]
         assert seen == want, (seen, want, out)
     print("test_counter_lanes_keep_their_own_registers PASS")
 
@@ -193,11 +197,12 @@ def test_lanes_keep_their_own_wire_elements(tmpdir):
 
 
 def test_stateless_mains_keep_their_own_fifo_models(tmpdir):
-    code, out = _sim(tmpdir, "fifo_lanes.py", FIFO_LANES)
+    code, out = _sim(tmpdir, "fifo_lanes.py", FIFO_LANES, cycles=6)
     assert code == 0, out
     lines = [line for line in out.splitlines() if line.startswith("outs")]
-    # The FWFT FIFO shows each MAIN's own word from cycle 2
-    assert lines[2:] and all(line == "outs 7 9" for line in lines[2:]), out
+    # The FWFT FIFO, emptied by the cycle-0 reset, shows each MAIN's own word
+    # from cycle 3
+    assert lines[3:] and all(line == "outs 7 9" for line in lines[3:]), out
     print("test_stateless_mains_keep_their_own_fifo_models PASS")
 
 

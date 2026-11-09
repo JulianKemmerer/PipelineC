@@ -7,7 +7,7 @@ re-imports the design (pass 2). Every import prints the parameter values it
 saw -- a declared param() and an injected -D global -- which must be the
 same in every pass. CORE_LATENCY is a direct design read of the bottom-up
 value, for the pass report (the factory also reads it, to size its FIFO)."""
-from pypeline import MAIN, hw_func, param, uint8_t
+from pypeline import MAIN, hw_func, param, uint8_t, Input, make_reset, uint1_t
 
 from stream.stream import make_stream_interface
 from stream.stream_auto_pipeline import make_stream_auto_pipeline
@@ -29,7 +29,12 @@ pass2_sap = make_stream_auto_pipeline(pass2_core, start_latency=START)
 CORE_LATENCY = pass2_sap.auto_pipeline.latency  # DIRECT_LATENCY_READ
 
 
-@MAIN(100.0)
+# Synchronous reset pin (pulsed in cycle 0 by the simulators): every @MAIN
+# resets every register with it
+rst: Input[uint1_t] = make_reset()
+
+
+@MAIN(100.0, reset=rst, reset_registers="all")
 def design_params_pass2_main(
     stream_in_if: uint8_stream_intrf.fwd_t, stream_out_if: uint8_stream_intrf.fb_t
 ) -> pass2_sap.return_t:

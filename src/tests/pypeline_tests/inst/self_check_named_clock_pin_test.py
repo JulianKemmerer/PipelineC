@@ -27,6 +27,7 @@ from pypeline import (
     Reg,
     global_fifo,
     make_clock,
+    make_reset,
     sim_assert,
     sim_finish,
     sim_print,
@@ -36,13 +37,16 @@ from pypeline import (
 
 N_WORDS = 10
 
-sys_clk = make_clock(50.0, name="sys")  # the clock clk_50p0_sys
+# Synchronous reset pin (pulsed in cycle 0 by the simulators), the reset of
+# sys_clk: both MAINs and the global FIFO reset with it
+rst: Input[uint1_t] = make_reset()
+sys_clk = make_clock(50.0, name="sys", reset=rst)  # the clock clk_50p0_sys
 SYS_CLK: Input[uint1_t] = sys_clk  # arrives on this pin
 
 words: Fifo[uint8_t] = global_fifo(4)
 
 
-@MAIN(sys_clk)
+@MAIN(sys_clk, reset_registers="all")
 def producer():
     n: Reg[uint8_t]
     words.wr.stream.data = n
@@ -51,7 +55,7 @@ def producer():
         n += 1
 
 
-@MAIN(sys_clk)
+@MAIN(sys_clk, reset_registers="all")
 def consumer():
     t: Reg[uint8_t]
     n: Reg[uint8_t]

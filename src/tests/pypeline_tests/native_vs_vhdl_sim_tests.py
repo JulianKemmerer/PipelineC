@@ -83,6 +83,10 @@ COMB_TEST_FILES = [
     # Reset equivalence of stream library blocks (stream FIFO, skid buffers):
     # one chain reset mid-traffic matches one held in reset until then
     ("self_check_reset_stream_lib_test.py", INST_DIR, []),
+    # Reset equivalence of DSP library blocks (ROM NCO/log/atan2, CORDIC,
+    # elastic FIR, valid-only FIR decimator, moving average, DC blocker,
+    # magnitude): one chain reset mid-traffic matches one held in reset
+    ("self_check_reset_dsp_test.py", INST_DIR, []),
     # Global instances, Inst[f]: a combinational instance driven from two
     # MAINs, two instances of one counter, a skid buffer instance with
     # backpressure, an AUTO_PIPELINE(f, latency=2) instance and a make_ram
@@ -275,6 +279,13 @@ NON_COMB_TEST_FILES = [
     ),
     # The same reset of a pipeline, with the sweep's sky130 build
     ("self_check_reset_pipeline_test.py", INST_DIR, ["--pipeline_min_effort", "0"]),
+    # A mid-run reset of a sliced pure MAIN: nothing in flight comes out
+    # (native sim's delayed MAIN writes become zeros)
+    (
+        "self_check_reset_pipelined_main_test.py",
+        INST_DIR,
+        ["--pipeline_min_effort", "0"],
+    ),
     # A scheduled AUTO_FSM reset mid-request: it returns to idle (its one-hot
     # state to its idle bit) and restarts, with no result of the cancelled case
     ("self_check_reset_fsm_test.py", INST_DIR, []),

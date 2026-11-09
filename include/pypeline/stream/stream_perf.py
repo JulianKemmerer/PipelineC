@@ -183,8 +183,9 @@ class BufferTap(_EpochTap):
 
     Occupancy survives a phase reset; counters do not, so a phase boundary
     cannot silently invent an empty buffer. A reset of the buffer's hardware
-    does empty it (emptied(), called by stream_perf_probe). No hardware
-    occupancy counter or extra registers are introduced.
+    does empty it (emptied(), called by stream_perf_probe), and the beats it
+    held count as discarded. No hardware occupancy counter or extra registers
+    are introduced.
     """
 
     kind = "buffer"
@@ -199,8 +200,10 @@ class BufferTap(_EpochTap):
 
     def emptied(self):
         """The buffer itself was reset to empty (a hardware reset, or a new
-        simulation): commit the samples before it, count from zero after it."""
+        simulation): commit the samples before it, count the beats it held as
+        discarded, and count from zero after it."""
         self.flush()
+        self.discarded += self.occupancy
         self.occupancy = 0
 
     def reset(self):
@@ -209,6 +212,7 @@ class BufferTap(_EpochTap):
         self.high_water = self.occupancy
         self.accepted = 0
         self.retired = 0
+        self.discarded = 0
         self.simultaneous_cycles = 0
         self.full_cycles = 0
         self.empty_cycles = 0
@@ -234,7 +238,8 @@ class BufferTap(_EpochTap):
             "kind": self.kind, "cycles": self.cycles, "capacity_beats": self.capacity,
             "start_occupancy": self.start_occupancy, "end_occupancy": self.occupancy,
             "high_water_beats": self.high_water, "accepted_beats": self.accepted,
-            "retired_beats": self.retired, "simultaneous_cycles": self.simultaneous_cycles,
+            "retired_beats": self.retired, "discarded_beats": self.discarded,
+            "simultaneous_cycles": self.simultaneous_cycles,
             "full_cycles": self.full_cycles, "empty_cycles": self.empty_cycles,
         }
 

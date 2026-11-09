@@ -39,6 +39,8 @@ from pypeline import (
     uint8_t,
     sim_call,
     sim_reset,
+    Input,
+    make_reset,
 )
 from interface.interface import interface
 from interface.interface_func import make_hw_func_from_interface_func
@@ -126,14 +128,19 @@ def fork_twin(
     return o
 
 
-@MAIN
+# Synchronous reset pin (pulsed in cycle 0 by the simulators): every @MAIN
+# resets every register with it
+rst: Input[uint1_t] = make_reset()
+
+
+@MAIN(reset=rst, reset_registers="all")
 def top_fork(
     axis_in_if: axis_intrf.fwd_t, fast_if: axis_intrf.fb_t, slow_if: axis_intrf.fb_t
 ) -> fork.return_t:
     return fork(axis_in_if, fast_if, slow_if)
 
 
-@MAIN
+@MAIN(reset=rst, reset_registers="all")
 def top_fork_twin(
     axis_in_if: axis_intrf.fwd_t, fast_if: axis_intrf.fb_t, slow_if: axis_intrf.fb_t
 ) -> fork.return_t:

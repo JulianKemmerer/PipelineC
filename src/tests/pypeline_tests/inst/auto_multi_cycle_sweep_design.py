@@ -19,6 +19,8 @@ from pypeline import (
     uint1_t,
     uint16_t,
     uint32_t,
+    Input,
+    make_reset,
 )
 
 from stream.stream import make_stream_interface
@@ -46,7 +48,12 @@ mix_mcp = make_stream_auto_multi_cycle(
 )
 
 
-@MAIN(param("AUTO_MULTI_CYCLE_SWEEP_GOAL", 100.0, type=float))
+# Synchronous reset pin (pulsed in cycle 0 by the simulators): every @MAIN
+# resets every register with it
+rst: Input[uint1_t] = make_reset()
+
+
+@MAIN(param("AUTO_MULTI_CYCLE_SWEEP_GOAL", 100.0, type=float), reset=rst, reset_registers="all")
 @hw_func
 def auto_multi_cycle_sweep_main() -> uint32_t:
     x: Reg[uint32_t] = 1

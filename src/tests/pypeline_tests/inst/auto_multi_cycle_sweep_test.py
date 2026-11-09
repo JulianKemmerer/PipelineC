@@ -11,7 +11,7 @@
 #  (b) start_latency = (a)'s count: the sweep starts and settles there -- no
 #      AUTO_MULTI_CYCLE change, pass 2 skipped
 #  (c) max_latency=1: the cap blocks the goal, the sweep says so, build fails
-#  (d) latency memory: (a) runs with the memory on, so a rebuild of its output
+#  (d) latency memory: (a) runs with the memory on, so a --rebuild of its output
 #      directory starts from the remembered count and skips pass 2; a
 #      same-goal memory count three cycles too high stays provisional, so
 #      confirm-down brings it back to (a)'s count; and at a raised goal the
@@ -96,7 +96,8 @@ def check_raises_count(out_dir):
 
 
 def check_remembered_count(out_dir, count, hints_dir):
-    rc, out = run(out_dir, memory=True)
+    # The same inputs again: --rebuild, or the up-to-date out_dir does nothing
+    rc, out = run(out_dir, extra=["--rebuild"], memory=True)
     if rc != 0:
         fail(f"remembered-count rebuild exited {rc}")
     if not re.search(rf"^\[latency memory\] AUTO_MULTI_CYCLE \S+: starts at {count} \(latency memory", out, re.M):
@@ -112,7 +113,7 @@ def check_remembered_count(out_dir, count, hints_dir):
             piece["latency"] = count + 3
     with open(memory_path, "w") as f:
         json.dump(memory, f)
-    rc, out = run(out_dir, memory=True)
+    rc, out = run(out_dir, extra=["--rebuild"], memory=True)
     if rc != 0 or "MCP confirm-down passed" not in out or list(harvested(out).values()) != [count]:
         fail("a current-goal MCP piece was not confirmed down")
     # The same verified datapath piece at a lower goal is a floor at a raised

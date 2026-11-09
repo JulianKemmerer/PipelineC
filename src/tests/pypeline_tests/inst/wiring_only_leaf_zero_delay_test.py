@@ -21,6 +21,8 @@ _SRC = """
 import sys
 sys.path.insert(0, {repo_root!r})
 from pypeline import MAIN, Reg, hw_func, int24_t, int32_t, uint8_t
+from pypeline import Input, make_reset, uint1_t
+rst: Input[uint1_t] = make_reset()  # every register resets; pulsed in cycle 0
 
 
 @hw_func
@@ -47,7 +49,7 @@ def add_one(x: int32_t) -> int32_t:
     return x + 1
 
 
-@MAIN
+@MAIN(reset=rst, reset_registers="all")
 def top(a: int32_t, b: int32_t) -> int32_t:
     x: int32_t = sext24(a + b)
     return add_one(delay_one(x) + b) + seven()

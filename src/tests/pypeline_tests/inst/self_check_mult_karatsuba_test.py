@@ -27,7 +27,7 @@ sys.path.insert(
     ),
 )
 
-from pypeline import MAIN, Reg, make_uint_t, sim_assert, sim_finish, sim_print, uint1_t, uint8_t, uint16_t
+from pypeline import Input, MAIN, make_reset, make_uint_t, Reg, sim_assert, sim_finish, sim_print, uint16_t, uint1_t, uint8_t
 
 from operators.soft import register_mult_karatsuba_inferred_leaves
 from operators.soft_mult import (
@@ -60,7 +60,12 @@ MAX130 = (1 << 130) - 1
 NUM_CYCLES = 24
 
 
-@MAIN
+# Synchronous reset pin (pulsed in cycle 0 by the simulators): every @MAIN
+# resets every register with it
+rst: Input[uint1_t] = make_reset()
+
+
+@MAIN(reset=rst, reset_registers="all")
 def self_check_mult_karatsuba():
     n: Reg[uint8_t]
     x: Reg[uint130_t] = 0x2C4F_9A31_77D0_E5B8_1F03_6C9D_42A8_B71E_5

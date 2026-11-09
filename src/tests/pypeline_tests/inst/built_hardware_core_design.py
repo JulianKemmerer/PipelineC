@@ -16,6 +16,9 @@ from pypeline import (
     param,
     struct,
     uint16_t,
+    Input,
+    make_reset,
+    uint1_t,
 )
 
 GOAL_MHZ = param("GOAL_MHZ", 100, help="Clock goal of both MAINs")
@@ -65,11 +68,16 @@ fsm_in: Wire[OPS_FSM.in_stream_t]  # into the FSM
 fsm_out: Wire[OPS_FSM.out_stream_t]  # out of the FSM
 
 
-@MAIN(GOAL_MHZ)
+# Synchronous reset pin (pulsed in cycle 0 by the simulators): every @MAIN
+# resets every register with it
+rst: Input[uint1_t] = make_reset()
+
+
+@MAIN(GOAL_MHZ, reset=rst, reset_registers="all")
 def body_main():
     body_out = BODY(body_in)
 
 
-@MAIN(GOAL_MHZ)
+@MAIN(GOAL_MHZ, reset=rst, reset_registers="all")
 def fsm_main():
     fsm_out = OPS_FSM(fsm_in)

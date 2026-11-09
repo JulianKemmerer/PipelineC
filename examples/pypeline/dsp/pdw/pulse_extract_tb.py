@@ -54,6 +54,8 @@ from pypeline import (
     uint16_t,
     uint32_t,
     uint64_t,
+    Input,
+    make_reset,
 )
 
 from pulse_detect import make_pulse_detect
@@ -130,7 +132,12 @@ def synth_freq_acc(gate_last: uint1_t, re_in: ACC_T, im_in: ACC_T) -> _DP.freq_a
 engine_acc = make_pulse_extract(_DP, depth=TB_DEPTH, n_pkts=TB_N_PKTS)
 
 
-@MAIN(125.0)
+# Synchronous reset pin (pulsed in cycle 0 by the simulators): every @MAIN
+# resets every register with it
+rst: Input[uint1_t] = make_reset()
+
+
+@MAIN(125.0, reset=rst, reset_registers="all")
 def pulse_extract_accept_tb():
     cyc: Reg[uint32_t]
     phase: uint32_t = cyc % ACC_PERIOD
@@ -166,7 +173,6 @@ def pulse_extract_accept_tb():
         noise_est=_DP.noise_t(val=TB_NOISE),
         pkt_out_if=engine_acc.pkt_out_intrf.fb_t(1),
         pdw_out_if=engine_acc.pdw_out_intrf.fb_t(1),
-        rst=0,  # this testbench never resets
     )
 
     cyc = cyc + 1
@@ -252,7 +258,7 @@ GLITCH_MIN_WIDTH = 16
 engine_glitch = make_pulse_extract(_DP, depth=TB_DEPTH, n_pkts=TB_N_PKTS)
 
 
-@MAIN(125.0)
+@MAIN(125.0, reset=rst, reset_registers="all")
 def pulse_extract_glitch_tb():
     cyc: Reg[uint32_t]
     phase: uint32_t = cyc % GLITCH_PERIOD
@@ -282,7 +288,6 @@ def pulse_extract_glitch_tb():
         noise_est=_DP.noise_t(val=TB_NOISE),
         pkt_out_if=engine_glitch.pkt_out_intrf.fb_t(1),
         pdw_out_if=engine_glitch.pdw_out_intrf.fb_t(1),
-        rst=0,  # this testbench never resets
     )
 
     cyc = cyc + 1
@@ -318,7 +323,7 @@ CW_MAX_WIDTH = 32  # == the candidate's width: the SM's force-close marker
 engine_cw = make_pulse_extract(_DP, depth=TB_DEPTH, n_pkts=TB_N_PKTS)
 
 
-@MAIN(125.0)
+@MAIN(125.0, reset=rst, reset_registers="all")
 def pulse_extract_cw_tb():
     cyc: Reg[uint32_t]
     phase: uint32_t = cyc % CW_PERIOD
@@ -348,7 +353,6 @@ def pulse_extract_cw_tb():
         noise_est=_DP.noise_t(val=TB_NOISE),
         pkt_out_if=engine_cw.pkt_out_intrf.fb_t(1),
         pdw_out_if=engine_cw.pdw_out_intrf.fb_t(1),
-        rst=0,  # this testbench never resets
     )
 
     cyc = cyc + 1
@@ -382,7 +386,7 @@ ST_PERIOD = 48
 engine_st = make_pulse_extract(_DP, depth=TB_DEPTH, n_pkts=TB_N_PKTS)
 
 
-@MAIN(125.0)
+@MAIN(125.0, reset=rst, reset_registers="all")
 def pulse_extract_status_tb():
     cyc: Reg[uint32_t]
     phase: uint32_t = cyc % ST_PERIOD
@@ -421,7 +425,6 @@ def pulse_extract_status_tb():
         noise_est=_DP.noise_t(val=TB_NOISE),
         pkt_out_if=engine_st.pkt_out_intrf.fb_t(1),
         pdw_out_if=engine_st.pdw_out_intrf.fb_t(1),
-        rst=0,  # this testbench never resets
     )
 
     cyc = cyc + 1
@@ -475,7 +478,7 @@ BP_PERIOD = 128
 engine_bp = make_pulse_extract(_DP, depth=TB_DEPTH, n_pkts=TB_N_PKTS)
 
 
-@MAIN(125.0)
+@MAIN(125.0, reset=rst, reset_registers="all")
 def pulse_extract_backpressure_tb():
     cyc: Reg[uint32_t]
     phase: uint32_t = cyc % BP_PERIOD
@@ -514,7 +517,6 @@ def pulse_extract_backpressure_tb():
         noise_est=_DP.noise_t(val=TB_NOISE),
         pkt_out_if=engine_bp.pkt_out_intrf.fb_t(pkt_ready),
         pdw_out_if=engine_bp.pdw_out_intrf.fb_t(pdw_ready),
-        rst=0,  # this testbench never resets
     )
 
     cyc = cyc + 1

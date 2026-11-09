@@ -59,7 +59,7 @@ BRING-UP ORDER IS LOAD-BEARING. The design has two reset domains: `pdw_ctrl`
 follows tx0's reset alone, everything else follows the OR of all of them. That
 exists so configuration can land while the datapath is still held:
 
-    1. nothing activated              all resets asserted, buffers draining
+    1. nothing activated              all resets asserted, buffers empty
     2. activateStream(TX,0)           control block live, datapath still held
     3. write one pdw_ctrl_t frame     config lands, datapath still held
     4. activate RX0, RX1, TX1         datapath starts ALREADY CONFIGURED
@@ -205,7 +205,7 @@ def overflow_message(label, got, n_elems, alarm_armed):
         head
         + cause
         + (
-            "Reset/drain and restart before resuming capture. Transport details: "
+            "Reset and restart before resuming capture. Transport details: "
             + BITSTREAM_GUIDE
             + "#data-transport-application-notes"
         )
@@ -749,7 +749,7 @@ Try, in order:
 """.strip()
 
 ALARM_TEST_OK = """OVERFLOW on {label}, as --alarm-test commanded: the internal-error
-alarm reaches the host. Rung 6 PASSES. Stopping here; reset/drain the streams
+alarm reaches the host. Rung 6 PASSES. Stopping here; reset the streams
 before normal capture. The test bit would fire again on every resync.
 Re-run without --alarm-test (keep --alarm) to capture.""".strip()
 
@@ -876,9 +876,9 @@ def resync(sdr, streams, active, cfg, args):
                 f"resync could not deactivate stream {s}: status {status}"
             )
     active.clear()
-    # RST_MIN_HOLD_CYCLES (16448) at 125 MHz is ~132 us; the drain is only as
-    # fast as the data, so a short reset leaves buffers partly full. Milliseconds
-    # here cost nothing and remove the question.
+    # The design needs no minimum reset hold: a reset of any length leaves the
+    # datapath as at power-on (top.py resets every register). The pause is only
+    # margin for the platform's stream teardown; milliseconds cost nothing.
     time.sleep(max(0.05, args.settle))
 
     tx_ctrl, tx_replay, rx_pkt, rx_pdw = streams

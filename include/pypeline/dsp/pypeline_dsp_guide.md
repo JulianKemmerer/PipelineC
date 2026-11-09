@@ -20,6 +20,9 @@ state; under the default `"requested"` nothing in it resets. The blocks with the
 `rst` argument (`make_lut_nco`, `make_log2_db`, `make_lut_atan2`) keep it for designs
 without resets; with automatic reset, pass `rst=0` explicitly (an omitted default
 argument is [#386](https://github.com/JulianKemmerer/PipelineC/issues/386)).
+`self_check_reset_dsp_test.py` checks this for every block family: a chain reset
+mid-traffic gives the same outputs as one held in reset until then, in native and GHDL
+simulation.
 
 ## `make_fir` — single-rate filter
 

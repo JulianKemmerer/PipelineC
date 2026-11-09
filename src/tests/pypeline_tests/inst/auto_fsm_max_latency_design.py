@@ -35,6 +35,8 @@ from pypeline import (
     param,
     struct,
     uint1_t,
+    Input,
+    make_reset,
 )
 
 
@@ -75,7 +77,12 @@ _IMPOSSIBLE = param("PYPELINE_AUTO_FSM_IMPOSSIBLE_LATENCY", False)
 CHAIN_FSM = AUTO_FSM(add_chain, max_latency=2 if _IMPOSSIBLE else 4)
 
 
-@MAIN(90.0)
+# Synchronous reset pin (pulsed in cycle 0 by the simulators): every @MAIN
+# resets every register with it
+rst: Input[uint1_t] = make_reset()
+
+
+@MAIN(90.0, reset=rst, reset_registers="all")
 def auto_fsm_max_latency_top(start: uint1_t, x: chain_in_t) -> int16_t:
     s: CHAIN_FSM.in_stream_t
     s.data = x

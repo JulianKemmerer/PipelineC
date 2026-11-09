@@ -254,7 +254,9 @@ ram = make_auto_pipeline_ram(uint32_t, 1024, ports=('w', 'r'), latency=7)
 @initial
 def check_geometry():
     assert ram.read_after_write_gap == {gap}, ram.plan
-@MAIN
+from pypeline import Input, make_reset, uint1_t
+rst: Input[uint1_t] = make_reset()  # every register resets; pulsed in cycle 0
+@MAIN(reset=rst, reset_registers="all")
 def tick():
     return
 """

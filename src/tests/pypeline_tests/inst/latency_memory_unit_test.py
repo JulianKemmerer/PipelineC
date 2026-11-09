@@ -151,6 +151,8 @@ _NESTED_SRC = """
 import sys
 sys.path.insert(0, {src!r})
 from pypeline import AUTO_PIPELINE, MAIN, hw_func, uint8_t
+from pypeline import Input, make_reset, uint1_t
+rst: Input[uint1_t] = make_reset()  # every register resets; pulsed in cycle 0
 
 @hw_func
 def leaf(x: uint8_t) -> uint8_t:
@@ -165,7 +167,7 @@ def holder(x: uint8_t) -> uint8_t:
 OUTER = AUTO_PIPELINE(holder, name="outer")
 PLAIN = AUTO_PIPELINE(leaf, name="plain")
 
-@MAIN
+@MAIN(reset=rst, reset_registers="all")
 def nested_main(x: uint8_t) -> uint8_t:
     return OUTER(x) ^ PLAIN(x)
 """
@@ -328,6 +330,8 @@ import sys
 sys.path.insert(0, {src!r})
 sys.path.insert(0, {library!r})
 from pypeline import MAIN, AUTO_PIPELINE, hw_func, uint8_t
+from pypeline import Input, make_reset, uint1_t
+rst: Input[uint1_t] = make_reset()  # every register resets; pulsed in cycle 0
 from stream.stream_multi_cycle import make_stream_auto_multi_cycle
 @hw_func
 def body(x: uint8_t) -> uint8_t:
@@ -342,10 +346,10 @@ def make_compute(n):
         return a
     return compute
 MCP = make_stream_auto_multi_cycle(make_compute(BODY.latency + 2), name="dependent")
-@MAIN(50.0)
+@MAIN(50.0, reset=rst, reset_registers="all")
 def body_main(x: uint8_t) -> uint8_t:
     return BODY(x)
-@MAIN(50.0)
+@MAIN(50.0, reset=rst, reset_registers="all")
 def mcp_main(stream_in_if: MCP.in_fwd_t, stream_out_if: MCP.out_fb_t) -> MCP.return_t:
     return MCP(stream_in_if, stream_out_if)
 """
@@ -459,7 +463,8 @@ def test_hint_beats_lower_goal_memory(tmp):
     design = os.path.join(tmp, "hint_regions.py")
     with open(design, "w") as f:
         f.write(_NESTED_SRC.format(src=os.path.join(THIS_DIR, "..", "..", ".."))
-                .replace("@MAIN\ndef nested_main", "@MAIN(50.0)\ndef nested_main"))
+                .replace('@MAIN(reset=rst, reset_registers="all")\ndef nested_main',
+                         '@MAIN(50.0, reset=rst, reset_registers="all")\ndef nested_main'))
     out_dir = os.path.join(tmp, "hint_regions_out")
     os.makedirs(out_dir)
     SYN.SYN_OUTPUT_DIRECTORY = out_dir
@@ -513,7 +518,8 @@ def test_lower_goal_floor_only_for_regions(tmp):
     design = os.path.join(tmp, "floor_regions.py")
     with open(design, "w") as f:
         f.write(_NESTED_SRC.format(src=os.path.join(THIS_DIR, "..", "..", ".."))
-                .replace("@MAIN\ndef nested_main", "@MAIN(50.0)\ndef nested_main"))
+                .replace('@MAIN(reset=rst, reset_registers="all")\ndef nested_main',
+                         '@MAIN(50.0, reset=rst, reset_registers="all")\ndef nested_main'))
     out_dir = os.path.join(tmp, "floor_regions_out")
     os.makedirs(out_dir)
     SYN.SYN_OUTPUT_DIRECTORY = out_dir

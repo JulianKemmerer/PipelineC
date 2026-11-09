@@ -140,6 +140,44 @@ def test_primary_input_to_output_has_explicit_zero_components():
     assert result["critical_path_arc_count"] == 1, result
 
 
+def test_path_from_an_input_names_its_port():
+    # rst -> inverter -> capture.D (a reset pin's fanout); a register path
+    # names no port, and a bus input names its bit
+    def run(start_bits, start_name):
+        return _run_fixture(
+            {
+                "ports": {
+                    "clk": {"direction": "input", "bits": [1]},
+                    start_name: {"direction": "input", "bits": start_bits},
+                },
+                "cells": {
+                    "logic": {"type": INV, "connections": {"A": [start_bits[-1]], "Y": [4]}},
+                    "capture": {
+                        "type": DFF,
+                        "connections": {"CLK": [1], "D": [4], "Q": [5]},
+                    },
+                },
+            }
+        )
+
+    result = run([2], "rst")
+    assert result["start_reg_name"] is None, result
+    assert result["start_port_name"] == "rst", result
+    assert run([2, 3], "data")["start_port_name"] == "data[1]"
+    registered = _run_fixture(
+        {
+            "ports": {"clk": {"direction": "input", "bits": [1]}},
+            "cells": {
+                "launch": {"type": DFF, "connections": {"CLK": [1], "D": [5], "Q": [3]}},
+                "logic": {"type": INV, "connections": {"A": [3], "Y": [4]}},
+                "capture": {"type": DFF, "connections": {"CLK": [1], "D": [4], "Q": [5]}},
+            },
+        }
+    )
+    assert registered["start_reg_name"] == "launch", registered
+    assert registered["start_port_name"] is None, registered
+
+
 def test_zero_logic_path_has_explicit_empty_diagnostics():
     result = _run_fixture(
         {
@@ -501,6 +539,7 @@ def test_log_and_structured_report_round_trip():
             structured = json.load(f)
 
     assert report.synthesis_recipe == "synth_flatten"
+    assert report.start_reg_name is None and report.start_port_name == "data_in"
     assert report.launch_clock_to_q_ns == 0.0
     assert report.setup_ns == 0.0
     assert report.critical_path_arc_count == 1
@@ -530,18 +569,31 @@ def test_cached_timing_requires_exact_inputs_model_and_mapped_json_hash():
         synthesis_inputs = {"identity_sha256": "a" * 64}
         result = {
             "worst_period_ns": 1.0,
+            "start_port_name": None,
             "mapping_succeeded": True,
             "mapped_json_path": mapped_path,
             "mapped_json_sha256": DEVICE_MODELS._sha256_file(mapped_path),
         }
-        DEVICE_MODELS._write_sta_json(
-            log_path,
-            result,
-            DEVICE_MODELS.DEFAULT_LIBRARY,
-            DEVICE_MODELS.DEFAULT_CORNER,
-            "current",
-            synthesis_inputs,
+
+        def write(result):
+            DEVICE_MODELS._write_sta_json(
+                log_path,
+                result,
+                DEVICE_MODELS.DEFAULT_LIBRARY,
+                DEVICE_MODELS.DEFAULT_CORNER,
+                "current",
+                synthesis_inputs,
+            )
+
+        # A report from before reports named a path's input port
+        write({k: v for k, v in result.items() if k != "start_port_name"})
+        assert (
+            DEVICE_MODELS._cached_timing_mismatch_reason(
+                log_path, synthesis_inputs, "current"
+            )
+            == "report predates input-port startpoints"
         )
+        write(result)
         assert DEVICE_MODELS._cached_timing_matches(
             log_path, synthesis_inputs, "current"
         )
@@ -587,6 +639,7 @@ def test_cached_timing_mismatch_reason_names_changed_input():
             log_path,
             {
                 "worst_period_ns": 1.0,
+                "start_port_name": None,
                 "mapping_succeeded": True,
                 "mapped_json_path": mapped_path,
                 "mapped_json_sha256": DEVICE_MODELS._sha256_file(mapped_path),
@@ -674,6 +727,7 @@ def test_synthesis_identity_survives_copying_the_output_directory():
             log_path,
             {
                 "worst_period_ns": 1.0,
+                "start_port_name": None,
                 "mapping_succeeded": True,
                 "mapped_json_path": "mapped.json",
                 "mapped_json_sha256": DEVICE_MODELS._sha256_file(mapped_path),

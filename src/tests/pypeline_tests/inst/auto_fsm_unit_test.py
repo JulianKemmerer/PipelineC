@@ -59,6 +59,8 @@ DESIGN_SRC = textwrap.dedent(
     sys.path.insert(0, {repo!r})
     from pypeline import (AUTO_FSM, MAIN, NamedTuple, Reg, hw_func, int16_t,
                           struct, uint1_t)
+    from pypeline import Input, make_reset, uint1_t
+    rst: Input[uint1_t] = make_reset()  # every register resets; pulsed in cycle 0
 
     @struct
     class in_t(NamedTuple):
@@ -76,7 +78,7 @@ DESIGN_SRC = textwrap.dedent(
 
     FSM = AUTO_FSM(chain)
 
-    @MAIN({mhz})
+    @MAIN({mhz}, reset=rst, reset_registers="all")
     def top(start: uint1_t, x: in_t) -> int16_t:
         s: FSM.in_stream_t
         s.data = x
@@ -102,6 +104,8 @@ FACTOR_SRC = textwrap.dedent(
     sys.path.insert(0, {repo!r})
     from pypeline import (AUTO_FSM, MAIN, NamedTuple, Reg, concat, hw_func,
                           struct, uint1_t, uint8_t)
+    from pypeline import Input, make_reset, uint1_t
+    rst: Input[uint1_t] = make_reset()  # every register resets; pulsed in cycle 0
 
     @struct
     class in_t(NamedTuple):
@@ -118,7 +122,7 @@ FACTOR_SRC = textwrap.dedent(
 
     FSM = AUTO_FSM(chain)
 
-    @MAIN({mhz})
+    @MAIN({mhz}, reset=rst, reset_registers="all")
     def top(start: uint1_t, x: in_t) -> uint8_t:
         s: FSM.in_stream_t
         s.data = x
@@ -138,6 +142,8 @@ PACK_SRC = textwrap.dedent(
     sys.path.insert(0, {repo!r})
     from pypeline import (AUTO_FSM, MAIN, NamedTuple, Reg, concat, hw_func,
                           struct, uint1_t, uint8_t)
+    from pypeline import Input, make_reset, uint1_t
+    rst: Input[uint1_t] = make_reset()  # every register resets; pulsed in cycle 0
 
     @struct
     class in_t(NamedTuple):
@@ -165,7 +171,7 @@ PACK_SRC = textwrap.dedent(
 
     FSM = AUTO_FSM(chain)
 
-    @MAIN({mhz})
+    @MAIN({mhz}, reset=rst, reset_registers="all")
     def top(start: uint1_t, x: in_t) -> out_t:
         s: FSM.in_stream_t
         s.data = x
@@ -185,6 +191,8 @@ FUSED_PACK_SRC = textwrap.dedent(
     sys.path.insert(0, {repo!r})
     from pypeline import (AUTO_FSM, MAIN, NamedTuple, Reg, concat, hw_func,
                           struct, uint1_t, uint4_t, uint6_t)
+    from pypeline import Input, make_reset, uint1_t
+    rst: Input[uint1_t] = make_reset()  # every register resets; pulsed in cycle 0
 
     @struct
     class in_t(NamedTuple):
@@ -224,7 +232,7 @@ FUSED_PACK_SRC = textwrap.dedent(
 
     FSM = AUTO_FSM(chain)
 
-    @MAIN({mhz})
+    @MAIN({mhz}, reset=rst, reset_registers="all")
     def top(start: uint1_t, x: in_t) -> out_t:
         s: FSM.in_stream_t
         s.data = x
@@ -248,6 +256,8 @@ SCOPED_SOFT_SRC = textwrap.dedent(
     sys.path.insert(0, {repo!r})
     from pypeline import (AUTO_FSM, MAIN, NamedTuple, Reg, hw_func, make_uint_t,
                           struct, uint1_t, uint8_t, uint16_t)
+    from pypeline import Input, make_reset, uint1_t
+    rst: Input[uint1_t] = make_reset()  # every register resets; pulsed in cycle 0
     from operators.soft_mult import make_inferred_mult
 
     uint3_t = make_uint_t(3)
@@ -269,7 +279,7 @@ SCOPED_SOFT_SRC = textwrap.dedent(
 
     FSM = AUTO_FSM(mix)
 
-    @MAIN({mhz})
+    @MAIN({mhz}, reset=rst, reset_registers="all")
     def top(start: uint1_t, x: in_t) -> uint17_t:
         s: FSM.in_stream_t
         s.data = x
@@ -294,6 +304,8 @@ BLOCKED_SRC = textwrap.dedent(
     sys.path.insert(0, {repo!r})
     from pypeline import (AUTO_FSM, MAIN, NamedTuple, Reg, hw_func, int8_t,
                           int16_t, make_uint_t, struct, uint1_t, uint8_t, uint16_t)
+    from pypeline import Input, make_reset, uint1_t
+    rst: Input[uint1_t] = make_reset()  # every register resets; pulsed in cycle 0
     from operators.soft_mult import make_inferred_mult
 
     uint2_t = make_uint_t(2)
@@ -328,7 +340,7 @@ BLOCKED_SRC = textwrap.dedent(
 
     FSM = AUTO_FSM(mix)
 
-    @MAIN({mhz})
+    @MAIN({mhz}, reset=rst, reset_registers="all")
     def top(start: uint1_t, x: in_t) -> out_t:
         s: FSM.in_stream_t
         s.data = x
@@ -353,6 +365,8 @@ WIDE_SRC = textwrap.dedent(
     sys.path.insert(0, {repo!r})
     from pypeline import (AUTO_FSM, MAIN, NamedTuple, Reg, hw_func, make_uint_t,
                           struct, uint1_t, uint64_t)
+    from pypeline import Input, make_reset, uint1_t
+    rst: Input[uint1_t] = make_reset()  # every register resets; pulsed in cycle 0
     from operators.soft_mult import make_mult_karatsuba_inferred_leaves
 
     uint128_t = make_uint_t(128)
@@ -373,7 +387,7 @@ WIDE_SRC = textwrap.dedent(
 
     FSM = AUTO_FSM(wide)
 
-    @MAIN({mhz})
+    @MAIN({mhz}, reset=rst, reset_registers="all")
     def top(start: uint1_t, x: in_t) -> uint128_t:
         s: FSM.in_stream_t
         s.data = x
@@ -399,6 +413,8 @@ TWO_FLOORS_SRC = textwrap.dedent(
     sys.path.insert(0, {repo!r})
     from pypeline import (AUTO_FSM, MAIN, NamedTuple, Reg, hw_func, make_uint_t,
                           struct, uint1_t, uint32_t)
+    from pypeline import Input, make_reset, uint1_t
+    rst: Input[uint1_t] = make_reset()  # every register resets; pulsed in cycle 0
 
     uint33_t = make_uint_t(33)
 
@@ -422,7 +438,7 @@ TWO_FLOORS_SRC = textwrap.dedent(
 
     FSM = AUTO_FSM(ten)
 
-    @MAIN({mhz})
+    @MAIN({mhz}, reset=rst, reset_registers="all")
     def top(start: uint1_t, x: in_t) -> out_t:
         s: FSM.in_stream_t
         s.data = x

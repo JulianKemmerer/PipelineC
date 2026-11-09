@@ -11,7 +11,7 @@ THIS_DIR = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, os.path.join(THIS_DIR, "../../../"))
 sys.path.insert(0, os.path.join(THIS_DIR, "../../../../include/pypeline"))
 
-from pypeline import MAIN, hw_func, uint8_t
+from pypeline import MAIN, hw_func, uint8_t, Input, make_reset, uint1_t
 
 from stream.stream import make_stream_interface
 from stream.stream_auto_pipeline import make_stream_auto_pipeline
@@ -28,7 +28,12 @@ uint8_stream_intrf = make_stream_interface(uint8_t)
 grow_sap = make_stream_auto_pipeline(grow_core, start_latency=1)
 
 
-@MAIN(100.0)
+# Synchronous reset pin (pulsed in cycle 0 by the simulators): every @MAIN
+# resets every register with it
+rst: Input[uint1_t] = make_reset()
+
+
+@MAIN(100.0, reset=rst, reset_registers="all")
 def stream_auto_pipeline_grow_main(
     stream_in_if: uint8_stream_intrf.fwd_t, stream_out_if: uint8_stream_intrf.fb_t
 ) -> grow_sap.return_t:

@@ -35,9 +35,13 @@ import sys
 sys.path.insert(0, {repo_root!r})
 from pypeline import *
 
+# A reset pin as the clock's reset: every MAIN and global instance resets
+rst: Input[uint1_t] = make_reset()
+clk = make_clock(100.0, reset=rst)
+
 rx: Fifo[uint8_t] = global_fifo(4)
 
-@MAIN(100.0)
+@MAIN(clk, reset_registers="all")
 def producer():
     n: Reg[uint8_t]
     rx.wr.stream.data = n
@@ -45,7 +49,7 @@ def producer():
     if rx.wr.ready:
         n += 1
 
-@MAIN(100.0)
+@MAIN(clk, reset_registers="all")
 def consumer():
     total: Reg[uint8_t]
     rx.rd.ready = 1
@@ -132,7 +136,7 @@ def main():
         assert SWEEP.PRINT_TIMING_FAILURES(state, timing)
     text = out.getvalue()
     expected = (
-        "ERROR: TIMING NOT MET: global FIFO rx [fifo_path_design.py:6] achieved "
+        "ERROR: TIMING NOT MET: global FIFO rx [fifo_path_design.py:10] achieved "
         "61.78 MHz vs 100.00 MHz goal (nothing_auto_pipelinable)"
     )
     assert expected in text, text

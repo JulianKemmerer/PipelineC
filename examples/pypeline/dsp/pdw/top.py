@@ -58,6 +58,8 @@ from pypeline import (
     concat,
     host_export,
     int16_t,
+    make_clock,
+    make_reset,
     make_uint_t,
     struct,
     uint1_t,
@@ -117,15 +119,13 @@ pdw_ctrl = make_pdw_ctrl(AXIS_N)
 # datapath's first sample is then processed against real thresholds instead of
 # CTRL_DEFAULTS. See pdw_ctrl.py's docstring for the four-step sequence.
 #
-# Reset does three things, and only these three (README has the full list):
-#   BLOCK  gate the generator's and the detector's valid, so nothing enters
-#   DRAIN  force every downstream ready/pop high, so buffers empty into the bit
-#          bucket -- the ONLY way to clear the make_fifo instances and the
-#          serializers, which are library black boxes with no flush
-#   CLEAR  return this project's own registers to their power-on values
-#
-# Because the drain is only as fast as the data, reset must be HELD: emptying a
-# full packet FIFO takes up to its depth in cycles. RST_MIN_HOLD_CYCLES below.
+# Both are reset Wires (make_reset): the three @MAINs below them reset every
+# register they hold with `reset_registers="all"` -- this project's state, the
+# library FIFOs, serializers and skid buffers, the DSP filters' history and
+# every pipeline stage -- to its initial value, in the cycle after the reset is
+# asserted, however much was buffered. Beyond that, reset only BLOCKS: the
+# generator's and the detector's valid are gated, and every master's tvalid,
+# because the ports meet hardware that is not reset (README has the details).
 # ---------------------------------------------------------------------------
 
 # ⚠ TIE AN UNUSED CHANNEL'S RESET LOW. `global_rst` is the OR of all seven, so a
@@ -149,13 +149,6 @@ tx1_m_axis_rst: Input[uint1_t]
 # ~2 ns of margin can absorb. pdw_tb.py reads this rather than hardcoding it.
 RST_LATENCY = 1
 
-# The minimum a host should hold reset for the drain to actually finish: the
-# packet FIFO empties at one beat per cycle, plus the record serializers' own
-# frames and the pipeline latencies feeding them. ~131 us at 125 MHz, which any
-# real platform reset comfortably exceeds -- stated so it is a number rather
-# than an assumption.
-RST_MIN_HOLD_CYCLES = 16384 + 64
-
 # ---------------------------------------------------------------------------
 # The internal-error alarm's two numbers (see pdw_main). ALARM_DROP_SAMPLES is
 # how many ADC samples one alarm destroys: enough that a platform counting
@@ -171,11 +164,15 @@ ALARM_MAX_CYCLES = 1 << 20
 error_alarm = make_error_alarm(ALARM_DROP_SAMPLES, ALARM_MAX_CYCLES)
 
 
-global_rst: Wire[uint1_t]  # OR of all seven -- everything except pdw_ctrl
-ctrl_rst: Wire[uint1_t]  # tx0_s_axis_rst alone -- pdw_ctrl only
+global_rst: Wire[uint1_t] = make_reset()  # OR of all seven -- all but pdw_ctrl
+ctrl_rst: Wire[uint1_t] = make_reset()  # tx0_s_axis_rst alone -- pdw_ctrl only
+# The one 125 MHz clock. global_rst is its reset: a @MAIN on it resets with
+# global_rst unless it names another (ctrl_main) or none (rst_main).
+pdw_clk = make_clock(125.0, reset=global_rst)
 
 
-@MAIN(125.0)
+# Not reset: it drives both resets, so its registers keep their power-up values
+@MAIN(pdw_clk, reset=None)
 def rst_main():
     any_rst: uint1_t = (
         rx0_s_axis_rst
@@ -218,7 +215,7 @@ tx0_s_axis_tready: Output[uint1_t]
 ctrl_regs: Wire[pdw_ctrl_t]
 
 
-@MAIN(125.0)
+@MAIN(pdw_clk, reset=ctrl_rst, reset_registers="all")
 def ctrl_main():
     # Typed locals first: uint_to_array_le splits by the value's WIDTH, and a
     # port read straight into it carries only whatever width its current value
@@ -232,9 +229,10 @@ def ctrl_main():
     ci.data.eod[0] = tx0_s_axis_tlast
     ci.valid = tx0_s_axis_tvalid
 
-    # ctrl_rst, NOT global_rst -- this block comes out of reset first so it can
-    # be configured while the datapath is still held. See pdw_ctrl.py.
-    c = pdw_ctrl(axis_in_if=pdw_ctrl.axis_intrf.fwd_t(ci), rst=ctrl_rst)
+    # Reset by ctrl_rst (the @MAIN above), NOT global_rst -- this block comes
+    # out of reset first so it can be configured while the datapath is still
+    # held. See pdw_ctrl.py.
+    c = pdw_ctrl(axis_in_if=pdw_ctrl.axis_intrf.fwd_t(ci))
     tx0_s_axis_tready = c.axis_in_if.ready
     ctrl_regs = c.regs
 
@@ -263,7 +261,7 @@ pulse_gen_valid: Wire[uint1_t]
 pulse_gen_overflow: Wire[uint1_t]
 
 
-@MAIN(125.0)
+@MAIN(pdw_clk, reset_registers="all")
 def pulse_gen_main():
     o = pulse_gen(
         pri=ctrl_regs.pulse_gen_pri,
@@ -272,7 +270,6 @@ def pulse_gen_main():
         freq=ctrl_regs.pulse_gen_freq,
         chirp_rate=ctrl_regs.pulse_gen_chirp_rate,
         noise_amp=ctrl_regs.pulse_gen_noise_amp,
-        rst=global_rst,
     )
     # BLOCK: pulse_gen's own contract is an always-valid fixed-rate stream, so
     # stopping the flow is done here, at the boundary, for both the external DAC
@@ -382,9 +379,9 @@ host_export(
 # ---------------------------------------------------------------------------
 # A fully-registered register slice on each record master port. mode="full"
 # derives BOTH its outputs from registers only, so nothing outside -- the
-# rx*_m_axis_tready pin included -- reaches the serializer's own ready. That is
-# what lets reset force the drain unconditionally again; see the note in
-# pdw_main. Two slots, +1 cycle, 100% throughput.
+# rx*_m_axis_tready pin included -- reaches the serializer's own ready, whose
+# path into its `nfill` index is already deep. Two slots, +1 cycle, 100%
+# throughput.
 pdw_skid = make_axis_skid_buffer(pdw_tx.axis_intrf)
 
 cand_skid = make_axis_skid_buffer(cand_tx.axis_intrf)
@@ -463,7 +460,7 @@ rx2_m_axis_tvalid: Output[uint1_t]
 rx2_m_axis_tready: Input[uint1_t]
 
 
-@MAIN(125.0)
+@MAIN(pdw_clk, reset_registers="all")
 def pdw_main():
     # Both readies are consumed by pulse_extract and produced from its own outputs
     # -- a genuine circular reference between two call results, which is what
@@ -508,7 +505,6 @@ def pdw_main():
         trig=alarm_trig,
         en=alarm_en,
         in_valid=rx0_s_axis_tvalid,
-        rst=global_rst,
     )
     rx0_s_axis_tready = al.ready
 
@@ -553,7 +549,6 @@ def pdw_main():
         threshold_high=pulse_detect.power_t(val=ctrl_regs.threshold_high),
         threshold_low=pulse_detect.power_t(val=ctrl_regs.threshold_low),
         max_width=ctrl_regs.max_width,
-        rst=global_rst,
     )
 
     e = pulse_extract(
@@ -566,7 +561,6 @@ def pdw_main():
         noise_est=o.noise_est,
         pkt_out_if=pulse_extract.pkt_out_intrf.fb_t(pkt_ready),
         pdw_out_if=pulse_extract.pdw_out_intrf.fb_t(pdw_ready),
-        rst=global_rst,
     )
 
     # -- internal-error alarm, trigger --------------------------------------
@@ -578,28 +572,10 @@ def pdw_main():
     alarm_test: uint1_t = (ctrl_regs.flags & alarm_test_mask) != 0
     alarm_trig = alarm_test | e.fifo_full | e.desc_drop | e.meas_drop | pulse_gen_overflow
 
-    # DRAIN: while reset is asserted every sink is forced ready, so the whole
-    # chain empties into the bit bucket. That is the ONLY way to clear any of
-    # it -- the three FIFOs in packet_store and Path B's delay line are
-    # make_fifo instances, black-box VHDL entities with no flush, and the two
-    # record serializers are library blocks too.
-    #
-    # The packet path forces its own read enables inside packet_store
-    # (`data_ready |= rst` and friends) and clears its FSM, so the broadcast
-    # legs need no help here: pdw_reset_test.py holds pkt_out_ready LOW for the
-    # whole reset window and still gets a byte-exact drain.
-    #
-    # The two record serializers DO need it -- their buf/fill can only empty
-    # through ready -- and forcing it is only affordable because each now sits
-    # behind a fully-registered skid buffer. Driving the serializer's ready
-    # directly from `pin | rst` cost 8.3 MHz (128.5 -> 120.2): it put a LUT into
-    # the path feeding the serializer's `nfill`, the variable index of a
-    # 43-element buffer write already 12 logic levels deep, which serializer.py
-    # notes is combinational on stream_out_if.ready by design. The skid buffer's
-    # mode="full" derives both its outputs from registers only, so that path is
-    # cut at the slice and the OR now lands on the slice's own output ready.
-    pdw_rdy: uint1_t = rx1_m_axis_tready | global_rst
-    cand_rdy: uint1_t = rx2_m_axis_tready | global_rst
+    # Nothing needs forcing ready during reset: the reset empties the FIFOs,
+    # serializers and skid buffers itself, whatever the masters' tready pins do.
+    pdw_rdy: uint1_t = rx1_m_axis_tready
+    cand_rdy: uint1_t = rx2_m_axis_tready
     # No traffic may appear outside during reset: AXI forbids tvalid then, and a
     # host must not see the previous session's records on a channel it has just
     # opened.

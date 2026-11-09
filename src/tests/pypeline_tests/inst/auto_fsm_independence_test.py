@@ -70,12 +70,14 @@ FSM_B = AUTO_FSM(fsm_b_func)
 
 TOP_SOURCE = """
 from pypeline import MAIN, hw_func, uint1_t, uint16_t
+from pypeline import Input, make_reset, uint1_t
+rst: Input[uint1_t] = make_reset()  # every register resets; pulsed in cycle 0
 from fsm_a import FSM_A, a_in_t
 from fsm_b import FSM_B, b_in_t
 @hw_func
 def unrelated(x: uint16_t) -> uint16_t:
     return x ^ 5
-@MAIN(200.0)
+@MAIN(200.0, reset=rst, reset_registers="all")
 def top(a: a_in_t, b: b_in_t, valid: uint1_t) -> uint16_t:
     ra: FSM_A.in_stream_t
     ra.data = a

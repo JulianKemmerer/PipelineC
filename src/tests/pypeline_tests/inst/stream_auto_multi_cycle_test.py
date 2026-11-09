@@ -33,6 +33,8 @@ from pypeline import (
     sim_reset,
     uint1_t,
     uint32_t,
+    Input,
+    make_reset,
 )
 
 from stream.stream import make_stream_interface
@@ -71,7 +73,12 @@ divider_fixed_auto_multi_cycle = make_stream_auto_multi_cycle(
 
 
 
-@MAIN(100.0)
+# Synchronous reset pin (pulsed in cycle 0 by the simulators): every @MAIN
+# resets every register with it
+rst: Input[uint1_t] = make_reset()
+
+
+@MAIN(100.0, reset=rst, reset_registers="all")
 @hw_func
 def auto_multi_cycle_divider_test_fsm() -> uint1_t:
     x: Reg[uint32_t] = 2

@@ -8,7 +8,7 @@ sys.path.insert(
     0, os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "..", "..")
 )
 
-from pypeline import AUTO_PIPELINE, MAIN, NamedTuple, hw_func, struct, uint32_t
+from pypeline import AUTO_PIPELINE, MAIN, NamedTuple, hw_func, struct, uint32_t, Input, make_reset, uint1_t
 
 
 @struct
@@ -33,7 +33,12 @@ def core(p: pair_t) -> uint32_t:
 CORE = AUTO_PIPELINE(core, latency=2)
 
 
-@MAIN
+# Synchronous reset pin (pulsed in cycle 0 by the simulators): every @MAIN
+# resets every register with it
+rst: Input[uint1_t] = make_reset()
+
+
+@MAIN(reset=rst, reset_registers="all")
 def zero_delay_helper_build(a: uint32_t, b: uint32_t) -> uint32_t:
     p: pair_t = pair_t(a=a, b=b)
     return CORE(p)

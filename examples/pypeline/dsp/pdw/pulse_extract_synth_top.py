@@ -22,7 +22,7 @@ Synthesize (requires Vivado):
 
 import pdw_paths  # noqa: F401  (puts include/pypeline on sys.path)
 
-from pypeline import MAIN, PART, Input, uint1_t, uint32_t
+from pypeline import MAIN, PART, Input, make_reset, uint1_t, uint32_t
 
 from pulse_detect import make_pulse_detect
 from pulse_extract import make_pulse_extract
@@ -44,13 +44,13 @@ max_width: Input[uint32_t]
 
 dsp_overflow: Input[uint1_t]
 
-# A real port rather than a tied 0. Reset drives the three FIFO read enables as
-# well as the store FSM's clears, so it sits directly in the release path this
-# file exists to measure.
-rst: Input[uint1_t]
+# A real reset pin rather than none. Under reset_registers="all" the reset
+# reaches the three FIFOs' pointers as well as the store FSM, so it sits
+# directly in the release path this file exists to measure.
+rst: Input[uint1_t] = make_reset()
 
 
-@MAIN(125.0)
+@MAIN(125.0, reset=rst, reset_registers="all")
 def pulse_extract_top(
     gated_in: pulse_detect.gated_sample_t,
     pdw_in_if: pulse_detect.out_fwd_t,
@@ -73,5 +73,4 @@ def pulse_extract_top(
         noise_est=noise_est,
         pkt_out_if=pkt_out_if,
         pdw_out_if=pdw_out_if,
-        rst=rst,
     )

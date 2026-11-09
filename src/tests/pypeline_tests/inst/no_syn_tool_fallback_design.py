@@ -12,7 +12,7 @@ sys.path.insert(
     0, os.path.join(os.path.dirname(os.path.abspath(__file__)), "../../../")
 )
 
-from pypeline import AUTO_PIPELINE, MAIN, hw_func, uint8_t
+from pypeline import AUTO_PIPELINE, MAIN, hw_func, uint8_t, Input, make_reset, uint1_t
 
 
 @hw_func
@@ -24,6 +24,11 @@ FALLBACK_AP = AUTO_PIPELINE(fallback_core, start_latency=1)
 print(f"no_syn_tool_fallback_design: .latency={FALLBACK_AP.latency}", flush=True)
 
 
-@MAIN(10.0)
+# Synchronous reset pin (pulsed in cycle 0 by the simulators): every @MAIN
+# resets every register with it
+rst: Input[uint1_t] = make_reset()
+
+
+@MAIN(10.0, reset=rst, reset_registers="all")
 def no_syn_tool_fallback_main(x: uint8_t) -> uint8_t:
     return FALLBACK_AP(x)

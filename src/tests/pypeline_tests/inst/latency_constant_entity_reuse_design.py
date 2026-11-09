@@ -5,7 +5,7 @@ import os
 import sys
 
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "..", ".."))
-from pypeline import AUTO_PIPELINE, MAIN, hw_func, uint8_t  # noqa: E402
+from pypeline import AUTO_PIPELINE, MAIN, hw_func, uint8_t, Input, make_reset, uint1_t  # noqa: E402
 
 
 @hw_func
@@ -24,6 +24,11 @@ def folds_latency(x: uint8_t) -> uint8_t:
     return (x + LAT) * x
 
 
-@MAIN
+# Synchronous reset pin (pulsed in cycle 0 by the simulators): every @MAIN
+# resets every register with it
+rst: Input[uint1_t] = make_reset()
+
+
+@MAIN(reset=rst, reset_registers="all")
 def reuse_main(x: uint8_t) -> uint8_t:
     return folds_latency(AP(x))

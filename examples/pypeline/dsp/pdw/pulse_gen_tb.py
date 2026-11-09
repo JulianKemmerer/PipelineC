@@ -11,7 +11,9 @@ DC step, plus the reset contract:
   * `pulse_gen_noise_tb`-- noise only: bounded, live, and ZERO MEAN.
   * `pulse_gen_reset_tb`-- reset held with a LIVE configuration (the hardware
                            bring-up order): nothing from the reset window may
-                           leak into the first pulse after release.
+                           leak into the first pulse after release. Its
+                           reset, `gen_rst`, comes from `pulse_gen_reset_gen`,
+                           which is not reset and also gives it the cycle.
 
 All checks are structural (`sim_assert` on properties), not sample-by-sample
 comparisons -- bit-exactness against `golden_pulse_gen` is checked by
@@ -28,9 +30,11 @@ import pdw_paths  # noqa: F401  (puts include/pypeline on sys.path)
 from pypeline import (
     MAIN,
     Reg,
+    Wire,
     int16_t,
     int32_t,
     make_int_t,
+    make_reset,
     sim_assert,
     sim_print,
     uint1_t,
@@ -77,7 +81,6 @@ def pulse_gen_dc_tb():
         freq=0,
         chirp_rate=0,
         noise_amp=0,
-        rst=0,
     )
 
     # Golden reference: an independent free-running PRI counter, DELAYED by the
@@ -166,7 +169,6 @@ def pulse_gen_tone_tb():
         freq=TONE_FREQ,
         chirp_rate=0,
         noise_amp=0,
-        rst=0,
     )
 
     phase: Reg[uint32_t] = 0
@@ -230,7 +232,6 @@ def pulse_gen_noise_tb():
         freq=0,
         chirp_rate=0,
         noise_amp=NOISE_AMP,
-        rst=0,
     )
 
     # amplitude=0, so everything here is noise.
@@ -284,24 +285,35 @@ FIRST_PULSE_AT = RST_CYCLES + LAT  # release, then the pipeline fill
 MID_RST_AT = 225
 MID_RST_END = MID_RST_AT + RST_CYCLES
 
+gen_rst: Wire[uint1_t] = make_reset()
+gen_cycle: Wire[uint32_t]
+
 
 @MAIN(125.0)
+def pulse_gen_reset_gen():
+    """The reset and cycle count for pulse_gen_reset_tb: reset for the first
+    RST_CYCLES cycles and again from MID_RST_AT, mid-run."""
+    cyc: Reg[uint32_t] = 0
+    gen_cycle = cyc
+    gen_rst = (cyc < RST_CYCLES) | ((cyc >= MID_RST_AT) & (cyc < MID_RST_END))
+    cyc = cyc + 1
+
+
+@MAIN(125.0, reset=gen_rst, reset_registers="all")
 def pulse_gen_reset_tb():
     """Reset held WITH a live configuration must not leak into the output.
 
     This is the hardware bring-up order (README "Bring-up order"): the host
     configures the generator while the datapath is still held in reset, then
     releases it. Reset pins the PRI counter at 0, which is inside a pulse, so
-    unless the NCO is fed zero amplitude during reset its pipeline fills with
-    the carrier, and the first `LAT` samples after release are that stale
-    carrier prepended to the first pulse -- which came out `LAT` samples wider
-    than commanded. pdw_tb.py cannot see it: it lands its configuration on the
+    the NCO is fed the carrier for as long as reset lasts; unless its pipeline
+    resets too, the first `LAT` samples after release are that stale carrier
+    prepended to the first pulse, which then comes out `LAT` samples wider than
+    commanded. pdw_tb.py cannot see it: it lands its configuration on the
     release cycle itself, so CTRL_DEFAULTS' zero amplitude is what fills the
     pipeline there.
     """
-    cyc: Reg[uint32_t] = 0
-    t: uint32_t = cyc
-    in_rst: uint1_t = (t < RST_CYCLES) | ((t >= MID_RST_AT) & (t < MID_RST_END))
+    t: uint32_t = gen_cycle
     o = pulse_gen(
         pri=TEST_PRI,
         width=TEST_WIDTH,
@@ -309,9 +321,7 @@ def pulse_gen_reset_tb():
         freq=0,
         chirp_rate=0,
         noise_amp=0,
-        rst=in_rst,
     )
-    cyc = t + 1
 
     live: uint1_t = (o.data.i != 0) | (o.data.q != 0)
     sim_print(f"generator reset {t} {o.data.i} {o.data.q}", debug=True)

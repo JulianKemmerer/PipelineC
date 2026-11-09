@@ -17,6 +17,8 @@ from pypeline import (
     hw_func,
     sim_reset,
     sim_call,
+    Input,
+    make_reset,
 )
 
 # Path for pypeline_tests import
@@ -26,7 +28,12 @@ sys.path.insert(
 import pypeline_tests
 
 
-@MAIN
+# Synchronous reset pin (pulsed in cycle 0 by the simulators): every @MAIN
+# resets every register with it
+rst: Input[uint1_t] = make_reset()
+
+
+@MAIN(reset=rst, reset_registers="all")
 def regs_multi_inst(sel: uint1_t, data_in: uint32_t) -> uint32_t:
     rv: uint32_t
     if sel:
@@ -48,7 +55,7 @@ if __name__ == "__main__":
     test_regs_multi_inst()
 
 
-@MAIN
+@MAIN(reset=rst, reset_registers="all")
 def feedback_test(a: uint1_t, b: uint1_t) -> uint1_t:
     # Declare feedback, is not zero initalized in hardware
     # (is zero initialized for simulation evaluation)
@@ -77,7 +84,7 @@ if __name__ == "__main__":
     sim_feedback_test()
 
 
-@MAIN
+@MAIN(reset=rst, reset_registers="all")
 def fb_reg_accumulate(load: uint1_t, data: uint8_t) -> uint8_t:
     acc: Reg[uint8_t]  # accumulates across calls
     f: Feedback[uint1_t]  # 1 when acc is odd (LSB of acc)
@@ -111,7 +118,7 @@ if __name__ == "__main__":
     sim_fb_reg_accumulate_test()
 
 
-@MAIN
+@MAIN(reset=rst, reset_registers="all")
 def ce_accum_test(sel0: uint1_t, sel1: uint1_t, data_in: uint32_t) -> uint32_t:
     rv: uint32_t
     if sel0:
@@ -120,7 +127,7 @@ def ce_accum_test(sel0: uint1_t, sel1: uint1_t, data_in: uint32_t) -> uint32_t:
     return rv
 
 
-@MAIN
+@MAIN(reset=rst, reset_registers="all")
 def comp_null_test(sel: uint1_t) -> pypeline_tests.point_xy_t:
     p: pypeline_tests.point_xy_t
     if sel:
@@ -130,7 +137,7 @@ def comp_null_test(sel: uint1_t) -> pypeline_tests.point_xy_t:
     return p
 
 
-@MAIN
+@MAIN(reset=rst, reset_registers="all")
 def void_ret_test2(sel: uint1_t):
     p: pypeline_tests.point_xy_t
     if sel:
@@ -139,24 +146,24 @@ def void_ret_test2(sel: uint1_t):
         p.y = 1
 
 
-@MAIN
+@MAIN(reset=rst, reset_registers="all")
 def test_point_u8_t(point: pypeline_tests.point_u8_t) -> pypeline_tests.point_u8_t:
     return point
 
 
-@MAIN
+@MAIN(reset=rst, reset_registers="all")
 def types_test_main(point: pypeline_tests.point_t) -> pypeline_tests.point_t:
     return pypeline_tests.types_test_foo(point)
 
 
-@MAIN
+@MAIN(reset=rst, reset_registers="all")
 def reg_test(data_in: uint32_t) -> uint32_t:
     acc: Reg[uint32_t]
     acc = acc + data_in
     return acc
 
 
-@MAIN
+@MAIN(reset=rst, reset_registers="all")
 def while_concat_main(bits_lo: uint1_t[5], bits_hi: uint1_t[6]) -> uint1_t[11]:
     bits: uint1_t[11]
     b = 0
@@ -173,17 +180,17 @@ def while_concat_main(bits_lo: uint1_t[5], bits_hi: uint1_t[6]) -> uint1_t[11]:
     return bits
 
 
-@MAIN
+@MAIN(reset=rst, reset_registers="all")
 def adder_extra(a: uint32_t, b: uint32_t, c: uint32_t) -> uint34_t:
     return (a + b) + c
 
 
-@MAIN
+@MAIN(reset=rst, reset_registers="all")
 def adder(l: uint32_t, r: uint32_t) -> uint32_t:
     return l + r
 
 
-@MAIN
+@MAIN(reset=rst, reset_registers="all")
 def main_const_ref_rd(
     my_points: pypeline_tests.point_xy_t[10],
 ) -> pypeline_tests.point_xy_t[10]:
@@ -205,101 +212,101 @@ def main_const_ref_rd(
     return my_points
 
 
-@MAIN
+@MAIN(reset=rst, reset_registers="all")
 def adder_factory_test(a: uint32_t, b: uint32_t) -> uint32_t:
     return pypeline_tests.add_u32(a, b)
 
 
-@MAIN
+@MAIN(reset=rst, reset_registers="all")
 def adder_factory_dedup_test(a: uint32_t, b: uint32_t) -> uint32_t:
     return pypeline_tests.add_u32_dup(a, b)
 
 
-@MAIN
+@MAIN(reset=rst, reset_registers="all")
 def adder_factory_u8_test(a: uint8_t, b: uint8_t) -> uint8_t:
     return pypeline_tests.add_u8(a, b)
 
 
-@MAIN
+@MAIN(reset=rst, reset_registers="all")
 def nested_func_factory_test(a: uint32_t, b: uint32_t, c: uint32_t) -> uint32_t:
     return pypeline_tests.sum3_u32(a, b, c)
 
 
-@MAIN
+@MAIN(reset=rst, reset_registers="all")
 def nested_func_factory_dedup_test(a: uint32_t, b: uint32_t, c: uint32_t) -> uint32_t:
     return pypeline_tests.sum3_u32_dup(a, b, c)
 
 
-@MAIN
+@MAIN(reset=rst, reset_registers="all")
 def nested_func_factory_u8_test(a: uint8_t, b: uint8_t, c: uint8_t) -> uint8_t:
     return pypeline_tests.sum3_u8(a, b, c)
 
 
-@MAIN
+@MAIN(reset=rst, reset_registers="all")
 def pair_passthrough(p: pypeline_tests.pair_u32_t) -> pypeline_tests.pair_u32_t:
     return p
 
 
-@MAIN
+@MAIN(reset=rst, reset_registers="all")
 def pair_swap_fields(p: pypeline_tests.pair_u32_t) -> pypeline_tests.pair_u32_t:
     rv: pypeline_tests.pair_u32_t = pypeline_tests.pair_u32_t(a=p.b, b=p.a)
     return rv
 
 
-@MAIN
+@MAIN(reset=rst, reset_registers="all")
 def pair_dup_passthrough(
     p: pypeline_tests.pair_u32_t_dup,
 ) -> pypeline_tests.pair_u32_t_dup:
     return p
 
 
-@MAIN
+@MAIN(reset=rst, reset_registers="all")
 def nested_factory_swap_test(p: pypeline_tests.pair_u32_t) -> pypeline_tests.pair_u32_t:
     return pypeline_tests.swap_u32(p)
 
 
-@MAIN
+@MAIN(reset=rst, reset_registers="all")
 def nested_factory_def_test(a: uint32_t) -> uint32_t:
     return pypeline_tests.double_inv_u32(a)
 
 
-@MAIN
+@MAIN(reset=rst, reset_registers="all")
 def nested_factory_def_u8_test(a: uint8_t) -> uint8_t:
     return pypeline_tests.double_inv_u8(a)
 
 
-@MAIN
+@MAIN(reset=rst, reset_registers="all")
 def shift_const_param(v: uint32_t) -> uint32_t:
     return v << pypeline_tests.SHIFT_AMOUNT
 
 
-@MAIN
+@MAIN(reset=rst, reset_registers="all")
 def shift_const_local_param(v: uint32_t) -> uint32_t:
     AMOUNT = 5
     return v << AMOUNT
 
 
-@MAIN
+@MAIN(reset=rst, reset_registers="all")
 def shift_const(v: uint32_t) -> uint32_t:
     return v << 5
 
 
-@MAIN
+@MAIN(reset=rst, reset_registers="all")
 def uint_inv_test(a: uint32_t) -> uint32_t:
     return ~a
 
 
-@MAIN
+@MAIN(reset=rst, reset_registers="all")
 def main_foo_foo_fooo(x: uint1_t) -> uint1_t:
     return pypeline_tests.foo(pypeline_tests.foo(pypeline_tests.foo(x)))
 
 
-@MAIN
+@MAIN(reset=rst, reset_registers="all")
 def main_foo(x: uint1_t) -> uint1_t:
     return pypeline_tests.foo(x)
 
 
-@MAIN
+@MAIN(reset=rst, reset_registers="all")
 def point_max(points: pypeline_tests.point2d_t[3]) -> uint32_t:
     max_val: uint32_t = points[0].dim[0]
     for i in range(3):
@@ -333,7 +340,7 @@ if __name__ == "__main__":
     test_point_max()
 
 
-@MAIN
+@MAIN(reset=rst, reset_registers="all")
 def feedback_struct_test(x: uint32_t, y: uint32_t) -> uint32_t:
     # Feedback of a struct type -- the sim zero-bootstrap used to hardcode a bare
     # int 0 regardless of T, which crashed here on the first convergence pass's

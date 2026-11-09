@@ -41,6 +41,8 @@ from pypeline import (
     uint1_t,
     uint8_t,
     uint16_t,
+    Input,
+    make_reset,
 )
 
 
@@ -82,7 +84,13 @@ NUM_CYCLES_RUN = TOTAL_LAT + 40
 # Returns the pipeline output as a real top-level port: without any output,
 # the sweep's per-iteration top synthesis (yosys/PYRTL timing check) prunes
 # the entire design as unobserved and the timing analysis fails.
-@MAIN(40.0)
+
+# Synchronous reset pin (pulsed in cycle 0 by the simulators): every @MAIN
+# resets every register with it
+rst: Input[uint1_t] = make_reset()
+
+
+@MAIN(40.0, reset=rst, reset_registers="all")
 def ap_tb() -> ap_stream_t:
     count: Reg[uint16_t]
 

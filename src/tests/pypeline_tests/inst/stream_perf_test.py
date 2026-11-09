@@ -195,6 +195,22 @@ def test_buffer_tap():
     assert stream_fifo_capacity_beats(100) == 129
 
 
+def test_buffer_reset_counts_discarded_beats():
+    """A reset of the buffer's hardware (emptied()) drops what it held: the
+    beats count as discarded, so transfer conservation still holds."""
+    bt = BufferTap("a/fifo.occupancy")
+    bt.sample(1, (1, 0, 3))
+    bt.sample(2, (1, 0, 3))
+    bt.emptied()
+    bt.sample(3, (1, 0, 3))
+    bt.flush()
+    snap = bt.snapshot()
+    assert (snap["accepted_beats"], snap["discarded_beats"], snap["end_occupancy"]) == (
+        3, 2, 1), snap
+    phase = {"name": "p", "taps": {"a/fifo.occupancy": snap}}
+    assert sb.buffer_tap_errors(phase, {"a/fifo": 3}, settled=False) == []
+
+
 def test_state_and_arb_taps():
     reg = TapRegistry(["all"])
     st = reg.tap("a/mac.fsm", StateTap)

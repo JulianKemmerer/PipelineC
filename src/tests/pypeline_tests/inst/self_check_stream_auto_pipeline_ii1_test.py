@@ -32,7 +32,7 @@ sys.path.insert(
     ),
 )
 
-from pypeline import MAIN, Reg, hw_func, sim_assert, sim_finish, sim_print
+from pypeline import hw_func, Input, MAIN, make_reset, Reg, sim_assert, sim_finish, sim_print, uint1_t
 from pypeline import uint1_t, uint8_t, uint16_t
 
 from stream.stream_auto_pipeline import make_stream_auto_pipeline
@@ -52,7 +52,12 @@ NUM = 20  # words through each wrapper
 MAX_CYCLES = 100  # every result is due by cycle ~30; a stall fails loudly
 
 
-@MAIN(100.0)
+# Synchronous reset pin (pulsed in cycle 0 by the simulators): every @MAIN
+# resets every register with it
+rst: Input[uint1_t] = make_reset()
+
+
+@MAIN(100.0, reset=rst, reset_registers="all")
 def self_check_stream_auto_pipeline_ii1() -> uint8_t:
     cycle: Reg[uint16_t]
     sent0: Reg[uint8_t]

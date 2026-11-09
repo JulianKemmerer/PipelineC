@@ -22,6 +22,9 @@ from pypeline import (
     pipeline_latency,
     struct,
     uint16_t,
+    Input,
+    make_reset,
+    uint1_t,
 )
 
 
@@ -48,7 +51,12 @@ def core(x: uint16_t) -> extra_cuts_pair_t:
 AP = AUTO_PIPELINE(core, latency=2)
 
 
-@MAIN
+# Synchronous reset pin (pulsed in cycle 0 by the simulators): every @MAIN
+# resets every register with it
+rst: Input[uint1_t] = make_reset()
+
+
+@MAIN(reset=rst, reset_registers="all")
 def fixed_auto_pipeline_extra_cuts_top() -> extra_cuts_pair_t:
     count: Reg[uint16_t]
     r: extra_cuts_pair_t = AP(count)

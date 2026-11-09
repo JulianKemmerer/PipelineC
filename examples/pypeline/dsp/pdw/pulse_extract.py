@@ -170,7 +170,7 @@ def make_packet_store(
                      sim_assert fires if it ever is.
 
         packet_store(gated_in, pdw_in, pdw_in_valid, verdict, beat_status,
-                     meas_in, meas_in_valid, pkt_out_if, pdw_out_if, rst)
+                     meas_in, meas_in_valid, pkt_out_if, pdw_out_if)
                      -> packet_store_t
 
     `pdw_in_valid` must coincide with `gated_in.last` -- guaranteed by the
@@ -196,6 +196,13 @@ def make_packet_store(
         SEND_PKT -- forward `remaining` beats under real backpressure, with
                     `last` on the final one.
         FLUSH    -- pop and discard `remaining` beats at full rate.
+
+    RESET. No reset input: under a `reset_registers="all"` @MAIN a reset
+    empties the three FIFOs and returns the state machine and the write-side
+    accumulators to their initial values. The write side matters as much as
+    `state` does: n_pushed/acc_status/acc_bad accumulate across a packet, so a
+    reset landing mid-pulse would otherwise stamp the next packet's descriptor
+    with the abandoned pulse's beat count and sticky status bits.
     """
 
     @enum
@@ -301,7 +308,6 @@ def make_packet_store(
         meas_in_valid: uint1_t,
         pkt_out_if: pkt_out_intrf.fb_t,
         pdw_out_if: pdw_out_intrf.fb_t,
-        rst: uint1_t,
     ) -> packet_store_t:
         o: packet_store_t
 
@@ -318,19 +324,13 @@ def make_packet_store(
         releasing: uint1_t = state == store_state_t.SEND_PKT
         flushing: uint1_t = state == store_state_t.FLUSH
 
-        # Data FIFO. Drain during SEND_PKT (under real backpressure), during
-        # FLUSH (at full rate, into the bit bucket), and unconditionally during
-        # reset.
-        #
-        # The reset term is what makes reset able to empty this FIFO at all: it
-        # is a make_fifo instance, a black-box VHDL entity with no flush, so the
-        # only way to clear it is to clock its contents out. The other two terms
-        # cannot do that job, because both require a descriptor to have been
-        # popped -- and the case reset most needs to clean up is a pulse that
-        # was still OPEN when reset hit, whose `desc_push` never fired. Without
-        # this term those samples stay in the FIFO forever and become the head
-        # of the next packet.
-        data_ready: uint1_t = (releasing & pkt_out_if.ready) | flushing | rst
+        # Data FIFO. Drain during SEND_PKT (under real backpressure) and during
+        # FLUSH (at full rate, into the bit bucket). Both require a descriptor
+        # to have been popped, so neither can clean up a pulse that was still
+        # OPEN when a reset hit (its `desc_push` never fired): the reset itself
+        # empties the FIFO, or those samples would become the head of the next
+        # packet.
+        data_ready: uint1_t = (releasing & pkt_out_if.ready) | flushing
         df = data_fifo(
             ready_for_data_out=data_ready,
             data_in=gated_in.data,
@@ -392,13 +392,11 @@ def make_packet_store(
         # `data_out_valid` would be the obvious alternative, but the value is
         # only available from the call that also consumes it -- the same
         # circular call-order problem pulse_detect documents for chained
-        # elastic stages.
-        # Both also pop unconditionally during reset, for the same reason
-        # data_ready does. Popping an empty make_fifo is a safe no-op (its read
+        # elastic stages. Popping an empty make_fifo is a safe no-op (its read
         # side reloads the output register only `if self.q`), which is what the
-        # normal IDLE case already relies on.
-        awaiting: uint1_t = (state == store_state_t.WAIT_MEAS) | rst
-        desc_pop: uint1_t = (state == store_state_t.IDLE) | rst
+        # IDLE case relies on.
+        awaiting: uint1_t = state == store_state_t.WAIT_MEAS
+        desc_pop: uint1_t = state == store_state_t.IDLE
         sf = desc_fifo(
             ready_for_data_out=desc_pop, data_in=desc_in, data_in_valid=desc_push
         )
@@ -491,26 +489,6 @@ def make_packet_store(
                 else:
                     remaining = remaining - 1
 
-        # ---- reset ---------------------------------------------------------
-        # LAST, so it overrides every transition above. The FIFOs are emptied
-        # by the drain terms up at data_ready/desc_pop/awaiting; this clears the
-        # bookkeeping that describes what WAS in them. The write-side registers
-        # matter as much as `state` does: n_pushed/acc_status/acc_bad accumulate
-        # across a packet, so a reset landing mid-pulse would otherwise stamp
-        # the next packet's descriptor with the abandoned pulse's beat count and
-        # sticky status bits.
-        if rst:
-            state = store_state_t.IDLE
-            remaining = 0
-            acc_status = 0
-            acc_bad = 0
-            n_pushed = 0
-            fifo_full_sticky = 0
-            desc_drop_sticky = 0
-            meas_drop_sticky = 0
-            accept_r = 0
-            empty_r = 0
-
         return o
 
     packet_store.sample_t = sample_t
@@ -531,14 +509,12 @@ def make_pulse_extract(pulse_detect, depth=16384, n_pkts=16, *, join_depth=32):
     """The whole README box 3, wired to a `pulse_detect` instance. Returns pulse_extract, with its complete return type at pulse_extract.return_t.
 
         pulse_extract(gated_in, pdw_in_if, dsp_overflow, min_width, max_width,
-                   freq_acc, noise_est, pkt_out_if, pdw_out_if, rst)
+                   freq_acc, noise_est, pkt_out_if, pdw_out_if)
             -> pulse_extract_t
 
-    `rst` is active high. It both DRAINS and CLEARS: the three FIFOs are
-    black-box make_fifo instances with no flush, so reset forces their read
-    enables high and empties them by clocking their contents out, while the
-    store FSM's own registers are returned to their power-on values. Hold it
-    for at least as long as the data FIFO's depth for the drain to complete.
+    No reset input: under a `reset_registers="all"` @MAIN a reset empties the
+    three FIFOs and the joins and returns every register to its initial value
+    in the cycle after it is asserted, however much was buffered.
 
         pulse_extract_t fields:
           .pdw_in_if (pulse_detect.out_fb_t) -- the candidate stream's ready,
@@ -623,7 +599,6 @@ def make_pulse_extract(pulse_detect, depth=16384, n_pkts=16, *, join_depth=32):
         noise_est: pulse_detect.noise_t,
         pkt_out_if: packet_store.pkt_out_intrf.fb_t,
         pdw_out_if: packet_store.pdw_out_intrf.fb_t,
-        rst: uint1_t,
     ) -> pulse_extract_t:
         candidate = pdw_in_if.stream.data
         v = pdw_qualify(
@@ -667,7 +642,7 @@ def make_pulse_extract(pulse_detect, depth=16384, n_pkts=16, *, join_depth=32):
             pdw_in_if.stream.valid,
             freq_acc,
             freq_acc.valid,
-            rst,
+            0,
         )
 
         m = pulse_measure(
@@ -677,7 +652,6 @@ def make_pulse_extract(pulse_detect, depth=16384, n_pkts=16, *, join_depth=32):
             toa=j.p0.toa,
             valid_in=j.valid,
             count_pri=j.p0.accept,
-            rst=rst,
         )
 
         ps = packet_store(
@@ -690,7 +664,6 @@ def make_pulse_extract(pulse_detect, depth=16384, n_pkts=16, *, join_depth=32):
             meas_in_valid=m.valid,
             pkt_out_if=pkt_out_if,
             pdw_out_if=pdw_out_if,
-            rst=rst,
         )
 
         o: pulse_extract_t

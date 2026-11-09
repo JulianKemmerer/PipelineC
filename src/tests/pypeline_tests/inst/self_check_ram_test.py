@@ -60,6 +60,8 @@ from pypeline import (
     uint8_t,
     uint16_t,
     uint32_t,
+    Input,
+    make_reset,
 )
 
 from fixed_point import make_fixed_t
@@ -196,7 +198,12 @@ lookup_valid: Wire[uint1_t]
 lookup_result: Wire[lookup_t]
 
 
-@MAIN(100.0)
+# Synchronous reset pin (pulsed in cycle 0 by the simulators): every @MAIN
+# resets every register with it
+rst: Input[uint1_t] = make_reset()
+
+
+@MAIN(100.0, reset=rst, reset_registers="all")
 def self_check_ram_lookup():
     req: square_in_t
     req.addr = lookup_addr
@@ -221,7 +228,7 @@ sram_resp_fb_t = sram.p0_resp_intrf.fb_t
 sram_resp_stream_t = sram.p0_resp_intrf.stream_t
 
 
-@MAIN
+@MAIN(reset=rst, reset_registers="all")
 def self_check_ram_checker() -> lookup_t:
     c: Reg[uint8_t]
     done: Reg[uint1_t]

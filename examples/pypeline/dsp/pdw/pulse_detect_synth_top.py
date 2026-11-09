@@ -18,7 +18,7 @@ Synthesize (requires Vivado):
 
 import pdw_paths  # noqa: F401  (puts include/pypeline on sys.path)
 
-from pypeline import MAIN, PART, Input, uint1_t, uint32_t
+from pypeline import MAIN, PART, Input, make_reset, uint1_t, uint32_t
 
 from pulse_detect import make_pulse_detect_fsm
 
@@ -36,12 +36,13 @@ pulse_detect_fsm = make_pulse_detect_fsm(power_t)
 threshold_high: Input[uint32_t]
 threshold_low: Input[uint32_t]
 max_width: Input[uint32_t]
-# A real port rather than a tied 0: the reset fans out to the whole state
-# machine, so its routing is part of what this check should be measuring.
-rst: Input[uint1_t]
+# A real reset pin rather than none: under reset_registers="all" the reset
+# fans out to the whole state machine, so its routing is part of what this
+# check should be measuring.
+rst: Input[uint1_t] = make_reset()
 
 
-@MAIN(125.0)
+@MAIN(125.0, reset=rst, reset_registers="all")
 def pulse_detect_fsm_top(
     stream_in_if: pulse_detect_fsm.in_fwd_t, pdw_out_if: pulse_detect_fsm.out_fb_t
 ) -> pulse_detect_fsm.return_t:
@@ -51,5 +52,4 @@ def pulse_detect_fsm_top(
         power_t(val=threshold_high),
         power_t(val=threshold_low),
         max_width,
-        rst,
     )

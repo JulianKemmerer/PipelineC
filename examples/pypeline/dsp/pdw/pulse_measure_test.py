@@ -6,6 +6,8 @@ but only over the handful of phasor magnitudes and power levels that the real
 detector happens to produce. This drives it directly over the full input range
 -- phasor magnitudes from 2^10 to 2^36, power and noise across their whole
 spans -- which is where a width or normalization mistake would show up.
+A reset restarting the PRI state is checked in pdw_reset_test.py, under a real
+`reset_registers="all"` reset (sim_call runs with every reset inactive).
 
 Run: python3 pulse_measure_test.py
 """
@@ -51,7 +53,6 @@ def _drive(stim):
                 toa=s["toa"],
                 valid_in=1,
                 count_pri=s["accept"],
-                rst=0,
             )
         else:
             r = sim_call(
@@ -62,7 +63,6 @@ def _drive(stim):
                 toa=0,
                 valid_in=0,
                 count_pri=0,
-                rst=0,
             )
         if int(r.valid):
             got.append(
@@ -230,60 +230,6 @@ def test_bubbles_keep_fields_together():
     print("test_bubbles_keep_fields_together passed")
 
 
-def test_reset_discards_inflight_and_restarts_pri():
-    sim_reset()
-    old, new = _rand_stim(7, 3), _rand_stim(24, 87)
-    got = []
-    restart = len(old) + 70
-    for c in range(restart + len(new) + 80):
-        rst = len(old) <= c < restart
-        request = (
-            old[c]
-            if c < len(old)
-            else (new[c - restart] if restart <= c < restart + len(new) else None)
-        )
-        s = request or dict(
-            fre=0, fim=0, lre=0, lim=0, noise=0, peak=0, toa=0, accept=0
-        )
-        r = sim_call(
-            meas,
-            freq_acc=FA(
-                first_re=s["fre"],
-                first_im=s["fim"],
-                last_re=s["lre"],
-                last_im=s["lim"],
-                valid=int(request is not None),
-            ),
-            noise_est=NT(val=s["noise"]),
-            peak_power=PT(val=s["peak"]),
-            toa=s["toa"],
-            valid_in=int(request is not None),
-            count_pri=s["accept"],
-            rst=int(rst),
-        )
-        assert not r.overflow
-        if rst:
-            assert not r.valid, "measurement leaked during drain"
-        if r.valid:
-            assert c >= restart, "old measurement survived reset"
-            got.append(
-                {
-                    field: int(getattr(r, field))
-                    for field in (
-                        "freq_start",
-                        "freq_stop",
-                        "peak_power_db",
-                        "noise_power_db",
-                        "pri",
-                        "freq_degenerate",
-                        "pri_valid",
-                    )
-                }
-            )
-    assert got == _golden(new), (got, _golden(new))
-    print("test_reset_discards_inflight_and_restarts_pri passed")
-
-
 def test_selected_rom_alignment():
     """The slowest table can be power or noise, even slower than atan2."""
     import pypeline as py
@@ -313,6 +259,5 @@ if __name__ == "__main__":
     test_pri_counts_accepted_pulses_only()
     test_degenerate_phasor_is_flagged()
     test_bubbles_keep_fields_together()
-    test_reset_discards_inflight_and_restarts_pri()
     test_selected_rom_alignment()
     print("All pulse_measure tests passed")

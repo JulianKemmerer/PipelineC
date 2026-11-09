@@ -18,10 +18,18 @@ from pypeline import (
     uint8_t,
     sim_call,
     sim_reset,
+    Input,
+    make_reset,
+    uint1_t,
 )
 
 
-@MAIN(1.0)
+# Synchronous reset pin (pulsed in cycle 0 by the simulators): every @MAIN
+# resets every register with it
+rst: Input[uint1_t] = make_reset()
+
+
+@MAIN(1.0, reset=rst, reset_registers="all")
 def sweep_planless_main(x: uint8_t) -> uint8_t:
     # Stateful main, no auto-pipeline tags anywhere, trivially meets 1 MHz
     acc: Reg[uint8_t]

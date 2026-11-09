@@ -16,6 +16,9 @@ from pypeline import (
     sim_assert,
     sim_print,
     sim_finish,
+    Input,
+    make_reset,
+    uint1_t,
 )
 from ram import make_auto_pipeline_ram
 
@@ -26,7 +29,12 @@ if param("RAM_TARGET_IN_SOURCE", True):
     PART("xc7a200tffg1156-2")
 
 
-@MAIN(125.0)
+# Synchronous reset pin (pulsed in cycle 0 by the simulators): every @MAIN
+# resets every register with it
+rst: Input[uint1_t] = make_reset()
+
+
+@MAIN(125.0, reset=rst, reset_registers="all")
 def self_check_auto_pipeline_ram_target() -> uint32_t:
     tick: Reg[uint16_t]
     checked: Reg[uint16_t]

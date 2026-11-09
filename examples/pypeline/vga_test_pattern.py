@@ -95,7 +95,11 @@ def test_pattern(sig: vga_timing_signals_t) -> vga_12bpp_t:
     return vga_12bpp_t(r=out_r, g=out_g, b=out_b, hs=sig.hsync, vs=sig.vsync)
 
 
-@MAIN(vga_timing.pixel_clk_mhz)
+# Synchronous reset input, active high: restarts the VGA timing counters
+rst: Input[uint1_t] = make_reset()
+
+
+@MAIN(vga_timing.pixel_clk_mhz, reset=rst, reset_registers="all")
 def vga_test_pattern():
     """Top-level hardware process: generate timing, compute pixel colour, drive board output."""
     sig = vga_timing()

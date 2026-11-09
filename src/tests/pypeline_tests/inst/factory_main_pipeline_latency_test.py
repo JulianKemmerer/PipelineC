@@ -30,6 +30,8 @@ import sys
 sys.path.insert(0, {SRC_DIR!r})
 from pypeline import *
 
+rst: Input[uint1_t] = make_reset()  # every register resets; pulsed in cycle 0
+
 
 @pipeline_latency(1)
 @hw_func
@@ -56,7 +58,10 @@ def make_lane(i):
     return lane
 
 
-lanes = [MAIN(make_lane(i), name=f"lane{{i}}") for i in range(2)]
+lanes = [
+    MAIN(make_lane(i), name=f"lane{{i}}", reset=rst, reset_registers="all")
+    for i in range(2)
+]
 """
 
 
@@ -107,9 +112,11 @@ def test_lanes_dispatch_to_their_own_timing():
         ]
         for lane in ("lane0", "lane1")
     }
-    # lane1: delay_one's one cycle; lane0: one more for h's output register
-    assert ys["lane1"] == [1, 1, 2, 3, 4], ys
-    assert ys["lane0"] == [0, 1, 1, 2, 3], ys
+    # lane1: delay_one's one cycle; lane0: one more for h's output register.
+    # The cycle-0 reset returns t, delay_one's register and h's output register
+    # to 0, so each lane repeats its cycle-0 value once before counting
+    assert ys["lane1"] == [1, 1, 1, 2, 3], ys
+    assert ys["lane0"] == [0, 0, 1, 1, 2], ys
     print("test_lanes_dispatch_to_their_own_timing PASS")
 
 

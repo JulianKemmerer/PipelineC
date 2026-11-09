@@ -479,7 +479,12 @@ def render_pixel(sig: vga_timing_signals_t, state: full_state_t) -> sim_px_t:
     return sim_px_t(r=r, g=g, b=b, hs=sig.hsync, vs=sig.vsync)
 
 
-@MAIN(vga_timing.pixel_clk_mhz)
+# Synchronous reset input, active high: restarts the VGA timing and returns
+# the donut's rotation and bounce state to their initial values
+rst: Input[uint1_t] = make_reset()
+
+
+@MAIN(vga_timing.pixel_clk_mhz, reset=rst, reset_registers="all")
 def vga_donut():
     """Top-level hardware process: generate timing, compute pixel color, drive board output."""
     sig = vga_timing()

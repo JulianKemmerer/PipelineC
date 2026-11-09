@@ -30,6 +30,9 @@ from pypeline import (
     sim_finish,
     sim_reset,
     uint16_t,
+    Input,
+    make_reset,
+    uint1_t,
 )
 
 
@@ -88,7 +91,12 @@ def two_fixed_same_line(x: uint16_t) -> uint16_t:
 NUM_CYCLES = 20
 
 
-@MAIN
+# Synchronous reset pin (pulsed in cycle 0 by the simulators): every @MAIN
+# resets every register with it
+rst: Input[uint1_t] = make_reset()
+
+
+@MAIN(reset=rst, reset_registers="all")
 def fixed_latency_self_check() -> uint16_t:
     count: Reg[uint16_t]
     o: uint16_t = FIXED3(count)

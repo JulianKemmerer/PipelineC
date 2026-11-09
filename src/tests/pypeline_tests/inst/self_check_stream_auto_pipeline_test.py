@@ -42,6 +42,8 @@ from pypeline import (
     uint1_t,
     uint8_t,
     uint16_t,
+    Input,
+    make_reset,
 )
 
 from stream.stream import make_stream_interface
@@ -84,7 +86,13 @@ MAX_CYCLES = 200  # generous flush bound; a stuck pipeline fails loudly
 # its own stream_in_if from local constants -- so stream_auto_pipeline_t's own
 # `stream_in_if` field, the reverse half of a port this function doesn't
 # externally have, would be a lone half with no argument to pair with.)
-@MAIN(50.0)
+
+# Synchronous reset pin (pulsed in cycle 0 by the simulators): every @MAIN
+# resets every register with it
+rst: Input[uint1_t] = make_reset()
+
+
+@MAIN(50.0, reset=rst, reset_registers="all")
 def self_check_stream_auto_pipeline() -> stream_auto_pipeline.out_fwd_t:
     cycle: Reg[uint16_t]
     in_count: Reg[uint16_t]

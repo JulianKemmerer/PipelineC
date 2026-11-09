@@ -215,6 +215,30 @@ def test_primitive_widths_are_estimated_instead_of_synthesized():
         assert any(f.startswith("MUX_") for _, f in calls), calls
 
 
+def test_fallback_keeps_modeled_primitive_delays():
+    # A primitive's delay estimated from measured widths is an estimate with
+    # no submodules to derive it from: re-deriving the estimated delays after
+    # a fallback measurement must leave it modeled. Seen for real in the
+    # WireGuard 80 MHz sweep, where the hotspot lock model's measurement
+    # stopped the build with "BIN_OP_NEQ_uint3_t_uint1_t reduces to
+    # constants/wires in an unexpected way".
+    class Model:
+        def estimate(self, func_name):
+            return (2.5, 0.3) if func_name.startswith("BIN_OP_PLUS_") else None
+
+    with characterized(delay_model=Model()) as (ps, calls):
+        plus = [f for f in ps.path_delay_funcs if f.startswith("BIN_OP_PLUS_")]
+        assert plus
+        helper = next(f for f in ps.FuncToInstances if f.endswith("product_low"))
+        assert ps.FuncLogicLookupTable[helper].delay_is_estimated
+        assert helper in SYN.MEASURE_DELAYS([helper], ps)
+        assert all(
+            ps.FuncLogicLookupTable[f].delay == 25
+            and ps.FuncLogicLookupTable[f].delay_is_estimated
+            for f in plus
+        ), [(f, ps.FuncLogicLookupTable[f].delay) for f in plus]
+
+
 def test_unmarked_stateful_function_without_consumer_has_no_jobs():
     with characterized() as (ps, calls):
         assert "fsm_stand_in" not in ps.path_delay_funcs

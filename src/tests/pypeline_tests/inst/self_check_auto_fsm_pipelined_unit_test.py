@@ -22,6 +22,8 @@ from pypeline import (
     uint4_t,
     uint16_t,
     uint32_t,
+    Input,
+    make_reset,
 )
 from stream.stream_auto_fsm import make_stream_auto_fsm
 
@@ -83,7 +85,12 @@ if RAW.schedule is not None:
     ), "fixture must exercise a pipelined functional unit"
 
 
-@MAIN(60.0)
+# Synchronous reset pin (pulsed in cycle 0 by the simulators): every @MAIN
+# resets every register with it
+rst: Input[uint1_t] = make_reset()
+
+
+@MAIN(60.0, reset=rst, reset_registers="all")
 def self_check_auto_fsm_pipelined_unit() -> uint32_t:
     index: Reg[uint4_t]
     sent: Reg[uint1_t]

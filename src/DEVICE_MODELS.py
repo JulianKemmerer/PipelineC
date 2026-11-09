@@ -289,6 +289,7 @@ class _ArrivalState:
         "combinational_delay_ns",
         "prev",
         "arc",
+        "start_port",
     )
 
     def __init__(
@@ -300,6 +301,7 @@ class _ArrivalState:
         combinational_delay_ns=0.0,
         prev=None,
         arc=None,
+        start_port=None,
     ):
         self.time_ns = time_ns
         self.transition_ns = transition_ns
@@ -308,6 +310,9 @@ class _ArrivalState:
         self.combinational_delay_ns = combinational_delay_ns
         self.prev = prev
         self.arc = arc
+        # On a primary input's own arrival only: that input port's bit, as
+        # `name` or `name[i]` (see run_sta's start_port_name)
+        self.start_port = start_port
 
 
 def _arc_diagnostic(
@@ -483,13 +488,20 @@ def run_sta(
     # lists at each propagated net.
     arrival = {}
     all_bits = set(driver_of) | set(sinks_of) | set(clk_sinks_of)
-    for port in ports.values():
-        all_bits.update(bit for bit in port.get("bits", ()) if isinstance(bit, int))
+    input_port_bit = {}
+    for name, port in ports.items():
+        bits = port.get("bits", ())
+        all_bits.update(bit for bit in bits if isinstance(bit, int))
+        if port.get("direction") == "input":
+            for i, bit in enumerate(bits):
+                if isinstance(bit, int):
+                    input_port_bit[bit] = name if len(bits) == 1 else f"{name}[{i}]"
     for bit in all_bits:
         if bit not in driver_of:
+            port_bit = input_port_bit.get(bit)
             arrival[bit] = {
-                "rise": _ArrivalState(0.0, default_trans, None),
-                "fall": _ArrivalState(0.0, default_trans, None),
+                "rise": _ArrivalState(0.0, default_trans, None, start_port=port_bit),
+                "fall": _ArrivalState(0.0, default_trans, None, start_port=port_bit),
             }
 
     n_violations = 0
@@ -722,10 +734,20 @@ def run_sta(
     critical_path_cap_violations = sum(
         1 for arc in critical_path if arc["violates_max_capacitance"]
     )
+    # A path from a top-level input has no start register: name the input
+    # port instead, as other tools name it in their start point (a reset
+    # pin's fanout, say: SWEEP.RESET_DISTRIBUTION_PATH)
+    start_port_name = None
+    root = worst_state
+    while root is not None and root.prev is not None:
+        root = root.prev
+    if root is not None and root.root_inst is None:
+        start_port_name = root.start_port
 
     return {
         "worst_period_ns": worst_period,
         "start_reg_name": start_reg_name,
+        "start_port_name": start_port_name,
         "end_reg_name": end_reg_name,
         "launch_clock_to_q_ns": (
             worst_state.launch_clock_to_q_ns if worst_state is not None else 0.0
@@ -1181,6 +1203,10 @@ def _cached_timing_mismatch_reason(log_path, synthesis_inputs, recipe_name=None)
         return f"unreadable {os.path.basename(timing_json_path)} ({exc.__class__.__name__})"
     if structured.get("mapping_succeeded") is not True:
         return "cached run did not map successfully"
+    if "start_port_name" not in structured:
+        # Reused, it would hide where a path from a top-level input starts
+        # (Start port:), which the sweep reads for a reset pin's fanout
+        return "report predates input-port startpoints"
     if structured.get("model_cache_identity") != GET_MODEL_CACHE_IDENTITY(
         recipe_name=recipe_name
     ):
@@ -1302,6 +1328,9 @@ class PathReport:
         self.path_group = "clk"
         self.netlist_resources = set()
         self.start_reg_name = None
+        # The input port a path from a top-level input starts at (no start
+        # register); other tools name the port in start_reg_name
+        self.start_port_name = None
         self.end_reg_name = None
         self.launch_clock_to_q_ns = None
         self.combinational_delay_ns = None
@@ -1339,6 +1368,9 @@ class PathReport:
             elif "Start reg:" in line:
                 v = _val(line, "Start reg:")
                 self.start_reg_name = None if v == "None" else v
+            elif "Start port:" in line:
+                v = _val(line, "Start port:")
+                self.start_port_name = None if v == "None" else v
             elif "End reg:" in line:
                 v = _val(line, "End reg:")
                 self.end_reg_name = None if v == "None" else v
@@ -1438,6 +1470,7 @@ def _write_sta_log(
         f"Worst period (ns): {period_ns:.6f}",
         f"Fmax (MHz): {fmax_mhz:.6f}",
         f"Start reg: {sta_result['start_reg_name']}",
+        f"Start port: {sta_result.get('start_port_name')}",
         f"End reg: {sta_result['end_reg_name']}",
         f"Launch clock-to-Q (ns): {sta_result.get('launch_clock_to_q_ns', 0.0):.6f}",
         f"Combinational delay (ns): {sta_result.get('combinational_delay_ns', 0.0):.6f}",
@@ -1630,6 +1663,7 @@ def _run_synth_and_sta(
         failed_result = {
             "worst_period_ns": 0.0,
             "start_reg_name": None,
+            "start_port_name": None,
             "end_reg_name": None,
             "launch_clock_to_q_ns": 0.0,
             "combinational_delay_ns": 0.0,

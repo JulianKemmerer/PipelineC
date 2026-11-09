@@ -12,7 +12,7 @@ sys.path.insert(
     0, os.path.join(os.path.dirname(os.path.abspath(__file__)), "../../../")
 )
 
-from pypeline import AUTO_PIPELINE, MAIN, Reg, hw_func, uint1_t, uint8_t
+from pypeline import AUTO_PIPELINE, MAIN, Reg, hw_func, uint1_t, uint8_t, Input, make_reset
 
 
 @hw_func
@@ -36,7 +36,12 @@ print(
 )
 
 
-@MAIN(10.0)
+# Synchronous reset pin (pulsed in cycle 0 by the simulators): every @MAIN
+# resets every register with it
+rst: Input[uint1_t] = make_reset()
+
+
+@MAIN(10.0, reset=rst, reset_registers="all")
 def auto_pipeline_constraints_main(x: uint8_t) -> uint8_t:
     # State makes the main itself unsliceable: only the tagged regions take
     # registers

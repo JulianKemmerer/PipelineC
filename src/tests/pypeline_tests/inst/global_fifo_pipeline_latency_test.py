@@ -31,13 +31,17 @@ import sys, os
 sys.path.insert(0, {repo_root!r})
 from pypeline import *
 
+# A reset pin as the clock's reset: every MAIN and global instance resets
+rst: Input[uint1_t] = make_reset()
+clk = make_clock(100.0, reset=rst)
+
 """
 
 _FIFO = """
 rx: Fifo[uint8_t] = global_fifo(4)
 
 
-@MAIN(100.0)
+@MAIN(clk, reset_registers="all")
 def producer():
     n: Reg[uint8_t]
     rx.wr.stream.data = n
@@ -46,7 +50,7 @@ def producer():
         n += 1
 
 
-@MAIN(100.0)
+@MAIN(clk, reset_registers="all")
 def consumer():
     rx.rd.ready = 1
     sink = rx.rd.stream.data
@@ -70,7 +74,7 @@ def add1(x: uint8_t) -> uint8_t:
 add1_ap = AUTO_PIPELINE(add1)
 
 
-@MAIN(100.0)
+@MAIN(clk, reset_registers="all")
 def pl_main(a: uint8_t) -> uint8_t:
     t: Reg[uint8_t]
     y = delay_one(a)

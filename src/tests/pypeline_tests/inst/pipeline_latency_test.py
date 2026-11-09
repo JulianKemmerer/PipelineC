@@ -16,6 +16,8 @@ from pypeline import (
     sim_reset,
     uint1_t,
     uint16_t,
+    Input,
+    make_reset,
 )
 
 
@@ -37,7 +39,12 @@ def optional_join(x: uint16_t, bias: uint16_t = 5) -> uint16_t:
     return delay_one(x) + bias
 
 
-@MAIN
+# Synchronous reset pin (pulsed in cycle 0 by the simulators): every @MAIN
+# resets every register with it
+rst: Input[uint1_t] = make_reset()
+
+
+@MAIN(reset=rst, reset_registers="all")
 def pipeline_latency_main(x: uint16_t) -> uint16_t:
     return aligned_add(x)
 

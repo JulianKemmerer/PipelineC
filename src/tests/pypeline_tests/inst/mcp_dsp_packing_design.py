@@ -5,6 +5,8 @@ from typing import NamedTuple
 from pypeline import (
     AUTO_PIPELINE, MAIN, PART, Reg, hw_func, param, struct,
     uint1_t, uint16_t, uint32_t,
+    Input,
+    make_reset,
 )
 from stream.stream import make_stream_interface
 from stream.stream_multi_cycle import make_stream_auto_multi_cycle, make_stream_multi_cycle
@@ -47,7 +49,12 @@ class result_t(NamedTuple):
     control: uint16_t
 
 
-@MAIN(80.0)
+# Synchronous reset pin (pulsed in cycle 0 by the simulators): every @MAIN
+# resets every register with it
+rst: Input[uint1_t] = make_reset()
+
+
+@MAIN(80.0, reset=rst, reset_registers="all")
 @hw_func
 def mcp_dsp_main(data: operands_t, valid: uint1_t, ready: uint1_t) -> result_t:
     request: word_if.stream_t

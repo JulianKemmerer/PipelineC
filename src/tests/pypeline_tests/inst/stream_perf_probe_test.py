@@ -34,7 +34,7 @@ sys.path.insert(
 
 from typing import NamedTuple
 
-from pypeline import MAIN, Feedback, Reg, final, hw_func, struct, uint1_t, uint8_t
+from pypeline import MAIN, Feedback, Reg, final, hw_func, struct, uint1_t, uint8_t, Input, make_reset
 
 from stream import stream_bottleneck
 from stream import stream_perf_probe as probe
@@ -115,12 +115,17 @@ left_chain = _chain(PERIODS["left"])
 right_chain = _chain(PERIODS["right"])
 
 
-@MAIN
+# Synchronous reset pin (pulsed in cycle 0 by the simulators): every @MAIN
+# resets every register with it
+rst: Input[uint1_t] = make_reset()
+
+
+@MAIN(reset=rst, reset_registers="all")
 def left_main() -> uint8_t:
     return left_chain()
 
 
-@MAIN
+@MAIN(reset=rst, reset_registers="all")
 def right_main() -> uint8_t:
     return right_chain()
 

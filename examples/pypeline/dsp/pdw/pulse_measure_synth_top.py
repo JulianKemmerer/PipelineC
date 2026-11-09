@@ -6,7 +6,7 @@ implementation. This exposes every measurement input/output for comparison.
 """
 
 import pdw_paths  # noqa: F401
-from pypeline import MAIN, PART, uint1_t, uint64_t
+from pypeline import MAIN, PART, Input, make_reset, uint1_t, uint64_t
 from pulse_detect import make_pulse_detect
 from pulse_measure import make_pulse_measure
 
@@ -17,7 +17,11 @@ measure = make_pulse_measure(detector)
 freq_t, noise_t, power_t = detector.freq_accum_t, detector.noise_t, detector.power_t
 
 
-@MAIN(125.0)
+# A real reset pin: under reset_registers="all" it reaches every register
+rst: Input[uint1_t] = make_reset()
+
+
+@MAIN(125.0, reset=rst, reset_registers="all")
 def pulse_measure_top(
     freq: freq_t,
     noise: noise_t,
@@ -25,6 +29,5 @@ def pulse_measure_top(
     toa: uint64_t,
     valid: uint1_t,
     accept: uint1_t,
-    rst: uint1_t,
 ) -> measure.return_t:
-    return measure(freq, noise, power, toa, valid, accept, rst)
+    return measure(freq, noise, power, toa, valid, accept)

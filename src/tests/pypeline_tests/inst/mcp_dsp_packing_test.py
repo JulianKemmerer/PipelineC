@@ -25,9 +25,12 @@ def run(cmd, out, name, env=None):
     return text
 
 
-def build(out, start, prepare=False, comb=False, name="build"):
+def build(out, start, prepare=False, comb=False, name="build", rebuild=False):
     cmd = [sys.executable, SRC / "pypelinec", DESIGN, "--out_dir", out,
            "-D", f"MCP_DSP_START={start}"]
+    if rebuild:
+        # The same inputs again: without it the up-to-date out_dir does nothing
+        cmd.append("--rebuild")
     if prepare:
         cmd += ["--comb", "--no_synth"]
     elif comb:
@@ -145,6 +148,10 @@ def ghdl_protocol(out, auto_count):
         n = auto_count if "auto_multi_cycle" in entity else 4
         ports = dict(re.findall(r"(stream_in_if|stream_out_if|return_output)\s*:\s*(?:in|out)\s+(\w+)", text))
         assert len(ports) == 3, path
+        # An entity whose state resets has a RESET port: one reset edge
+        # before the protocol's cycle 0
+        has_reset = re.search(r"\bRESET\s*:\s*in\s+std_logic\b", text) is not None
+        reset_map = "RESET => rst, " if has_reset else ""
         tb_name = f"mcp_protocol_{index}"
         tb = f"""library ieee;
 use ieee.std_logic_1164.all;
@@ -153,13 +160,14 @@ use work.c_structs_pkg.all;
 entity {tb_name} is end;
 architecture test of {tb_name} is
   signal clk : std_logic := '0';
+  signal rst : std_logic := '1';
   signal req : {ports['stream_in_if']};
   signal fb : {ports['stream_out_if']};
   signal result : {ports['return_output']};
 begin
   clk <= not clk after 5 ns;
   dut: entity work.{entity} port map (
-    clk => clk, CLOCK_ENABLE => to_unsigned(1, 1),
+    clk => clk, CLOCK_ENABLE => to_unsigned(1, 1), {reset_map}
     stream_in_if => req, stream_out_if => fb, return_output => result);
   process
     variable accepted : integer := -1;
@@ -171,6 +179,8 @@ begin
     req.stream.data.salt(1) <= to_unsigned(29, 16);
     req.stream.valid <= to_unsigned(1, 1);
     fb.ready <= to_unsigned(0, 1);
+    wait until rising_edge(clk);
+    rst <= '0';
     for cycle in 0 to {n + 4} loop
       wait until rising_edge(clk);
       if accepted = -1 and result.stream_in_if.ready = 1 then
@@ -245,7 +255,7 @@ def main():
     ghdl_protocol(swept, count)
     run([sys.executable, Path(__file__).resolve(), "--native-count", count], out, "native_confirmed")
     before = {p: p.stat().st_mtime_ns for p in swept.rglob("vivado*.log")}
-    warm = build(swept, 1, name="warm_build")
+    warm = build(swept, 1, name="warm_build", rebuild=True)
     assert "Reading log" in warm and "Running:" not in warm, "warm MCP run re-synthesized"
     assert before == {p: p.stat().st_mtime_ns for p in swept.rglob("vivado*.log")}
     print("MCP DSP packing, setup/hold coverage, simulation, and warm reuse PASS")

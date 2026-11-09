@@ -3415,6 +3415,9 @@ class ParserState:
         # Pypeline clock identity (mhz, name) -> the Python name of a clock
         # made by make_clock with it, for messages and the crossing report
         self.pypeline_clock_names = {}
+        # Pypeline _Clock objects held in design module globals, named by a
+        # MAIN or not (their make_clock(reset=) is the clock's primary reset)
+        self.pypeline_module_clocks = []
         # Pypeline clock identity (mhz, name) -> the syn_mhz its make_clock gave
         self.pypeline_clock_syn_mhz = {}
         # Pypeline crossing report rows (PY_TO_LOGIC.CrossingRow): ASYNC wire
@@ -3565,6 +3568,7 @@ class ParserState:
         rv.pypeline_global_insts = dict(self.pypeline_global_insts)
         rv.pypeline_wire_decls = dict(self.pypeline_wire_decls)
         rv.pypeline_clock_names = dict(self.pypeline_clock_names)
+        rv.pypeline_module_clocks = list(getattr(self, "pypeline_module_clocks", []))
         rv.pypeline_clock_syn_mhz = dict(self.pypeline_clock_syn_mhz)
         rv.pypeline_clock_crossings = list(self.pypeline_clock_crossings)
         rv.wire_clocks_checked = set(self.wire_clocks_checked)

@@ -29,6 +29,9 @@ from pypeline import (
     uint1_t,
     uint8_t,
     uint16_t,
+    Input,
+    make_clock,
+    make_reset,
 )
 
 N_WORDS = 12
@@ -46,7 +49,13 @@ words: Fifo[word_t] = global_fifo(4)
 last_sq: Output[uint16_t]
 
 
-@MAIN
+# Synchronous reset pin (pulsed in cycle 0 by the simulators), the reset of
+# the design's clock: every @MAIN and global instance resets with it
+rst: Input[uint1_t] = make_reset()
+clk = make_clock(25.0, reset=rst)
+
+
+@MAIN(clk, reset_registers="all")
 def producer():
     t: Reg[uint8_t]
     n: Reg[uint8_t]
@@ -60,7 +69,7 @@ def producer():
     t += 1
 
 
-@MAIN
+@MAIN(clk, reset_registers="all")
 def consumer():
     t: Reg[uint8_t]
     n: Reg[uint8_t]

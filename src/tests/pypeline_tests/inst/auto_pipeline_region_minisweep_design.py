@@ -17,7 +17,7 @@ sys.path.insert(
     0, os.path.join(os.path.dirname(os.path.abspath(__file__)), "../../../")
 )
 
-from pypeline import AUTO_PIPELINE, MAIN, NamedTuple, Reg, hw_func, param, rotl, struct, uint1_t, uint32_t
+from pypeline import AUTO_PIPELINE, MAIN, NamedTuple, Reg, hw_func, param, rotl, struct, uint1_t, uint32_t, Input, make_reset
 
 
 @struct
@@ -74,7 +74,12 @@ CHAIN_AP = (
 )
 
 
-@MAIN(param("REGION_MINISWEEP_GOAL", 120.0, type=float))
+# Synchronous reset pin (pulsed in cycle 0 by the simulators): every @MAIN
+# resets every register with it
+rst: Input[uint1_t] = make_reset()
+
+
+@MAIN(param("REGION_MINISWEEP_GOAL", 120.0, type=float), reset=rst, reset_registers="all")
 def region_minisweep_main(s: st4_t) -> st4_t:
     # State makes the main itself unsliceable: only the tagged call site
     # takes registers

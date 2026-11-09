@@ -246,6 +246,7 @@ Verified drift to fix alongside implementation:
 | standalone synth/build_report docs | “all three” tool categories is stale; synth has six nonempty tools and build_report has four |
 | area-model failure notes | Old absolute-MAE failure has a source correction; retain cache-isolation concern and do not present old FAIL as current |
 | PDW runtime notes | Current ROM configuration and doubled liveness bound differ from the cited CORDIC projection |
+| [TEST_INVENTORY.md](TEST_INVENTORY.md) per-file `test_*` tables | Hand-kept line anchors drift with every edit. In the working tree on top of `deac5d21`, 50 of the 177 `inst/` files with `test_*` functions have tables with wrong anchors or missing functions, and 9 files (among them `reset_elab_test.py` and `built_hardware_current_test.py`) have no table. Generate these tables from the source with the registration tables |
 
 Generate the registration/category/cost tables from one manifest. Keep handwritten purpose and rationale close to each feature, with an owner/issue link for special cases. This avoids a second giant hand-maintained registration list. The manifest's source hashes identify this review's snapshot; regenerate and re-review changed purposes rather than blindly treating generated prose as current.
 

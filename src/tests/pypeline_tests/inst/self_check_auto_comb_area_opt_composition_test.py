@@ -12,6 +12,8 @@ import sys
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "../../..")))
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "../../../../include/pypeline")))
 from pypeline import (AUTO_COMB_AREA_OPT, AUTO_PIPELINE, MAIN, NamedTuple, Reg, hw_func,
+    Input,
+    make_reset,
     struct, sim_assert, sim_finish, sim_print, uint1_t, uint8_t, uint16_t)
 from stream.stream_auto_pipeline import make_stream_auto_pipeline
 from stream.stream_auto_fsm import make_stream_auto_fsm
@@ -108,7 +110,12 @@ CHECK_FSM = make_checker(FSM, FSM.return_t, 1)
 CHECK_EXPLICIT = make_checker(EXPLICIT, EXPLICIT.return_t, 2)
 
 
-@MAIN(5.0)
+# Synchronous reset pin (pulsed in cycle 0 by the simulators): every @MAIN
+# resets every register with it
+rst: Input[uint1_t] = make_reset()
+
+
+@MAIN(5.0, reset=rst, reset_registers="all")
 def composition() -> composition_t:
     cycle: Reg[uint16_t]
     finished: Reg[uint1_t]

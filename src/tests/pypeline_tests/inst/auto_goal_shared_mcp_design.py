@@ -1,7 +1,7 @@
 """Fixture for auto_goal_vivado_test.py: one make_stream_auto_multi_cycle
 object used under a 50 MHz and a 100 MHz MAIN. One tag has one count, which
 must meet both clocks."""
-from pypeline import MAIN, PART, Reg, hw_func, uint32_t
+from pypeline import MAIN, PART, Reg, hw_func, uint32_t, Input, make_reset, uint1_t
 
 from stream.stream import make_stream_interface
 from stream.stream_multi_cycle import make_stream_auto_multi_cycle
@@ -33,11 +33,17 @@ def lane() -> uint32_t:
     return f.stream_out_if.stream.data
 
 
-@MAIN(50.0)
+# Synchronous reset pins, one per clock (pulsed in cycle 0 by the simulators):
+# every @MAIN resets every register with its clock's pin
+rst_100: Input[uint1_t] = make_reset()
+rst_50: Input[uint1_t] = make_reset()
+
+
+@MAIN(50.0, reset=rst_50, reset_registers="all")
 def slow() -> uint32_t:
     return lane()
 
 
-@MAIN(100.0)
+@MAIN(100.0, reset=rst_100, reset_registers="all")
 def fast() -> uint32_t:
     return lane()

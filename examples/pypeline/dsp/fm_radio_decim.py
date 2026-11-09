@@ -19,7 +19,7 @@ For a simulation testbench with plots, see fir_decim_tb.py next to this file
 (same filter, driven by dsp/fir_tb.py's @sim_input/@sim_output machinery).
 """
 
-from pypeline import MAIN, uint1_t
+from pypeline import MAIN, Input, make_reset, uint1_t
 
 import board.arty.part100t  # sets PART for the Arty A7-100T; swap for other boards
 
@@ -63,14 +63,19 @@ q_decim_5x = make_fir_decim(
 )
 
 
-@MAIN(125.0)
+# Synchronous reset input, active high: both channels' filter history,
+# pipeline and output FIFO reset while it is 1
+rst: Input[uint1_t] = make_reset()
+
+
+@MAIN(125.0, reset=rst, reset_registers="all")
 def i_chan(
     stream_in_if: i_decim_5x.in_fwd_t, stream_out_if: i_decim_5x.out_fb_t
 ) -> i_decim_5x.return_t:
     return i_decim_5x(stream_in_if, stream_out_if)
 
 
-@MAIN(125.0)
+@MAIN(125.0, reset=rst, reset_registers="all")
 def q_chan(
     stream_in_if: q_decim_5x.in_fwd_t, stream_out_if: q_decim_5x.out_fb_t
 ) -> q_decim_5x.return_t:

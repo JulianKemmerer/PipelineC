@@ -126,6 +126,7 @@ Within each group, bugs that affect both front ends come first, problems in the 
 | 46 | TBD | Both | A hierarchy with inferred multiplies is sliced as if its DSP leaves shrank with it: a Karatsuba body needs 10–34 stages where ~5 would do | Yes, Vivado |
 | 47 | TBD | Python | `AUTO_PIPELINE(f, latency=N)` of a function that reads a global wire cannot place its cuts | Yes |
 | 48 | TBD | Python | Native sim: `~` of a one-bit wire written from a comparison is always true | Yes |
+| 49 | TBD | Both | sky130 area estimates leave out primitives whose delay is modeled from measured widths | Yes |
 
 ## Wrong hardware, or simulation disagrees with hardware
 
@@ -824,3 +825,20 @@ Within each group, bugs that affect both front ends come first, problems in the 
   (`_TypedAnnAssignRewriter`), would make `~` the one-bit NOT.
 - **Reproduce:** `known_issues_tests.py` `native_invert_compare_wire_known_issue`
   (`inst/native_invert_compare_wire_test.py`, expect-fail).
+
+### 49. TBD: sky130 area estimates leave out primitives whose delay is modeled from measured widths
+
+- **Front ends:** both (the `device_models` backend).
+- **What happens:** a primitive operator whose delay comes from the width model
+  (`Function: BIN_OP_AND_uint32_t_uint32_t modeled path delay: ... from measured widths`)
+  is never synthesized on its own, so its leaf area is never measured or cached. The
+  build's area estimate then reports `N leaf area(s) not yet cached` and leaves those
+  operators out, and the `_area.json` sidecar lists them in `missing_leaf_area_funcs`.
+  This holds even in the mode the area estimate exists for (`--no_hier_syn --no_sweep`),
+  which measures every uncached leaf on the spot.
+- **Where to look:** the modeled-delay path in `SYN` (`from measured widths`), which
+  skips the leaf synthesis that also writes `WRITE_CACHED_LEAF_AREA`;
+  `SYN.WRITE_AREA_ESTIMATE_FILE`.
+- **Reproduce:** the registered `build_report_device_models` test
+  `area_estimate_build_report_test` fails on it (mode 1, `inst/leaf_1ll_cap_design.py`),
+  on commit `deac5d21` too.

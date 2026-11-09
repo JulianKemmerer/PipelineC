@@ -15,6 +15,8 @@ from pypeline import (
     uint32_t,
     uint48_t,
     uint64_t,
+    Input,
+    make_reset,
 )
 from fifo import make_fifo
 from stream.stream import make_stream_interface
@@ -66,12 +68,18 @@ def opaque_stage(x: uint16_t) -> uint16_t:
     return queued.data_out
 
 
-@MAIN(80.0)
+# Synchronous reset pins, one per clock (pulsed in cycle 0 by the simulators):
+# every @MAIN resets every register with its clock's pin
+rst_80: Input[uint1_t] = make_reset()
+rst: Input[uint1_t] = make_reset()  # the bare MAINs' default clock
+
+
+@MAIN(80.0, reset=rst_80, reset_registers="all")
 def pipeline_main(x: uint16_t, index: uint1_t) -> uint16_t:
     return bank_stage(x, index) ^ stateful_neighbor(x) ^ opaque_stage(x)
 
 
-@MAIN(80.0)
+@MAIN(80.0, reset=rst_80, reset_registers="all")
 def unrelated_main(x: uint64_t) -> uint8_t:
     count: Reg[uint64_t]
     count = count + x
@@ -79,12 +87,12 @@ def unrelated_main(x: uint64_t) -> uint8_t:
     return queued.data_out
 
 
-@MAIN(80.0)
+@MAIN(80.0, reset=rst_80, reset_registers="all")
 def pure_main(x: uint8_t) -> uint8_t:
     return x * x + x
 
 
-@MAIN
+@MAIN(reset=rst, reset_registers="all")
 def goal_less_main(x: uint64_t) -> uint64_t:
     return x + x
 
@@ -97,7 +105,7 @@ def goal_less_math(x: uint64_t) -> uint64_t:
 goal_less_pipeline = AUTO_PIPELINE(goal_less_math, name="goal_less_pipeline")
 
 
-@MAIN
+@MAIN(reset=rst, reset_registers="all")
 def goal_less_tag_main(x: uint64_t) -> uint64_t:
     return goal_less_pipeline(x)
 
@@ -110,7 +118,7 @@ def fixed_only_math(x: uint24_t) -> uint48_t:
 fixed_pipeline = AUTO_PIPELINE(fixed_only_math, latency=2, name="fixed_only")
 
 
-@MAIN
+@MAIN(reset=rst, reset_registers="all")
 def fixed_only_main(x: uint24_t) -> uint48_t:
     return fixed_pipeline(x)
 
@@ -123,12 +131,12 @@ def fsm_stand_in(x: uint24_t) -> uint24_t:
     return acc
 
 
-@MAIN(80.0)
+@MAIN(80.0, reset=rst_80, reset_registers="all")
 def fsm_main(x: uint24_t) -> uint24_t:
     return fsm_stand_in(x)
 
 
-@MAIN(80.0)
+@MAIN(80.0, reset=rst_80, reset_registers="all")
 def mcp_main(x: uint16_t) -> uint16_t:
     request: word_if.stream_t
     request.data = x

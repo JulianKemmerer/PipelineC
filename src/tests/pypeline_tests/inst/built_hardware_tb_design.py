@@ -18,6 +18,8 @@ from pypeline import (
     sim_print,
     uint1_t,
     uint16_t,
+    Input,
+    make_reset,
 )
 
 import built_hardware_core_design as core
@@ -40,7 +42,12 @@ print(f"built_hardware_tb: OPS_FSM.latency {core.OPS_FSM.latency}")
 print(f"built_hardware_tb: SPARE.latency {core.SPARE_LATENCY}")
 
 
-@MAIN(core.GOAL_MHZ)
+# Synchronous reset pin (pulsed in cycle 0 by the simulators): every @MAIN
+# resets every register with it
+rst: Input[uint1_t] = make_reset()
+
+
+@MAIN(core.GOAL_MHZ, reset=rst, reset_registers="all")
 def built_hardware_tb():
     n: Reg[uint16_t]  # cycle count
     first: Reg[uint16_t]  # cycle the first region result arrived

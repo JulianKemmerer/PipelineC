@@ -95,7 +95,7 @@ def make_pulse_gen(
 ):
     """Build a pulse generator. Returns pulse_gen, with its complete return type at pulse_gen.return_t.
 
-        pulse_gen(pri, width, amplitude, freq, chirp_rate, noise_amp, rst)
+        pulse_gen(pri, width, amplitude, freq, chirp_rate, noise_amp)
             -> stream(iq_t)
 
     pri:        pulse repetition interval, in samples.
@@ -106,11 +106,15 @@ def make_pulse_gen(
     chirp_rate: added to the phase increment on each sample of a pulse, so the
                 instantaneous frequency ramps linearly (LFM). 0 gives a tone.
     noise_amp:  0 disables noise entirely.
-    rst:        active high. Returns every register to its power-on value,
-                including the LFSR seeds and the phase accumulator, and feeds
-                the NCO zero amplitude, so the output sequence after a reset is
-                bit-identical to the one after configuration. Does NOT gate
-                `valid` -- see the reset block.
+
+    RESET. No reset input: called under a `reset_registers="all"` @MAIN
+    (top.py's pulse_gen_main), a reset returns every register to its initial
+    value -- the LFSR seeds, the phase accumulator and the NCO's pipeline
+    included -- so the output sequence after a reset is bit-identical to the
+    one after power-on. ../pdw_tb.py depends on that: its golden model starts
+    at the cycle reset releases, with no state to carry in. `valid` stays 1
+    during a reset: this block's contract is a fixed-rate always-valid DAC
+    stream, and top.py gates the stream's valid with the same reset.
     """
 
     @struct
@@ -135,7 +139,6 @@ def make_pulse_gen(
         freq: int32_t,
         chirp_rate: int32_t,
         noise_amp: uint16_t,
-        rst: uint1_t,
     ) -> out_stream_t:
         pri_counter: Reg[pri_t] = 0
         phase_acc: Reg[uint32_t] = 0
@@ -149,21 +152,18 @@ def make_pulse_gen(
         # down the same pipeline as the carrier and cannot drift out of step
         # with it.
         #
-        # `~rst` as well, and that is not tidiness. Reset pins pri_counter at 0,
-        # which is INSIDE a pulse (0 < width), and the documented bring-up
-        # writes the configuration while the datapath is still held -- so
-        # without this term the NCO's pipeline fills with the carrier at phase
-        # 0 for as long as reset lasts, and the initial pipeline-fill samples
-        # after release are that stale carrier, prepended to the first real
-        # pulse. On hardware that made pulse 0 come out `latency` samples wider
-        # than commanded and fail pdw_verify's width check; pdw_tb never saw it
-        # because it lands its configuration exactly on the release cycle.
-        # Feeding zero during reset makes "the pipeline is empty at release" --
-        # which golden_pulse_gen assumes -- true however long reset is held.
+        # Reset pins pri_counter at 0, which is INSIDE a pulse (0 < width), and
+        # the documented bring-up writes the configuration while the datapath
+        # is still held -- so the NCO is fed the carrier for as long as reset
+        # lasts. That is harmless only because the reset also clears the NCO's
+        # pipeline on every reset cycle: "the pipeline is empty at release" --
+        # which golden_pulse_gen assumes -- holds however long reset is held.
+        # Called where that pipeline does NOT reset, the stale carrier would be
+        # prepended to the first real pulse: on hardware, pulse 0 `latency`
+        # samples wider than commanded, failing pdw_verify's width check.
         zero_amp: amplitude_t = 0
-        amp_on: uint1_t = pulse_active & (~rst)
-        amp_now: amplitude_t = amplitude if amp_on else zero_amp
-        n = nco(phase=phase_acc, amplitude=amp_now, valid_in=1, rst=rst)
+        amp_now: amplitude_t = amplitude if pulse_active else zero_amp
+        n = nco(phase=phase_acc, amplitude=amp_now, valid_in=1, rst=0)
 
         # ---- noise: 4 disjoint bytes of each LFSR, read as SIGNED, summed --
         # The intermediate int8_t is load bearing. Slicing a uint32_t yields an
@@ -266,28 +266,6 @@ def make_pulse_gen(
         nsum_i_r = nsum_i
         nsum_q_r = nsum_q
 
-        # ---- reset --------------------------------------------------------
-        # LAST, so it overrides every advance above. Every register goes back
-        # to its power-on value, which makes the stimulus BIT-REPRODUCIBLE
-        # across a reset: reset the design and you get the identical waveform,
-        # including the LFSR noise. ../pdw_tb.py depends on that -- its golden
-        # model starts at the cycle reset releases, with no state to carry in.
-        #
-        # `valid` is deliberately NOT gated here: this block's contract is a
-        # fixed-rate always-valid DAC stream. top.py gates the stream's valid
-        # with the same reset, which is where the flow actually stops.
-        if rst:
-            pri_counter = 0
-            phase_acc = 0
-            chirp_acc = 0
-            lfsr_i = LFSR_SEED_I
-            lfsr_q = LFSR_SEED_Q
-            nsum_i_r = 0
-            nsum_q_r = 0
-            noise_i_r = 0
-            noise_q_r = 0
-            out_i_r = 0
-            out_q_r = 0
         # Always valid: a fixed-rate DAC stream, including the NCO fill.
         return out_stream_t(data=sample, valid=1, overflow=n.overflow)
 

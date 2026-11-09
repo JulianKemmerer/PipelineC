@@ -28,6 +28,8 @@ from pypeline import (
     uint1_t,
     uint8_t,
     uint32_t,
+    Input,
+    make_reset,
 )
 
 
@@ -83,13 +85,18 @@ decrypt_mac = decrypt_bundle.mac
 decrypt_pick = decrypt_bundle.pick
 
 
-@MAIN
+# Synchronous reset pin (pulsed in cycle 0 by the simulators): every @MAIN
+# resets every register with it
+rst: Input[uint1_t] = make_reset()
+
+
+@MAIN(reset=rst, reset_registers="all")
 def c_structs_pkg_relayout_encrypt(x: uint32_t, sel: uint8_t) -> uint32_t:
     acc = encrypt_mac(x)
     return acc.powers.values[0] ^ acc.valid ^ encrypt_pick(acc, sel)
 
 
-@MAIN
+@MAIN(reset=rst, reset_registers="all")
 def c_structs_pkg_relayout_decrypt(x: uint32_t, sel: uint8_t) -> uint32_t:
     acc = decrypt_mac(x)
     return acc.powers.values[0] ^ acc.valid ^ decrypt_pick(acc, sel)

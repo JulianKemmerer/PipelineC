@@ -17,7 +17,7 @@ sys.path.insert(
     ),
 )
 from typing import NamedTuple
-from pypeline import MAIN, PART, hw_func, struct, uint1_t, uint32_t
+from pypeline import MAIN, PART, hw_func, struct, uint1_t, uint32_t, Input, make_reset
 
 from stream.stream import make_stream_interface
 from stream.stream_auto_pipeline import make_stream_auto_pipeline
@@ -72,14 +72,19 @@ scalar_mcp = make_stream_multi_cycle(scalar_round, 2)
 wide_pipeline = make_stream_auto_pipeline(wide_round)
 
 
-@MAIN(50.0)
+# Synchronous reset pin (pulsed in cycle 0 by the simulators): every @MAIN
+# resets every register with it
+rst: Input[uint1_t] = make_reset()
+
+
+@MAIN(50.0, reset=rst, reset_registers="all")
 def scalar_main(
     stream_in_if: uint32_stream_intrf.fwd_t, stream_out_if: scalar_mcp.out_fb_t
 ) -> scalar_mcp.return_t:
     return scalar_mcp(stream_in_if, stream_out_if)
 
 
-@MAIN(50.0)
+@MAIN(50.0, reset=rst, reset_registers="all")
 def wide_main(
     stream_in_if: wide_stream_intrf.fwd_t, stream_out_if: wide_pipeline.out_fb_t
 ) -> wide_pipeline.return_t:

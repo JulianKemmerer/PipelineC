@@ -503,6 +503,16 @@ def get_tests() -> list:
             cmd=[INST_DIR / "sweep_cross_main_test.py"],
         )
     )
+    # A failing path that is a reset's fanout (from its pin or the MAIN
+    # driving its Wire, into a MAIN it resets) is reported and stops that
+    # MAIN's plan instead of being pipelined (SWEEP.RESET_DISTRIBUTION_PATH)
+    tests.append(
+        Test(
+            name="reset_sweep_path_test",
+            category="unit",
+            cmd=[INST_DIR / "reset_sweep_path_test.py"],
+        )
+    )
     # Generated VHDL doesn't change between parse passes of one run:
     # c_structs_pkg only grows within one output directory, and shared C
     # built-in entities name no call site. Every synthesized leaf hashes these

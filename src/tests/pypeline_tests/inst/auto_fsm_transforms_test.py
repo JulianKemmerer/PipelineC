@@ -107,6 +107,8 @@ def test_real_field_read_chain_is_prepared_before_scheduling():
 
     source = """
 from pypeline import AUTO_FSM, MAIN, NamedTuple, hw_func, struct, uint1_t, uint3_t, uint16_t
+from pypeline import Input, make_reset, uint1_t
+rst: Input[uint1_t] = make_reset()  # every register resets; pulsed in cycle 0
 @struct
 class input_t(NamedTuple):
     index: uint3_t
@@ -119,7 +121,7 @@ def choose(x: input_t) -> uint16_t:
             value = x.values[k]
     return value
 FSM = AUTO_FSM(choose)
-@MAIN(5.0)
+@MAIN(5.0, reset=rst, reset_registers="all")
 def top(x: input_t, valid: uint1_t) -> uint16_t:
     request: FSM.in_stream_t
     request.data = x
@@ -142,6 +144,8 @@ def test_prepared_fusion_matches_the_cleaned_scheduling_graph():
 
     source = """
 from pypeline import AUTO_FSM, INFERRED, MAIN, NamedTuple, hw_func, register_operator, struct, uint1_t, uint16_t, uint32_t
+from pypeline import Input, make_reset, uint1_t
+rst: Input[uint1_t] = make_reset()  # every register resets; pulsed in cycle 0
 @struct
 class input_t(NamedTuple):
     values: uint16_t[4]
@@ -158,7 +162,7 @@ def compute(x: input_t) -> uint32_t:
 register_operator("INFERRED_MULT", uint16_t, uint16_t, INFERRED, scope=compute)
 register_operator("PLUS", uint32_t, uint32_t, INFERRED, scope=compute)
 FSM = AUTO_FSM(compute)
-@MAIN(5.0)
+@MAIN(5.0, reset=rst, reset_registers="all")
 def top(x: input_t, valid: uint1_t) -> uint32_t:
     request: FSM.in_stream_t
     request.data = x
@@ -186,6 +190,8 @@ def test_measurement_roots_are_trimmed_like_instantiated_logic():
 
     source = """
 from pypeline import AUTO_FSM, MAIN, hw_func, uint1_t, uint8_t
+from pypeline import Input, make_reset, uint1_t
+rst: Input[uint1_t] = make_reset()  # every register resets; pulsed in cycle 0
 @hw_func
 def offset(a: uint8_t, b: uint1_t) -> uint8_t:
     return a + b
@@ -193,7 +199,7 @@ def offset(a: uint8_t, b: uint1_t) -> uint8_t:
 def work(x: uint8_t) -> uint8_t:
     return offset(x, 1)
 FSM = AUTO_FSM(work)
-@MAIN(5.0)
+@MAIN(5.0, reset=rst, reset_registers="all")
 def top(x: uint8_t, valid: uint1_t) -> uint8_t:
     request: FSM.in_stream_t
     request.data = x
@@ -224,6 +230,8 @@ def test_width_decided_comparison_has_no_measured_wrapper():
 
     source = """
 from pypeline import AUTO_FSM, MAIN, NamedTuple, hw_func, struct, uint1_t, uint8_t
+from pypeline import Input, make_reset, uint1_t
+rst: Input[uint1_t] = make_reset()  # every register resets; pulsed in cycle 0
 @struct
 class input_t(NamedTuple):
     lane: uint1_t
@@ -237,7 +245,7 @@ def work(x: input_t) -> uint8_t:
         result = result + 5
     return result
 FSM = AUTO_FSM(work)
-@MAIN(5.0)
+@MAIN(5.0, reset=rst, reset_registers="all")
 def top(x: input_t, valid: uint1_t) -> uint8_t:
     request: FSM.in_stream_t
     request.data = x

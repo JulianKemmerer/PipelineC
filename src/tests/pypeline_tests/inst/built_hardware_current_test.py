@@ -31,8 +31,10 @@ import SYN
 
 DESIGN = """
 from pypeline import MAIN, uint16_t
+from pypeline import Input, make_reset, uint1_t
+rst: Input[uint1_t] = make_reset()  # every register resets; pulsed in cycle 0
 
-@MAIN(30.0)
+@MAIN(30.0, reset=rst, reset_registers="all")
 def top(x: uint16_t, y: uint16_t) -> uint16_t:
     return x - y
 """

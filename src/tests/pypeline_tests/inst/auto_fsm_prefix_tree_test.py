@@ -36,11 +36,13 @@ import pypeline
 
 SOURCE = """
 from pypeline import AUTO_FSM, MAIN, PART, uint1_t, uint2_t
+from pypeline import Input, make_reset, uint1_t
+rst: Input[uint1_t] = make_reset()  # every register resets; pulsed in cycle 0
 from operators.soft_cmp import _make_prefix_tree
 PART("xc7a200tffg1156-2")
 prefix = _make_prefix_tree(17, level=3)
 FSM = AUTO_FSM(prefix)
-@MAIN(80.0)
+@MAIN(80.0, reset=rst, reset_registers="all")
 def top(value: uint2_t[17], valid: uint1_t) -> uint2_t:
     request: FSM.in_stream_t
     request.data = value

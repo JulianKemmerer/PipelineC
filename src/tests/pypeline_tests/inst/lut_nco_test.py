@@ -30,7 +30,7 @@ import math
 import random
 
 import pypeline as py
-from pypeline import MAIN, int16_t, sim_call, sim_reset, uint1_t, uint32_t, param
+from pypeline import MAIN, int16_t, sim_call, sim_reset, uint1_t, uint32_t, param, Input, make_reset
 from AUTO_PIPELINE import RamPlan
 
 from dsp.nco import golden_lut_nco, make_lut_nco, sine_quarter_table
@@ -47,7 +47,12 @@ nco_small = make_lut_nco(int16_t, table_bits=6, phase_bits=20)
 TURN = 1 << 32
 
 
-@MAIN(125.0)
+# Synchronous reset pin (pulsed in cycle 0 by the simulators): every @MAIN
+# resets every register with it
+rst: Input[uint1_t] = make_reset()
+
+
+@MAIN(125.0, reset=rst, reset_registers="all")
 def lut_nco_main(
     phase: uint32_t, amplitude: int16_t, valid_in: uint1_t
 ) -> nco.return_t:

@@ -55,6 +55,8 @@ from pypeline import (
     struct,
     uint1_t,
     uint4_t,
+    Input,
+    make_reset,
 )
 
 from stream.stream_auto_fsm import make_stream_auto_fsm
@@ -90,7 +92,12 @@ def mixed_ops(x: case_t) -> int16_t:
 OPS_FSM = make_stream_auto_fsm(mixed_ops)
 
 
-@MAIN(25.0)
+# Synchronous reset pin (pulsed in cycle 0 by the simulators): every @MAIN
+# resets every register with it
+rst: Input[uint1_t] = make_reset()
+
+
+@MAIN(25.0, reset=rst, reset_registers="all")
 def self_check_stream_auto_fsm() -> int16_t:
     # Returning the last result gives the design a real output port -- see
     # self_check_auto_fsm_test.py's comment on why this matters for synthesis.

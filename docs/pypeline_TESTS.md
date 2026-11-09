@@ -717,7 +717,8 @@ The latency memory and `--latency_hints` (see
   - a raised goal turns the lock into a mini-sweep hint, which skips the streak wait
     and starts the isolated sweep at the old depth.
 - **`auto_multi_cycle_sweep_test.py` (build_report_vivado), case (d):**
-  - a rebuild starts from the remembered count and skips pass 2;
+  - a rebuild (`--rebuild`, since the same command alone is up to date) starts from the
+    remembered count and skips pass 2;
   - a same-goal count three cycles too high is still confirmed down;
   - at a raised goal, the lower goal's count is a floor.
 - **`auto_multi_cycle_unit_test.py` (unit):** a remembered count is elaborated, then
@@ -1086,18 +1087,66 @@ Synchronous resets ([guide](pypeline_guide.md#resets)):
 | `reset_sim_timeline_test` | `native_sim` | the cycle-0 pulse of a reset pin and `--run N`, an unchanged reset-free timeline, no pulse for a pin a `@sim_input` drives, a reset `Wire` from its logic, `sim_call` with resets inactive |
 | `self_check_reset_regs_test` | `native_vs_vhdl_sim` (`--comb`) | a pin reset pulsed in cycle 0 and a generator's reset `Wire`: scalar, signed, array, struct and enum initializers, `"all"` and `"requested"`, `NO_RESET`, one function reset in one MAIN and not another, a reset in a cycle a clock-enabled call is skipped, mirrored by manual `if rst:` logic |
 | `self_check_reset_pipeline_test` | `native_vs_vhdl_sim` (`--comb`, and sky130) | a fixed-latency `AUTO_PIPELINE`'s stage and raw operator registers: no stale valid after a reset |
+| `self_check_reset_pipelined_main_test` | `native_vs_vhdl_sim` (sky130) | a pure MAIN the sweep slices, reset in cycle 0 and mid-run: the reset cycle's word never comes out and nothing stale follows (native sim's delayed MAIN writes become zeros) |
 | `self_check_reset_fsm_test` | `native_vs_vhdl_sim` (`--comb`, and sky130) | a scheduled `AUTO_FSM` reset mid-request returns to idle and restarts; no result of the cancelled case |
 | `self_check_reset_global_inst_test` | `native_vs_vhdl_sim` (`--comb`) | `Inst[f]` of a counter and of an `AUTO_PIPELINE`, and a same-clock `Fifo[T]`, reset with their clock's reset |
-| `self_check_reset_ram_test` | `native_vs_vhdl_sim` (`--comb`) | a RAM reset keeps its contents, cancels a read in flight and the write at the reset edge |
+| `self_check_reset_ram_test` | `native_vs_vhdl_sim` (`--comb`) | a `make_ram` and a `make_auto_pipeline_ram` reset keeps its contents, cancels a read in flight and the write at the reset edge; only valid bits reset (`make_ram`'s `addr`/`rd_data` keep their values) |
+| `ram_reset_inference_open_tools_test`, `ram_reset_inference_vivado_test` | `build_report_open_tools`, `build_report_vivado` | a 4096 x 32 `make_ram` and `make_auto_pipeline_ram` under `reset_registers="all"` (`--comb`): the RAM entity has the reset, and ECP5 and Artix-7 still use block RAM, not flip-flops |
+| `reset_sweep_path_test` | `unit` | `SWEEP.RESET_DISTRIBUTION_PATH` on a parsed design (a reset `Wire`'s and a pin's fanout, the pin also as the `start_port_name` sky130 STA reports; not a path inside one MAIN, into a MAIN without that reset, or from a source that also drives data the reset MAIN reads, directly or through another MAIN); a scripted sweep stops at a reset path without pipelining and names the reset, pipelines the same path unclassified, and does not stop at a reset path in an iteration worse than an earlier one (`RESET_PATH_STOPS_PLAN`) |
 | `self_check_reset_stream_lib_test` | `native_vs_vhdl_sim` (`--comb`) | reset equivalence of a stream FIFO and two skid buffers: a chain reset mid-traffic matches one held in reset until then |
+| `self_check_reset_dsp_test` | `native_vs_vhdl_sim` (`--comb`) | the same reset equivalence for the DSP blocks: the ROM NCO, log/dB and atan2 (requests in flight, own `rst=0`), CORDIC atan2, an elastic FIR (fixed latency 2), a valid-only FIR decimator, moving average and DC blocker, and magnitude |
 | `multi_clock_reset_ghdl_test` | `multi_clock` (no synthesis) | `multi_clock_reset_design.py`: each domain's MAINs, global instance and FIFO map their domain's reset; GHDL resets each domain in turn while the other keeps counting |
 | `multi_clock_reset_synth_open_tools_test`, `multi_clock_reset_synth_vivado_test` | `multi_clock` (open_tools, Vivado) | the same design `--comb` on ECP5 and Artix-7: both clocks meet timing, both per-policy entities are built |
 | `vhdl_submodule_port_map_test` | `unit` | `RESET` after `CLOCK_ENABLE` in each stateful child's port map |
 | `double_parse_file_test` | `elab_introspect` | two parses give the same `main_resets` and per-policy entity names |
 
-Reset-free behavior is the default and stays in every other test. These keep no reset
-on purpose: Layer-1 `sim_call` scripts (`sim_call` has every reset inactive), C designs,
-`known_issues` reproducers, and tests whose subject is reset-free timing.
+Every fixture with state also runs with a default reset: a reset pin (`rst:
+Input[uint1_t] = make_reset()`, pulsed in cycle 0 by both simulators) and
+`reset_registers="all"` on its `@MAIN`s, or the pin as its clock's reset
+(`make_clock(rate, reset=rst)`) where global instances or FIFOs need it, one pin per
+clock in a design on several clocks. So each registration also checks the reset of what
+it builds, and expectations that count cycles from power-up start after the cycle-0
+reset. The examples do too: the board tops (a PLL-lock synchronizer driving a reset
+`Wire`), `stream_pipeline.py`, `auto_pipeline_ram.py`, `vga_test_pattern.py`,
+`vga_donut.py`, `dsp/fm_radio_decim.py` and the PDW project (its own reset test,
+`examples/pypeline/dsp/pdw/pdw_reset_test.py`, run by hand, as the PDW README says).
+
+These stay reset-free on purpose, and they are what keeps reset-free generated VHDL
+covered:
+
+- `known_issues` reproducers, which must reproduce their bug as filed;
+- the language and simulator semantics fixtures: global wires (`global_wire_*`,
+  `global_wires_sim_test`), variable references (`var_ref_*`), register update rules
+  (`reg_aug_assign_test`, `reg_bitwise_mask_test`, `reg_undefined_width_test`,
+  `sim_loop_reg_state_test`), casts, widths and types (`call_arg_width_test`,
+  `nested_truncate_test`, `struct_ctor_positional_test`, `cast_interface_test`,
+  `char_array_test`, `enum_test`, `bit_math_test`), the `sim_*` APIs (`sim_input_test`,
+  `sim_output_direct_wire_test`, `sim_print_test`, `sim_assert_finish_test`,
+  `main_args_sim_test`);
+- elaboration-rule, error and API tests, whose designs are rejected or whose subject is a
+  call form or a naming or clock rule (`interface_type_error_test`,
+  `global_wire_errors_test`, `wires_contract_test`, `multi_rate_sim_refusal_test`,
+  `clock_domains_elab_test`, `clock_api_unit_test`, `global_inst_api_unit_test`,
+  `factory_main_api_unit_test`, `factory_main_elab_test`, `global_inst_elab_test`,
+  `global_fifo_elab_test`, `auto_fsm_owner_goal_test`); `reset_elab_test` covers their
+  reset rules;
+- async clock-crossing designs (`async_fifo_*`, `multi_clock_*_design.py`): an async
+  global FIFO is not reset, and a `reset_registers="all"` `@MAIN` at its end is an error
+  (`multi_clock_reset_design.py` covers resets on several clocks);
+- tests of a library block's own `rst` input, which exists for designs without resets
+  (`self_check_dsp_rom_test`, `valid_join_test`);
+- fixtures with no state, where a reset changes nothing (`auto_comb_*_opt_test`,
+  `loop_iter_naming_test`);
+- QoR references whose numbers the docs quote (`auto_pipeline_ram_design.py` for the RAM
+  QoR bench, `float_sine_auto_fsm.py`'s FSM table, `vga_donut_auto_fsm_next_state.py`,
+  `auto_fsm_ctl_compare_test`'s FSM area);
+- `sweep_floor_detect_design.py`, whose subject is the sweep's stop on the plateau it
+  measures: with a reset pin, the pin's fanout to the registers the sweep adds becomes
+  the critical path past its best iteration, and fmax falls as the cuts grow, so the
+  sweep never sees a plateau and ends on `no_realized_change` instead;
+- `sim_call` scripts and C designs;
+- the getting-started examples `counter.py`, `fsm.py`, `blink.py` and `pipeline.py`, whose
+  printed output, waveforms and simulator drivers the README walks through.
 
 ## Factory-made MAIN coverage
 

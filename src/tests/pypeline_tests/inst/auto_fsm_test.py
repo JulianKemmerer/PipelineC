@@ -35,6 +35,8 @@ from pypeline import (
     sim_call,
     struct,
     uint1_t,
+    Input,
+    make_reset,
 )
 
 
@@ -66,7 +68,12 @@ def blob(x: blob_in_t) -> int16_t:
 BLOB_FSM = AUTO_FSM(blob)
 
 
-@MAIN(25.0)
+# Synchronous reset pin (pulsed in cycle 0 by the simulators): every @MAIN
+# resets every register with it
+rst: Input[uint1_t] = make_reset()
+
+
+@MAIN(25.0, reset=rst, reset_registers="all")
 def auto_fsm_top(start: uint1_t, x: blob_in_t) -> int16_t:
     s: BLOB_FSM.in_stream_t
     s.data = x

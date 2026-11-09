@@ -94,6 +94,11 @@ def main():
     partial_design = sub("partial.py")
     with open(partial_design, "w") as f:
         f.write('''from pypeline import MAIN, AUTO_PIPELINE, Reg, hw_func, param, uint8_t
+from pypeline import Input, make_reset, uint1_t
+# A reset pin per MAIN, as BAD_GOAL can put them on two clocks: every
+# register resets, pulsed in cycle 0
+good_rst: Input[uint1_t] = make_reset()
+bad_rst: Input[uint1_t] = make_reset()
 @hw_func
 def good(x: uint8_t) -> uint8_t:
     return x * x
@@ -102,10 +107,10 @@ def bad(x: uint8_t) -> uint8_t:
     return x + 1
 GOOD = AUTO_PIPELINE(good, name="good", start_latency=1)
 BAD = AUTO_PIPELINE(bad, name="bad", start_latency=1)
-@MAIN(30.0)
+@MAIN(30.0, reset=good_rst, reset_registers="all")
 def good_main(x: uint8_t) -> uint8_t:
     return GOOD(x)
-@MAIN(param("BAD_GOAL", 30.0, type=float))
+@MAIN(param("BAD_GOAL", 30.0, type=float), reset=bad_rst, reset_registers="all")
 def bad_main(x: uint8_t) -> uint8_t:
     acc: Reg[uint8_t]
     acc = acc + 1

@@ -20,6 +20,8 @@ from pypeline import (
     sim_assert,
     sim_print,
     sim_finish,
+    Input,
+    make_reset,
 )
 from ram import make_auto_pipeline_ram
 from stream.stream_ram import make_stream_auto_pipeline_ram
@@ -64,7 +66,12 @@ def aligned(w: wr_t, r: rd_t) -> aligned_t:
     return out
 
 
-@MAIN(20.0)
+# Synchronous reset pin (pulsed in cycle 0 by the simulators): every @MAIN
+# resets every register with it
+rst: Input[uint1_t] = make_reset()
+
+
+@MAIN(20.0, reset=rst, reset_registers="all")
 def self_check_auto_pipeline_ram() -> uint32_t:
     tick: Reg[uint16_t]
     raw_cycle: Reg[uint16_t]

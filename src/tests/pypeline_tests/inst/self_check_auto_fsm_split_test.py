@@ -38,6 +38,8 @@ from pypeline import (
     uint4_t,
     uint16_t,
     uint32_t,
+    Input,
+    make_reset,
 )
 
 uint17_t = make_uint_t(17)
@@ -74,7 +76,12 @@ def wide_ops(x: case_t) -> result_t:
 OPS_FSM = AUTO_FSM(wide_ops)
 
 
-@MAIN(25.0)
+# Synchronous reset pin (pulsed in cycle 0 by the simulators): every @MAIN
+# resets every register with it
+rst: Input[uint1_t] = make_reset()
+
+
+@MAIN(25.0, reset=rst, reset_registers="all")
 def self_check_auto_fsm_split() -> uint32_t:
     # A real output port keeps synthesis from deleting the FSM (see
     # self_check_auto_fsm_test.py).

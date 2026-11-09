@@ -70,6 +70,17 @@ def get_tests() -> list:
             needs_out_dir=True,
         )
     )
+    # make_ram and make_auto_pipeline_ram under reset_registers="all" still map
+    # to block RAM (only valid bits reset), on ECP5 and on Vivado
+    for tool, category in (("open_tools", OPEN_TOOLS), ("vivado", VIVADO)):
+        tests.append(
+            Test(
+                name=f"ram_reset_inference_{tool}_test",
+                category=category,
+                cmd=[INST_DIR / "ram_reset_inference_test.py", "--syn_tool", tool],
+                needs_out_dir=True,
+            )
+        )
 
     tests.append(
         Test(

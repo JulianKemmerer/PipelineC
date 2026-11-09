@@ -19,8 +19,11 @@ from vga.timing import make_vga_timing, VGA_640_480
 # Every @MAIN here runs at 25 MHz, so the generated top level has one clock
 # port named after that rate: clk_25p0. board.vhd drives it from a PLL.
 
-# PLL 'locked' signal: low until clk_25p0 is stable
-pll_locked: Input[uint1_t]
+# PLL 'locked' signal: low until clk_25p0 is stable. It is not synchronous to
+# clk_25p0 (ASYNC), so lock_sync brings it in through two registers.
+pll_locked: Input[uint1_t, ASYNC]
+# Reset while the PLL is not locked, synchronous to clk_25p0
+pll_rst: Wire[uint1_t] = make_reset()
 
 # RGB LED 0 pins, active-high (1 = on)
 led0_r: Output[uint1_t]
@@ -30,9 +33,23 @@ led0_b: Output[uint1_t]
 CLK_MHZ = 25.0
 # Clock cycles in half a second
 HALF_SEC = int(CLK_MHZ * 1e6 / 2)
+# The 25 MHz clock, with pll_rst as the reset of its @MAINs
+clk = make_clock(CLK_MHZ, reset=pll_rst)
 
 
-@MAIN(CLK_MHZ)
+# Not reset: it drives the reset. Its registers start at 0, so the design is
+# held in reset from power-up until the lock has passed through both.
+@MAIN(clk, reset=None)
+def lock_sync():
+    s0: Reg[uint1_t]
+    s1: Reg[uint1_t]
+    pll_rst = ~s1
+    s1 = s0
+    s0 = pll_locked
+
+
+# Every register below resets (to 0) while the PLL is not locked
+@MAIN(clk, reset_registers="all")
 def blinky_main():
     counter: Reg[uint32_t]
     led_reg: Reg[uint1_t]
@@ -46,10 +63,6 @@ def blinky_main():
         led_reg = ~led_reg
     else:
         counter += 1
-    # Hold in reset until the PLL is stable
-    if pll_locked == 0:
-        counter = 0
-        led_reg = 0
 
 
 # VGA part of the demo: 640x480 uses the same 25 MHz clock as pixel clock
@@ -71,7 +84,11 @@ def test_pattern(sig: vga_timing_signals_t) -> vga_12bpp_t:
     return vga_12bpp_t(r=out_r, g=out_g, b=out_b, hs=sig.hsync, vs=sig.vsync)
 
 
-@MAIN(vga_timing.pixel_clk_mhz)
+assert vga_timing.pixel_clk_mhz == CLK_MHZ
+
+
+# The VGA timing counters restart while the PLL is not locked
+@MAIN(clk, reset_registers="all")
 def vga_pmod_main():
     # VGA timing for fixed resolution
     sig = vga_timing()

@@ -22,7 +22,7 @@ sys.path.insert(
         "pypeline",
     ),
 )
-from pypeline import MAIN, Reg, Wire, sim_output, uint1_t, uint32_t
+from pypeline import MAIN, Reg, Wire, sim_output, uint1_t, uint32_t, Input, make_reset
 
 from fifo import make_fifo
 
@@ -39,13 +39,19 @@ fifo_ready: Wire[uint1_t]
 # gets re-queued once driver_main advances the wire later the same cycle --
 # the same re-evaluation stress sim_model_test.py's accum_main uses to prove
 # no double-mutation, applied here to the FIFO's deque state.
-@MAIN
+
+# Synchronous reset pin (pulsed in cycle 0 by the simulators): every @MAIN
+# resets every register with it
+rst: Input[uint1_t] = make_reset()
+
+
+@MAIN(reset=rst, reset_registers="all")
 def fifo_conv_main():
     r = fifo_conv(0, push_in, 1)  # never pop; always attempt to push
     fifo_ready = r.data_in_ready
 
 
-@MAIN
+@MAIN(reset=rst, reset_registers="all")
 def driver_main():
     count: Reg[uint32_t]
     push_in = count
@@ -66,7 +72,7 @@ def check_fifo_ready(cycle, ready):
     )
 
 
-@MAIN
+@MAIN(reset=rst, reset_registers="all")
 def checker_main():
     n: Reg[uint32_t]
     check_fifo_ready(n, fifo_ready)

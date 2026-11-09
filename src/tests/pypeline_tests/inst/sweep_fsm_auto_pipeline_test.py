@@ -21,6 +21,8 @@ from pypeline import (
     uint8_t,
     sim_call,
     sim_reset,
+    Input,
+    make_reset,
 )
 
 data_t = uint8_t
@@ -62,7 +64,12 @@ print(
 )
 
 
-@MAIN(40.0)
+# Synchronous reset pin (pulsed in cycle 0 by the simulators): every @MAIN
+# resets every register with it
+rst: Input[uint1_t] = make_reset()
+
+
+@MAIN(40.0, reset=rst, reset_registers="all")
 def sweep_fsm_auto_pipeline_main(
     pipeline_in: stream_t, pipeline_out_ready: uint1_t
 ) -> fsm_pipeline_test_t:

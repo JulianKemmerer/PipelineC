@@ -18,6 +18,9 @@ from pypeline import (
     uint8_t,
     sim_call,
     sim_reset,
+    Input,
+    make_reset,
+    uint1_t,
 )
 
 
@@ -29,7 +32,12 @@ def acc_step(x: uint8_t) -> uint8_t:
     return acc
 
 
-@MAIN(30.0)
+# Synchronous reset pin (pulsed in cycle 0 by the simulators): every @MAIN
+# resets every register with it
+rst: Input[uint1_t] = make_reset()
+
+
+@MAIN(30.0, reset=rst, reset_registers="all")
 def sweep_boundary_main(x: uint8_t) -> uint8_t:
     # Sliceable comb A
     a: uint8_t = x / ~x

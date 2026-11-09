@@ -60,8 +60,8 @@ def make_pulse_measure(
 ):
     """Build the per-pulse measurement block. Returns pulse_measure, with its complete return type at pulse_measure.return_t.
 
-        pulse_measure(freq_acc, noise_est, peak_power, toa, valid_in, count_pri,
-                    rst) -> pulse_measure_t
+        pulse_measure(freq_acc, noise_est, peak_power, toa, valid_in, count_pri)
+            -> pulse_measure_t
 
     `valid_in` is the gate_last / candidate cycle. `count_pri` should be the
     qualification verdict's accept bit: PRI is measured between ACCEPTED
@@ -70,17 +70,18 @@ def make_pulse_measure(
     gaps pause that counter. Pipeline transport latency does not need to be
     subtracted from either timestamp before taking their difference.
 
-    `rst` is active high and clears the PRI state. It MUST be driven from the
-    same reset that clears pulse_detect's `toa_counter`, since PRI is a
-    difference of two TOAs and the two would otherwise straddle a counter
-    epoch -- see the reset block for what that produces.
+    RESET. No reset input: call it under the same `reset_registers="all"`
+    @MAIN reset as pulse_detect (top.py's pdw_main), since PRI is a difference
+    of two TOAs, and a `prev_toa` kept across a reset that cleared
+    pulse_detect's `toa_counter` would straddle a counter epoch -- see the PRI
+    registers below for what that produces.
 
     All outputs describe the same candidate when `.valid` asserts.
     PDW_ATAN2_METHOD=cordic|rom selects the angle implementation (default rom);
     atan2_method overrides it for a factory call. All measurement fields align
     in request order through bounded queues; `join_depth` defaults to 32
-    memory words per branch. Overflow reaches the extraction alarm. Reset
-    drains all joins and clears PRI history. `get_latency()` is available to
+    memory words per branch. Overflow reaches the extraction alarm. A reset
+    empties all joins and clears PRI history. `get_latency()` is available to
     tests/models under continuous CE, without any eager latency query.
     """
     power_t = pulse_detect.power_t
@@ -139,7 +140,6 @@ def make_pulse_measure(
         toa: uint64_t,
         valid_in: uint1_t,
         count_pri: uint1_t,
-        rst: uint1_t,
     ) -> pulse_measure_t:
         # ---- frequency: one atan2 per endpoint, in parallel ---------------
         if atan2_method == "rom":
@@ -147,36 +147,43 @@ def make_pulse_measure(
                 x_in=freq_acc.first_re,
                 y_in=freq_acc.first_im,
                 valid_in=valid_in,
-                rst=rst,
+                rst=0,
             )
             ce = angle_unit(
                 x_in=freq_acc.last_re,
                 y_in=freq_acc.last_im,
                 valid_in=valid_in,
-                rst=rst,
+                rst=0,
             )
             angle_overflow: uint1_t = cs.overflow | ce.overflow
         else:
             cs = angle_unit(
                 x_in=freq_acc.first_re,
                 y_in=freq_acc.first_im,
-                valid_in=valid_in & ~rst,
+                valid_in=valid_in,
             )
             ce = angle_unit(
                 x_in=freq_acc.last_re,
                 y_in=freq_acc.last_im,
-                valid_in=valid_in & ~rst,
+                valid_in=valid_in,
             )
             angle_overflow: uint1_t = 0
 
         # ---- power and noise in dB ----------------------------------------
-        lp = log_db(v=peak_power, valid_in=valid_in, rst=rst)
-        ln = log_db_noise(v=noise_est, valid_in=valid_in, rst=rst)
+        lp = log_db(v=peak_power, valid_in=valid_in, rst=0)
+        ln = log_db_noise(v=noise_est, valid_in=valid_in, rst=0)
 
         # ---- PRI ----------------------------------------------------------
+        # Both reset, and that is NOT optional: pulse_detect's `toa_counter`
+        # is cleared by the same reset, so a `prev_toa` carried across it would
+        # be a TOA from a counter epoch that no longer exists. `delta = toa -
+        # prev_toa` on the first pulse after release would then be a huge
+        # wrapped value reported as a real PRI. Clearing `have_prev` alongside
+        # makes that pulse report pri_valid=0 / STATUS_PRI_INVALID instead --
+        # exactly what the first accepted pulse after power-on already does.
         prev_toa: Reg[uint64_t]
         have_prev: Reg[uint1_t]
-        take: uint1_t = valid_in & count_pri & ~rst
+        take: uint1_t = valid_in & count_pri
         delta: uint64_t = toa - prev_toa
         zero32: uint32_t = 0
         pri_now: uint32_t = delta[31:0] if have_prev else zero32
@@ -199,22 +206,8 @@ def make_pulse_measure(
             ln.valid,
             pri_meta_t(pri=pri_now, valid=pri_ok),
             valid_in,
-            rst,
+            0,
         )
-
-        # ---- reset ---------------------------------------------------------
-        # NOT optional, and not merely tidy: pulse_detect's `toa_counter` is
-        # cleared by the same reset, so a `prev_toa` carried across it would be
-        # a TOA from a counter epoch that no longer exists. `delta = toa -
-        # prev_toa` on the first pulse after release would then be a huge
-        # wrapped value reported as a real PRI. Clearing `have_prev` alongside
-        # makes that pulse report pri_valid=0 / STATUS_PRI_INVALID instead --
-        # exactly what the first accepted pulse after power-on already does.
-        # The join drains in-flight PRI metadata as well. The extraction
-        # engine also blocks release and drains descriptors during reset.
-        if rst:
-            prev_toa = 0
-            have_prev = 0
 
         o: pulse_measure_t
         o.freq_start = j.p0.angle

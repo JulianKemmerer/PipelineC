@@ -6,7 +6,7 @@ from types import SimpleNamespace
 from axi.axis import make_keep_count
 from fixed_point import make_fixed_t, register_fixed_ops
 from kept_data_bus import make_kept_data_bus_t
-from pypeline import MAIN, hw_func, uint8_t, uint16_t
+from pypeline import MAIN, hw_func, uint8_t, uint16_t, Input, make_reset, uint1_t
 from stream.stream_auto_pipeline import make_stream_auto_pipeline
 
 # Numeric operand type and its registered arithmetic bundle.
@@ -21,17 +21,22 @@ bus_t = make_kept_data_bus_t(uint8_t, 4)
 keep_count = make_keep_count(bus_t, 4)
 
 
-@MAIN
+# Synchronous reset pin (pulsed in cycle 0 by the simulators): every @MAIN
+# resets every register with it
+rst: Input[uint1_t] = make_reset()
+
+
+@MAIN(reset=rst, reset_registers="all")
 def registered_add(a: ops.operand_t, b: ops.operand_t) -> ops.add.return_t:
     return ops.add(a, b)
 
 
-@MAIN
+@MAIN(reset=rst, reset_registers="all")
 def nested_add(a: operand_t, b: operand_t) -> bundle.arithmetic.add.return_t:
     return bundle.arithmetic.add(a, b)
 
 
-@MAIN
+@MAIN(reset=rst, reset_registers="all")
 def count_kept(x: bus_t) -> keep_count.return_t:
     return keep_count(x)
 
@@ -45,7 +50,7 @@ def widen(x: uint8_t) -> uint16_t:
 pipeline = make_stream_auto_pipeline(widen, start_latency=2)
 
 
-@MAIN
+@MAIN(reset=rst, reset_registers="all")
 def stream_stage(
     stream_in_if: pipeline.in_fwd_t, stream_out_if: pipeline.out_fb_t
 ) -> pipeline.return_t:

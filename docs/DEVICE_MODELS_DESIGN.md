@@ -252,6 +252,14 @@ and the full model/cache identity. A purely combinational isolated leaf has
 zero clock-to-Q and setup by construction; a registered full design normally
 has all three components.
 
+A path from a top-level input has no launch register (`Start reg: None`). For
+one, the report names the input port bit it starts at instead (`Start port:`,
+`start_port_name`; `name` or `name[i]`), found by walking the winning arrival
+back to the input's own arrival. Other tools name such a port in their start
+point, and the sweep reads it to recognize a reset pin's fanout
+([SWEEP_DESIGN.md](SWEEP_DESIGN.md#3-the-refinement-loop)). A cached report
+without the field was written before it existed and is remeasured, not reused.
+
 The no-early-flatten flow remains available as the `current` **control
 recipe**. The opt-in synthesis-recipe matrix also has fixed internal variants
 for `synth -flatten`, flattening with `-noabc` before the single liberty ABC

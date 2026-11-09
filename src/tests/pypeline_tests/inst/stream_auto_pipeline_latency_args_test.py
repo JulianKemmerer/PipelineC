@@ -22,7 +22,7 @@ sys.path.insert(0, os.path.join(THIS_DIR, "..", "..", ".."))
 sys.path.insert(0, os.path.join(THIS_DIR, "..", "..", "..", "..", "include", "pypeline"))
 
 import pypeline
-from pypeline import MAIN, hw_func, sim_call, sim_reset, uint8_t
+from pypeline import MAIN, hw_func, sim_call, sim_reset, uint8_t, Input, make_reset, uint1_t
 
 from fixed_point import make_fixed_t
 from stream.stream import make_stream_interface
@@ -49,21 +49,26 @@ hinted_sap = make_stream_auto_pipeline(div_inv, start_latency=4, max_latency=6)
 fixed_sap = make_stream_auto_pipeline(div_inv, latency=2)
 
 
-@MAIN(50.0)
+# Synchronous reset pin (pulsed in cycle 0 by the simulators): every @MAIN
+# resets every register with it
+rst: Input[uint1_t] = make_reset()
+
+
+@MAIN(50.0, reset=rst, reset_registers="all")
 def plain_sap_main(
     stream_in_if: uint8_stream_intrf.fwd_t, stream_out_if: uint8_stream_intrf.fb_t
 ) -> plain_sap.return_t:
     return plain_sap(stream_in_if, stream_out_if)
 
 
-@MAIN(50.0)
+@MAIN(50.0, reset=rst, reset_registers="all")
 def hinted_sap_main(
     stream_in_if: uint8_stream_intrf.fwd_t, stream_out_if: uint8_stream_intrf.fb_t
 ) -> hinted_sap.return_t:
     return hinted_sap(stream_in_if, stream_out_if)
 
 
-@MAIN(50.0)
+@MAIN(50.0, reset=rst, reset_registers="all")
 def fixed_sap_main(
     stream_in_if: uint8_stream_intrf.fwd_t, stream_out_if: uint8_stream_intrf.fb_t
 ) -> fixed_sap.return_t:

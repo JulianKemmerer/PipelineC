@@ -10,7 +10,7 @@ sys.path.insert(
     0, os.path.join(os.path.dirname(os.path.abspath(__file__)), "../../../")
 )
 
-from pypeline import AUTO_PIPELINE, MAIN, Reg, hw_func, uint1_t, uint8_t
+from pypeline import AUTO_PIPELINE, MAIN, Reg, hw_func, uint1_t, uint8_t, Input, make_reset
 
 
 @hw_func
@@ -23,7 +23,12 @@ def capped_core(x: uint8_t) -> uint8_t:
 CAPPED_AP = AUTO_PIPELINE(capped_core, max_latency=1)
 
 
-@MAIN(1000.0)
+# Synchronous reset pin (pulsed in cycle 0 by the simulators): every @MAIN
+# resets every register with it
+rst: Input[uint1_t] = make_reset()
+
+
+@MAIN(1000.0, reset=rst, reset_registers="all")
 def auto_pipeline_max_latency_main(x: uint8_t) -> uint8_t:
     toggle: Reg[uint1_t]
     toggle = ~toggle

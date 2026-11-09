@@ -16,7 +16,7 @@ sys.path.insert(
         "pypeline",
     ),
 )
-from pypeline import MAIN, uint1_t, uint32_t, sim_call, sim_reset
+from pypeline import MAIN, uint1_t, uint32_t, sim_call, sim_reset, Input, make_reset
 
 from fifo import make_fifo
 
@@ -27,7 +27,12 @@ fifo_fwft = make_fifo(uint32_t, 5)
 CAPACITY = 8
 
 
-@MAIN
+# Synchronous reset pin (pulsed in cycle 0 by the simulators): every @MAIN
+# resets every register with it
+rst: Input[uint1_t] = make_reset()
+
+
+@MAIN(reset=rst, reset_registers="all")
 def fifo_test_top(
     ready_for_data_out: uint1_t, data_in: uint32_t, data_in_valid: uint1_t
 ) -> fifo_fwft.return_t:

@@ -26,6 +26,8 @@ from pypeline import (
     struct,
     uint1_t,
     uint16_t,
+    Input,
+    make_reset,
 )
 
 
@@ -60,7 +62,12 @@ def hierarchical_kernel(x: uint16_t, k: uint16_t) -> uint16_t:
     return (left ^ right) + base
 
 
-@MAIN(200.0)
+# Synchronous reset pin (pulsed in cycle 0 by the simulators): every @MAIN
+# resets every register with it
+rst: Input[uint1_t] = make_reset()
+
+
+@MAIN(200.0, reset=rst, reset_registers="all")
 def typed_placement_pure_main():
     i: typed_in_t = typed_in_wire
     o: typed_out_t
@@ -88,7 +95,7 @@ NUM_CHECK = 24
 MAX_CYCLES = 160
 
 
-@MAIN
+@MAIN(reset=rst, reset_registers="all")
 def typed_placement_checker() -> typed_out_t:
     count: Reg[uint16_t]
     seen: Reg[uint16_t]

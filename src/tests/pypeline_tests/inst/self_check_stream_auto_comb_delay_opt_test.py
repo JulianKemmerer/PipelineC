@@ -5,6 +5,8 @@ import sys
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "../../..")))
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "../../../../include/pypeline")))
 from pypeline import (AUTO_COMB_DELAY_OPT, MAIN, NamedTuple, Reg, hw_func, struct,
+                      Input,
+                      make_reset,
                       sim_assert, sim_finish, sim_print, uint1_t, uint8_t, uint16_t)
 from stream.stream_auto_comb_delay_opt import make_stream_auto_comb_delay_opt
 
@@ -29,7 +31,12 @@ CORE = AUTO_COMB_DELAY_OPT(selected)
 STREAM = make_stream_auto_comb_delay_opt(CORE)
 
 
-@MAIN(5.0)
+# Synchronous reset pin (pulsed in cycle 0 by the simulators): every @MAIN
+# resets every register with it
+rst: Input[uint1_t] = make_reset()
+
+
+@MAIN(5.0, reset=rst, reset_registers="all")
 def stream_test() -> uint16_t:
     cycle: Reg[uint16_t]
     sent: Reg[uint8_t]

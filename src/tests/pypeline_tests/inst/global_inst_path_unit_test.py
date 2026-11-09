@@ -36,6 +36,10 @@ import sys
 sys.path.insert(0, {repo_root!r})
 from pypeline import *
 
+# A reset pin as the clock's reset: every MAIN and global instance resets
+rst: Input[uint1_t] = make_reset()
+clk = make_clock(100.0, reset=rst)
+
 @hw_func
 def counter(step: uint8_t) -> uint8_t:
     n: Reg[uint8_t]
@@ -50,7 +54,7 @@ def mul_add(a: uint16_t, b: uint16_t) -> uint32_t:
 cnt: Inst[counter]
 ap: Inst[AUTO_PIPELINE(mul_add)]
 
-@MAIN(100.0)
+@MAIN(clk, reset_registers="all")
 def driver():
     n: Reg[uint16_t]
     cnt.step = 1
@@ -58,7 +62,7 @@ def driver():
     ap.b = n
     n += 1
 
-@MAIN(100.0)
+@MAIN(clk, reset_registers="all")
 def user():
     total: Reg[uint32_t]
     total += cnt.out + ap.out
@@ -118,7 +122,7 @@ def main():
     with contextlib.redirect_stdout(out):
         assert SWEEP.PRINT_TIMING_FAILURES(state, timing)
     expected = (
-        "ERROR: TIMING NOT MET: global instance cnt [inst_path_design.py:17] "
+        "ERROR: TIMING NOT MET: global instance cnt [inst_path_design.py:21] "
         "achieved 61.78 MHz vs 100.00 MHz goal (nothing_auto_pipelinable)"
     )
     assert expected in out.getvalue(), out.getvalue()

@@ -52,6 +52,8 @@ from pypeline import (
     uint8_t,
     uint16_t,
     uint32_t,
+    Input,
+    make_reset,
 )
 
 from axi.type_axis import make_axis_to_type, make_type_to_axis
@@ -74,7 +76,12 @@ tx = make_type_to_axis(hdr_t, N)
 rx = make_axis_to_type(hdr_t, N)
 
 
-@MAIN
+# Synchronous reset pin (pulsed in cycle 0 by the simulators): every @MAIN
+# resets every register with it
+rst: Input[uint1_t] = make_reset()
+
+
+@MAIN(reset=rst, reset_registers="all")
 def self_check_type_axis():
     sent: Reg[uint32_t]
     got: Reg[uint32_t]

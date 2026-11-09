@@ -25,6 +25,8 @@ DESIGN_SRC = textwrap.dedent(
     sys.path.insert(0, {repo!r})
     from pypeline import (AUTO_FSM, MAIN, NamedTuple, Reg, hw_func, make_uint_t,
                           struct, uint1_t, uint16_t)
+    from pypeline import Input, make_reset, uint1_t
+    rst: Input[uint1_t] = make_reset()  # every register resets; pulsed in cycle 0
 
     uint2_t = make_uint_t(2)
 
@@ -49,7 +51,7 @@ DESIGN_SRC = textwrap.dedent(
 
     FSM = AUTO_FSM({func})
 
-    @MAIN(25.0)
+    @MAIN(25.0, reset=rst, reset_registers="all")
     def top(start: uint1_t, x: in_t) -> uint16_t:
         s: FSM.in_stream_t
         s.data = x

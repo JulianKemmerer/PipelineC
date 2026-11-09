@@ -60,8 +60,9 @@ single element, as in `led0_b(0) => led0_b`.
 Every `@MAIN` in [top.py](top.py) runs at 25 MHz, so the generated top level has one
 clock input named after that rate, `clk_25p0`. [board.vhd](board.vhd) makes the 25 MHz
 clock from the board's 100 MHz `CLK100MHZ` with an `MMCME2_BASE` PLL primitive and passes
-its `LOCKED` output in as `pll_locked`, which holds the blinking logic in reset until the
-clock is stable. Changing the rate of a `@MAIN` changes the clock port name, so the PLL
+its `LOCKED` output in as `pll_locked`. [top.py](top.py) passes it through two registers
+into a reset `Wire`, `pll_rst`, the clock's reset, which holds the blinking and VGA logic in
+[reset](../../../docs/pypeline_guide.md#resets) until the clock is stable. Changing the rate of a `@MAIN` changes the clock port name, so the PLL
 settings and the port map need updating too. To pick a fixed clock port name instead,
 see [`make_clock`](../../../docs/pypeline_guide.md#naming-a-clock-with-make_clock), as used
 by the [pico-ice example](../pico_ice).

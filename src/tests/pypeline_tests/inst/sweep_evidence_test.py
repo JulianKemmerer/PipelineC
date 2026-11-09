@@ -1100,7 +1100,7 @@ latencies, divergent = AUTO_PIPELINE.HARVEST_AUTO_PIPELINE_LATENCIES(a, ta)
 assert not divergent
 saved = {a.LogicInstLookupTable[root].func_name: (AUTO_PIPELINE.CAPTURE_CONCRETE_PIPELINE(root,ta,a),ta[root].GET_HASH_EXT(ta,a),ta[root].GET_TOTAL_LATENCY(a,ta)) for root in roots}
 # Move only the caller source locations; function/type identity is unchanged.
-file.write_text(file.read_text().replace("@MAIN\ndef", "\n\n@MAIN\ndef"))
+file.write_text(file.read_text().replace("\n@MAIN", "\n\n\n@MAIN"))
 pypeline.SET_AUTO_PIPELINE_LATENCY_CACHE(latencies)
 b = PY_TO_LOGIC.PARSE_FILE(str(file))
 tb = AUTO_PIPELINE.GET_ZERO_ADDED_CLKS_TIMING_PARAMS_LOOKUP(b)

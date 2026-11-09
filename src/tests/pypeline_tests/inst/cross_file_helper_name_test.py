@@ -52,6 +52,11 @@ def test_sub_file_helper_is_not_the_top_file_helper():
     _write(
         "cfh_lib",
         """
+        from pypeline import Input, make_reset, uint1_t
+
+        # One reset pin for all three files' MAINs (a port name is global)
+        rst: Input[uint1_t] = make_reset()  # every register resets; pulsed in cycle 0
+
         @hw_func
         def step(x: uint8_t) -> uint8_t:
             return x + 5
@@ -66,7 +71,8 @@ def test_sub_file_helper_is_not_the_top_file_helper():
         def step(x: uint8_t) -> uint8_t:
             return x + 1
 
-        @MAIN(100.0)
+        from cfh_lib import rst
+        @MAIN(100.0, reset=rst, reset_registers="all")
         def counter() -> uint8_t:
             count: Reg[uint8_t]
             rv = count
@@ -79,7 +85,8 @@ def test_sub_file_helper_is_not_the_top_file_helper():
         """
         from cfh_lib import step
 
-        @MAIN(100.0)
+        from cfh_lib import rst
+        @MAIN(100.0, reset=rst, reset_registers="all")
         def importer() -> uint8_t:
             n: Reg[uint8_t]
             rv = n
@@ -97,7 +104,8 @@ def test_sub_file_helper_is_not_the_top_file_helper():
         def step(x: uint8_t) -> uint8_t:
             return x + 3
 
-        @MAIN(100.0)
+        from cfh_lib import rst
+        @MAIN(100.0, reset=rst, reset_registers="all")
         def top() -> uint8_t:
             c: Reg[uint8_t]
             rv = c

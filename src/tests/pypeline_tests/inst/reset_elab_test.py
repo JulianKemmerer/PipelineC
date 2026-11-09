@@ -518,6 +518,20 @@ def test_global_insts_reset_with_their_clock():
     print("test_global_insts_reset_with_their_clock PASS")
 
 
+def test_rate_mains_take_an_unnamed_clocks_reset():
+    # make_clock(100.0, reset=rst) that no MAIN names is still the clock
+    # @MAIN(100.0) runs on: its MAINs and global instances take rst
+    src = "rst: Input[uint1_t] = make_reset()\nclk = make_clock(100.0, reset=rst)\n" + (
+        _GLOBAL_INSTS.replace("@MAIN(clk, reset_registers=POLICY)", '@MAIN(100.0, reset_registers="all")')
+        .replace("@MAIN(clk)", "@MAIN(100.0)")
+    )
+    state, _out = _parse(src, "rate_mains_clock_reset_test.py")
+    assert state.main_resets["producer"] == PY_TO_LOGIC.MainReset("rst", "all")
+    assert state.main_resets["c1_INST"] == PY_TO_LOGIC.MainReset("rst", "all")
+    assert state.main_resets["words_FIFO"] == PY_TO_LOGIC.MainReset("rst", "all")
+    print("test_rate_mains_take_an_unnamed_clocks_reset PASS")
+
+
 def test_global_insts_without_clock_reset_keep_names():
     src = "clk = make_clock(100.0)\n" + _GLOBAL_INSTS.replace("POLICY", '"requested"')
     state, _out = _parse(src, "global_insts_free_test.py")

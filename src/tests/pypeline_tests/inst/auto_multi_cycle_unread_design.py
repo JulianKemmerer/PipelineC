@@ -11,6 +11,8 @@ from pypeline import (
     uint1_t,
     uint8_t,
     uint32_t,
+    Input,
+    make_reset,
 )
 
 PART("xc7a35ticsg324-1l")
@@ -18,7 +20,12 @@ PART("xc7a35ticsg324-1l")
 MC = AUTO_MULTI_CYCLE(start_latency=2)
 
 
-@MAIN(100.0)
+# Synchronous reset pin (pulsed in cycle 0 by the simulators): every @MAIN
+# resets every register with it
+rst: Input[uint1_t] = make_reset()
+
+
+@MAIN(100.0, reset=rst, reset_registers="all")
 @hw_func
 def auto_multi_cycle_unread_main(x: uint32_t) -> uint1_t:
     launch: Reg[uint32_t, MC.start]

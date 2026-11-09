@@ -1559,7 +1559,10 @@ A struct created inside a nested factory is never visible to `_discover_structs_
 immediately at decoration time, the struct already carries its canonical name when
 `_elaborate_live_func` finds it in a closure. `_elaborate_live_func` checks each closure
 variable: if a NamedTuple subclass with `_pypeline_ctype_name` is not yet in
-`struct_to_field_type_dict`, it is registered there before elaboration begins.
+`struct_to_field_type_dict`, it is registered there before elaboration begins. A struct
+a caller reaches only as an attribute (`mag.complex_t`), in no annotation, is registered
+by the unannotated constructor that declares a local of it (`c = mag.complex_t(...)`,
+in `_elab_assign`); annotations register theirs through `_resolved_annotation_to_ctype`.
 
 ```python
 def make_swap(T):
@@ -5061,8 +5064,10 @@ MAIN has its clock. It fills `ParserState.main_resets[MAIN] = MainReset(source, 
 (reset wire key, `"requested"` or `"all"`) for each MAIN with a reset:
 
 - a registered `@MAIN` (`_main_registry`'s `_MainInfo`): `pypeline._resolve_main_reset`
-  with the clock primaries of every clock the design names (`_design_clocks`,
-  `pypeline._clock_primary_resets`);
+  with the clock primaries of every clock the design names (`_design_clocks`:
+  MAINs' and wires' clocks, and every clock object in a design module's globals,
+  `ParserState.pypeline_module_clocks`, so an unnamed `make_clock(100.0, reset=rst)` no
+  MAIN references still gives `@MAIN(100.0)` its reset; `pypeline._clock_primary_resets`);
 - a global instance's MAIN or a same-clock FIFO's (`decl.crossing is None`):
   `pypeline._global_inst_main_reset`, its clock's primary reset under `"all"`; an async
   FIFO's side MAINs get none.

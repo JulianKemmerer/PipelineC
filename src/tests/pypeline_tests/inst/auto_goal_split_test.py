@@ -56,11 +56,16 @@ TWO_CALLS = HEADER + """
 SLOW = make_lane()
 FAST = make_lane()
 
-@MAIN(50.0)
+from pypeline import Input, make_clock, make_reset, uint1_t
+rst_50: Input[uint1_t] = make_reset()  # one reset pin per clock; pulsed in cycle 0
+rst_100: Input[uint1_t] = make_reset()
+clk_50 = make_clock(50.0, reset=rst_50)
+clk_100 = make_clock(100.0, reset=rst_100)
+@MAIN(50.0, reset_registers="all")
 def slow(x: uint32_t) -> uint32_t:
     return SLOW(x)
 
-@MAIN(100.0)
+@MAIN(100.0, reset_registers="all")
 def fast(x: uint32_t) -> uint32_t:
     return FAST(x)
 """
@@ -117,7 +122,7 @@ def test_two_calls_at_two_goals_build_their_own_hardware():
 
 def test_objects_at_one_goal_still_share_hardware():
     reset()
-    source = TWO_CALLS.replace("@MAIN(100.0)", "@MAIN(50.0)")
+    source = TWO_CALLS.replace("@MAIN(100.0,", "@MAIN(50.0,")
     with tempfile.TemporaryDirectory() as tmp:
         state, out = parse(tmp, source)
         assert REPARSE_NOTE not in out, out
@@ -129,19 +134,24 @@ def test_objects_at_one_goal_still_share_hardware():
 COMPREHENSION = HEADER + """
 LANES = [make_lane() for _ in range(4)]
 
-@MAIN(50.0)
+from pypeline import Input, make_clock, make_reset, uint1_t
+rst_50: Input[uint1_t] = make_reset()  # one reset pin per clock; pulsed in cycle 0
+rst_100: Input[uint1_t] = make_reset()
+clk_50 = make_clock(50.0, reset=rst_50)
+clk_100 = make_clock(100.0, reset=rst_100)
+@MAIN(50.0, reset_registers="all")
 def slow_a(x: uint32_t) -> uint32_t:
     return LANES[{a}](x)
 
-@MAIN(50.0)
+@MAIN(50.0, reset_registers="all")
 def slow_b(x: uint32_t) -> uint32_t:
     return LANES[{b}](x)
 
-@MAIN(100.0)
+@MAIN(100.0, reset_registers="all")
 def fast_a(x: uint32_t) -> uint32_t:
     return LANES[{c}](x)
 
-@MAIN(100.0)
+@MAIN(100.0, reset_registers="all")
 def fast_b(x: uint32_t) -> uint32_t:
     return LANES[{d}](x)
 """
@@ -180,14 +190,19 @@ BUNDLES = [SimpleNamespace(lane=make_lane()) for _ in range(2)]
 WRAPPED = [make_wrapper(make_lane()) for _ in range(2)]
 LOOPED = [make_lane() for _ in range(3)]
 
-@MAIN(50.0)
+from pypeline import Input, make_clock, make_reset, uint1_t
+rst_50: Input[uint1_t] = make_reset()  # one reset pin per clock; pulsed in cycle 0
+rst_100: Input[uint1_t] = make_reset()
+clk_50 = make_clock(50.0, reset=rst_50)
+clk_100 = make_clock(100.0, reset=rst_100)
+@MAIN(50.0, reset_registers="all")
 def slow(x: uint32_t) -> uint32_t:
     acc: uint32_t = BY_NAME["slow"](x) + BUNDLES[0].lane(x) + WRAPPED[0](x)
     for i in range(2):
         acc = acc + LOOPED[i](x)
     return acc
 
-@MAIN(100.0)
+@MAIN(100.0, reset_registers="all")
 def fast(x: uint32_t) -> uint32_t:
     return BY_NAME["fast"](x) + BUNDLES[1].lane(x) + WRAPPED[1](x) + LOOPED[2](x)
 """
@@ -229,7 +244,11 @@ def make_lane_main():
 
     return lane_main
 
-LANE_MAINS = [MAIN(make_lane_main(), mhz=mhz, name=f"lane{i}") for i, mhz in enumerate((50.0, 100.0))]
+rst_50: Input[uint1_t] = make_reset()  # one reset pin per clock; pulsed in cycle 0
+rst_100: Input[uint1_t] = make_reset()
+clk_50 = make_clock(50.0, reset=rst_50)
+clk_100 = make_clock(100.0, reset=rst_100)
+LANE_MAINS = [MAIN(make_lane_main(), mhz=mhz, name=f"lane{i}", reset_registers="all") for i, mhz in enumerate((50.0, 100.0))]
 """
 
 
@@ -249,16 +268,21 @@ shared: Wire[uint32_t]
 SLOW = make_lane()
 FAST = make_lane()
 
-@MAIN(50.0)
+from pypeline import Input, make_clock, make_reset, uint1_t
+rst_50: Input[uint1_t] = make_reset()  # one reset pin per clock; pulsed in cycle 0
+rst_100: Input[uint1_t] = make_reset()
+clk_50 = make_clock(50.0, reset=rst_50)
+clk_100 = make_clock(100.0, reset=rst_100)
+@MAIN(50.0, reset_registers="all")
 def driver(x: uint32_t) -> uint32_t:
     shared = x
     return x
 
-@MAIN
+@MAIN(reset_registers="all")
 def inferred() -> uint32_t:
     return SLOW(shared)
 
-@MAIN(100.0)
+@MAIN(100.0, reset_registers="all")
 def fast(x: uint32_t) -> uint32_t:
     return FAST(x)
 """
@@ -277,11 +301,16 @@ def test_bare_main_counts_at_its_inferred_goal():
 SHARED = HEADER + """
 LANE = make_lane()
 
-@MAIN(50.0)
+from pypeline import Input, make_clock, make_reset, uint1_t
+rst_50: Input[uint1_t] = make_reset()  # one reset pin per clock; pulsed in cycle 0
+rst_100: Input[uint1_t] = make_reset()
+clk_50 = make_clock(50.0, reset=rst_50)
+clk_100 = make_clock(100.0, reset=rst_100)
+@MAIN(50.0, reset_registers="all")
 def slow(x: uint32_t) -> uint32_t:
     return LANE(x)
 
-@MAIN(100.0)
+@MAIN(100.0, reset_registers="all")
 def fast(x: uint32_t) -> uint32_t:
     return LANE(x)
 """
@@ -314,6 +343,11 @@ def test_one_object_at_two_goals_without_a_read_parses():
 
 FSMS = """
 from pypeline import *
+from pypeline import Input, make_clock, make_reset, uint1_t
+rst_50: Input[uint1_t] = make_reset()  # one reset pin per clock; pulsed in cycle 0
+rst_100: Input[uint1_t] = make_reset()
+clk_50 = make_clock(50.0, reset=rst_50)
+clk_100 = make_clock(100.0, reset=rst_100)
 
 @struct
 class in_t(NamedTuple):
@@ -340,11 +374,11 @@ def make_fsm_lane():
 SLOW = make_fsm_lane()
 FAST = make_fsm_lane()
 
-@MAIN(50.0)
+@MAIN(50.0, reset_registers="all")
 def slow(a: in_t, valid: uint1_t) -> uint16_t:
     return SLOW(a, valid)
 
-@MAIN(100.0)
+@MAIN(100.0, reset_registers="all")
 def fast(a: in_t, valid: uint1_t) -> uint16_t:
     return FAST(a, valid)
 """

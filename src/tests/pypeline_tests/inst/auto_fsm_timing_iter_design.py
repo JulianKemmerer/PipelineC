@@ -41,6 +41,8 @@ from pypeline import (
     uint23_t,
     uint25_t,
     uint27_t,
+    Input,
+    make_reset,
 )
 
 
@@ -69,7 +71,12 @@ def grow_chain(x: chain_in_t) -> uint27_t:
 CHAIN_FSM = AUTO_FSM(grow_chain)
 
 
-@MAIN(120.0)
+# Synchronous reset pin (pulsed in cycle 0 by the simulators): every @MAIN
+# resets every register with it
+rst: Input[uint1_t] = make_reset()
+
+
+@MAIN(120.0, reset=rst, reset_registers="all")
 def auto_fsm_timing_iter_top(start: uint1_t, x: chain_in_t) -> uint27_t:
     s: CHAIN_FSM.in_stream_t
     s.data = x

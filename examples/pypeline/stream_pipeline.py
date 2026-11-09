@@ -37,13 +37,19 @@ in_intrf = mult_pipeline.in_intrf
 out_intrf = mult_pipeline.out_intrf
 
 # Globally visible wires to interface with the pipeline
+# Synchronous reset input, active high: while it is 1 the three @MAINs below
+# reset every register they hold -- the pipeline's stages and output FIFO, the
+# producer's count, the consumer's last result (docs/pypeline_guide.md#resets)
+rst: Input[uint1_t] = make_reset()
+clk = make_clock(100.0, reset=rst)
+
 mult_in: Wire[in_intrf.stream_t]  # input to pipeline, data+valid
 mult_in_ready: Wire[uint1_t]  # output from pipeline, ready
 mult_out: Wire[out_intrf.stream_t]  # output from pipeline, data+valid
 mult_out_ready: Wire[uint1_t]  # input to pipeline, ready
 
 
-@MAIN(100.0)
+@MAIN(clk, reset_registers="all")
 def mult_pipeline_main():
     result = mult_pipeline(
         in_intrf.fwd_t(stream=mult_in), out_intrf.fb_t(ready=mult_out_ready)
@@ -53,7 +59,7 @@ def mult_pipeline_main():
 
 
 # Feeds the pipeline: x*(x+1) for x = 0, 1, 2, ...
-@MAIN(100.0)
+@MAIN(clk, reset_registers="all")
 def producer():
     x: Reg[uint16_t]
     mult_in.data.x = x
@@ -68,7 +74,7 @@ result_out: Output[uint32_t]
 
 
 # Uses the pipeline's results
-@MAIN(100.0)
+@MAIN(clk, reset_registers="all")
 def consumer():
     last_result: Reg[uint32_t]
     mult_out_ready = 1  # always ready

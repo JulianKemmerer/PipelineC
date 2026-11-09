@@ -5,7 +5,7 @@ sys.path.insert(
     0, os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "def")
 )
 
-from pypeline import MAIN, uint32_t
+from pypeline import MAIN, NamedTuple, hw_func, struct, uint32_t
 
 import pypeline_tests
 
@@ -94,3 +94,30 @@ def mixed_granularity_branch_reassign(
         p.dim[0] = 1
         p.dim[1] = 2
     return p
+
+
+def _make_pair_swap():
+    @struct
+    class pair_t(NamedTuple):
+        a: uint32_t
+        b: uint32_t
+
+    @hw_func
+    def pair_swap(p: pair_t) -> pair_t:
+        return pair_t(a=p.b, b=p.a)
+
+    pair_swap.pair_t = pair_t  # a factory's types travel as attributes
+    return pair_swap
+
+
+pair_swap = _make_pair_swap()
+
+
+@MAIN
+def unannotated_factory_struct_ctor(v0: uint32_t, v1: uint32_t) -> uint32_t:
+    # A factory's struct, reached only as an attribute and named in no
+    # annotation: the unannotated constructor declares the local and
+    # registers the type
+    p = pair_swap.pair_t(a=v0, b=v1)
+    q = pair_swap(p)
+    return q.a ^ p.a

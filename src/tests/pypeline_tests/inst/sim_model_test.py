@@ -27,6 +27,9 @@ from pypeline import (
     uint8_t,
     uint32_t,
     vhdl,
+    Input,
+    make_reset,
+    uint1_t,
 )
 
 # Clocked accumulator with a combinational path through to the output
@@ -277,12 +280,17 @@ accum_in: Wire[uint32_t]
 accum_total: Wire[uint32_t]
 
 
-@MAIN
+# Synchronous reset pin (pulsed in cycle 0 by the simulators): every @MAIN
+# resets every register with it
+rst: Input[uint1_t] = make_reset()
+
+
+@MAIN(reset=rst, reset_registers="all")
 def accum_main():
     accum_total = accum_np(accum_in)
 
 
-@MAIN
+@MAIN(reset=rst, reset_registers="all")
 def driver_main():
     count: Reg[uint32_t]
     accum_in = count
@@ -298,7 +306,7 @@ def check_accum(cycle, total):
     )
 
 
-@MAIN
+@MAIN(reset=rst, reset_registers="all")
 def checker_main():
     n: Reg[uint32_t]
     check_accum(n, accum_total)

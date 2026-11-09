@@ -25,6 +25,8 @@ import pypeline
 # Scope pins the written chain while keeping ordinary unsigned arithmetic.
 DESIGN = textwrap.dedent("""
 from pypeline import AUTO_FSM, INFERRED, MAIN, NamedTuple, hw_func, register_operator, struct, uint1_t, uint16_t
+from pypeline import Input, make_reset, uint1_t
+rst: Input[uint1_t] = make_reset()  # every register resets; pulsed in cycle 0
 @struct
 class input_t(NamedTuple):
     a: uint16_t
@@ -38,7 +40,7 @@ def chain(x: input_t) -> uint16_t:
     return b + x.d
 register_operator("PLUS", uint16_t, uint16_t, INFERRED, scope=chain)
 FSM = AUTO_FSM(chain)
-@MAIN(10.0)
+@MAIN(10.0, reset=rst, reset_registers="all")
 def top(x: input_t, valid: uint1_t) -> uint16_t:
     request: FSM.in_stream_t
     request.data = x
@@ -112,6 +114,8 @@ def test_schedule_cache_rejects_stale_source_target_and_version():
 # and so a different call site.
 LATENCY_SIZED_DESIGN = textwrap.dedent("""
 from pypeline import AUTO_FSM, AUTO_PIPELINE, MAIN, NamedTuple, hw_func, struct, uint1_t, uint8_t, uint16_t
+from pypeline import Input, make_reset, uint1_t
+rst: Input[uint1_t] = make_reset()  # every register resets; pulsed in cycle 0
 @hw_func
 def core(x: uint8_t) -> uint8_t:
     return x + 1
@@ -130,10 +134,10 @@ def make_lane_sum(capacity):
     return lanes_t, lane_sum
 lanes_t, lane_sum = make_lane_sum(CAPACITY)
 FSM = AUTO_FSM(lane_sum)
-@MAIN(10.0)
+@MAIN(10.0, reset=rst, reset_registers="all")
 def core_top(x: uint8_t) -> uint8_t:
     return CORE(x)
-@MAIN(10.0)
+@MAIN(10.0, reset=rst, reset_registers="all")
 def fsm_top(x: lanes_t, valid: uint1_t) -> uint16_t:
     request: FSM.in_stream_t
     request.data = x

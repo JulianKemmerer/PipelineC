@@ -58,6 +58,8 @@ from pypeline import (
     uint4_t,
     uint8_t,
     uint16_t,
+    Input,
+    make_reset,
 )
 from ram import make_ram
 
@@ -122,7 +124,12 @@ sum_consumer = make_sum_consumer(narrow)
 diff_consumer = make_diff_consumer(narrow)
 
 
-@MAIN
+# Synchronous reset pin (pulsed in cycle 0 by the simulators): every @MAIN
+# resets every register with it
+rst: Input[uint1_t] = make_reset()
+
+
+@MAIN(reset=rst, reset_registers="all")
 def factory_arg_port_annotation_test() -> uint16_t:
     c: Reg[uint4_t]
     done: Reg[uint1_t]

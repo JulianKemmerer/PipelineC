@@ -18,7 +18,7 @@ sys.path.insert(
 )
 import random
 
-from pypeline import MAIN, uint32_t, sim_call, sim_reset
+from pypeline import MAIN, uint32_t, sim_call, sim_reset, Input, make_reset, uint1_t
 
 from axi.axis import make_axis_interface, make_axis_skid_buffer
 from stream.skid_buffer import make_skid_buffer
@@ -40,35 +40,40 @@ axis_intrf = make_axis_interface(N)
 axis_skid = make_axis_skid_buffer(axis_intrf)
 
 
-@MAIN
+# Synchronous reset pin (pulsed in cycle 0 by the simulators): every @MAIN
+# resets every register with it
+rst: Input[uint1_t] = make_reset()
+
+
+@MAIN(reset=rst, reset_registers="all")
 def full_skid_top(
     stream_in_if: full_skid.fwd_t, stream_out_if: full_skid.fb_t
 ) -> full_skid.return_t:
     return full_skid(stream_in_if, stream_out_if)
 
 
-@MAIN
+@MAIN(reset=rst, reset_registers="all")
 def fwd_skid_top(
     stream_in_if: fwd_skid.fwd_t, stream_out_if: fwd_skid.fb_t
 ) -> fwd_skid.return_t:
     return fwd_skid(stream_in_if, stream_out_if)
 
 
-@MAIN
+@MAIN(reset=rst, reset_registers="all")
 def rev_skid_top(
     stream_in_if: rev_skid.fwd_t, stream_out_if: rev_skid.fb_t
 ) -> rev_skid.return_t:
     return rev_skid(stream_in_if, stream_out_if)
 
 
-@MAIN
+@MAIN(reset=rst, reset_registers="all")
 def byp_skid_top(
     stream_in_if: byp_skid.fwd_t, stream_out_if: byp_skid.fb_t
 ) -> byp_skid.return_t:
     return byp_skid(stream_in_if, stream_out_if)
 
 
-@MAIN
+@MAIN(reset=rst, reset_registers="all")
 def axis_skid_top(
     stream_in_if: axis_skid.fwd_t, stream_out_if: axis_skid.fb_t
 ) -> axis_skid.return_t:

@@ -12,7 +12,9 @@ runs a deliberately-wrong cycle-counting model through the same stimulus and
 asserts it gets the wrong answer. Without that second test the first one is
 just a number that happens to match.
 
-Composed with sim_call, so this runs in under a second.
+Composed with sim_call, so this runs in under a second. A reset abandoning an
+alarm in flight is checked in pdw_reset_test.py, which runs the alarm under a
+real `reset_registers="all"` reset (sim_call runs with every reset inactive).
 
 Run: python3 pdw_alarm_test.py
 """
@@ -32,7 +34,7 @@ MAX_CYCLES = 200
 ALARM = make_error_alarm(drop_samples=DROPS, max_cycles=MAX_CYCLES)
 
 
-def _run(cycles, trig_of, valid_of, en=1, rst_of=lambda c: 0):
+def _run(cycles, trig_of, valid_of, en=1):
     """Drive the alarm and return (n_dropped, n_low_cycles, fire_cycles)."""
     sim_reset()
     dropped = low = 0
@@ -44,7 +46,6 @@ def _run(cycles, trig_of, valid_of, en=1, rst_of=lambda c: 0):
             trig=int(trig_of(c)),
             en=int(en),
             in_valid=valid,
-            rst=int(rst_of(c)),
         )
         if int(o.firing):
             fires.append(c)
@@ -144,19 +145,6 @@ def test_backstop_releases_when_no_samples_arrive():
     print(f"test_backstop_releases_when_no_samples_arrive passed ({low} cycles)")
 
 
-def test_reset_abandons_an_alarm_in_flight():
-    dropped, low, fires = _run(
-        400, lambda c: c == 10, lambda c: 1, rst_of=lambda c: 12 <= c < 30
-    )
-    assert fires == [10]
-    assert dropped < DROPS, (
-        f"reset did not cut the alarm short: {dropped} samples dropped"
-    )
-    assert low < 25, f"ready stayed low for {low} cycles across a reset"
-    print(f"test_reset_abandons_an_alarm_in_flight passed "
-          f"({dropped} of {DROPS} samples before reset)")
-
-
 def test_backstop_must_exceed_the_drop_count():
     try:
         make_error_alarm(drop_samples=64, max_cycles=32)
@@ -175,6 +163,5 @@ if __name__ == "__main__":
     test_standing_trigger_fires_once()
     test_retriggers_after_the_trigger_clears()
     test_backstop_releases_when_no_samples_arrive()
-    test_reset_abandons_an_alarm_in_flight()
     test_backstop_must_exceed_the_drop_count()
     print("All pdw_alarm tests passed")
