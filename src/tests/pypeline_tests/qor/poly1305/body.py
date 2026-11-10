@@ -7,9 +7,12 @@ The body is WireGuard's paired feedback and coefficient arithmetic, a*b + c mod 
 with the hybrid_square 130-bit Karatsuba product of `arithmetic.py`. Registered
 boundary ports are for timing characterization; the region's latency excludes them.
 
--D HELPER=0 (default) tags the arithmetic directly, so the region planner slices
-it on its landscape. -D HELPER=1 adds the helper level WireGuard's body probe has,
-so the sweep locks the helper with its isolated mini-sweep instead.
+-D HELPER=0 (default) tags the arithmetic directly, so the region root is the
+arithmetic itself. -D HELPER=1 adds the helper level WireGuard's body once had,
+so the hotspot is a helper inside the region. Either way the sweep locks the
+hotspot with its isolated mini-sweep: 10 slices at 87.64 MHz in 3 whole-design
+syntheses at 80 MHz (Vivado 2019.2). Before region roots were mini-swept
+(compiler at 9fbd5d9f), HELPER=0 grew the region to 34 slices (82.05 MHz, 7).
 """
 
 from pypeline import AUTO_PIPELINE, MAIN, PART, Reg, hw_func, param, NamedTuple, struct
@@ -35,7 +38,8 @@ def body_helper(x: body_in_t) -> uint130_t:
     return residue_mul_add_mod(x.a, x.b, x.c)
 
 
-# A wrapper keeps the multiply inside the region (issue #387).
+# The helper level is optional: a region root is mini-swept like a helper
+# inside it (issue #387).
 if HELPER:
 
     @hw_func

@@ -1177,6 +1177,35 @@ def _VHDL_INSTANCE_TRIE(parser_state):
     return tries
 
 
+def INSTANCE_LABEL_POSITION(name, inst, parser_state):
+    """Where instance `inst`'s own VHDL label starts in a timing report's cell
+    name (lower case), or -1. The labels VHDL emission gives the instances from
+    inst's MAIN down to it (WIRE_TO_VHDL_NAME of each local name, as
+    _VHDL_INSTANCE_TRIE keys them) must appear as consecutive hierarchy levels:
+    separated by "/" (Vivado) or by a flattening tool's "." before an escaped
+    identifier (sky130 STA: `$flatten\\main.\\label.\\label.$auto...`). The last
+    occurrence wins, like a substring match's rfind."""
+    if name is None:
+        return -1
+    labels = [
+        VHDL.WIRE_TO_VHDL_NAME(local, parser_state).lower()
+        for local in inst.split(LOGIC.SUBMODULE_MARKER)[1:]
+    ]
+    if not labels:
+        return -1
+    pattern = (
+        r"(?:^|/|\\)"
+        + "".join(re.escape(label) + r"(?:/|\.\\)" for label in labels[:-1])
+        + "("
+        + re.escape(labels[-1])
+        + r")(?=[/.]|$)"
+    )
+    position = -1
+    for match in re.finditer(pattern, name.lower()):
+        position = match.start(1)
+    return position
+
+
 def PATH_CELLS_BY_MAIN(path_report, parser_state, TimingParamsLookupTable):
     """Which MAIN, and which instance inside it, each name on a timing path
     belongs to.

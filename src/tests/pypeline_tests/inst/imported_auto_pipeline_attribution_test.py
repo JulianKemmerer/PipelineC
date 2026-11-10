@@ -1,20 +1,21 @@
 #!/usr/bin/env python3
-"""Known issue: AUTO_PIPELINE(imported_f) loses the sweep's path attribution.
+"""AUTO_PIPELINE(imported_f) keeps the sweep's path attribution (#387).
 
 The call's instance is labeled with the bare Python name (`square`), while the
 callee's func_name is module-prefixed (`imported_math_square`). Attribution
 (SWEEP.RANK_PATH_FUNC_CANDIDATES) looks for func names inside register names,
-so a critical path through the region root matches nothing and the sweep falls
-back to blind global replans. Separately, a region root is never mini-swept.
-Seen for real: WireGuard tagging poly1305_body directly (bodies 6/12 deep, over
-DSP capacity) instead of through a wrapper (8/8, recorded).
+which matches nothing here; a region root is also found by its instance's
+exact label path (SYN.INSTANCE_LABEL_POSITION). Before that, the sweep fell
+back to blind global replans: WireGuard tagging poly1305_body directly built
+bodies 6/12 deep, over DSP capacity, instead of 8/8 through a wrapper.
+region_root_minisweep_test.py checks the sweep then mini-sweeps the root.
 
 In process, no synthesis tool: elaborate a two-module design, build a register
 path from the real emitted VHDL label path (SYN._VHDL_INSTANCE_TRIE) and ask
-SWEEP.RESOLVE_PIPELINABLE_HOTSPOT for the region's function.
+SWEEP.RESOLVE_PIPELINABLE_HOTSPOT for the region's function. The same path in
+sky130 STA's flattened form ($flatten\\main.\\label.) must attribute the same.
 
-Exits 1 while the bug is present (registered expect_fail in
-known_issues_tests.py), 0 once the region root is attributed.
+Exits 0 when the region root is attributed, 1 otherwise.
 """
 import os
 import sys
@@ -83,6 +84,26 @@ def main():
             )
             if hotspot != region.func_name:
                 print(f"FAIL: the path was attributed to {hotspot}, not {region.func_name}")
+                return 1
+            basis = SWEEP.ATTRIBUTION_BASIS(report, hotspot, plan, ps)
+            if basis != "inside":
+                print(f"FAIL: the attribution basis is {basis}, not inside")
+                return 1
+            # sky130 STA flattens the hierarchy into escaped identifiers
+            flat = "$flatten\\top_0clk_12345678." + "".join(
+                "\\" + label + "." for label in labels
+            )
+            flat_report = SimpleNamespace(
+                start_reg_name=flat + "$auto$ff.cc:266:slice$1",
+                end_reg_name=flat + "$auto$ff.cc:266:slice$2",
+                netlist_resources=set(),
+            )
+            flat_hotspot, _reason, _stage = SWEEP.RESOLVE_PIPELINABLE_HOTSPOT(
+                flat_report, plan, ps
+            )
+            print(f"Flattened path: {flat_report.start_reg_name}; hotspot={flat_hotspot}")
+            if flat_hotspot != region.func_name:
+                print(f"FAIL: the flattened path was attributed to {flat_hotspot}")
                 return 1
         finally:
             pypeline.SET_AUTO_PIPELINE_BUILD_MODE(None)

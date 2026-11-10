@@ -4,7 +4,7 @@ This lists every open [PipelineC issue][issues], most serious first, for contrib
 
 Feature ideas and design questions live in [Discussions][discussions]. Before starting on code, read [`CONTRIBUTING.md`](../CONTRIBUTING.md): changes usually start with a discussion.
 
-- **Baseline:** commit `5d2a9ca62616932aa401c8a3b07973afbb357ce5`. Every `file:line` reference points into that commit. The entries for [#369][i369], [#370][i370], [#371][i371], [#372][i372], [#379][i379], [#380][i380], [#381][i381] and [#382][i382] to [#387][i387], and entry 46, cite code newer than that commit, so they name functions instead. Entry 46 was verified on commit `16f70fd2`.
+- **Baseline:** commit `5d2a9ca62616932aa401c8a3b07973afbb357ce5`. Every `file:line` reference points into that commit. The entries for [#369][i369], [#370][i370], [#371][i371], [#372][i372], [#379][i379], [#380][i380], [#381][i381] and [#382][i382] to [#386][i386], and entry 46, cite code newer than that commit, so they name functions instead. Entry 46 was verified on commit `16f70fd2`.
 - **Verified** means reproduced on that commit, in some cases by simulating the generated VHDL in GHDL. Unverified entries come from reading the code or from the issue thread.
 
 ## Before you start
@@ -63,7 +63,7 @@ Issues #353 and later include their reproducers in the issue itself.
 
 - `python3 src/tests/pypeline_tests/run_all.py` runs the Python suites. It accepts `-j N` and `--category …`.
 - `src/tests/c_tests/test_builds.sh "--comb --no_synth"` builds the C examples.
-- `python3 src/tests/pypeline_tests/known_issues_tests.py` runs expect-fail reproducers of known bugs, including those for [#361][i361], [#369][i369], [#370][i370], [#371][i371], [#372][i372], [#376][i376], [#378][i378] and [#382][i382] to [#387][i387]. A fixed bug shows up as XPASS.
+- `python3 src/tests/pypeline_tests/known_issues_tests.py` runs expect-fail reproducers of known bugs, including those for [#361][i361], [#369][i369], [#370][i370], [#371][i371], [#372][i372], [#376][i376], [#378][i378] and [#382][i382] to [#386][i386]. A fixed bug shows up as XPASS.
 
 ## Ranking
 
@@ -120,7 +120,7 @@ Within each group, bugs that affect both front ends come first, problems in the 
 | 40 | [#365][i365] | Both | `--coarse --sweep` may crash on narrow leaves | Not reproduced |
 | 41 | [#372][i372] | Python | `AUTO_PIPELINE(latency=N)` adds N cuts when `@pipeline_latency` calls already supply N cycles | Yes |
 | 42 | [#366][i366] | Python | AUTO_FSM deeply opened schedules may fail to elaborate | No, needs a long AUTO_FSM search |
-| 43 | [#387][i387] | Python | `AUTO_PIPELINE(f)` on an imported function sweeps worse than tagging a local wrapper | Yes, in process |
+| 43 | TBD | Python | A path inside an imported helper is blamed on the function around it | Yes, in process |
 | 44 | [#380][i380] | Both | The top level's global-wire connections come out in a hash-dependent order, so `top.vhd` changes between builds | Yes |
 | 45 | [#381][i381] | Both | After the sweep meets timing, a failed trim trial is kept and the build ends TIMING NOT MET | Yes |
 | 46 | TBD | Both | A hierarchy with inferred multiplies is sliced as if its DSP leaves shrank with it: a Karatsuba body needs 10–34 stages where ~5 would do | Yes, Vivado |
@@ -699,13 +699,13 @@ Within each group, bugs that affect both front ends come first, problems in the 
 - **Where to look:** AUTO_FSM's source generation for opened operations in `src/AUTO_FSM.py`; `docs/AUTO_FSM_DESIGN.md` §6.
 - **Reproduce:** not re-run here; it needs a long AUTO_FSM search.
 
-### 43. [#387][i387]: `AUTO_PIPELINE(f)` on an imported function sweeps worse than a wrapper
+### 43. TBD: a path inside an imported helper is blamed on the function around it
 
 - **Front ends:** Python.
-- **What happens:** the call's instance is labeled with the bare Python name (`square`), while the callee's function name is module-prefixed (`imported_math_square`). The sweep attributes a critical path by finding function names inside its register names, so a path through the region root matches nothing and the sweep replans the whole MAIN blindly. Separately, the sweep never mini-sweeps a region root, only functions inside a region. Seen on WireGuard: tagging `poly1305_body` directly built the bodies 6 and 12 deep and overflowed the device's DSPs, where tagging a one-line wrapper built 8 and 8.
-- **Where to look:** `SWEEP.RANK_PATH_FUNC_CANDIDATES` and `ATTRIBUTION_BASIS` (name matching); `SYN.PATH_CELLS_BY_MAIN` already maps path names to instances through the emitted hierarchy. The region-root exclusion is the `hotspot_func != region.func_name` test in `SWEEP.DO_PLANNED_THROUGHPUT_SWEEP`.
-- **Reproduce:** `python3 src/tests/pypeline_tests/known_issues_tests.py -k imported_auto_pipeline_attribution` (XFAIL while the bug is present).
-- **Workaround:** tag a small local wrapper that calls the function, so the function sits inside the region.
+- **What happens:** a call's instance is labeled with the name it is called by. An imported function called by its bare name (`square`, or an alias such as WireGuard's `feedback_mul_add_mod` for `poly1305_math_residue_mul_add_mod_inferred`) has a module-prefixed function name that is in no register name, and the sweep attributes a critical path by finding function names inside register names. A path inside the helper goes to the nearest enclosing function found by name, or to the AUTO_PIPELINE region root around it, which is also found by its instance's label path. The sweep then mini-sweeps that whole function or region instead of the repeated helper, which can take more registers or more syntheses.
+- **Where to look:** `SWEEP.RANK_PATH_FUNC_CANDIDATES`. Region roots are matched by `SYN.INSTANCE_LABEL_POSITION` only after name matches fail, so designs that match by name today blame the same function. Matching every candidate by its instances' label paths would replace name matching and change what those designs blame.
+- **Reproduce:** `python3 src/tests/pypeline_tests/run_all.py --category known_issues -t imported_helper_attribution_known_issue -j 1` (XFAIL while the bug is present).
+- **Workaround:** call the helper from a function in its own module: a same-module call is labeled with the module-prefixed name.
 
 ### 44. [#380][i380]: the top level's global-wire connections come out in a hash-dependent order
 
@@ -789,7 +789,6 @@ Within each group, bugs that affect both front ends come first, problems in the 
 [i384]: https://github.com/JulianKemmerer/PipelineC/issues/384
 [i385]: https://github.com/JulianKemmerer/PipelineC/issues/385
 [i386]: https://github.com/JulianKemmerer/PipelineC/issues/386
-[i387]: https://github.com/JulianKemmerer/PipelineC/issues/387
 [d323]: https://github.com/JulianKemmerer/PipelineC/discussions/323
 [d326]: https://github.com/JulianKemmerer/PipelineC/discussions/326
 [d342]: https://github.com/JulianKemmerer/PipelineC/discussions/342

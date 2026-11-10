@@ -650,6 +650,12 @@ from a different angle:
   build the same depth in at most five whole-design checks, including two optional
   trim probes. Final history must retain all six locks and a measured passing
   frequency. Before the fix, the hinted build reached twice the depth in five.
+- `region_root_minisweep_test.py` (build_report_device_models): the same chain as an
+  imported function tagged directly (`region_root_minisweep_design.py`), so the
+  critical path is found only by the region root's label path and nothing inside it
+  matches by name. The root itself must be mini-swept and locked, and reach the same
+  depth as tagging the one-line wrapper of `-D REGION_ROOT_WRAPPER=1`, which
+  mini-sweeps the function inside it (two builds).
 - `auto_pipeline_c_pragma_test.py` (build_report_device_models): C `#pragma AUTOPIPELINE N` under
   `--comb`.
 - `self_check_fixed_auto_pipeline_test.py` (both native_vs_vhdl categories): compares
@@ -723,10 +729,14 @@ The latency memory and `--latency_hints` (see
   - at a raised goal, the lower goal's count is a floor.
 - **`auto_multi_cycle_unit_test.py` (unit):** a remembered count is elaborated, then
   registered as a provisional seed.
-- **`imported_auto_pipeline_attribution_test.py` (known_issues):** the in-process
-  reproducer for tagging an imported function directly. It builds a register path
-  from the real emitted hierarchy (`SYN._VHDL_INSTANCE_TRIE`) and expects the region
-  root to be blamed; XFAIL until that attribution is fixed.
+- **`imported_auto_pipeline_attribution_test.py` (unit):** tagging an imported function
+  directly. It builds a register path from the real emitted hierarchy
+  (`SYN._VHDL_INSTANCE_TRIE`), in Vivado's `/` form and sky130 STA's flattened form,
+  and expects the region root to be blamed, found by its instance's label path, with
+  an `inside` basis.
+- **`imported_helper_attribution_test.py` (known_issues):** the same path inside an
+  imported helper the region root calls is blamed on the root, not the helper; XFAIL
+  until helpers are found by label path too.
 
 The harness sets `PIPELINEC_INTERNAL_NO_LATENCY_MEMORY=1` for every test (see
 [Running](#running)); the memory build tests turn it back off for their own builds.
@@ -846,8 +856,15 @@ hand-worked numbers.
   - named tags:
     - the key is the name plus a fixed/max suffix;
     - a named tag consumes no site ordinal;
-    - a second tag with one name is a `TypeError`;
+    - a second tag with one name joins its group; one with other constraints is a
+      `TypeError` naming both sites;
     - identity ignores a named tag's `start_latency`, but not the count;
+  - repeated stream wrappers: two calls of one uncached service factory
+    ([`auto_multi_cycle_repeated_design.py`](../src/tests/pypeline_tests/inst/auto_multi_cycle_repeated_design.py))
+    elaborate, unnamed (keyed by the wrapped function) and under a shared `name=`, to one
+    group each, held by one function. A shared name over another function is refused;
+  - replaying built hardware: a tag that build read but never built reads the recorded
+    count, and any other undecided tag raises `BuiltHardwareError`;
   - a starting count from the latency memory is elaborated, then registered as
     a provisional seed with the source floor. Evidence that raises it keeps
     that floor.
@@ -1144,6 +1161,10 @@ covered:
   measures: with a reset pin, the pin's fanout to the registers the sweep adds becomes
   the critical path past its best iteration, and fmax falls as the cuts grow, so the
   sweep never sees a plateau and ends on `no_realized_change` instead;
+- `region_root_minisweep_design.py`, whose subject is the mini-sweep lock of a whole
+  region: with a reset pin, the pin's fanout to the lock's thousands of registers is
+  the critical path in the full design, so a lock that meets the goal in isolation
+  never does in context;
 - `sim_call` scripts and C designs;
 - the getting-started examples `counter.py`, `fsm.py`, `blink.py` and `pipeline.py`, whose
   printed output, waveforms and simulator drivers the README walks through.
@@ -1508,8 +1529,8 @@ exercise generated helpers and specialization reuse in real hardware builds.
   - named function, struct and enum keys are `<name>_s<digest of the unnamed key>`;
   - the decorator errors;
   - `make_stream_auto_pipeline` / `make_stream_auto_multi_cycle` products keep the
-    names they had before `name=` existed. The unnamed AUTO_MULTI_CYCLE key's
-    `line137` is pinned, because moving that line renames every unnamed holder.
+    names they had before `name=` existed. An unnamed stream AUTO_MULTI_CYCLE key is
+    the wrapped function's key plus `_mcp`, not the library line that builds it.
 - **`name_index_test.py` (elab_introspect):**
   - the `USER NAMES` section;
   - two named groups on one function stay two instances with callee-derived call-site labels;
@@ -1517,7 +1538,9 @@ exercise generated helpers and specialization reuse in real hardware builds.
   - a conflicting name fails, naming both sites.
 - **`double_parse_file_test.py` (elab_introspect):** `user_names_design.py`, with
   every form of `name=`, parses to the same keys twice; `auto_goal_split_design.py`,
-  whose objects from one comprehension are used at two clock goals, too.
+  whose objects from one comprehension are used at two clock goals, and
+  `auto_multi_cycle_repeated_design.py`, whose repeated stream AUTO_MULTI_CYCLE
+  wrappers share keys, too.
 
 **AUTO objects at several clock goals.**
 - **`auto_construction_site_unit_test.py` (unit, no parse):** construction sites tell

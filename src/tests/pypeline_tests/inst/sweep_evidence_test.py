@@ -869,11 +869,20 @@ def test_carried_locks_belong_to_their_main_and_obey_lock_rules():
         again = SWEEP.MainSweepPlan("dec", 40)
         SWEEP.LOAD_CARRIED_LOCKS(again, ps, zero())
         assert set(again.locked) == {inst}
-        # Same rules as the mini-sweep: never inside a constrained region.
+        # Same rules as the mini-sweep: never on or inside a constrained
+        # region, while an uncapped region's root takes it (#387).
         region = SWEEP.MainSweepPlan("dec", 40)
-        region.regions = [SimpleNamespace(inst=inst)]
+        region.regions = [
+            SimpleNamespace(inst=inst, constraint=SWEEP.LOGIC.AutoPipelineLatency(max_latency=3))
+        ]
         SWEEP.LOAD_CARRIED_LOCKS(region, ps, zero())
         assert region.locked == {}
+        region = SWEEP.MainSweepPlan("dec", 40)
+        region.regions = [
+            SimpleNamespace(inst=inst, constraint=SWEEP.LOGIC.AutoPipelineLatency(start_latency=1))
+        ]
+        SWEEP.LOAD_CARRIED_LOCKS(region, ps, zero())
+        assert set(region.locked) == {inst}
         # A preserved MAIN keeps the lock only if its snapshot built it.
         kept = SWEEP.MainSweepPlan("dec", 40)
         SWEEP.LOAD_CARRIED_LOCKS(kept, ps, zero(), AUTO_PIPELINE.CAPTURE_CONCRETE_PIPELINE("dec", zero(), ps))
@@ -1450,7 +1459,8 @@ def test_unresolved_region_keeps_zero_cut_probe_during_mcp_repair():
         AUTO_PIPELINE, "_ENFORCE_ONE_AUTO_PIPELINE_REGION", side_effect=lower
     ):
         AUTO_PIPELINE.ENFORCE_AUTO_PIPELINE_REGIONS(
-            [region], None, {}, period_ns=10.0, zero_cut_probe=True, unresolved=True
+            [region], None, {"a": SimpleNamespace(params_are_fixed=False)},
+            period_ns=10.0, zero_cut_probe=True, unresolved=True,
         )
     # An unrelated MCP count may need another iteration before the trim can
     # finish. Keep testing the zero-cut implementation in that iteration.

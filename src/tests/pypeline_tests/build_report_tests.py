@@ -222,6 +222,18 @@ def get_tests() -> list:
             needs_out_dir=True,
         )
     )
+    # An imported function tagged directly is its region's root: its critical
+    # path is found by the root instance's label path, the root itself is
+    # mini-swept and locked, and it reaches the depth of tagging a one-line
+    # wrapper instead (#387; two builds).
+    tests.append(
+        Test(
+            name="region_root_minisweep_test",
+            category=DM,
+            cmd=[INST_DIR / "region_root_minisweep_test.py"],
+            needs_out_dir=True,
+        )
+    )
     # C frontend `#pragma AUTOPIPELINE N`: a fixed latency, built with exactly
     # N clocks even by a --comb build.
     tests.append(

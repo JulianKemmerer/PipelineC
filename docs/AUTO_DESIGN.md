@@ -314,9 +314,9 @@ memory use it, so each goal gets its own depth.
 goals whose `.latency` the design read (`pypeline.AUTO_READS`): no one value
 matches its instances, and `PARSE_FILE` raises with it.
 
-AUTO_MULTI_CYCLE needs none of this: an unnamed tag's key is its construction
-site already, and one tag used at several goals gets the count its fastest
-goal needs (see
+AUTO_MULTI_CYCLE needs none of this: a key used at several goals gets the
+count its fastest goal needs. An unnamed raw tag's key is its construction
+site; an unnamed `make_stream_auto_multi_cycle` tag's key is its function (see
 [AUTO_MULTI_CYCLE_DESIGN.md](AUTO_MULTI_CYCLE_DESIGN.md)).
 
 ## 8. Tests

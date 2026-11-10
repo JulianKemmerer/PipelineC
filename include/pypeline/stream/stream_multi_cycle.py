@@ -136,19 +136,24 @@ def make_stream_auto_multi_cycle(
     max_latency; latency=N fixes it. A provisional isolated seed can be confirmed
     down once per datapath shape before counts become grow-only. The handshake is written in terms of the
     tag's .latency, so the final design always waits exactly as many cycles as
-    the path is constrained for.
+    the path is constrained for. Calls over one func with the same
+    constraints, or with the same name=, are one group: one count and one
+    hardware definition, with separate state per instance. Give calls
+    different name=s for independent counts.
 
     Returns func_mcp, with its complete return type at func_mcp.return_t, like make_stream_multi_cycle;
     func_mcp.mcp is the AUTO_MULTI_CYCLE tag (read func_mcp.mcp.latency for the count).
     A result is valid mcp.latency + 1 cycles after its input is accepted.
     """
-    MC = AUTO_MULTI_CYCLE(latency=latency, start_latency=start_latency, max_latency=max_latency, name=name)  # noqa: E501
-    # name= names the tag (see AUTO_MULTI_CYCLE): latency hints, the latency
-    # memory and sweep reports find it by that name. Keep the construction on
-    # this one line: an unnamed tag's key is the source line it is built on,
-    # so moving it renames every unnamed make_stream_auto_multi_cycle holder.
-    _check_mcp_latency("make_stream_auto_multi_cycle", MC._ncycles_for_compiler())
     stream_types = _mcp_stream_types(func, "make_stream_auto_multi_cycle")
+    # The tag's key is name= when given, else func's (see AUTO_MULTI_CYCLE):
+    # latency hints, the latency memory and sweep reports find it by that key,
+    # and calls over one func with the same constraints share one count.
+    MC = AUTO_MULTI_CYCLE(
+        latency=latency, start_latency=start_latency, max_latency=max_latency,
+        name=name, _func=func,
+    )
+    _check_mcp_latency("make_stream_auto_multi_cycle", MC._ncycles_for_compiler())
     in_type = stream_types.in_type
     out_type = stream_types.out_type
     in_intrf = stream_types.in_intrf

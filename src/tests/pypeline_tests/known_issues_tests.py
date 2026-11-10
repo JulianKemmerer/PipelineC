@@ -89,15 +89,14 @@ def get_tests() -> list:
             expect_fail=True,
         )
     )
-    # AUTO_PIPELINE(imported_f): the instance label is the bare name, the
-    # func_name module-prefixed, so path attribution misses the region root
-    # and the sweep replans blindly (WireGuard without its body wrappers).
-    # Issue #387.
+    # A path inside an imported helper: the call is labeled with the bare
+    # name, the func_name module-prefixed, so attribution never finds the
+    # helper and blames the region root around it. Issue TBD.
     tests.append(
         Test(
-            name="imported_auto_pipeline_attribution_known_issue",
+            name="imported_helper_attribution_known_issue",
             category="known_issues",
-            cmd=[INST_DIR / "imported_auto_pipeline_attribution_test.py"],
+            cmd=[INST_DIR / "imported_helper_attribution_test.py"],
             expect_fail=True,
         )
     )

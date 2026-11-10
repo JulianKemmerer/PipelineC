@@ -1648,33 +1648,48 @@ AUTO_PIPELINE's `.latency` feedback, with a few deliberate differences:
     value.
   - A cached value that conflicts with `latency=` or exceeds `max_latency=` is a
     `ValueError`.
-- **Canonical key.** `module.co_name_line<lineno>_<ordinal>` plus the
-  `_latency_N` / `_start_latency_S` / `_max_latency_M` suffix.
-  - The key is the construction site plus a per-site ordinal, because there is no wrapped
-    function to key on. The ordinal disambiguates one factory line building several tags.
-  - Ordinals restart with every design execution: `RESET_AUTO_MULTI_CYCLE_TRACKING`, called from
-    `CLEAR_AUTO_PIPELINE_LATENCY_READ_FLAG` (i.e. `PARSE_FILE`) and before
-    `pypeline_sim.run_sim`'s design import.
-  - Keys are therefore deterministic across the pin-and-confirm re-executions.
-  - A library factory's tags all share its one construction line, and that line
-    number is in their keys. Moving the constructor in
-    `make_stream_auto_multi_cycle` invalidates unnamed latency keys;
-    `factory_closure_naming_test` checks the key against the actual source site.
-  - **A named tag's key is its name** plus the `_latency_N` / `_max_latency_M` suffix
+- **Canonical key.** One of three bases, plus the `_latency_N` / `_start_latency_S` /
+  `_max_latency_M` suffix:
+  - **A raw tag:** `module.co_name_line<lineno>_<ordinal>`, the construction site plus a
+    per-site ordinal, because there is no wrapped function to key on. The ordinal
+    disambiguates one factory line building several tags. Ordinals restart with every
+    design execution (`RESET_AUTO_MULTI_CYCLE_TRACKING`, called from
+    `CLEAR_AUTO_PIPELINE_LATENCY_READ_FLAG`, i.e. `PARSE_FILE`, and before
+    `pypeline_sim.run_sim`'s design import), so keys are deterministic across the
+    pin-and-confirm re-executions.
+  - **A `make_stream_auto_multi_cycle` tag:** `CANONICAL_CALLABLE_KEY(func)` plus `_mcp`,
+    from the private `_func=` that factory passes. Calls over one function with the same
+    constraints have one key, and their wrapper closures are equal, so they share one
+    holder function and one count, like two AUTO_PIPELINE tags on one function.
+    `factory_closure_naming_test` checks the key is not the library line.
+  - **A named tag:** its name plus the `_latency_N` / `_max_latency_M` suffix
     (`start_latency` is left out). It consumes no site ordinal, so unnamed keys at the
-    same site never move. `_auto_multi_cycle_names` allows one tag per name per
-    design execution; a second construction is a `TypeError` naming the first site.
+    same site never move. A name is one group: `_auto_multi_cycle_names` holds the first
+    tag's signature (the wrapped function's `_name_identity`, if any, and the three
+    constraints), and a tag whose signature differs is a `TypeError` naming both sites,
+    as for AUTO_PIPELINE.
+  - The key is resolved on first use (`canonical_key`), since a wrapped function's key
+    needs `PY_TO_LOGIC`, which plain native sim never imports. The constructor resolves
+    it only when a seed table, the build cache or `_built_unbuilt_reads` is installed.
+    `binding_key` is the canonical key (one count per tag at every clock goal), for
+    `_require_built`.
 - **Construction inside a `@hw_func` body is a `TypeError`.** Detected by the calling
   frame's pseudo file name (`<local_const>`, `<const_eval>`, ...) or `_sim_active`. A tag
   re-created on every evaluation would break key identity.
 - **Read tracking.**
-  - `.latency` (alias `.ncycles`) records the value in `_auto_multi_cycle_served`.
+  - `.latency` (alias `.ncycles`) records the value in `_auto_multi_cycle_served` and the
+    read site in `_auto_multi_cycle_read_sites`, both keyed by the tag object; the
+    accessors (`AUTO_MULTI_CYCLE_SERVED_LATENCIES`, `AUTO_MULTI_CYCLE_READ_SITES`,
+    `AUTO_MULTI_CYCLE_CONSTRUCTED`) resolve keys when the compiler asks, merging the tags
+    of one key.
   - The compiler reads through `_ncycles_for_compiler()`, which records nothing.
   - `AUTO_MULTI_CYCLE_UNREAD_KEYS()` lists non-fixed tags no design code read; the driver refuses
     those (`AUTO_MULTI_CYCLE.CHECK_AUTO_MULTI_CYCLE_TAGS_READ`).
 - **Name identity.** `_stable_key` encodes the key, the constraint **and the
   resolved count** (for a named tag, the key, `latency=`, `max_latency=` and the count:
-  its `start_latency` is only a starting value). An AUTO_PIPELINE's identity
+  its `start_latency` is only a starting value). An unnamed stream tag encodes its
+  wrapped function's `_stable_key` in place of the key, which leaves the key
+  unresolved. An AUTO_PIPELINE's identity
   deliberately omits its served latency.
   Here the function holding the tagged registers bakes `.latency`-derived constants into
   its logic, so a count change between passes must rename that entity, not reuse a

@@ -236,9 +236,11 @@ elaborated counts overlaid with the sweep's final overrides.
 - One tag has one count, even when MAINs at different clock goals use it: the count
   grows for whichever goal's path fails, and `SEED_COUNTS` seeds from the fastest
   goal, so it meets every clock and is more cycles than a slower domain needs. Tags
-  constructed separately, one per clock domain (two factory calls, or a loop), are
-  separate keys already, since an unnamed tag's key is its construction site, and get
-  counts of their own. A count per goal for one tag is not supported yet.
+  with separate keys, one per clock domain, get counts of their own: raw tags
+  constructed separately (two factory calls, or a loop), since an unnamed raw tag's
+  key is its construction site, and `make_stream_auto_multi_cycle` calls given
+  different `name=`s, since an unnamed stream tag's key is its function. A count per
+  goal for one tag is not supported yet.
 - The count never goes below where it started: a post-met probe downward would cost a
   full synthesis per step on large designs.
 - Only the worst path per clock group is reported, so an AUTO_MULTI_CYCLE path hidden behind a
@@ -263,7 +265,12 @@ path meets timing; pass 2 re-elaborates, the final XDC carries the count, and
 the pipelined native `--sim` asserts the handshake waits count + 1 cycles;
 (2) restarting at that count settles with no change and pass 2 skipped; (3) a
 `max_latency=1` cap fails the build naming it. `auto_multi_cycle_unit_test.py`
-covers this module's functions in-process on synthetic reports.
+covers this module's functions in-process on synthetic reports. Its
+`test_repeated_stream_tags_share_one_group` elaborates
+[`auto_multi_cycle_repeated_design.py`](../src/tests/pypeline_tests/inst/auto_multi_cycle_repeated_design.py),
+two calls of one uncached service factory: each key, unnamed (the wrapped
+function) or shared by `name=`, is one group whose two paths sit in one holder
+function. `double_parse_file_test` re-parses that design for stable keys and names.
 [`added_latency_context_test.py`](../src/tests/pypeline_tests/inst/added_latency_context_test.py)
 adds a shared-helper regression across two MAINs, tagged bodies, fixed/auto
 MCP wrappers, direct FSM calls, and untagged bridges. It checks actual

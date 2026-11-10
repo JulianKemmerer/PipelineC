@@ -5248,6 +5248,31 @@ def RANK_PATH_FUNC_CANDIDATES(path_report, plan, parser_state):
                 one[func_name] = (max(positions), len(fl), fl)
         if len(one) > 0:
             return _ranked(one)
+        # Tiers A and B again for region roots, found by their instances'
+        # exact label paths (SYN.INSTANCE_LABEL_POSITION) when no name
+        # matched. An AUTO_PIPELINE call is labeled with the wrapped
+        # function's own name, and an imported function's func_name is
+        # module-prefixed, so a region root's name can be in no register name
+        # at all. Only after name matches, so a deeper function found by name
+        # still wins.
+        root_insts = {}
+        for region in getattr(plan, "regions", ()):
+            root_insts.setdefault(region.func_name, []).append(region.inst)
+        both, one = {}, {}
+        for func_name, insts in root_insts.items():
+            fl = func_name.lower()
+            positions = [
+                max(SYN.INSTANCE_LABEL_POSITION(e, inst, parser_state) for inst in insts)
+                for e in endpoints
+            ]
+            if all(p >= 0 for p in positions):
+                both[func_name] = (min(positions), len(fl), fl)
+            elif any(p >= 0 for p in positions):
+                one[func_name] = (max(positions), len(fl), fl)
+        if len(both) > 0:
+            return _ranked(both)
+        if len(one) > 0:
+            return _ranked(one)
 
     # Tier C: no endpoint name usable at all (mangled beyond matching, or
     # the tool reports netlist resources but no register endpoint names) -
@@ -5754,15 +5779,17 @@ def DESCRIBE_EXCLUDED_MINISWEEP_INSTANCES(excluded, parser_state):
     return f"; left {len(excluded)} instance(s) combinational (" + "; ".join(descriptions) + ")"
 
 
-def REGION_INTERIOR_LOCK_BLOCKER(region, plan, parser_state):
-    """Why a mini-sweep lock may not go inside `region`, or None.
+def REGION_LOCK_BLOCKER(region, plan, parser_state):
+    """Why a mini-sweep lock may not go on `region`'s root or inside it, or
+    None.
 
     A fixed (latency=) or capped (max_latency=) region owns its register
     count and resets its interior on a recount, which would drop the lock.
     Every other member of the region's group is in this plan's MAIN or a
     peer's: a group is one key at one clock goal
     (AUTO.AUTO_PIPELINE_BINDING), and the lock goes into every member
-    (SHARE_LOCK), which must realize one .latency."""
+    (SHARE_LOCK), which must realize one .latency. A locked root realizes
+    its region from the lock (AUTO_PIPELINE._ENFORCE_ONE_AUTO_PIPELINE_REGION)."""
     if region.constraint.upper_bound() is not None:
         return "constrained AUTO_PIPELINE region"
     return None
@@ -5776,25 +5803,30 @@ def LOCK_BLOCKED_REASON(func, plan, targets, parser_state):
     """
     # Never mini-sweep a subtree root (or the main): "isolating" the whole
     # subtree is just this sweep with even slices instead of planned cuts,
-    # and locking the root would freeze the entire plan
+    # and locking the root would freeze the entire plan. A subtree that is an
+    # AUTO_PIPELINE region (its caller cannot absorb latency) is planned by
+    # region enforcement instead, so its root follows the region rules below.
+    region_insts = {region.inst for region in getattr(plan, "regions", ())}
     root_funcs = set(
-        parser_state.LogicInstLookupTable[d].func_name for d in plan.subtrees
+        parser_state.LogicInstLookupTable[d].func_name
+        for d in plan.subtrees
+        if d not in region_insts
     )
     root_funcs.add(parser_state.LogicInstLookupTable[plan.main_inst].func_name)
     if func in root_funcs:
         return "subtree root"
-    # Never lock around a constrained AUTO_PIPELINE region, nor inside one
-    # whose register count a constraint owns (latency= / max_latency=: see
-    # ENFORCE_AUTO_PIPELINE_REGIONS). An uncapped start_latency= region is
-    # only a starting guess, so its interior takes locks like an untagged
-    # call site's would.
+    # Never lock around an AUTO_PIPELINE region, nor on or inside one whose
+    # register count a constraint owns (latency= / max_latency=: see
+    # ENFORCE_AUTO_PIPELINE_REGIONS). An uncapped region's count is only
+    # planned or a starting guess, so its root and interior take locks like
+    # an untagged call site's would.
     for func_inst in targets:
         for region in getattr(plan, "regions", ()):
             if not _INSTS_CONFLICT(func_inst, region.inst):
                 continue
-            if not func_inst.startswith(region.inst + LOGIC.SUBMODULE_MARKER):
-                return "constrained AUTO_PIPELINE region"
-            reason = REGION_INTERIOR_LOCK_BLOCKER(region, plan, parser_state)
+            if region.inst.startswith(func_inst + LOGIC.SUBMODULE_MARKER):
+                return "contains an AUTO_PIPELINE region"
+            reason = REGION_LOCK_BLOCKER(region, plan, parser_state)
             if reason is not None:
                 return reason
     func_logic = parser_state.FuncLogicLookupTable[func]
@@ -6203,6 +6235,11 @@ def APPLY_LOCKS(plan, parser_state, TimingParamsLookupTable):
             TimingParamsLookupTable = AUTO_PIPELINE.RESTORE_CONCRETE_PIPELINE(
                 locked_inst, lock.concrete, TimingParamsLookupTable, parser_state
             )
+            # A region root's isolated sweep fixed the root itself
+            # (REENFORCE_AUTO_PIPELINE_REGIONS), and the snapshot carries
+            # that flag. The locked instance is frozen below, once its
+            # boundary banks are in.
+            TimingParamsLookupTable[locked_inst].params_are_fixed = False
             if (lock.model_fingerprint != SUBTREE_MODEL_FINGERPRINT(locked_inst, parser_state)
                     and not lock.model_mismatch_reported):
                 print(f"[sweep] Delay model changed for locked {locked_logic.func_name}; "
@@ -6678,7 +6715,7 @@ def RECORD_CROSSING(crossings, printed, main_inst, path_report, curr_mhz, roles,
     )
 
 
-def ATTRIBUTION_BASIS(path_report, func_name):
+def ATTRIBUTION_BASIS(path_report, func_name, plan=None, parser_state=None):
     """How an attribution of path_report to func_name is evidenced, so a
     message can say what was measured and what was guessed:
       "inside"   the name is in every available endpoint (the path's
@@ -6687,16 +6724,29 @@ def ATTRIBUTION_BASIS(path_report, func_name):
       "cells"    only in netlist cell/net names: the path passes through its
                  logic
     None when the name is in none of them (e.g. named from the instance
-    hierarchy instead, see PATH_MAIN_ROLES)."""
+    hierarchy instead, see PATH_MAIN_ROLES). Given the plan, an endpoint also
+    holds a region root of func_name whose instance's label path is in it
+    (RANK_PATH_FUNC_CANDIDATES)."""
     if func_name is None:
         return None
     fl = func_name.lower()
     endpoints = [
         e.lower() for e in (path_report.start_reg_name, path_report.end_reg_name) if e
     ]
-    if endpoints and all(fl in e for e in endpoints):
+    root_insts = [
+        region.inst
+        for region in (getattr(plan, "regions", ()) if plan is not None else ())
+        if region.func_name == func_name
+    ]
+
+    def holds(e):
+        return fl in e or any(
+            SYN.INSTANCE_LABEL_POSITION(e, inst, parser_state) >= 0 for inst in root_insts
+        )
+
+    if endpoints and all(holds(e) for e in endpoints):
         return "inside"
-    if any(fl in e for e in endpoints):
+    if any(holds(e) for e in endpoints):
         return "endpoint"
     if any(fl in r.lower() for r in (getattr(path_report, "netlist_resources", None) or ())):
         return "cells"
@@ -7878,7 +7928,9 @@ def DO_PLANNED_THROUGHPUT_SWEEP(parser_state, multimain_timing_params):
                             hotspot_func, unpipelinable_reason = role["blockers"][0]
                             hotspot_basis = "hierarchy"
                         else:
-                            hotspot_basis = ATTRIBUTION_BASIS(scoped_path, hotspot_func)
+                            hotspot_basis = ATTRIBUTION_BASIS(
+                                scoped_path, hotspot_func, plan, parser_state
+                            )
                         if (
                             hotspot_func is not None
                             and unpipelinable_reason is not None
@@ -8010,15 +8062,14 @@ def DO_PLANNED_THROUGHPUT_SWEEP(parser_state, multimain_timing_params):
                             region = AUTO_PIPELINE.REGION_FOR_HOTSPOT(
                                 hotspot_func, plan, parser_state
                             )
-                            # A repeated helper inside an uncapped
-                            # start_latency= region takes the same measured
-                            # mini-sweep an untagged call site's would; a
-                            # region-wide count change only spreads cuts over
-                            # the delay model's geometry (see
-                            # REGION_INTERIOR_LOCK_BLOCKER).
+                            # A repeated hotspot in an uncapped region, its
+                            # root or a helper inside it, takes the same
+                            # measured mini-sweep an untagged call site's
+                            # would; a region-wide count change only spreads
+                            # cuts over the delay model's geometry (see
+                            # REGION_LOCK_BLOCKER).
                             if (
-                                hotspot_func != region.func_name
-                                and REGION_INTERIOR_LOCK_BLOCKER(
+                                REGION_LOCK_BLOCKER(
                                     region, plan, parser_state
                                 )
                                 is None

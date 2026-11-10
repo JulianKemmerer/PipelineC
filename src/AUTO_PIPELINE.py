@@ -4525,6 +4525,17 @@ def _ENFORCE_ONE_AUTO_PIPELINE_REGION(
         region.realized = realized
         region.predicted_ns = implementation["worst_stage_du"] / SYN.DELAY_UNIT_MULT
         return tpl
+    if tpl[region.inst].params_are_fixed:
+        # A mini-sweep lock on the root (SWEEP.APPLY_LOCKS, which runs first)
+        # holds the whole region, measured to meet the goal: it is the
+        # region's pipeline, so plan nothing on top of it. Only an uncapped
+        # region takes one (SWEEP.REGION_LOCK_BLOCKER).
+        _INVALIDATE_REGION_CACHES(region.inst, tpl)
+        region.cuts = []
+        region.placements = []
+        region.realized = tpl[region.inst].GET_TOTAL_LATENCY(parser_state, tpl)
+        region.predicted_ns = 0.0
+        return tpl
     goal = constraint.latency if constraint.is_fixed() else None
     cap = constraint.max_latency
     k = count
@@ -4660,8 +4671,13 @@ def ENFORCE_AUTO_PIPELINE_REGIONS(
     for group_key in order:
         members = groups[group_key]
         for region in members:
-            region.landscape = SWEEP.BUILD_SLICE_LANDSCAPE(
-                region.inst, parser_state, tpl, func_delay_scale
+            # A locked root has nothing left to plan (_ENFORCE_ONE_AUTO_PIPELINE_REGION)
+            region.landscape = (
+                None
+                if tpl[region.inst].params_are_fixed
+                else SWEEP.BUILD_SLICE_LANDSCAPE(
+                    region.inst, parser_state, tpl, func_delay_scale
+                )
             )
         count, calibrate = _AUTO_PIPELINE_REGION_COUNT(
             members[0], period_ns, global_scale, zero_cut_probe

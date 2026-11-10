@@ -3405,7 +3405,8 @@ AUTO_PIPELINE(some_func, start_latency=2, max_latency=5)  # guess and limit toge
   `S` registers, may add more when timing fails, and may remove unnecessary registers
   after timing is met. Past the first iteration the search is the same as for an
   AUTO_PIPELINE without a hint, including the measured mini-sweep of a repeated helper inside
-  it, so a hint can save iterations but never changes where the search can go. Its bootstrap elaboration reads `.latency == S`; plain source
+  it, or of the tagged function itself, so a hint can save iterations but never changes
+  where the search can go. Its bootstrap elaboration reads `.latency == S`; plain source
   simulation and non-automatic elaboration read 0 until an implemented latency is
   supplied.
 - **`max_latency=M` is a limit.** Automatic implementation never builds more than `M`
@@ -3458,20 +3459,6 @@ body_decrypt = AUTO_PIPELINE(poly1305_body, name="poly1305_body_decrypt")
   same `latency=` / `start_latency=` / `max_latency=`. A conflict is an error that names
   both construction sites. Identical tags are fine: they are one group, like two unnamed
   tags on one function.
-
-- **For the best sweep results, tag a wrapper.** Tagging a function imported from
-  another module, as above, makes it the root of its latency region. The sweep then
-  can't tell when a slow path runs through it, and it never mini-sweeps a region
-  root ([#387](https://github.com/JulianKemmerer/PipelineC/issues/387)). A one-line local wrapper per
-  group keeps the function inside the region:
-
-  ```python
-  @hw_func
-  def poly1305_body_encrypt(x: body_in_stream_t) -> body_out_stream_t:
-      return poly1305_body(x)
-
-  body_encrypt = AUTO_PIPELINE(poly1305_body_encrypt, name="poly1305_body_encrypt")
-  ```
 
 Name a tag when you want a stable handle for it: a latency hint you commit, a report you
 parse, or a second, independent group over a function. Unnamed tags work everywhere
@@ -3871,9 +3858,17 @@ def my_fsm(i: my_struct_t) -> my_struct_t:
   [latency memory or a hints file](#starting-latencies-the-latency-memory-and---latency_hints)
   is provisional: it may also be confirmed down to what the build measures.
 - **`name=` gives the tag a stable key.** Without one, the key is the source line that
-  constructs the tag, plus a construction ordinal. With one, the key is the name, so
-  hints, the latency memory and reports find it however the code around it changes.
-  Each name belongs to one tag. See [Naming a latency group](#naming-a-latency-group-name).
+  constructs the tag, plus a construction ordinal. A
+  [`make_stream_auto_multi_cycle`](#tool-chosen-cycle-count-make_stream_auto_multi_cycle)
+  tag's key is instead the function it wraps, like an AUTO_PIPELINE's. With a name, the key
+  is the name, so hints, the latency memory and reports find it however the code around
+  it changes.
+- **A key is one group with one count.** Tags sharing a name, or stream wrappers of one
+  function with the same constraints, are one group, the way two calls of one factory
+  give one hardware definition with separate state. Tags sharing a name must have the
+  same `latency=` / `start_latency=` / `max_latency=` (and wrap the same function); a
+  conflict is an error that names both construction sites. Give tags different names for
+  independent counts. See [Naming a latency group](#naming-a-latency-group-name).
 - **The source is re-elaborated with the final count.** Like `AUTO_PIPELINE.latency`, this
   keeps every counter, buffer, and handshake derived from `.latency` consistent with the
   implemented constraint.
@@ -5714,6 +5709,11 @@ The ports and `func_mcp.return_t` are identical to `make_stream_multi_cycle`'s. 
 is written in terms of `func_mcp.mcp.latency`, so it always waits exactly as many cycles
 as the path is constrained for. A correct `start_latency=` can already match the final
 value; otherwise source re-elaboration updates the handshake automatically.
+
+Calls over one function with the same constraints share a key: one cycle count and one
+hardware definition, each instance with its own state. A factory can therefore build its
+wrapper once per caller, with no caching or `name=` needed. Give the calls different
+`name=`s for counts of their own, for example one per clock domain.
 
 ---
 

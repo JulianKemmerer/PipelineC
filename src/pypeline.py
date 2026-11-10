@@ -324,9 +324,13 @@ def _stable_key(value, seen=frozenset()):
                 value.max_latency,
                 value._ncycles,
             )
+        # A wrapped function's tag is identified by that function, without
+        # resolving its key (which needs the compiler)
         return (
             "_is_auto_multi_cycle_tag",
-            value.canonical_key,
+            value.canonical_key
+            if value.func is None
+            else ("func", _stable_key(value.func, seen)),
             value.fixed_latency,
             value.start_latency,
             value.max_latency,
@@ -5658,22 +5662,28 @@ class MULTI_CYCLE(metaclass=_MultiCycleMeta):
 # native-sim design import (SET_AUTO_MULTI_CYCLE_LATENCY_CACHE). Empty otherwise, so
 # .latency reads its constructor value (latency=, else start_latency=, else 1).
 _auto_multi_cycle_latency_cache: dict = {}
-# canonical_key -> set of values design code read through .latency/.ncycles
-# during the current design execution. The compiler's own read (the
-# set_multicycle_path value, AUTO_MULTI_CYCLE._ncycles_for_compiler) is NOT recorded:
-# an AUTO_MULTI_CYCLE nothing in the design reads can't have its handshake follow the
-# sweep, and the driver fails the build on it (AUTO_MULTI_CYCLE_UNREAD_KEYS).
+# AUTO_MULTI_CYCLE object -> set of values design code read through
+# .latency/.ncycles during the current design execution. The compiler's own
+# read (the set_multicycle_path value, AUTO_MULTI_CYCLE._ncycles_for_compiler) is
+# NOT recorded: an AUTO_MULTI_CYCLE nothing in the design reads can't have its
+# handshake follow the sweep, and the driver fails the build on it
+# (AUTO_MULTI_CYCLE_UNREAD_KEYS). Keyed by object so plain native sim never
+# resolves a key (see AUTO_MULTI_CYCLE.canonical_key).
 _auto_multi_cycle_served: dict = {}
-# canonical_key -> "file:line" sites of those reads, first read first
+# (AUTO_MULTI_CYCLE object, "file:line") of those reads, first read first (an
+# ordered set: the values are None)
 _auto_multi_cycle_read_sites: dict = {}
-# canonical_key -> AUTO_MULTI_CYCLE constructed during the current design execution
-_auto_multi_cycle_constructed: dict = {}
+# AUTO_MULTI_CYCLE objects constructed during the current design execution, in
+# construction order
+_auto_multi_cycle_constructed: list = []
 # (module, code name, line) -> constructions seen at that source site during
 # the current design execution; the ordinal disambiguates one factory line
 # building several AUTO_MULTI_CYCLE tags (see AUTO_MULTI_CYCLE.canonical_key)
 _auto_multi_cycle_site_counts: dict = {}
-# name -> "file:line" of the AUTO_MULTI_CYCLE(name=) constructed under it during
-# the current design execution: one tag object per name
+# name -> (signature, "file:line", tag) of the first AUTO_MULTI_CYCLE(name=) this
+# design execution constructed under that name. A name is one multi-cycle
+# group: every tag sharing it must have the same constraints (and wrap the
+# same function, for a make_stream_auto_multi_cycle tag).
 _auto_multi_cycle_names: dict = {}
 # Pseudo file names the decorator / elaborator compile compile-time
 # expressions under. An AUTO_MULTI_CYCLE constructed under one of these is being built
@@ -5723,33 +5733,46 @@ def USER_NAMED_AUTO_TAGS() -> list:
     ]
     rows += [
         ("AUTO_MULTI_CYCLE", name, tag.canonical_key, site)
-        for name, (site, tag) in _auto_multi_cycle_names.items()
+        for name, (_, site, tag) in _auto_multi_cycle_names.items()
     ]
     return sorted(rows)
 
 
 def AUTO_MULTI_CYCLE_SERVED_LATENCIES() -> dict:
-    """canonical_key -> set of .latency values design code read."""
-    return {key: set(values) for key, values in _auto_multi_cycle_served.items()}
+    """canonical_key -> set of .latency values design code read (over every
+    tag of the key)."""
+    served = {}
+    for tag, values in _auto_multi_cycle_served.items():
+        served.setdefault(tag.canonical_key, set()).update(values)
+    return served
 
 
 def AUTO_MULTI_CYCLE_READ_SITES() -> dict:
     """canonical_key -> "file:line" sites that read .latency, first read first."""
-    return {key: list(sites) for key, sites in _auto_multi_cycle_read_sites.items()}
+    sites = {}
+    for tag, site in _auto_multi_cycle_read_sites:
+        found = sites.setdefault(tag.canonical_key, [])
+        if site not in found:
+            found.append(site)
+    return sites
 
 
 def AUTO_MULTI_CYCLE_CONSTRUCTED() -> dict:
-    """canonical_key -> AUTO_MULTI_CYCLE object, for the current design execution."""
-    return dict(_auto_multi_cycle_constructed)
+    """canonical_key -> AUTO_MULTI_CYCLE object, for the current design execution
+    (the last one constructed, when several share a key)."""
+    return {tag.canonical_key: tag for tag in _auto_multi_cycle_constructed}
 
 
 def AUTO_MULTI_CYCLE_UNREAD_KEYS() -> list:
     """Keys of sweep-adjustable (not fixed latency=) AUTO_MULTI_CYCLE tags whose .latency
-    design code never read."""
+    design code never read (through any tag of the key)."""
+    read = {tag.canonical_key for tag in _auto_multi_cycle_served}
     return sorted(
-        key
-        for key, tag in _auto_multi_cycle_constructed.items()
-        if tag.fixed_latency is None and key not in _auto_multi_cycle_served
+        {
+            tag.canonical_key
+            for tag in _auto_multi_cycle_constructed
+            if tag.fixed_latency is None and tag.canonical_key not in read
+        }
     )
 
 
@@ -5809,18 +5832,30 @@ class AUTO_MULTI_CYCLE:
     Construct it once, eagerly, outside any @hw_func body (e.g. at a factory's
     top level) and capture it by closure.
 
+    An unnamed tag's key is the constructing source line and a construction
+    ordinal. A make_stream_auto_multi_cycle tag's is instead the function it
+    wraps (_func=, set only by that factory), like an AUTO_PIPELINE's: tags
+    over one function with the same constraints are one group with one count.
+
     name="..." names the tag: its key becomes the name (plus `_latency_N` /
-    `_max_latency_M`) instead of the constructing source line and a
-    construction ordinal, so latency hints and the latency memory find it by
+    `_max_latency_M`), so latency hints and the latency memory find it by
     that name and reports print it. start_latency= is not part of a named
-    key. Each name belongs to one tag per design execution.
+    key. Tags sharing a name are one group with one count, so they must have
+    the same latency= / start_latency= / max_latency= (and wrap the same
+    function, for make_stream_auto_multi_cycle tags).
     """
 
     # Duck-type marker (_stable_key, PY_TO_LOGIC)
     _is_auto_multi_cycle_tag = True
 
     def __init__(
-        self, *, latency=None, start_latency=None, max_latency=None, name=None
+        self,
+        *,
+        latency=None,
+        start_latency=None,
+        max_latency=None,
+        name=None,
+        _func=None,
     ):
         _check_auto_multi_cycle_latency_arg("latency", latency)
         _check_auto_multi_cycle_latency_arg("start_latency", start_latency)
@@ -5850,34 +5885,48 @@ class AUTO_MULTI_CYCLE:
                 "inside a body is re-created on every evaluation, so the build "
                 "can't track its cycle count"
             )
+        if _func is not None and not is_hw_func(_func):
+            raise TypeError("AUTO_MULTI_CYCLE(_func=...): must be @hw_func-decorated")
         self.fixed_latency = latency
         self.start_latency = start_latency
         self.max_latency = max_latency
         self.name = name
+        # The function a make_stream_auto_multi_cycle tag's path computes, else
+        # None: an unnamed tag's key derives from it (canonical_key)
+        self.func = _func
         self.start = _MultiCycleRole(self, is_start=True)
         self.end = _MultiCycleRole(self, is_start=False)
+        # Resolved on first use (canonical_key): a wrapped function's key needs
+        # the compiler, which plain native sim never imports
+        self._canonical_key = None
         if name is not None:
             _check_user_name(name, "AUTO_MULTI_CYCLE")
+            signature = (
+                None if _func is None else _name_identity(_func),
+                latency,
+                start_latency,
+                max_latency,
+            )
             where = _construction_site()
-            prior = _auto_multi_cycle_names.get(name)
-            if prior is not None:
+            prior = _auto_multi_cycle_names.setdefault(name, (signature, where, self))
+            if prior[0] != signature:
                 raise TypeError(
-                    f"AUTO_MULTI_CYCLE(name={name!r}) at {where}: the name is "
-                    f"already used by the AUTO_MULTI_CYCLE at {prior[0]}. Each "
-                    "AUTO_MULTI_CYCLE is its own multi-cycle path, so each needs "
-                    "its own name."
+                    f"AUTO_MULTI_CYCLE(name={name!r}) at {where} differs from the "
+                    f"AUTO_MULTI_CYCLE(name={name!r}) at {prior[1]}: tags sharing a "
+                    "name are one multi-cycle group with one count, so they must "
+                    "have the same latency= / start_latency= / max_latency= (and "
+                    "wrap the same function). Give one of them another name."
                 )
-            _auto_multi_cycle_names[name] = (where, self)
             # Named tags never consume a site ordinal, so unnamed keys at the
             # same site don't move
-            self.canonical_key = name + _auto_multi_cycle_latency_suffix(
+            self._canonical_key = name + _auto_multi_cycle_latency_suffix(
                 latency, None, max_latency
             )
-        else:
+        elif _func is None:
             site = (frame.f_globals.get("__name__", "?"), code.co_name, frame.f_lineno)
             ordinal = _auto_multi_cycle_site_counts.get(site, 0)
             _auto_multi_cycle_site_counts[site] = ordinal + 1
-            self.canonical_key = (
+            self._canonical_key = (
                 f"{site[0]}.{site[1]}_line{site[2]}_{ordinal}"
                 + _auto_multi_cycle_latency_suffix(latency, start_latency, max_latency)
             )
@@ -5895,27 +5944,56 @@ class AUTO_MULTI_CYCLE:
             seed = _latency_seed("AUTO_MULTI_CYCLE", self.canonical_key, max_latency)
             if seed is not None and seed >= 1:
                 self.seed = ncycles = seed
-        cached = _auto_multi_cycle_latency_cache.get(self.canonical_key)
         # Whether the installed build harvest has this tag (_require_built)
-        self._built_decided = cached is not None
-        if cached is not None:
-            if latency is not None and cached != latency:
-                raise ValueError(
-                    f"AUTO_MULTI_CYCLE {self.canonical_key}: latency={latency} is fixed, "
-                    f"but the build settled on {cached} cycles for it"
-                )
-            if max_latency is not None and cached > max_latency:
-                raise ValueError(
-                    f"AUTO_MULTI_CYCLE {self.canonical_key}: the build settled on "
-                    f"{cached} cycles, above max_latency={max_latency}"
-                )
-            ncycles = cached
-            self.seed = None  # the build's own result supersedes it
-        elif ("AUTO_MULTI_CYCLE", self.canonical_key) in _built_unbuilt_reads:
-            # The simulated build read this tag but never built it
-            ncycles = _built_unbuilt_reads[("AUTO_MULTI_CYCLE", self.canonical_key)]
+        self._built_decided = False
+        # Skip key resolution when nothing is installed (plain native sim)
+        if _auto_multi_cycle_latency_cache or _built_unbuilt_reads:
+            cached = _auto_multi_cycle_latency_cache.get(self.canonical_key)
+            self._built_decided = cached is not None
+            if cached is not None:
+                if latency is not None and cached != latency:
+                    raise ValueError(
+                        f"AUTO_MULTI_CYCLE {self.canonical_key}: latency={latency} is "
+                        f"fixed, but the build settled on {cached} cycles for it"
+                    )
+                if max_latency is not None and cached > max_latency:
+                    raise ValueError(
+                        f"AUTO_MULTI_CYCLE {self.canonical_key}: the build settled on "
+                        f"{cached} cycles, above max_latency={max_latency}"
+                    )
+                ncycles = cached
+                self.seed = None  # the build's own result supersedes it
+            elif ("AUTO_MULTI_CYCLE", self.canonical_key) in _built_unbuilt_reads:
+                # The simulated build read this tag but never built it
+                ncycles = _built_unbuilt_reads[("AUTO_MULTI_CYCLE", self.canonical_key)]
         self._ncycles = ncycles
-        _auto_multi_cycle_constructed[self.canonical_key] = self
+        _auto_multi_cycle_constructed.append(self)
+
+    @property
+    def canonical_key(self) -> str:
+        """The tag's group key: its name, its construction site, or the
+        function a make_stream_auto_multi_cycle tag wraps plus `_mcp`; then
+        the constraint suffix."""
+        if self._canonical_key is None:
+            # Lazy so plain native sim never imports the compiler; any context
+            # that needs the key (elaboration, an installed cache) has
+            # PY_TO_LOGIC loaded already.
+            import PY_TO_LOGIC
+
+            self._canonical_key = (
+                PY_TO_LOGIC.CANONICAL_CALLABLE_KEY(self.func)
+                + "_mcp"
+                + _auto_multi_cycle_latency_suffix(
+                    self.fixed_latency, self.start_latency, self.max_latency
+                )
+            )
+        return self._canonical_key
+
+    @property
+    def binding_key(self) -> str:
+        """The key installed results are under (_require_built): one count
+        per tag, whatever clock goals use it, so its canonical_key."""
+        return self.canonical_key
 
     def _ncycles_for_compiler(self) -> int:
         """The cycle count without counting as a design read."""
@@ -5924,11 +6002,8 @@ class AUTO_MULTI_CYCLE:
     @property
     def latency(self) -> int:
         _require_built("AUTO_MULTI_CYCLE", self, read=True)
-        _auto_multi_cycle_served.setdefault(self.canonical_key, set()).add(self._ncycles)
-        sites = _auto_multi_cycle_read_sites.setdefault(self.canonical_key, [])
-        site = _latency_read_site()
-        if site not in sites:
-            sites.append(site)
+        _auto_multi_cycle_served.setdefault(self, set()).add(self._ncycles)
+        _auto_multi_cycle_read_sites[(self, _latency_read_site())] = None
         return self._ncycles
 
     @property
@@ -5947,7 +6022,12 @@ class AUTO_MULTI_CYCLE:
         return ", ".join(parts) if parts else "unconstrained"
 
     def __repr__(self):
-        return f"AUTO_MULTI_CYCLE({self.canonical_key}, {self.describe()}, {self._ncycles} cycles)"
+        if self._canonical_key is None and "PY_TO_LOGIC" not in _sys.modules:
+            inner = _inspect.unwrap(self.func)
+            key = f"func={inner.__module__}.{inner.__qualname__}"
+        else:
+            key = self.canonical_key
+        return f"AUTO_MULTI_CYCLE({key}, {self.describe()}, {self._ncycles} cycles)"
 
 
 class _ResetMarker:

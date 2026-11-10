@@ -492,6 +492,17 @@ def get_tests() -> list:
             cmd=[INST_DIR / "path_attribution_test.py"],
         )
     )
+    # AUTO_PIPELINE(imported_f): the instance label is the bare name, the
+    # func_name module-prefixed, so only the region root instance's label path
+    # (SYN.INSTANCE_LABEL_POSITION) attributes a path inside the root to it.
+    # Issue #387.
+    tests.append(
+        Test(
+            name="imported_auto_pipeline_attribution_test",
+            category="unit",
+            cmd=[INST_DIR / "imported_auto_pipeline_attribution_test.py"],
+        )
+    )
     # Multi-MAIN feedback (real WireGuard shared 70 MHz names): a path that
     # only crosses a MAIN never re-pipelines it, attribution sees only the
     # plan's own MAIN, best-result ties go to met own paths then fewer

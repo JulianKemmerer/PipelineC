@@ -3,7 +3,11 @@
 """AUTO_MULTI_CYCLE unit tests -- no synthesis tool involved:
   - AUTO_MULTI_CYCLE constructor validation and .latency resolution (default/start/
     fixed/cache), construction-site keys, the inline-construction guard,
-    design-read tracking (served / unread);
+    design-read tracking (served / unread), reads while replaying built hardware;
+  - name= and wrapped-function groups: tags sharing a name (or, unnamed, a
+    make_stream_auto_multi_cycle function) are one group;
+    auto_multi_cycle_repeated_design.py's two calls of one service factory
+    elaborate to one holder function per group;
   - the naming identity (pypeline._name_identity) follows the resolved cycle count;
   - SYN: MCP_EFFECTIVE_NCYCLES, ELABORATED/HARVEST_AUTO_MULTI_CYCLE_NCYCLES, the
     MultiMainTimingParams hash (unchanged unless a count was overridden);
@@ -424,13 +428,16 @@ def test_named_tags():
     # A named tag consumes no site ordinal, so unnamed keys never move
     second = make_tag(start_latency=2).canonical_key
     assert first.endswith("_0_start_latency_2") and second.endswith("_1_start_latency_2")
-    # One tag per name per design execution
+    # A name is one group: a repeat with the same constraints joins it, a
+    # different constraint is refused naming both sites
+    again = make_tag(start_latency=2, max_latency=6, name="prologue")
+    assert again.canonical_key == named.canonical_key
     try:
         make_tag(name="prologue")
     except TypeError as e:
-        assert "already used" in str(e) and __file__ in str(e), str(e)
+        assert "differs from" in str(e) and str(e).count(__file__) == 2, str(e)
     else:
-        raise AssertionError("a second AUTO_MULTI_CYCLE(name='prologue') was accepted")
+        raise AssertionError("AUTO_MULTI_CYCLE(name='prologue') with other constraints was accepted")
     expect_raises(ValueError, make_tag, name="has__double")
     assert ("AUTO_MULTI_CYCLE", "prologue", "prologue_max_latency_6") in [
         r[:3] for r in pypeline.USER_NAMED_AUTO_TAGS()
@@ -457,6 +464,73 @@ def test_named_tags():
         pypeline.SET_AUTO_MULTI_CYCLE_LATENCY_CACHE({})
         pypeline.RESET_AUTO_MULTI_CYCLE_TRACKING()
     print("test_named_tags PASS")
+
+
+def test_repeated_stream_tags_share_one_group():
+    """make_stream_auto_multi_cycle over equal kernel closures, called once per
+    MAIN by an uncached factory: unnamed tags are keyed by the wrapped
+    function, named ones by the shared name, and either pair is one group whose
+    paths sit in one holder function. A shared name over another function is
+    refused."""
+    from stream.stream_multi_cycle import make_stream_auto_multi_cycle
+
+    design = os.path.join(THIS_DIR, "auto_multi_cycle_repeated_design.py")
+    parser_state = PY_TO_LOGIC.PARSE_FILE(design)
+    groups = AUTO_MULTI_CYCLE_MODULE.COLLECT_AUTO_MULTI_CYCLE_GROUPS(parser_state)
+    assert len(groups) == 2 and "setup" in groups, sorted(groups)
+    (unnamed_key,) = [k for k in groups if k != "setup"]
+    assert unnamed_key.startswith("kernel_k_3_") and unnamed_key.endswith(
+        "_mcp_start_latency_2"
+    ), unnamed_key
+    for key, group in groups.items():
+        holders = {
+            parser_state.LogicInstLookupTable[inst].func_name for inst, _s, _e in group.paths
+        }
+        mains = {inst.split(LOGIC.SUBMODULE_MARKER)[0] for inst, _s, _e in group.paths}
+        assert len(group.paths) == 2 and len(holders) == 1, (key, group.paths, holders)
+        assert mains == {"encrypt_main", "decrypt_main"}, (key, mains)
+    AUTO_MULTI_CYCLE_MODULE.CHECK_AUTO_MULTI_CYCLE_TAGS_READ(parser_state)
+
+    import importlib.util
+
+    # A new design execution: names start over
+    pypeline.RESET_AUTO_MULTI_CYCLE_TRACKING()
+    spec = importlib.util.spec_from_file_location("repeated_design", design)
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    module.make_service(6, name="mixed")
+    try:
+        module.make_service(7, name="mixed")
+    except TypeError as e:
+        assert "differs from" in str(e) and "wrap the same function" in str(e), str(e)
+    else:
+        raise AssertionError("name='mixed' over two different functions was accepted")
+    # The wrapped function, not the library line, keys an unnamed tag
+    a = make_stream_auto_multi_cycle(module.make_kernel(8))
+    b = make_stream_auto_multi_cycle(module.make_kernel(9))
+    assert a.mcp.canonical_key != b.mcp.canonical_key
+    assert pypeline._name_identity(a) != pypeline._name_identity(b)
+    pypeline.RESET_AUTO_MULTI_CYCLE_TRACKING()
+    print("test_repeated_stream_tags_share_one_group PASS")
+
+
+def test_built_hardware_replay_reads():
+    """Replaying built hardware (pypeline.SET_BUILT_HARDWARE_SOURCE): reading
+    the .latency of a tag that build read but never built returns the
+    recorded value; any other undecided tag is refused."""
+    try:
+        pypeline.RESET_AUTO_MULTI_CYCLE_TRACKING()
+        key = make_tag(start_latency=2).canonical_key
+        pypeline.RESET_AUTO_MULTI_CYCLE_TRACKING()
+        pypeline.SET_BUILT_HARDWARE_SOURCE("build_dir", {"AUTO_MULTI_CYCLE": {key: 4}})
+        recorded = make_tag(start_latency=2)
+        assert recorded.latency == 4
+        unknown = make_tag(start_latency=3)
+        expect_raises(pypeline.BuiltHardwareError, lambda: unknown.latency)
+    finally:
+        pypeline.SET_BUILT_HARDWARE_SOURCE(None)
+        pypeline.RESET_AUTO_MULTI_CYCLE_TRACKING()
+    print("test_built_hardware_replay_reads PASS")
 
 
 def test_seeds_are_provisional():
@@ -535,5 +609,7 @@ if __name__ == "__main__":
     test_endpoint_selection_on_elaborated_wrapper()
     test_unread_tag_fails_build_check()
     test_named_tags()
+    test_repeated_stream_tags_share_one_group()
+    test_built_hardware_replay_reads()
     test_seeds_are_provisional()
     print("All AUTO_MULTI_CYCLE unit tests passed.")

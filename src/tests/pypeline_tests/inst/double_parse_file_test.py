@@ -120,6 +120,20 @@ def test_scheduled_auto_fsm_cache_reparses():
     test_schedule_cache_rejects_stale_source_target_and_version()
 
 
+def test_repeated_auto_multi_cycle_design_reparses():
+    # make_stream_auto_multi_cycle over equal kernel closures, unnamed (keyed
+    # by the wrapped function) and under one shared name=: the keys, and the
+    # holder functions named from them, are the same in a second parse
+    ps1, ps2 = parse_twice_and_compare(
+        os.path.join(INST_DIR, "auto_multi_cycle_repeated_design.py")
+    )
+    import AUTO_MULTI_CYCLE
+
+    keys1 = sorted(AUTO_MULTI_CYCLE.COLLECT_AUTO_MULTI_CYCLE_GROUPS(ps1))
+    keys2 = sorted(AUTO_MULTI_CYCLE.COLLECT_AUTO_MULTI_CYCLE_GROUPS(ps2))
+    assert keys1 == keys2 and len(keys1) == 2, (keys1, keys2)
+
+
 def test_var_ref_naming_design_reparses():
     # Two sequential runtime variable-index writes to the same array -- the
     # second write's covering wire is the first write's own alias, whose
@@ -251,6 +265,7 @@ if __name__ == "__main__":
     test_fir_design_reparses()
     test_auto_fsm_design_reparses()
     test_auto_goal_split_design_reparses()
+    test_repeated_auto_multi_cycle_design_reparses()
     test_var_ref_naming_design_reparses()
     test_user_names_design_reparses()
     test_reset_design_reparses()

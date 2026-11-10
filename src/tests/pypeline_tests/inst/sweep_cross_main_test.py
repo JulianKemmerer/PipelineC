@@ -641,10 +641,25 @@ def test_lock_rules_for_regions():
         ]
         with patch.object(AUTO_PIPELINE, "FUNC_HAS_HIER_ALLOWING_ADDED_LATENCY_TO_RAW_VHDL", lambda *a: True):
             got = SWEEP.LOCK_BLOCKED_REASON("h", plan, ["a" + M + "r" + M + "h"], ps)
-            # Locking the region root itself is never allowed
+            # The region root follows its interior's rule: a lock holds the
+            # whole region (#387)
             root = SWEEP.LOCK_BLOCKED_REASON("region_func", plan, ["a" + M + "r"], ps)
+            # ... also when its caller cannot absorb latency, which makes the
+            # region its own cut subtree
+            plan.subtrees = ["a" + M + "r"]
+            root_subtree = SWEEP.LOCK_BLOCKED_REASON(
+                "region_func", plan, ["a" + M + "r"], ps
+            )
         assert got == expected, (constraint.describe(), member, peer, got)
-        assert root == "constrained AUTO_PIPELINE region", root
+        assert root == expected, (constraint.describe(), member, peer, root)
+        assert root_subtree == expected, (constraint.describe(), root_subtree)
+    # A plain cut subtree's root is never locked
+    plan = SWEEP.MainSweepPlan("a", 100)
+    ps = _region_state(start_only)
+    plan.subtrees = ["a" + M + "r"]
+    with patch.object(AUTO_PIPELINE, "FUNC_HAS_HIER_ALLOWING_ADDED_LATENCY_TO_RAW_VHDL", lambda *a: True):
+        reason = SWEEP.LOCK_BLOCKED_REASON("region_func", plan, ["a" + M + "r"], ps)
+    assert reason == "subtree root", reason
 
 
 def _peer_plans(goals):
@@ -759,12 +774,19 @@ def test_region_bootstrap_and_calibration_after_lock():
     assert other.scale == 0.5 and other.start_pending  # other groups untouched
 
 
-def _region_sweep(constraint):
+def _region_sweep(constraint, hotspot="h", floors=None):
     """Main 'a' whose only cuttable logic is a constrained region 'a____r'
-    around a repeated helper 'h'; its path fails until 'h' is locked."""
+    around a repeated helper 'h'; its path fails until the hotspot, 'h' or
+    the region root 'region_func', is locked. A root lock is captured the
+    way an isolated sweep leaves it, the root itself fixed, and has an
+    output boundary bank. `floors` are latency-memory depth floors
+    (SWEEP.LATENCY_MEMORY_AP_FLOORS) that hold once the lock exists."""
     ps = _region_state(constraint)
     regions = AUTO_PIPELINE.COLLECT_AUTO_PIPELINE_REGIONS(ps)
     helper = "a" + M + "r" + M + "h"
+    target = helper if hotspot == "h" else "a" + M + "r"
+    if target != helper:
+        ps.LogicInstLookupTable[target].outputs = ["return_output"]  # its bank's
 
     def fresh(_):
         return {i: AUTO_PIPELINE.TimingParams(i, l) for i, l in ps.LogicInstLookupTable.items()}
@@ -774,17 +796,20 @@ def _region_sweep(constraint):
 
     def mini(func, plan, ps_):
         minis.append(func)
+        SWEEP.LATENCY_MEMORY_AP_FLOORS.update(floors or {})
         table = fresh(ps_)
-        table[helper].SET_SLICES([0.5])
-        plan.locked[helper] = SWEEP.MiniSweepLock(
+        table[target].SET_SLICES([0.5])
+        table[target].params_are_fixed = target != helper
+        plan.locked[target] = SWEEP.MiniSweepLock(
             [0.5],
-            concrete=AUTO_PIPELINE.CAPTURE_CONCRETE_PIPELINE(helper, table, ps_),
-            model_fingerprint=SWEEP.SUBTREE_MODEL_FINGERPRINT(helper, ps_),
+            has_output_regs=target != helper,
+            concrete=AUTO_PIPELINE.CAPTURE_CONCRETE_PIPELINE(target, table, ps_),
+            model_fingerprint=SWEEP.SUBTREE_MODEL_FINGERPRINT(target, ps_),
         )
         return True
 
     def rule(ps_, p):
-        return [path("a", 5.0 if p.TimingParamsLookupTable[helper]._slices else 12.0)]
+        return [path("a", 5.0 if p.TimingParamsLookupTable[target]._slices else 12.0)]
 
     backend = ScriptedBackend(rule, True)
     history = {}
@@ -796,10 +821,11 @@ def _region_sweep(constraint):
                 (SYN, "SYN_OUTPUT_DIRECTORY", out),
                 (SWEEP, "SWEEP_HISTORY", history),
                 (AUTO_PIPELINE, "COLLECT_AUTO_PIPELINE_REGIONS", lambda *a, **k: regions),
-                (SWEEP, "RESOLVE_PIPELINABLE_HOTSPOT", lambda p, plan, ps_: ("h", None, "")),
+                (SWEEP, "RESOLVE_PIPELINABLE_HOTSPOT", lambda p, plan, ps_: (hotspot, None, "")),
+                (SWEEP, "LATENCY_MEMORY_AP_FLOORS", {}),
                 (SWEEP, "RUN_HOTSPOT_MINISWEEP", mini),
-                (SWEEP, "SUMMARIZE_SUBTREE_PIPELINE", lambda m, st, t, p: (False, [], len(t[helper]._slices))),
-                (SWEEP, "GET_SUBTREE_PIPELINE_STAGES", lambda plan, t, p: len(t[helper]._slices)),
+                (SWEEP, "SUMMARIZE_SUBTREE_PIPELINE", lambda m, st, t, p: (False, [], len(t[target]._slices))),
+                (SWEEP, "GET_SUBTREE_PIPELINE_STAGES", lambda plan, t, p: len(t[target]._slices)),
                 (
                     AUTO_PIPELINE.TimingParams,
                     "GET_TOTAL_LATENCY",
@@ -825,6 +851,33 @@ def test_start_latency_region_hotspot_takes_the_minisweep():
     assert actions[-1] == "met", actions
     assert not result.sweep_timing_failures, result.sweep_timing_failures
     assert region.scale == 1.0, region.scale  # recalibrated on the lock
+
+
+def test_region_root_hotspot_takes_the_minisweep():
+    """The region root itself is the hotspot (#387): it is mini-swept like an
+    interior helper, its lock takes an output boundary bank although the
+    captured interior has the root fixed, and the region is realized from
+    the lock."""
+    result, minis, actions, region = _region_sweep(
+        LOGIC.AutoPipelineLatency(start_latency=1), hotspot="region_func"
+    )
+    assert minis == ["region_func"], (minis, actions)
+    assert actions[0].startswith("grow_auto_pipeline"), actions
+    assert actions[1] == "minisweep(region_func)", actions
+    assert actions[-1] == "met", actions
+    assert not result.sweep_timing_failures, result.sweep_timing_failures
+    root = result.TimingParamsLookupTable["a" + M + "r"]
+    assert root._slices == [0.5] and root._has_output_regs and root.params_are_fixed
+    assert region.cuts == [] and region.landscape is None, (region.cuts, region.landscape)
+    # A remembered lower-goal depth floor does not re-plan the region over
+    # the lock (AUTO_PIPELINE._ENFORCE_ONE_AUTO_PIPELINE_REGION)
+    result, minis, actions, region = _region_sweep(
+        LOGIC.AutoPipelineLatency(start_latency=1), hotspot="region_func",
+        floors={region.key: 5},
+    )
+    assert actions[1] == "minisweep(region_func)" and actions[-1] == "met", actions
+    root = result.TimingParamsLookupTable["a" + M + "r"]
+    assert root._slices == [0.5] and region.realized == 1, (root._slices, region.realized)
 
 
 def test_shared_region_is_locked_once_for_every_same_goal_main():

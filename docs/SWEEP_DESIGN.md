@@ -50,6 +50,7 @@ same nonzero-exit timing-failure gate as an ordinary pipeline search.
   - [Divider acceptance and the 48-slice intermediate level](#divider-acceptance-and-the-48-slice-intermediate-level)
   - [Hard floors need path evidence](#hard-floors-need-path-evidence)
   - [start_latency regions and mini-sweeps](#start_latency-regions-and-mini-sweeps)
+  - [Region roots and one-line wrappers](#region-roots-and-one-line-wrappers)
   - [Locks shared by MAINs at one goal](#locks-shared-by-mains-at-one-goal)
   - [Cross-MAIN handshake paths](#cross-main-handshake-paths)
 
@@ -657,8 +658,10 @@ wire types and delay components); descendants are measured with the same rules
 before minimizing and again before matching, so both sides of the key see the
 same model. A carried lock obeys the mini-sweep's own rules
 (`LOCK_BLOCKED_REASON`): only eligible instances in the owning MAIN, never a
-subtree root or MAIN, never inside a constrained AUTO_PIPELINE region, and
-never nested in another lock. A MAIN at the same goal that has no lock of its own
+subtree root or MAIN, never around an AUTO_PIPELINE region nor on or inside a
+constrained one, and never nested in another lock. A region whose caller
+cannot absorb latency is also its own cut subtree; region enforcement plans it,
+not the subtree planner, so its root follows the region rules. A MAIN at the same goal that has no lock of its own
 takes it (`SHARE_LOCK`, unless it replays a preserved implementation); a MAIN at
 another goal never inherits it. Only the retained implementation's locks are stored. A MAIN
 preserved from a failed confirmation keeps a carried lock only if its
@@ -987,10 +990,11 @@ compact repeated-helper solution before global densification skips past it:
    <MAIN>`). A carried or remembered lock fills a peer that has none. A MAIN at
    another goal keeps its own locks. Ineligible instances stay combinational
    and are named in the log and trace. No eligible
-   in-MAIN instance makes the hotspot unpipelinable. A hotspot inside an
-   uncapped `start_latency=` region takes this step too
-   (`REGION_INTERIOR_LOCK_BLOCKER`): the hint is only a starting count, so the
-   region must search like an untagged call site. A region group is one key at one
+   in-MAIN instance makes the hotspot unpipelinable. A hotspot in an uncapped
+   region, inside it or its root, takes this step too (`REGION_LOCK_BLOCKER`):
+   a `start_latency=` hint is only a starting count, so the region must search
+   like an untagged call site. A locked root holds the whole region, which
+   `AUTO_PIPELINE._ENFORCE_ONE_AUTO_PIPELINE_REGION` then realizes from the lock. A region group is one key at one
    goal (`AUTO.AUTO_PIPELINE_BINDING`), so its other members are always in this MAIN
    or a peer. Its region-wide growth only
    spreads cuts over the delay model's layout, which can be far from the real
@@ -1039,7 +1043,17 @@ attempted. Instead:
    common ancestor of the two registers (both endpoint names share their
    textual prefix down to their lowest common ancestor), so the deepest
    (rightmost) such match wins, longer name breaking ties — this finds the
-   LCA without ever needing exact hierarchical matching. Only when no
+   LCA without ever needing exact hierarchical matching. When no name
+   matches an endpoint, an AUTO_PIPELINE region root is looked for by its
+   instance's exact label path (`SYN.INSTANCE_LABEL_POSITION`, Vivado `/` and
+   sky130 STA's flattened `.\` levels), with the same two tiers. The tagged
+   call is labeled with the wrapped function's bare name, and an imported
+   function's name is module-prefixed (`square` vs `imported_math_square`),
+   so a root's name can be in no register name at all
+   (`imported_auto_pipeline_attribution_test`). It comes after name matches
+   so that a deeper function found by name still wins. A path inside an
+   imported helper still goes to its region root
+   ([issues inventory entry 43](issues_inventory.md#43-tbd-a-path-inside-an-imported-helper-is-blamed-on-the-function-around-it)). Only when no
    candidate matches any endpoint name at all does it fall back to summing
    matched-substring length across every endpoint/resource string (the
    original scoring, kept as a last resort for tools that report resources
@@ -1071,8 +1085,9 @@ attempted. Instead:
    are local to the entity the FF lives in, never global. Messages state what
    the attribution rests on (`ATTRIBUTION_BASIS`, recorded as
    `bottleneck_basis`):
-   - the path "runs inside" a function whose name is in both endpoints;
-   - it "starts or ends in" one named in one endpoint;
+   - the path "runs inside" a function whose name, or region root label
+     path, is in both endpoints;
+   - it "starts or ends in" one found in one endpoint;
    - it "passes through logic of" one matched only by netlist cell names.
 
    A cell-name match is a guess and is never printed as proof that the
@@ -1574,7 +1589,9 @@ Items 2-6 are collected with the other timing-model gaps in [#352](https://githu
    - **The misprediction.** Inside the Poly1305 body (Vivado,
      xc7a200tffg1156-2), a 34×34 inferred multiply measured at 8.4 ns on its own
      sits at 1.85 ns. At 80 MHz (`qor/poly1305/body.py`), region growth needed
-     32–34 cuts (`-D HELPER=0`) and the helper's mini-sweep 10 (`-D HELPER=1`).
+     32–34 cuts and the isolated mini-sweep 10. Region growth was what a
+     directly tagged root got before roots were mini-swept (`-D HELPER=0`,
+     compiler at `9fbd5d9f`); both `HELPER` settings now take the mini-sweep.
      Every worst path ran from a register through the pre-adds and a leaf into
      the following subtract.
    - **A tried fix.** Keeping variable multiplies at their measured delay and
@@ -1722,6 +1739,33 @@ passing but deeper implementation would discard this improvement.
 
 Fixed and capped regions still never lock inside: their count is the
 constraint's, and a recount resets the interior.
+
+### Region roots and one-line wrappers
+
+The region root was excluded twice: mini-sweeps were offered only to a hotspot
+other than `region.func_name`, and `LOCK_BLOCKED_REASON` refused a lock on the
+root (and, when the root's caller cannot absorb latency, on it as a cut
+subtree root). A root tagged directly could only grow with its region, so
+designs tagged a one-line local wrapper and let the sweep mini-sweep the real
+function inside it ([#387](https://github.com/JulianKemmerer/PipelineC/issues/387)).
+An imported root was also never attributed: its call is labeled with the
+function's bare name, its function name is module-prefixed.
+
+The cost was large. WireGuard tagging `poly1305_body` directly built the
+bodies 6 and 12 deep and overflowed the device's DSPs, against 8 and 8
+through wrappers. `region_root_minisweep_design.py` with a reset pin
+(sky130, 120 MHz, the compiler at `9fbd5d9f`) grew the directly tagged
+region to 1583 cuts before trimming to 719, where the wrapper's mini-sweep
+locked the function inside at 26.
+
+A root now takes the same mini-sweep as an interior helper, and its lock is
+the region's pipeline (`AUTO_PIPELINE._ENFORCE_ONE_AUTO_PIPELINE_REGION`).
+`region_root_minisweep_test` checks that the direct tag and the wrapper reach
+the same depth, and on Vivado the Poly1305 body probe tagged directly
+(`qor/poly1305/body.py -D HELPER=0`, 80 MHz) now matches its helper variant:
+10 slices in 3 whole-design syntheses, against 34 in 7. A path inside an
+imported helper is still attributed to the root around it, not the helper
+([issues inventory entry 43](issues_inventory.md#43-tbd-a-path-inside-an-imported-helper-is-blamed-on-the-function-around-it)).
 
 ### Locks shared by MAINs at one goal
 

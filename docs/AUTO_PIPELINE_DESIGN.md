@@ -720,7 +720,9 @@ each plan's region-conflict checks to its own MAIN. If no in-MAIN instance
 can absorb latency, the helper is unpipelinable in that plan.
 
 Containing landscapes then see an ordinary `Segment.LOCKED`, the mini-sweep lock path. A
-region that is itself a cut-subtree root takes the existing locked-root branch. Clamping
+region that is itself a cut-subtree root (its caller cannot absorb latency) takes the
+existing locked-root branch, and a mini-sweep may still lock its root, as for any
+uncapped region root. Clamping
 cuts inside a shared landscape instead would not work: parallel branches share one
 delay axis, and the container can't count the region's latency.
 
@@ -782,13 +784,19 @@ delay axis, and the container can't count the region's latency.
   realized value.
 - **Growth and shrinking.**
   - Region landscapes feed `SWEEP.RANK_PATH_FUNC_CANDIDATES`, and a region root counts as a
-    valid attribution. When `REGION_FOR_HOTSPOT` places a critical path inside a region,
+    valid attribution. A root is also found by its instance's exact label path
+    (`SYN.INSTANCE_LABEL_POSITION`) when no function name matched: the tagged call is
+    labeled with the wrapped function's bare name, and an imported function's name is
+    module-prefixed. When `REGION_FOR_HOTSPOT` places a critical path inside a region,
     that group's `region.scale` is multiplied (the `grow_auto_pipeline` action).
-    In an uncapped `start_latency=` region, the second consecutive attribution
-    to the same interior helper runs the mini-sweep instead, as for an
+    In an uncapped region, the second consecutive attribution to the same hotspot, an
+    interior helper or the root itself, runs the mini-sweep instead, as for an
     untagged call site (`SWEEP.TRY_HOTSPOT_MINISWEEP`). After the lock,
     `RESET_REGION_CALIBRATION_AFTER_LOCK` resets the group's `region.scale` to
-    1.0, so the rest of the region is planned from the clock period.
+    1.0, so the rest of the region is planned from the clock period. A locked root
+    holds the whole region: `_ENFORCE_ONE_AUTO_PIPELINE_REGION` realizes it from the
+    lock (`params_are_fixed` after `SWEEP.APPLY_LOCKS`), with no planned cuts, no
+    landscape and no growth.
   - Global replans grow regions too.
   - If nothing else in the plan can change and no region count moved, the region with
     the worst predicted stage gets one more register.
@@ -804,12 +812,13 @@ delay axis, and the container can't count the region's latency.
     inside capped regions;
   - an iteration's physical schedule fingerprint (region placements included) repeats
     one already tried while a region is at its cap. This stops before re-synthesizing.
-- **Mini-sweeps** never lock a hotspot that contains a region, or that lies inside a
-  fixed (`latency=`) or capped (`max_latency=`) region: those own their count, and a
-  recount resets the interior. Inside an uncapped `start_latency=` region they do lock
-  (`SWEEP.REGION_INTERIOR_LOCK_BLOCKER`): every member of the region's group is in the
-  blamed MAIN or a MAIN at its clock goal, and the lock goes into every member. The hint is a starting count only, and
-  region-wide growth over a serial-layout delay model can need twice the registers. See
+- **Mini-sweeps** never lock a hotspot that contains a region, or that is the root of
+  or lies inside a fixed (`latency=`) or capped (`max_latency=`) region: those own their
+  count, and a recount resets the interior. In an uncapped region they lock the root or
+  an interior helper (`SWEEP.REGION_LOCK_BLOCKER`): every member of the region's group
+  is in the blamed MAIN or a MAIN at its clock goal, and the lock goes into every
+  member. A `start_latency=` hint is a starting count only, and region-wide growth over
+  a serial-layout delay model can need twice the registers. See
   [`SWEEP_DESIGN.md` History](SWEEP_DESIGN.md#start_latency-regions-and-mini-sweeps).
 - **Everything else includes regions:**
   - snapshots;
@@ -864,6 +873,7 @@ for the full coverage list. The ones that exercise this module end to end
 | `auto_fsm_latency_sized_test.py` | the same core sizing an AUTO_FSM's function (lanes = depth + 2): the AUTO_FSM call site pass 2 creates is scheduled by `AUTO_FSM.REPARSE` before the one seeded confirmation synthesis, and the build exits 0 |
 | `auto_pipeline_constraints_test.py` | §6 constrained regions: `latency=2` / `start_latency=1` call sites built with exactly 2 / 1 registers and pass 2 skipped; a `max_latency=1` cap stops an unreachable goal promptly, naming the cap, then `TIMING NOT MET`; `make_stream_auto_pipeline(..., start_latency=1)` sizes its bootstrap FIFO from the hint, settles in one sweep iteration and skips pass 2 when the hint matches, and grows past a too-small hint (pass 2 resizes the FIFO) |
 | `auto_pipeline_region_minisweep_test.py` | `start_latency=1` is only a starting guess: a ChaCha-shaped chain of a repeated helper (quarter rounds written in series on a shared state) takes the same mini-sweep lock and reaches the same depth (11) in at most five whole-design checks including two optional trim probes, with and without the hint; final history retains six locks and measured passing timing (before the fix the hinted build reached 22 in five) |
+| `region_root_minisweep_test.py` | an imported function tagged directly is its region's root (#387): its critical path is found by the root instance's label path, the root itself is mini-swept and locked, and the build reaches the same depth as tagging a one-line wrapper, which mini-sweeps the function inside it |
 | `auto_pipeline_c_pragma_test.py` | C `#pragma AUTOPIPELINE 2` is a fixed latency, built with exactly 2 clocks even by a `--comb` build |
 | `sweep_fsm_auto_pipeline_test.py` | Reg-FSM main + AUTO_PIPELINE region: the cut subtree is the tagged child, the FSM's latency stays 0 |
 | `sweep_float32_test.py` (registered once per backend, **every** `--syn_tool`) | a plain auto-pipelined float32 adder MAIN sweeps to its goal on every synthesis backend, not just sky130 -- see [pypeline_TESTS.md](pypeline_TESTS.md#per-syn_tool-sweep-coverage) |

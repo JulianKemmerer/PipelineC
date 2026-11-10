@@ -875,14 +875,10 @@ def test_stream_factory_names_unchanged_and_forwarded():
         "_start_latency_None_max_latency_None_func_round_a_hw"
     )
     mcp = make_stream_auto_multi_cycle(round_a_hw)
-    # An unnamed tag's key is the library source line it is built on: moving
-    # that line renames every unnamed make_stream_auto_multi_cycle holder
-    source, first_line = inspect.getsourcelines(make_stream_auto_multi_cycle)
-    constructor_line = first_line + next(
-        i for i, line in enumerate(source) if "MC = AUTO_MULTI_CYCLE(" in line
-    )
+    # An unnamed tag's key is the function it wraps, never the library line
+    # it is built on
     assert mcp.mcp.canonical_key == (
-        f"stream.stream_multi_cycle.make_stream_auto_multi_cycle_line{constructor_line}_0"
+        P.CANONICAL_CALLABLE_KEY(round_a_hw) + "_mcp"
     ), mcp.mcp.canonical_key
     assert inspect.unwrap(mcp)._pypeline_name_info.render(192) == (
         "func_mcp_from_stream_stream_multi_cycle_make_stream_auto_multi_cycle"
