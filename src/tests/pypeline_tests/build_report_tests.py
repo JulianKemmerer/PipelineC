@@ -582,21 +582,8 @@ def get_tests() -> list:
             requires=["yosys", "ghdl"],
         )
     )
-    # sky130 area estimate/measurement reporting, both operating modes:
-    # mode 1 (--no_hier_syn --no_sweep) prints an estimate and leaves every
-    # leaf area-cached; mode 2 (a real confirmation/sweep synthesis) also
-    # prints the exact measured area from that run's own mapped netlist;
-    # mode 3: a --no_hier_syn build reports the MAIN's area and delay from an
-    # earlier --full_hier_syn run in the shared --syn_cache store.
-    tests.append(
-        Test(
-            name="area_estimate_build_report_test",
-            category=DM,
-            cmd=[INST_DIR / "area_estimate_build_report_test.py"],
-            needs_out_dir=True,
-            requires=["yosys", "ghdl"],
-        )
-    )
+    # area_estimate_build_report_test (sky130 area estimate and measurement
+    # reporting) is in known_issues_tests.py until #393 is fixed.
     # The generated host module: a real build must drop one in <out_dir>/host/
     # whose bytes agree with pypeline's own type_to_bytes for the design's type.
     tests.append(

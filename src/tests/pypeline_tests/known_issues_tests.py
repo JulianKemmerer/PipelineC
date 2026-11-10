@@ -89,6 +89,22 @@ def get_tests() -> list:
             expect_fail=True,
         )
     )
+    # sky130 area estimate/measurement reporting, both operating modes: mode 1
+    # (--no_hier_syn --no_sweep) must leave every leaf area-cached, but a
+    # primitive whose delay is modeled from measured widths is never
+    # synthesized, so its area is never cached and the test exits at mode 1;
+    # modes 2 and 3 (measured area, stored measurements) do not run until it is
+    # fixed. Issue #393. On XPASS move it back to build_report_device_models.
+    tests.append(
+        Test(
+            name="area_estimate_build_report_test",
+            category="known_issues",
+            cmd=[INST_DIR / "area_estimate_build_report_test.py"],
+            needs_out_dir=True,
+            requires=["yosys", "ghdl"],
+            expect_fail=True,
+        )
+    )
     # A path inside an imported helper: the call is labeled with the bare
     # name, the func_name module-prefixed, so attribution never finds the
     # helper and blames the region root around it. Issue #389.

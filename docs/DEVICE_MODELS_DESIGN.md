@@ -571,7 +571,7 @@ These are collected with the sweep planner's modeling gaps in [#352](https://git
   modeled branch has no such rule. So the area estimate leaves the primitive out and
   reports `N leaf area(s) not yet cached`, and `_area.json` lists it in
   `missing_leaf_area_funcs`, even under `--no_hier_syn --no_sweep` (§6, mode 1).
-  `area_estimate_build_report_test` fails on it
+  `area_estimate_build_report_test` (registered in `known_issues`) fails on it
   ([#393](https://github.com/JulianKemmerer/PipelineC/issues/393)), so its modes 2
   and 3 do not run.
 
@@ -668,7 +668,8 @@ unit that disagrees with the active model's own unit rather than mixing it
 in.
 
 **Two operating modes**, both real and both exercised by
-`area_estimate_build_report_test`:
+`area_estimate_build_report_test` (mode 1 currently fails on
+[#393](https://github.com/JulianKemmerer/PipelineC/issues/393), see Limitations):
 
 1. **latchup.app's own usage** (`--no_hier_syn --no_sweep`): every leaf
    either hits a warm `cache/area` entry, or — when its `.delay` is cached
