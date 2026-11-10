@@ -4,7 +4,7 @@ way a FIFO is sized. Separate calls by default; LANES=list builds both in one
 comprehension. Each object must get its own goal's depth. The depth is ORed
 into the result, so the value read reaches the hardware without adding logic
 to the timed path. 100 MHz, not higher: the chained inferred multiplies'
-DSP cascade plateaus near 122 MHz on this part (issues inventory entry 46)."""
+DSP cascade plateaus near 122 MHz on this part (issue #390)."""
 from pypeline import AUTO_PIPELINE, MAIN, PART, hw_func, param, uint32_t, Input, make_reset, uint1_t
 
 PART("xc7a35ticsg324-1l")

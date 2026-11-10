@@ -7,14 +7,17 @@ name (`square`), while its func_name is module-prefixed
 looks for func names inside register names, so it never finds the helper.
 Only an AUTO_PIPELINE region root is also found by its instance's label path
 (#387), so a path inside the helper goes to the region root around it: the
-sweep mini-sweeps the whole region instead of the repeated helper. Seen on
-WireGuard's Poly1305 body, whose feedback_mul_add_mod (an imported alias of
-poly1305_math_residue_mul_add_mod_inferred) is never attributed.
+sweep mini-sweeps the whole region instead of the repeated helper (#389).
+Seen on WireGuard's Poly1305 body, whose feedback_mul_add_mod (an imported
+alias of poly1305_math_residue_mul_add_mod_inferred) is never attributed.
 
 In process, no synthesis tool: elaborate a two-module design whose region
-root calls the imported helper twice, build a register path inside the first
-call from the real emitted VHDL label path (SYN._VHDL_INSTANCE_TRIE) and ask
-SWEEP.RESOLVE_PIPELINABLE_HOTSPOT for the function.
+root calls the imported helper twice, give every function a nonzero delay (the
+landscape only holds functions with a delay, and only landscape functions are
+candidates), build a register path inside the first call from the real emitted
+VHDL label path (SYN._VHDL_INSTANCE_TRIE) and ask
+SWEEP.RESOLVE_PIPELINABLE_HOTSPOT for the function. With the helper defined in
+outer's own module instead, the same check attributes the path to the helper.
 
 Exits 1 while the bug is present (registered expect_fail in
 known_issues_tests.py), 0 once the helper is attributed.
@@ -81,6 +84,11 @@ def main():
             plan.subtrees = ["top"]
             plan.regions = [region]
             plan.landscapes = {}
+            # No synthesis ran, so no function has a delay and the landscape
+            # would be empty: the helper could never be a candidate.
+            for func_logic in ps.FuncLogicLookupTable.values():
+                if func_logic.delay is None:
+                    func_logic.delay = 20
             region.landscape = SWEEP.BUILD_SLICE_LANDSCAPE(region.inst, ps, {
                 inst: AUTO_PIPELINE.TimingParams(inst, logic)
                 for inst, logic in ps.LogicInstLookupTable.items()

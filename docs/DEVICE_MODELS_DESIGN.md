@@ -562,6 +562,18 @@ These are collected with the sweep planner's modeling gaps in [#352](https://git
   derives transition/setup conventions that cannot be recovered from their
   published artifacts, not fitted away with a fudge factor. Together these
   account for essentially all of the remaining ~5% engine error.
+- **A primitive whose delay is modeled from measured widths has no leaf area.**
+  The modeled branch of `SYN.ADD_PATH_DELAY_TO_LOOKUP` (`modeled path delay ...
+  from measured widths`) sets `.delay` and synthesizes nothing, and a leaf's area
+  is a byproduct of the synthesis run that measures its delay
+  (`_run_synth_and_sta` writes it through `SYN.WRITE_CACHED_LEAF_AREA`). The branch
+  for a warm delay cache forces one synthesis when the cached area is missing; the
+  modeled branch has no such rule. So the area estimate leaves the primitive out and
+  reports `N leaf area(s) not yet cached`, and `_area.json` lists it in
+  `missing_leaf_area_funcs`, even under `--no_hier_syn --no_sweep` (§6, mode 1).
+  `area_estimate_build_report_test` fails on it
+  ([#393](https://github.com/JulianKemmerer/PipelineC/issues/393)), so its modes 2
+  and 3 do not run.
 
 ## 6. Area model
 
@@ -662,7 +674,9 @@ in.
    either hits a warm `cache/area` entry, or — when its `.delay` is cached
    but its `.area` is missing — `ADD_PATH_DELAY_TO_LOOKUP` forces one real
    synthesis to fill both, mirroring the existing clause that does the same
-   for a missing combinational-planner-weights sidecar. The hierarchy above
+   for a missing combinational-planner-weights sidecar. A primitive whose
+   delay the width model estimates is the exception
+   ([Limitations](#5-limitations-and-future-work)). The hierarchy above
    the leaves is the cheap estimate, except for a function whose exact
    inputs an earlier run synthesized (in the output directory or the
    `--syn_cache` store): its measured area counts instead

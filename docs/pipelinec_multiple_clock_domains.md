@@ -1266,7 +1266,7 @@ discussions are listed under their discussion number.
 | [#342](https://github.com/JulianKemmerer/PipelineC/discussions/342) | discussion | Pypeline: crossing between clock domains | open questions: annotation, library factory, or both; how native simulation schedules several rates ([section 16](#16-ideas-for-multiple-clock-domains-in-pypeline)) |
 | [#346](https://github.com/JulianKemmerer/PipelineC/discussions/346) | discussion | multi-cycle constraints on tools other than Vivado | the same per-tool question CDC constraints raise |
 | [#349](https://github.com/JulianKemmerer/PipelineC/discussions/349) | discussion | clearing a FIFO on reset | no FIFO has a clear input |
-| [#354](https://github.com/JulianKemmerer/PipelineC/issues/354) | issue, open | Pypeline native simulation runs different rates in lockstep; it now refuses such designs, and closing the issue is recommended | [section 16](#native-simulation-with-several-clocks) |
+| [#354](https://github.com/JulianKemmerer/PipelineC/issues/354) | issue, closed | Pypeline native simulation ran different rates in lockstep; it now refuses such designs | [section 16](#native-simulation-with-several-clocks) |
 
 ## 10. IR: what the compiler records
 

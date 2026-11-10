@@ -2674,6 +2674,11 @@ Two traps when writing a design that will be diffed against real VHDL:
   make simulation hardware-accurate for functions decorated with `@hw_func` or `@MAIN`. Inner
   functions must carry `@hw_func` to opt in. See Bit-Accurate Arithmetic section for ctype-chain
   limitations (plain int operands, shifts, `__radd__`).
+- **A whole-wire write is not cast to the wire's type
+  ([#392](https://github.com/JulianKemmerer/PipelineC/issues/392))** — `_sim_wire_write` stores
+  the value as given, so a `Wire[uint1_t]` written from a comparison (`q = t >= 2`) holds a Python
+  `bool`. `~q` is then `-2`, which is truthy, where hardware gives the one-bit NOT. Test
+  `q == 0`, or assign the comparison to a typed local first.
 - **`Input[T]` wires** — initialized to zero at `sim_reset()`; driving a per-cycle value is
   supported via `@sim_input` (see above).
 - **`@MAIN` arguments** — top-level input ports with no driver: `pypeline_sim.py`

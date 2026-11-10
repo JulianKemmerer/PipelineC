@@ -1053,7 +1053,7 @@ attempted. Instead:
    (`imported_auto_pipeline_attribution_test`). It comes after name matches
    so that a deeper function found by name still wins. A path inside an
    imported helper still goes to its region root
-   ([issues inventory entry 43](issues_inventory.md#43-tbd-a-path-inside-an-imported-helper-is-blamed-on-the-function-around-it)). Only when no
+   ([#389](https://github.com/JulianKemmerer/PipelineC/issues/389)). Only when no
    candidate matches any endpoint name at all does it fall back to summing
    matched-substring length across every endpoint/resource string (the
    original scoring, kept as a last resort for tools that report resources
@@ -1583,7 +1583,8 @@ Items 2-6 are collected with the other timing-model gaps in [#352](https://githu
    and concave, so minimizing the worst stage at a given stage count means
    equal-width chunks — but the constraint itself has not been revisited
    since.
-7. **A hierarchy measured as a whole is scaled uniformly.** Both the landscape
+7. **A hierarchy measured as a whole is scaled uniformly
+   ([#390](https://github.com/JulianKemmerer/PipelineC/issues/390)).** Both the landscape
    and the coarse slicer place its children in proportion to their standalone
    delays, shrunk to the whole's measured delay.
    - **The misprediction.** Inside the Poly1305 body (Vivado,
@@ -1765,7 +1766,7 @@ the same depth, and on Vivado the Poly1305 body probe tagged directly
 (`qor/poly1305/body.py -D HELPER=0`, 80 MHz) now matches its helper variant:
 10 slices in 3 whole-design syntheses, against 34 in 7. A path inside an
 imported helper is still attributed to the root around it, not the helper
-([issues inventory entry 43](issues_inventory.md#43-tbd-a-path-inside-an-imported-helper-is-blamed-on-the-function-around-it)).
+([#389](https://github.com/JulianKemmerer/PipelineC/issues/389)).
 
 ### Locks shared by MAINs at one goal
 

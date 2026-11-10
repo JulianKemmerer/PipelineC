@@ -63,7 +63,7 @@ def get_tests() -> list:
     tests = []
     # Native sim: `~q` of a Wire[uint1_t] written from a comparison is always
     # truthy (the wire holds a Python bool; ~True is -2), unlike the hardware's
-    # one-bit NOT. Inventory entry 48 (issue TBD).
+    # one-bit NOT. Issue #392.
     tests.append(
         Test(
             name="native_invert_compare_wire_known_issue",
@@ -72,16 +72,16 @@ def get_tests() -> list:
             expect_fail=True,
         )
     )
-    # AUTO_PIPELINE(f, latency=2) of a function that reads a global wire cannot
-    # place its cuts ("realized 1 clock(s)"); with the wire's value as a
-    # constant it can. Inventory entry 47 (issue TBD).
+    # AUTO_PIPELINE(f, latency=2) of a function with a variable multiply cannot
+    # place its cuts ("realized 1 clock(s)"); a constant multiply or an
+    # adder-only body can. Issue #391.
     tests.append(
         Test(
-            name="fixed_latency_global_read_known_issue",
+            name="fixed_latency_variable_multiply_known_issue",
             category="known_issues",
             cmd=[
                 PYPELINEC,
-                INST_DIR / "fixed_latency_global_read_design.py",
+                INST_DIR / "fixed_latency_variable_multiply_design.py",
                 "--comb",
                 "--no_synth",
             ],
@@ -91,7 +91,7 @@ def get_tests() -> list:
     )
     # A path inside an imported helper: the call is labeled with the bare
     # name, the func_name module-prefixed, so attribution never finds the
-    # helper and blames the region root around it. Issue TBD.
+    # helper and blames the region root around it. Issue #389.
     tests.append(
         Test(
             name="imported_helper_attribution_known_issue",

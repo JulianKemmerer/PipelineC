@@ -590,6 +590,14 @@ supply the latency and `x + 1` runs in parallel. It fails while the built core
 instantiates a pipelined adder, and passes once the adder stays combinational.
 Tracked as bug [#372](https://github.com/JulianKemmerer/PipelineC/issues/372).
 
+**Known issue: a variable multiply in a fixed AUTO_PIPELINE.**
+`fixed_latency_variable_multiply_design.py` (known_issues) builds
+`AUTO_PIPELINE(scale, latency=2)`, where `scale` multiplies two variables
+(`--comb --no_synth`). The build stops with "cannot build the requested latency --
+realized 1 clock(s)"; the same body with a constant multiply builds. It passes
+once the planner can place the cuts. Tracked as bug
+[#391](https://github.com/JulianKemmerer/PipelineC/issues/391).
+
 ## AUTO_PIPELINE latency constraint coverage
 
 Each test below covers `AUTO_PIPELINE(func, latency= / start_latency= / max_latency=)`
@@ -735,8 +743,12 @@ The latency memory and `--latency_hints` (see
   and expects the region root to be blamed, found by its instance's label path, with
   an `inside` basis.
 - **`imported_helper_attribution_test.py` (known_issues):** the same path inside an
-  imported helper the region root calls is blamed on the root, not the helper; XFAIL
-  until helpers are found by label path too.
+  imported helper the region root calls is blamed on the root, not the helper
+  ([#389](https://github.com/JulianKemmerer/PipelineC/issues/389)); XFAIL until
+  helpers are found by label path too. The in-process harness gives every function a
+  nonzero delay first: the landscape holds only functions with a delay, and only
+  landscape functions are candidates. With the helper defined in the root's own
+  module the same check attributes the path to the helper.
 
 The harness sets `PIPELINEC_INTERNAL_NO_LATENCY_MEMORY=1` for every test (see
 [Running](#running)); the memory build tests turn it back off for their own builds.
@@ -794,8 +806,8 @@ any rate, so these tests check the rate itself.
   - `--rebuild` builds again (warm) and rewrites the record with the same build inputs;
   - a `--no_synth` build in the directory removes `built_hardware.json`.
 
-  The build passes `--pipeline_min_effort 0`: a trim trial of this design hits issue 45
-  of the [issues inventory](issues_inventory.md) ([#381](https://github.com/JulianKemmerer/PipelineC/issues/381)).
+  The build passes `--pipeline_min_effort 0`: a trim trial of this design hits
+  [#381](https://github.com/JulianKemmerer/PipelineC/issues/381) (see the [issues inventory](issues_inventory.md)).
 
 ## Stream performance measurement coverage
 
@@ -1007,6 +1019,11 @@ The remaining global wire tests:
   with no shared wire, where `global_wires_pkg` is not written but `top.vhd` uses
   its types, so GHDL rejects the VHDL
   ([#384](https://github.com/JulianKemmerer/PipelineC/issues/384)).
+- `native_invert_compare_wire_known_issue` (`known_issues`, native sim only): `~q`,
+  where `q: Wire[uint1_t]` is written from a comparison, is truthy in every cycle
+  because the wire holds a Python `bool` (`native_invert_compare_wire_test.py`
+  asserts the hardware's answer,
+  [#392](https://github.com/JulianKemmerer/PipelineC/issues/392)).
 
 **Pipeline timing.** See the guide's
 [Global wires in pipelined code](pypeline_guide.md#global-wires-in-pipelined-code).

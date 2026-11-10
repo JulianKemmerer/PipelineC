@@ -215,6 +215,11 @@ For async behavior, add reset/restart only where the FIFO API has a defined rese
 
 The newer three known-issue tests already fill previously unrepresented shapes. The next task there is to make the intended failure precise and promote fixed reproducers into the normal feature lane, not add another broad native test that misses the same instance/ownership boundaries.
 
+Two reproducer-quality findings, from the tree at `df682629`:
+
+- **A known-issue test can XFAIL without reaching its question.** `Test.expect_fail` inverts only the exit code, so a harness error and the bug look alike. `imported_helper_attribution_test.py` exited 1 because its in-process harness gave no function a delay: the region's landscape was `None`, so the imported helper was never a candidate in `SWEEP.RANK_PATH_FUNC_CANDIDATES` and the test could never XPASS ([#389](https://github.com/JulianKemmerer/PipelineC/issues/389)). It now gives every function a nonzero delay first. The same design with the helper defined in the root's own module exits 0, which shows the check discriminates. A reproducer whose failure is an exit code needs such a control.
+- **A regression test that fails on an open bug sits in a default category.** `area_estimate_build_report_test` fails in `build_report_device_models` on [#393](https://github.com/JulianKemmerer/PipelineC/issues/393). Its mode-1 check exits before modes 2 and 3, so they do not run until the bug is fixed. It stays registered there because the issue quotes that command; moving it to `known_issues` would change that command.
+
 ## 10. Harness reliability, resource limits and evidence
 
 The following are small infrastructure changes that help runtime and interpretation:
