@@ -155,6 +155,8 @@ parser_state.func_no_added_latency      # func_name -> reason it takes no compil
 parser_state.pypeline_global_insts      # global instance/FIFO wire -> PY_TO_LOGIC.GlobalInstDecl
 parser_state.clk_cross_var_info         # var name -> LOGIC.ClkCrossVarInfo
 parser_state.pypeline_wire_decls        # global wire key -> PY_TO_LOGIC.WireDecl
+parser_state.file_to_module_prefix      # design .py file -> module prefix of its names (None: top)
+parser_state.pypeline_file_imports      # {(importing .py, imported .py)}, for the design diagram
 parser_state.pypeline_clock_names       # clock (mhz, name) -> its Python name
 parser_state.pypeline_clock_syn_mhz     # clock (mhz, name) -> its syn_mhz
 parser_state.pypeline_clock_crossings   # the crossing report's PY_TO_LOGIC.CrossingRows
@@ -172,7 +174,10 @@ filled only by the Python front end, but shared code reads some of them:
 - the sweep reads `pypeline_global_insts` to give paths inside a global instance or FIFO
   to its MAIN ([SWEEP_DESIGN.md](SWEEP_DESIGN.md));
 - `VHDL.WRITE_MULTIMAIN_TOP` skips its whole-wire clock check for the wires in
-  `wire_clocks_checked`.
+  `wire_clocks_checked`;
+- `DIAGRAM` reads the clock, global instance and wire tables, `file_to_module_prefix`
+  and `pypeline_file_imports` for the design diagram
+  ([DIAGRAM_DESIGN.md](DIAGRAM_DESIGN.md#4-extraction-rules)).
 
 They are read with `getattr`, since a C parser state pickled by an older compiler
 (`C_TO_LOGIC.GET_PARSER_STATE_CACHE`) lacks them, and all are copied in `DEEPCOPY`.

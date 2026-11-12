@@ -115,6 +115,19 @@ def get_tests() -> list:
             needs_out_dir=True,
         )
     )
+    # The design diagram a build writes: MAIN and AUTO_PIPELINE latencies equal
+    # built_hardware.json's, measured delays and zero-clock offsets are
+    # recorded, a --no_synth build writes the same structure, and a failed
+    # build removes the old page. One sky130 build, one --no_synth build and
+    # one failing parse.
+    tests.append(
+        Test(
+            name="diagram_build_test",
+            category=DM,
+            cmd=[INST_DIR / "diagram_build_test.py"],
+            needs_out_dir=True,
+        )
+    )
     tests.append(
         Test(
             name="generated_naming_build_test",

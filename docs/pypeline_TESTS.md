@@ -206,12 +206,6 @@ few synthesis iterations, unless pushing the sweep is the point of the test
 half of `auto_pipeline_constraints_test.py`). Keep it above the design's
 unpipelined fmax wherever the test needs a real pipeline cut.
 
-**Graph rendering is off.** `run_test` sets
-`PIPELINEC_INTERNAL_SKIP_PIPELINE_MAP_PNG=1` for every test, and wrapper
-subprocesses inherit it. Graphviz `pipeline_map` renders cost more than many
-whole tests and nothing reads them; the text `pipeline_map.log` is still
-written.
-
 ## Per-SYN_TOOL sweep coverage
 
 `inst/sweep_float32_test.py` -- a single float32 adder `@MAIN`, the Pypeline
@@ -1400,6 +1394,16 @@ The stale-input and final-VHDL cases fail on the tree before this change. The ol
 log was read, nothing was re-synthesized, and the same-named pipelined entity kept
 its earlier VHDL.
 
+## Design diagram coverage
+
+The design diagram (`diagram.html`, [DIAGRAM_DESIGN.md](DIAGRAM_DESIGN.md)):
+
+| Test | Category | What it covers |
+|---|---|---|
+| `diagram_test` | `elab_introspect` | the page's data, written in-process after `PARSE_FILE` as a `--no_synth` build would: the import tree and library files, MAIN files and clocks (with Python clock names), field-level wire links in the direction each field flows (a FIFO's `ready` against its data) and ASYNC wires, the `@wires` MAIN marked as wiring, a function graph's edges with widths and variable labels, a Feedback edge marked `fb`, call-site kinds (AUTO_PIPELINE and AUTO_FSM keys, the walk stopping at an AUTO_FSM site, raw VHDL leaves, operators), an async FIFO's two side MAINs grouped, a `@pipeline_latency` latency without synthesis, two parses writing byte-identical pages, no external reference in the page, and a C design (`examples/shared_globals.c`) with instance-level whole-wire links |
+| `diagram_build_test` | `build_report_device_models` | one sky130 build of `built_hardware_top_design.py`: MAIN latencies and the AUTO_PIPELINE site's depth equal `built_hardware.json`'s, measured delays are recorded and each zero-clock offset spans its callee's delay; a `--no_synth` build of the same top writes the same MAINs and links with no delays; a failing build in the first directory removes its old page |
+| `diagram_render_test` | `unit` (needs `google-chrome`) | headless Chrome loads the pages of two Pypeline designs and one C design: `#selftest` draws every view without a script error, and the default view draws blocks |
+
 ## `@initial` / `@final` hook coverage
 
 One design, `inst/hooks_design.py`, serves every hook test. Each hook appends its name to
@@ -1866,9 +1870,7 @@ default timeout (`common.DEFAULT_CATEGORY_TIMEOUT_S`, overridable per `Test` or 
 suite. A summary table reports PASS/FAIL/XFAIL/XPASS/SKIP/TIMEOUT per test, with
 output directories of any failed test printed for inspection (and, for a tool-check
 failure, which tool the log named). `run_test` also sets
-`PIPELINEC_INTERNAL_SKIP_PIPELINE_MAP_PNG=1` (see
-[Choosing a synthesis tool](#choosing-a-synthesis-tool)) and
-`PIPELINEC_INTERNAL_NO_LATENCY_MEMORY=1`. The second keeps each test's sweeps
+`PIPELINEC_INTERNAL_NO_LATENCY_MEMORY=1`, which keeps each test's sweeps
 independent of what an earlier run of the same test remembered in its reused
 output directory or a shared store. Tests of the latency memory set it back to
 `0` (see [Latency memory coverage](#latency-memory-coverage)).

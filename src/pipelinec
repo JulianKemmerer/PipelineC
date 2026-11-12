@@ -26,6 +26,7 @@ import utilities
 import SYN
 import AUTO_PIPELINE
 import SWEEP
+import DIAGRAM
 
 # Imported up here (elsewhere it is imported lazily, inside the functions that
 # schedule) so --auto_fsm_ctl's choices can come from AUTO_FSM itself rather than
@@ -508,6 +509,8 @@ if SIM.BUILT_HARDWARE_IS_CURRENT(build_inputs, args):
 # SIM.SIMULATE_BUILT_HARDWARE.
 if SIM.SIMULATE_BUILT_HARDWARE(args, src_file, build_inputs):
     sys.exit(0)
+# This build writes its own design diagram; until then out_dir holds none
+DIAGRAM.FORGET_DIAGRAM(SYN.SYN_OUTPUT_DIRECTORY)
 # AXIS XO file switch
 SYN.WRITE_AXIS_XO_FILE = args.xo_axis
 # Pin constraints file (if specified)
@@ -601,6 +604,9 @@ if SYN.SYN_TOOL is None:
 
 if args.comb or args.no_synth:
     comb_timing_params = AUTO_PIPELINE.WRITE_COMB_FINAL_FILES(parser_state, args.comb)
+    # A build that synthesizes writes its diagram after the sweep instead
+    if args.no_synth:
+        DIAGRAM.WRITE_DIAGRAM(parser_state, comb_timing_params, src_file)
     if args.comb:
         SIM.DO_COMB_STAGE_SIM(parser_state, args, comb_timing_params, src_file)
 
@@ -609,6 +615,8 @@ if not args.no_synth:
         parser_state, args, src_file
     )
     SWEEP.WRITE_SWEEP_RESULTS(parser_state, multimain_timing_params, src_file)
+    # Before the timing check, so a build that misses timing has one too
+    DIAGRAM.WRITE_DIAGRAM(parser_state, multimain_timing_params, src_file)
 
     # The build must FAIL if any timing goal was not met - results above are
     # still written (useful for debugging) but simulation and bitstream

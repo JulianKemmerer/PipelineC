@@ -15,6 +15,16 @@ from common import INST_DIR, Test, main
 
 def get_tests() -> list:
     tests = []
+    # The design diagram page renders in headless Chrome: every view of three
+    # designs (two Pypeline, one C) draws without a script error.
+    tests.append(
+        Test(
+            name="diagram_render_test",
+            category="unit",
+            cmd=[INST_DIR / "diagram_render_test.py"],
+            requires=["google-chrome"],
+        )
+    )
     # Global FIFO API: Fifo[T], global_fifo/global_sync_fifo, the stream-module
     # port helper and the FIFO MAIN generator's names.
     tests.append(

@@ -106,6 +106,7 @@ uint1_t blink()
 | Combinational area / delay optimization (New, experimental) | [Yes](docs/pypeline_guide.md#auto_comb_area_opt--auto_comb_delay_opt-experimental) | No |
 | Automatic resource-shared state machines (New, experimental) | [Yes](docs/pypeline_guide.md#auto_fsm-experimental) | No |
 | SoC system bus helpers | No | Yes |
+| Design diagram webpage (files, MAINs, wires, call hierarchy) (New) | [Yes](docs/README.md#viewing-the-design) | Yes (whole wires) |
 | Generates software Helper Code | [Yes](docs/pypeline_guide.md#host-type-export-declarations) | Yes |
 | Derived FSM style code | No | Yes |
 | Documentation | Comprehensive, planned | Ad-hoc, organic |

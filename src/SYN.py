@@ -3356,7 +3356,8 @@ def ESTIMATE_HIER_PATH_DELAYS(funcs_to_estimate, parser_state, quiet=False):
 
 
 def _HAS_SYNTHESIS_LOG(directory):
-    # Every backend's result is a log; pipeline_map.log is SYN's own diagnostic
+    # Every backend's result is a log; pipeline_map.log is not: an output
+    # directory written before the design diagram replaced it may still hold one
     try:
         return any(
             name.endswith(".log") and name != "pipeline_map.log"
@@ -3869,47 +3870,9 @@ def ADD_PATH_DELAY_TO_LOOKUP(parser_state, root_func_names=None):
     my_thread_pool.close()
     my_thread_pool.join()
 
-    # Write out final pictures requiring all delays in hierarchy to be computed above
     for logic_func_name in funcs_to_synth:
-        logic = parser_state.FuncLogicLookupTable[logic_func_name]
-        if logic.delay is None:
+        if parser_state.FuncLogicLookupTable[logic_func_name].delay is None:
             print("None delay for func to synth?", logic_func_name)
-        if logic.state_regs or logic.feedback_vars:
-            # An embedded AUTO_PIPELINE can absorb latency even though its
-            # stateful container has no zero-clock combinational geometry.
-            # Its measured FSM delay remains valid; draw maps for the regions.
-            continue
-        # What if do want pipeline map for something that will never be pipelined? --synth_all?
-        if not AUTO_PIPELINE.FUNC_HAS_HIER_ALLOWING_ADDED_LATENCY_TO_RAW_VHDL(
-            logic.func_name, parser_state
-        ):
-            continue
-        if len(logic.submodule_instances) <= 0:
-            continue
-        if logic.vhdl_module_text is not None:
-            continue
-        if logic.delay <= 0:
-            continue
-        # Any inst will do, skip func if was never used as instance
-        if logic_func_name not in parser_state.FuncToInstances:
-            continue
-        inst_name = list(parser_state.FuncToInstances[logic_func_name])[0]
-        # TODO make pipeline map return empty instead of check?
-        zero_added_clks_pipeline_map = AUTO_PIPELINE.GET_ZERO_ADDED_CLKS_PIPELINE_MAP(
-            inst_name, logic, parser_state
-        )  # use inst_logic since timing params are by inst
-        zero_clk_pipeline_map_str = str(zero_added_clks_pipeline_map)
-        out_dir = GET_OUTPUT_DIRECTORY(logic)
-        if not os.path.exists(out_dir):
-            os.makedirs(out_dir)
-        out_path = out_dir + "/pipeline_map.log"
-        f = open(out_path, "w")
-        f.write(zero_clk_pipeline_map_str)
-        f.close()
-        # Large fine-grained designs can have thousands of functions; opt-in
-        # QoR probes may skip diagnostic graph rendering without changing HDL.
-        if os.environ.get("PIPELINEC_INTERNAL_SKIP_PIPELINE_MAP_PNG") != "1":
-            zero_added_clks_pipeline_map.write_png(out_dir, parser_state)
 
     # Report worst timing modules
     for main_inst in main_to_min_mhz if root_func_names is None else ():

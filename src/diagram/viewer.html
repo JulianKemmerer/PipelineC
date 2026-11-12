@@ -1,0 +1,1002 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Design diagram</title>
+<!-- Written by PypelineC (src/DIAGRAM.py) from src/diagram/viewer.html; see
+     docs/DIAGRAM_DESIGN.md. Self-contained: no network access. -->
+<style>
+:root {
+  --bg: #ffffff; --fg: #1d1d1f; --muted: #6b6b70; --line: #c8c8cc;
+  --pane: #f5f5f7; --node: #ffffff; --node-border: #8a8a90; --accent: #2563eb;
+  --edge: #7a7a80; --cross: #d62728; --ghost: #b0b0b5; --hl: #fde68a;
+}
+@media (prefers-color-scheme: dark) {
+  :root {
+    --bg: #1b1b1e; --fg: #e6e6e9; --muted: #9a9aa2; --line: #3a3a40;
+    --pane: #242428; --node: #2b2b30; --node-border: #8a8a90; --accent: #60a5fa;
+    --edge: #9a9aa2; --cross: #ff6b6b; --ghost: #55555c; --hl: #6b5b1a;
+  }
+}
+* { box-sizing: border-box; }
+html, body { margin: 0; height: 100%; background: var(--bg); color: var(--fg);
+  font: 13px/1.35 system-ui, -apple-system, "Segoe UI", sans-serif; }
+#app { display: grid; grid-template-rows: auto 1fr; grid-template-columns: minmax(220px, 22%) 1fr;
+  height: 100%; }
+header { grid-column: 1 / 3; display: flex; flex-wrap: wrap; gap: 6px 14px; align-items: center;
+  padding: 6px 10px; border-bottom: 1px solid var(--line); background: var(--pane); }
+header .title { font-weight: 600; }
+#crumbs a, #crumbs span { white-space: nowrap; }
+#crumbs .sep { color: var(--muted); margin: 0 4px; }
+a { color: var(--accent); text-decoration: none; cursor: pointer; }
+a:hover { text-decoration: underline; }
+label { white-space: nowrap; cursor: pointer; }
+button { font: inherit; cursor: pointer; }
+#legend { display: flex; flex-wrap: wrap; gap: 4px 10px; }
+.sw { display: inline-block; width: 10px; height: 10px; border-radius: 2px; margin-right: 4px;
+  vertical-align: -1px; }
+#tree { overflow: auto; padding: 6px 4px 20px 6px; border-right: 1px solid var(--line);
+  background: var(--pane); }
+#tree ul { list-style: none; margin: 0; padding-left: 14px; }
+#tree > ul { padding-left: 0; }
+#tree li { white-space: nowrap; }
+#tree .tw { display: inline-block; width: 12px; color: var(--muted); cursor: pointer; }
+#tree .item { cursor: pointer; padding: 0 2px; border-radius: 3px; }
+#tree .item:hover { background: var(--hl); }
+#tree .item.sel { outline: 1px solid var(--accent); }
+#tree .dim { color: var(--muted); }
+#tree .badge, .badge { color: var(--muted); font-size: 11px; margin-left: 4px; }
+#tree input { margin: 0 3px 0 0; vertical-align: -2px; }
+#main { position: relative; overflow: hidden; }
+#svg { width: 100%; height: 100%; display: block; cursor: grab; }
+#svg text { fill: var(--fg); font-size: 12px; }
+#svg .n rect { fill: var(--node); stroke: var(--node-border); }
+#svg .n.port rect { rx: 10; }
+#svg .n.ghost rect { stroke-dasharray: 4 3; stroke: var(--ghost); }
+#svg .n.ghost text { fill: var(--muted); }
+#svg .n.hl rect { fill: var(--hl); }
+#svg .n.click { cursor: pointer; }
+#svg .n.click:hover rect { stroke: var(--accent); stroke-width: 2; }
+#svg .n .sub { fill: var(--muted); font-size: 11px; }
+#svg .e { fill: none; stroke: var(--edge); stroke-width: 1.3; }
+#svg .e.fb { stroke-dasharray: 5 4; }
+#svg .e.cross { stroke: var(--cross); }
+#svg .e.async { stroke-dasharray: 2 3; }
+#svg .el { fill: var(--muted); font-size: 10px; }
+#svg .note { fill: var(--muted); font-size: 12px; }
+#tip { position: fixed; pointer-events: none; display: none; max-width: 520px; z-index: 5;
+  background: var(--pane); border: 1px solid var(--line); border-radius: 4px; padding: 6px 8px;
+  white-space: pre-wrap; font: 12px/1.35 ui-monospace, Menlo, Consolas, monospace;
+  box-shadow: 0 2px 8px rgba(0,0,0,.2); }
+#results { position: fixed; z-index: 4; max-height: 60vh; overflow: auto; display: none;
+  background: var(--pane); border: 1px solid var(--line); border-radius: 4px; padding: 4px 0;
+  box-shadow: 0 2px 8px rgba(0,0,0,.2); }
+#results div { padding: 1px 10px; white-space: nowrap; cursor: pointer; }
+#results div:hover { background: var(--hl); }
+#mm { position: fixed; inset: 10% 15%; z-index: 6; display: none; flex-direction: column; gap: 6px;
+  background: var(--pane); border: 1px solid var(--line); border-radius: 6px; padding: 10px; }
+#mm textarea { flex: 1; font: 12px ui-monospace, Menlo, Consolas, monospace; background: var(--bg); color: var(--fg); }
+#svg .axis { stroke: var(--line); }
+#info { position: absolute; left: 10px; bottom: 8px; color: var(--muted); pointer-events: none; }
+@media (max-width: 700px) {
+  #app { grid-template-columns: 1fr; grid-template-rows: auto 35% 1fr; }
+  header { grid-column: 1; }
+  #tree { border-right: 0; border-bottom: 1px solid var(--line); }
+}
+</style>
+</head>
+<body>
+<div id="app">
+  <header>
+    <span class="title" id="title">Design diagram</span>
+    <span id="crumbs"></span>
+    <label><input type="checkbox" id="f-wiring" checked> hide wiring MAINs</label>
+    <label><input type="checkbox" id="f-ops"> show operators</label>
+    <label><input type="checkbox" id="f-fb"> hide feedback edges</label>
+    <label title="x: start time and delay in ns, height: bus width (functions with measured delays)"><input type="checkbox" id="f-scale"> hardware scale</label>
+    <button id="fit" type="button">fit</button>
+    <button id="mermaid" type="button" title="copy the current view as Mermaid flowchart text">copy as Mermaid</button>
+    <input id="search" type="search" placeholder="find instance…" size="16">
+    <a id="src" title="open the definition in VS Code"></a>
+    <span id="legend"></span>
+  </header>
+  <nav id="tree"></nav>
+  <div id="main">
+    <svg id="svg" xmlns="http://www.w3.org/2000/svg"><g id="vp"></g></svg>
+    <div id="info"></div>
+  </div>
+</div>
+<div id="tip"></div>
+<div id="results"></div>
+<div id="mm"><div>Mermaid text of this view (the clipboard was not available):</div>
+  <textarea id="mm-text" readonly></textarea><button id="mm-close" type="button">close</button></div>
+<script type="application/json" id="design">__DIAGRAM_DESIGN_JSON__</script>
+<script>
+"use strict";
+// Any uncaught error is recorded where the render test (#selftest) reads it
+addEventListener("error", (ev) => document.body.setAttribute("data-error", ev.message + " (line " + ev.lineno + ")"));
+const D = JSON.parse(document.getElementById("design").textContent);
+const MARK = "____";                       // LOGIC.SUBMODULE_MARKER
+const SVGNS = "http://www.w3.org/2000/svg";
+const PALETTE = ["#1f77b4", "#2ca02c", "#9467bd", "#ff7f0e", "#8c564b", "#e377c2",
+                 "#17becf", "#bcbd22", "#7f7f7f", "#aec7e8"];
+const $ = (id) => document.getElementById(id);
+const state = { hidden: new Set(), view: null };
+
+// ---------- names and lookups ----------
+const clockIds = Object.keys(D.clocks).sort();
+function clockColor(cid) {
+  const i = clockIds.indexOf(cid);
+  return i < 0 ? "#999" : PALETTE[i % PALETTE.length];
+}
+function base(path) { return path ? path.split("/").pop() : "?"; }
+function loc(file, line) { return file ? base(file) + (line ? ":" + line : "") : ""; }
+function func(name) { return D.funcs[name] || { kind: "op" }; }
+function mainLabel(m) {
+  const e = D.mains[m], f = D.funcs[m];
+  if (e && e.name) return e.name;
+  return (f && f.def) || m;
+}
+function mainGroup(m) {
+  const e = D.mains[m];
+  return e && e.group ? "group:" + e.group : m;
+}
+function mainOf(inst) { return inst.startsWith("pin:") ? inst : inst.split(MARK)[0]; }
+function fmtNs(x) { return x == null ? "" : (Math.round(x * 100) / 100) + " ns"; }
+function hasGraph(fname) { const f = D.funcs[fname]; return !!(f && f.graph); }
+// A function's graph as {nodes: {id: node}, edges: [{s, sp, d, dp, bits, label, fb}]},
+// unpacked once from the page's compact form (edges name nodes by index)
+const graphs = new Map();
+function graphOf(fname) {
+  if (graphs.has(fname)) return graphs.get(fname);
+  const f = D.funcs[fname];
+  let g = null;
+  if (f && f.graph) {
+    const list = f.graph.nodes, nodes = {};
+    for (const n of list) nodes[n.id] = n;
+    const edges = f.graph.edges.map(([s, sp, d, dp, bits, label, fb]) =>
+      ({ s: list[s].id, sp, d: list[d].id, dp, bits, label, fb: !!fb }));
+    g = { nodes, edges };
+  }
+  graphs.set(fname, g);
+  return g;
+}
+
+// Resolve an instance path (MAIN____local____local) to [[inst, func, local], ...]
+function resolve(inst) {
+  const toks = inst.split(MARK);
+  const main = toks[0];
+  if (!D.funcs[main]) return null;
+  const chain = [[main, main, null]];
+  let cur = main, path = main, i = 1;
+  while (i < toks.length) {
+    const g = graphOf(cur);
+    if (!g) return null;
+    let j = i, local = null;
+    for (; j < toks.length; j++) {     // a local name may itself hold the marker
+      const cand = toks.slice(i, j + 1).join(MARK);
+      if (g.nodes["s:" + cand]) { local = cand; break; }
+    }
+    if (local == null) return null;
+    cur = g.nodes["s:" + local].callee;
+    path += MARK + local;
+    chain.push([path, cur, local]);
+    i = j + 1;
+  }
+  return chain;
+}
+function instLatency(inst) {
+  if (!inst.includes(MARK) && D.mains[inst]) return D.mains[inst].latency;
+  return D.inst_latency[inst] || 0;
+}
+
+// ---------- files ----------
+const fileOrder = [];      // [path, parent or null] in tree order
+(function orderFiles() {
+  const seen = new Set();
+  const top = Object.keys(D.files).find((p) => D.files[p].top);
+  const queue = top ? [[top, null]] : [];
+  while (queue.length) {
+    const [p, parent] = queue.shift();
+    if (seen.has(p) || !D.files[p]) continue;
+    seen.add(p);
+    fileOrder.push([p, parent]);
+    for (const q of D.files[p].imports) queue.push([q, p]);
+  }
+  for (const p of Object.keys(D.files).sort()) if (!seen.has(p)) fileOrder.push([p, null]);
+})();
+
+// ---------- tooltip ----------
+const tip = $("tip");
+function showTip(ev, text) {
+  tip.textContent = text;
+  tip.style.display = "block";
+  const w = tip.offsetWidth, h = tip.offsetHeight;
+  let x = ev.clientX + 14, y = ev.clientY + 14;
+  if (x + w > innerWidth - 4) x = Math.max(4, ev.clientX - w - 14);
+  if (y + h > innerHeight - 4) y = Math.max(4, ev.clientY - h - 14);
+  tip.style.left = x + "px"; tip.style.top = y + "px";
+}
+function hideTip() { tip.style.display = "none"; }
+function attachTip(el, textFn) {
+  el.addEventListener("mousemove", (ev) => showTip(ev, textFn()));
+  el.addEventListener("mouseleave", hideTip);
+}
+function funcTip(fname, extra) {
+  const f = func(fname), lines = [];
+  if (extra) lines.push(...extra);
+  lines.push("function: " + fname);
+  if (f.def && f.def !== fname) lines.push("def: " + f.def);
+  lines.push("kind: " + f.kind + (f.file ? "   " + loc(f.file, f.line) : ""));
+  if (f.delay_ns != null) lines.push("delay: " + fmtNs(f.delay_ns) + (f.delay_estimated ? " (estimated)" : ""));
+  if (f.mcp) lines.push("multi-cycle paths");
+  const ports = (list) => list.map(([p, b]) => p + (b != null ? "[" + b + "]" : "")).join(", ");
+  if (f.inputs && f.inputs.length) lines.push("in:  " + ports(f.inputs));
+  if (f.outputs && f.outputs.length) lines.push("out: " + ports(f.outputs));
+  if (f.regs) lines.push("regs: " + f.regs.join(", "));
+  return lines.join("\n");
+}
+
+// ---------- tree pane ----------
+function el(tag, cls, text) {
+  const e = document.createElement(tag);
+  if (cls) e.className = cls;
+  if (text != null) e.textContent = text;
+  return e;
+}
+function treeItem(label, opts) {
+  const li = el("li");
+  const tw = el("span", "tw", opts.children ? "▸" : "");
+  li.appendChild(tw);
+  if (opts.check) li.appendChild(opts.check);
+  if (opts.color) { const s = el("span", "sw"); s.style.background = opts.color; li.appendChild(s); }
+  const it = el("span", "item" + (opts.dim ? " dim" : ""), label);
+  if (opts.route) it.dataset.route = opts.route;
+  li.appendChild(it);
+  if (opts.badge) li.appendChild(el("span", "badge", opts.badge));
+  if (opts.tip) attachTip(it, opts.tip);
+  if (opts.onclick) it.addEventListener("click", opts.onclick);
+  let ul = null;
+  const toggle = () => {
+    if (!opts.children) return;
+    if (!ul) { ul = el("ul"); opts.children(ul); li.appendChild(ul); tw.textContent = "▾"; return; }
+    const open = ul.style.display !== "none";
+    ul.style.display = open ? "none" : "";
+    tw.textContent = open ? "▸" : "▾";
+  };
+  tw.addEventListener("click", toggle);
+  if (opts.open) toggle();
+  return li;
+}
+function latBadge(n) { return n ? "L=" + n : ""; }
+function instChildren(inst, fname) {
+  return (ul) => {
+    const g = graphOf(fname);
+    if (!g) return;
+    for (const id of Object.keys(g.nodes).sort()) {
+      const n = g.nodes[id];
+      if (n.kind !== "sub") continue;
+      const cf = func(n.callee);
+      if (cf.kind === "op") continue;
+      const child = inst + MARK + id.slice(2);
+      const lat = instLatency(child);
+      ul.appendChild(treeItem(n.name, {
+        badge: [cf.def && !cf.def.startsWith(n.name) ? cf.def : "", latBadge(lat), n.auto_fsm ? "AUTO_FSM" : "",
+                cf.kind === "vhdl" ? "vhdl" : ""].filter(Boolean).join(" "),
+        route: "inst=" + (hasGraph(n.callee) ? child : inst),
+        onclick: () => go(hasGraph(n.callee) ? { inst: child } : { inst: inst, hl: id }),
+        children: hasGraph(n.callee) ? instChildren(child, n.callee) : null,
+        tip: () => funcTip(n.callee, ["instance: " + child, "latency: " + lat]),
+      }));
+    }
+  };
+}
+function buildTree() {
+  const root = el("ul");
+  const libs = [], byParent = new Map();
+  for (const [p, parent] of fileOrder) {
+    const f = D.files[p];
+    if (f.kind === "generated" && !f.mains.length) continue;
+    if (f.kind === "library") { if (!f.mains.length) { libs.push(p); continue; } }
+    const key = parent && byParent.has(parent) ? parent : null;
+    if (!byParent.has(key)) byParent.set(key, []);
+    byParent.get(key).push(p);
+    byParent.set(p, byParent.get(p) || []);
+  }
+  const fileItem = (p) => {
+    const f = D.files[p];
+    return treeItem(base(p), {
+      badge: f.kind === "design" ? "" : f.kind,
+      route: "file=" + p,
+      onclick: () => go({ file: p }),
+      open: f.top,
+      tip: () => p + "\nMAINs: " + f.mains.length + "\nimports: " + f.imports.map(base).join(", "),
+      children: (ul) => {
+        for (const m of f.mains) {
+          const e = D.mains[m];
+          const cb = el("input"); cb.type = "checkbox"; cb.checked = !state.hidden.has(m);
+          cb.title = "show in the design view";
+          cb.addEventListener("change", () => { cb.checked ? state.hidden.delete(m) : state.hidden.add(m); render(); });
+          const side = e.group ? (m.endsWith("_wr") ? " write side" : m.endsWith("_rd") ? " read side" : "") : "";
+          ul.appendChild(treeItem(mainLabel(m) + side, {
+            check: cb, color: clockColor(e.clock), dim: !!e.wiring,
+            badge: [latBadge(e.latency), e.kind !== "main" ? e.kind.replace("_", " ") : "", e.wiring || ""].filter(Boolean).join(" "),
+            route: "inst=" + m,
+            onclick: () => go({ inst: m }),
+            tip: () => mainTip(m),
+            children: hasGraph(m) ? instChildren(m, m) : null,
+          }));
+        }
+        for (const q of byParent.get(p) || []) ul.appendChild(fileItem(q));
+      },
+    });
+  };
+  for (const p of byParent.get(null) || []) root.appendChild(fileItem(p));
+  if (libs.length) {
+    root.appendChild(treeItem("libraries (" + libs.length + ")", {
+      dim: true,
+      children: (ul) => { for (const p of libs) ul.appendChild(treeItem(base(p), { dim: true, tip: () => p })); },
+    }));
+  }
+  $("tree").replaceChildren(root);
+}
+function mainTip(m) {
+  const e = D.mains[m], c = D.clocks[e.clock] || {};
+  const lines = ["MAIN: " + m, "kind: " + e.kind + (e.decl ? "  " + e.decl : ""), "source: " + loc(e.file, e.line),
+    "clock: " + e.clock + (c.name ? " (" + c.name + ")" : "") + (c.goal_mhz != null ? ", goal " + c.goal_mhz + " MHz" : ""),
+    "latency: " + e.latency];
+  if (e.wiring) lines.push("only wiring: " + e.wiring);
+  if (e.reset) lines.push("reset: " + e.reset);
+  return funcTip(m, lines);
+}
+
+// ---------- layered layout ----------
+// nodes: [{id, w, h, rank: "first"|"last"|null}], edges: [{s, d, fb}]
+function layout(nodes, edges) {
+  const idx = new Map(nodes.map((n, i) => [n.id, i]));
+  const N = nodes.length;
+  const out = Array.from({ length: N }, () => []);
+  const es = [];
+  for (const e of edges) {
+    const a = idx.get(e.s), b = idx.get(e.d);
+    if (a == null || b == null || a === b) continue;
+    es.push({ a, b, fb: !!e.fb, e });
+  }
+  // Break cycles: feedback edges first, then the narrower edge of a two-way
+  // pair (a stream's ready against its data), then DFS back edges, wide
+  // edges explored first so narrow ones end up reversed
+  const width = (x) => x.e.bits || 0;
+  const pair = new Map();
+  for (const x of es) pair.set(x.a + "," + x.b, Math.max(pair.get(x.a + "," + x.b) || 0, width(x)));
+  for (const x of es) {
+    const other = pair.get(x.b + "," + x.a);
+    if (other != null && (width(x) < other || (width(x) === other && x.a > x.b))) x.fb = true;
+  }
+  const fwd = es.filter((x) => !x.fb);
+  for (const x of fwd) out[x.a].push(x);
+  for (const list of out) list.sort((p, q) => width(q) - width(p));
+  const color = new Uint8Array(N), back = new Set();
+  for (let s = 0; s < N; s++) {
+    if (color[s]) continue;
+    const st = [[s, 0]]; color[s] = 1;
+    while (st.length) {
+      const top = st[st.length - 1], v = top[0];
+      if (top[1] < out[v].length) {
+        const x = out[v][top[1]++];
+        if (color[x.b] === 1) back.add(x);
+        else if (!color[x.b]) { color[x.b] = 1; st.push([x.b, 0]); }
+      } else { color[v] = 2; st.pop(); }
+    }
+  }
+  const dag = es.map((x) => (x.fb || back.has(x)) ? { a: x.b, b: x.a, x } : { a: x.a, b: x.b, x });
+  // Longest-path layers
+  const indeg = new Array(N).fill(0), succ = Array.from({ length: N }, () => []);
+  for (const y of dag) { succ[y.a].push(y.b); indeg[y.b]++; }
+  const layer = new Array(N).fill(0), q = [];
+  for (let i = 0; i < N; i++) if (!indeg[i]) q.push(i);
+  while (q.length) {
+    const v = q.shift();
+    for (const w of succ[v]) { layer[w] = Math.max(layer[w], layer[v] + 1); if (!--indeg[w]) q.push(w); }
+  }
+  for (let i = 0; i < N; i++) if (nodes[i].rank === "first") layer[i] = 0;
+  let maxL = 0;
+  for (let i = 0; i < N; i++) if (nodes[i].rank !== "last") maxL = Math.max(maxL, layer[i]);
+  for (let i = 0; i < N; i++) if (nodes[i].rank === "last") layer[i] = maxL + 1;
+  const used = [...new Set(layer)].sort((a, b) => a - b);   // close empty layers
+  const remap = new Map(used.map((l, i) => [l, i]));
+  for (let i = 0; i < N; i++) layer[i] = remap.get(layer[i]);
+  const L = used.length;
+  const layers = Array.from({ length: L }, () => []);
+  for (let i = 0; i < N; i++) layers[layer[i]].push(i);
+  // Barycenter ordering sweeps
+  const nb = Array.from({ length: N }, () => []);
+  for (const y of dag) { nb[y.a].push(y.b); nb[y.b].push(y.a); }
+  const pos = new Float64Array(N);
+  const setPos = () => layers.forEach((ly) => ly.forEach((v, i) => { pos[v] = i; }));
+  setPos();
+  for (let it = 0; it < 6; it++) {
+    const order = it % 2 ? [...layers.keys()].reverse() : [...layers.keys()];
+    for (const l of order) {
+      const ref = it % 2 ? l + 1 : l - 1;
+      const bc = (v) => {
+        const ns = nb[v].filter((w) => layer[w] === ref);
+        return ns.length ? ns.reduce((s, w) => s + pos[w], 0) / ns.length : pos[v];
+      };
+      const vals = new Map(layers[l].map((v) => [v, bc(v)]));
+      layers[l].sort((a, b) => vals.get(a) - vals.get(b) || a - b);
+      layers[l].forEach((v, i) => { pos[v] = i; });
+    }
+  }
+  // Coordinates
+  const GAPX = 70, GAPY = 18;
+  let x = 0;
+  const colH = layers.map((ly) => ly.reduce((s, v) => s + nodes[v].h + GAPY, -GAPY));
+  const H = Math.max(0, ...colH);
+  for (let l = 0; l < L; l++) {
+    const w = Math.max(...layers[l].map((v) => nodes[v].w));
+    let y = (H - colH[l]) / 2;
+    for (const v of layers[l]) {
+      nodes[v].x = x + (w - nodes[v].w) / 2; nodes[v].y = y; y += nodes[v].h + GAPY;
+    }
+    x += w + GAPX;
+  }
+  return { width: Math.max(0, x - GAPX), height: H };
+}
+
+// ---------- drawing ----------
+const vp = $("vp"), svg = $("svg");
+function svgEl(tag, attrs, parent) {
+  const e = document.createElementNS(SVGNS, tag);
+  for (const k in attrs) e.setAttribute(k, attrs[k]);
+  if (parent) parent.appendChild(e);
+  return e;
+}
+const CH = 7.2;   // approximate character width at 12px
+const MAXCH = 40;  // longer names are cut on the block; the tooltip has them whole
+function measure(n) {
+  n.lines = n.lines.map((t) => t.length > MAXCH ? t.slice(0, MAXCH - 1) + "…" : t);
+  const lines = n.lines;
+  n.w = Math.max(60, ...lines.map((t, i) => t.length * (i ? 6.4 : CH))) + 16;
+  n.h = Math.max(n.minH || 0, 10 + lines.length * 15);
+}
+function draw(nodes, edges, size, note, decorate) {
+  vp.replaceChildren();
+  state.last = { nodes, edges };
+  const byId = new Map(nodes.map((n) => [n.id, n]));
+  const eg = svgEl("g", {}, vp);
+  for (const e of edges) {
+    const a = byId.get(e.s), b = byId.get(e.d);
+    if (!a || !b) continue;
+    const x1 = a.x + a.w, y1 = a.y + a.h / 2, x2 = b.x, y2 = b.y + b.h / 2;
+    let d;
+    if (x2 > x1 + 4) {
+      const c = Math.max(30, (x2 - x1) / 2);
+      d = `M${x1},${y1} C${x1 + c},${y1} ${x2 - c},${y2} ${x2},${y2}`;
+    } else {   // back edge: under both nodes
+      const yb = Math.max(a.y + a.h, b.y + b.h) + 24;
+      d = `M${x1},${y1} C${x1 + 60},${y1} ${x1 + 60},${yb} ${(x1 + x2) / 2},${yb} S${x2 - 60},${y2} ${x2},${y2}`;
+    }
+    const cls = "e" + (e.fb ? " fb" : "") + (e.cross ? " cross" : "") + (e.async ? " async" : "");
+    const w = e.bits ? Math.min(6, 1 + Math.log2(e.bits) / 2) : 1.3;
+    const p = svgEl("path", { d, class: cls, "stroke-width": w.toFixed(2), "marker-end": "url(#arr)" }, eg);
+    if (e.tip) attachTip(p, () => e.tip);
+    if (e.text) {
+      const t = svgEl("text", { class: "el", x: (x1 + x2) / 2, y: (y1 + y2) / 2 - 4, "text-anchor": "middle" }, eg);
+      t.textContent = e.text.length > 40 ? e.text.slice(0, 38) + "…" : e.text;
+      if (e.tip) attachTip(t, () => e.tip);
+    }
+  }
+  const ng = svgEl("g", {}, vp);
+  for (const n of nodes) {
+    const g = svgEl("g", { class: "n " + (n.cls || ""), transform: `translate(${n.x},${n.y})` }, ng);
+    const r = svgEl("rect", { width: n.w, height: n.h, rx: 4 }, g);
+    if (n.color) { r.style.stroke = n.color; r.style.strokeWidth = "2"; }
+    n.lines.forEach((t, i) => {
+      const tx = svgEl("text", { x: 8, y: 17 + i * 15, class: i ? "sub" : "" }, g);
+      tx.textContent = t;
+    });
+    if (n.tip) attachTip(g, n.tip);
+    if (n.onclick) g.addEventListener("click", (ev) => { if (!dragged) n.onclick(ev); });
+    if (n.onclick && !(n.cls || "").includes("click")) g.style.cursor = "default";
+  }
+  const defs = svgEl("defs", {}, vp);
+  const m = svgEl("marker", { id: "arr", viewBox: "0 0 10 10", refX: 9, refY: 5, markerWidth: 7,
+    markerHeight: 7, orient: "auto-start-reverse", markerUnits: "userSpaceOnUse" }, defs);
+  svgEl("path", { d: "M0,0 L10,5 L0,10 z", fill: "var(--edge)" }, m);
+  if (note) {
+    const t = svgEl("text", { x: 0, y: -14, class: "note" }, vp);
+    t.textContent = note;
+  }
+  if (decorate) decorate(vp);
+  state.size = size;
+  fit();
+}
+
+// ---------- pan and zoom ----------
+let view = { x: 0, y: 0, k: 1 }, dragged = false;
+function applyView() { vp.setAttribute("transform", `translate(${view.x},${view.y}) scale(${view.k})`); }
+function fit() {
+  const s = state.size || { width: 1, height: 1 };
+  const W = svg.clientWidth || 800, H = svg.clientHeight || 600, pad = 30;
+  const k = Math.min(1.1, (W - 2 * pad) / Math.max(1, s.width), (H - 2 * pad) / Math.max(1, s.height + 30));
+  view = { k, x: (W - s.width * k) / 2, y: (H - s.height * k) / 2 + 10 * k };
+  applyView();
+}
+svg.addEventListener("wheel", (ev) => {
+  ev.preventDefault();
+  const r = svg.getBoundingClientRect(), mx = ev.clientX - r.left, my = ev.clientY - r.top;
+  const f = Math.exp(-ev.deltaY * 0.0015);
+  view.x = mx - (mx - view.x) * f; view.y = my - (my - view.y) * f; view.k *= f;
+  applyView();
+}, { passive: false });
+let drag = null;
+svg.addEventListener("mousedown", (ev) => { drag = { x: ev.clientX, y: ev.clientY, vx: view.x, vy: view.y }; dragged = false; });
+addEventListener("mousemove", (ev) => {
+  if (!drag) return;
+  const dx = ev.clientX - drag.x, dy = ev.clientY - drag.y;
+  if (Math.abs(dx) + Math.abs(dy) > 3) dragged = true;
+  view.x = drag.vx + dx; view.y = drag.vy + dy; applyView();
+});
+addEventListener("mouseup", () => { drag = null; setTimeout(() => { dragged = false; }, 0); });
+$("fit").addEventListener("click", fit);
+addEventListener("resize", fit);
+
+// ---------- edge contraction through hidden nodes ----------
+// edges: [{s, d, ...}]; keep(id) says whether a node is drawn. Returns edges
+// between kept nodes, one per (s, d) pair, merging the paths through hidden ones.
+// step(e, f) says whether a path entering a hidden node by e may leave it by f.
+function contract(nodeIds, edges, keep, merge, step) {
+  const out = new Map();
+  for (const e of edges) { if (!out.has(e.s)) out.set(e.s, []); out.get(e.s).push(e); }
+  const res = new Map();
+  for (const s of nodeIds) {
+    if (!keep(s)) continue;
+    const stack = (out.get(s) || []).map((e) => [e, [e]]), seen = new Set();
+    while (stack.length) {
+      const [e, path] = stack.pop();
+      if (keep(e.d)) {
+        const k = s + "\u0000" + e.d;
+        res.set(k, merge(res.get(k), s, e.d, path));
+      } else if (!seen.has(e)) {
+        seen.add(e);
+        for (const f of out.get(e.d) || []) {
+          if (f.d !== s && (!step || step(e, f))) stack.push([f, path.concat([f])]);
+        }
+      }
+    }
+  }
+  return [...res.values()];
+}
+// The (read wire, written wire) pairs a MAIN's own logic connects, from its
+// graph with everything but its global wire reads and writes contracted
+const passCache = new Map();
+function wirePairs(main) {
+  if (passCache.has(main)) return passCache.get(main);
+  const g = graphOf(main);
+  let pairs = null;
+  if (g) {
+    pairs = new Set();
+    const ids = Object.keys(g.nodes);
+    const keep = (id) => /^(gr|gw|i|o):/.test(id);
+    for (const e of contract(ids, g.edges, keep, (acc, s, d) => ({ s, d }))) {
+      if (e.s.startsWith("gr:") && e.d.startsWith("gw:")) pairs.add(e.s.slice(3) + "\u0000" + e.d.slice(3));
+    }
+  }
+  passCache.set(main, pairs);
+  return pairs;
+}
+
+// ---------- design view ----------
+function designView(file) {
+  const showWiring = !$("f-wiring").checked;
+  const inFile = file ? new Set(D.files[file] ? D.files[file].mains : []) : null;
+  // Graph of MAIN groups and pins
+  const nodeOf = (inst) => inst.startsWith("pin:") ? inst : mainGroup(mainOf(inst));
+  const members = new Map();
+  for (const m of Object.keys(D.mains)) {
+    const g = mainGroup(m);
+    if (!members.has(g)) members.set(g, []);
+    members.get(g).push(m);
+  }
+  const raw = [];
+  for (const l of D.links) {
+    const s = nodeOf(l.src), d = nodeOf(l.dst);
+    if (s !== d) raw.push({ s, d, link: l });
+  }
+  const isWiring = (g) => !g.startsWith("pin:") && members.get(g).every((m) => D.mains[m].wiring);
+  const userHidden = (g) => !g.startsWith("pin:") && members.get(g).every((m) => state.hidden.has(m));
+  const all = new Set([...members.keys()]);
+  for (const e of raw) { all.add(e.s); all.add(e.d); }
+  const ownMain = (g) => inFile && !g.startsWith("pin:") && members.get(g).some((m) => inFile.has(m));
+  const keep = (g) => !userHidden(g) && (showWiring || !isWiring(g) || ownMain(g));
+  // Through a hidden MAIN, a wire continues only into the wires its logic drives from it
+  const step = (e, f) => {
+    if (e.d.startsWith("pin:")) return true;
+    return members.get(e.d).some((m) => {
+      const pairs = wirePairs(m);
+      return !pairs || pairs.has(e.link.wire + "\u0000" + f.link.wire);
+    });
+  };
+  let edges = contract([...all], raw, keep, (acc, s, d, path) => {
+    acc = acc || { s, d, names: new Set(), bits: 0, async: false, crossing: false, links: [] };
+    const last = path[path.length - 1].link;
+    acc.names.add(path.map((p) => p.link.name).join(" → "));
+    acc.bits += last.bits || 0;
+    acc.async = acc.async || path.some((p) => p.link.async);
+    acc.links.push(path);
+    return acc;
+  }, step);
+  let ids = [...all].filter(keep);
+  // Pins with no connection are left out; a file view keeps its MAINs and their neighbors
+  const connected = new Set();
+  for (const e of edges) { connected.add(e.s); connected.add(e.d); }
+  ids = ids.filter((g) => !g.startsWith("pin:") || connected.has(g));
+  let ghost = new Set();
+  if (inFile) {
+    const mine = (g) => !g.startsWith("pin:") && members.get(g).some((m) => inFile.has(m));
+    const near = new Set();
+    for (const e of edges) {
+      if (mine(e.s)) near.add(e.d);
+      if (mine(e.d)) near.add(e.s);
+    }
+    ids = ids.filter((g) => mine(g) || near.has(g));
+    ghost = new Set(ids.filter((g) => !mine(g)));
+    edges = edges.filter((e) => ids.includes(e.s) && ids.includes(e.d) && (mine(e.s) || mine(e.d)));
+  }
+  const clockOf = (g) => g.startsWith("pin:") ? null : D.mains[members.get(g)[0]].clock;
+  const nodes = ids.sort().map((g) => {
+    if (g.startsWith("pin:")) {
+      const p = D.pins[g.slice(4)];
+      return { id: g, cls: "port", lines: [p.name, (p.dir === "in" ? "Input" : "Output") + (p.bits != null ? " [" + p.bits + "]" : "")],
+        rank: p.dir === "in" ? "first" : "last", tip: () => "pin " + p.name + "\n" + (p.loc || "") + "\nbits: " + p.bits };
+    }
+    const ms = members.get(g), e = D.mains[ms[0]];
+    const clocks = [...new Set(ms.map((m) => D.mains[m].clock))];
+    const lat = Math.max(...ms.map((m) => D.mains[m].latency));
+    const kindTxt = e.kind === "main" ? "MAIN" : e.kind.replace("_", " ");
+    const n = {
+      id: g, cls: (ghost.has(g) ? "ghost " : "") + "click",
+      lines: [ms.length > 1 ? e.name : mainLabel(ms[0]),
+              [kindTxt, lat ? "L=" + lat : "", clocks.join(" → ")].filter(Boolean).join("  "),
+              loc(e.file, e.line)],
+      color: clockColor(clocks[0]),
+      tip: () => ms.map(mainTip).join("\n\n"),
+      onclick: () => go({ inst: ms[0] }),
+    };
+    return n;
+  });
+  nodes.forEach(measure);
+  const de = edges.map((e) => {
+    const names = [...e.names].sort();
+    const cs = clockOf(e.s), cd = clockOf(e.d);
+    return { s: e.s, d: e.d, bits: e.bits, async: e.async, cross: cs && cd && cs !== cd,
+      text: names.length === 1 ? names[0] : names.length + " wires",
+      tip: names.join("\n") + (e.bits ? "\n" + e.bits + " bits" : "") };
+  });
+  if (de.length > 40) for (const e of de) e.text = "";   // hover for names
+  const size = layout(nodes, de);
+  const hiddenN = [...members.keys()].filter((g) => !keep(g)).length;
+  draw(nodes, de, size, (file ? base(file) + ": " : "") + nodes.length + " blocks" +
+    (hiddenN ? ", " + hiddenN + " hidden (filters)" : ""));
+  setSource(file || D.build.top, 1);
+  return nodes.length;
+}
+
+// ---------- function view ----------
+function functionView(inst, hl) {
+  const chain = resolve(inst);
+  if (!chain) throw new Error("unknown instance " + inst);
+  const fname = chain[chain.length - 1][1];
+  const f = func(fname), g = graphOf(fname);
+  if (!g) throw new Error("no graph for " + fname);
+  const showOps = $("f-ops").checked, hideFb = $("f-fb").checked;
+  const main = chain[0][0], clock = D.mains[main] ? D.mains[main].clock : null;
+  const visible = (id) => {
+    const n = g.nodes[id];
+    if (!n) return false;
+    if (n.kind === "sub") return showOps || func(n.callee).kind !== "op";
+    if (n.kind === "const" || n.kind === "ce") return showOps;
+    return true;
+  };
+  const ids = Object.keys(g.nodes).sort();
+  const raw = g.edges.filter((e) => !(hideFb && e.fb));
+  const edges = contract(ids, raw, visible, (acc, s, d, path) => {
+    acc = acc || { s, d, labels: new Set(), bits: 0, fb: false };
+    const label = path.map((e) => e.label).find(Boolean);
+    if (label) acc.labels.add(label);
+    acc.bits = Math.max(acc.bits, path[path.length - 1].bits || 0);
+    acc.fb = acc.fb || path.some((e) => e.fb);
+    return acc;
+  });
+  const shown = ids.filter(visible);
+  const hiddenOps = ids.length - shown.length;
+  const nodes = shown.map((id) => {
+    const n = g.nodes[id];
+    if (n.kind === "sub") {
+      const child = inst + MARK + id.slice(2);
+      const cf = func(n.callee), lat = instLatency(child);
+      const tags = [];
+      if (cf.def && !cf.def.startsWith(n.name)) tags.push(cf.def);   // a factory's def extends the name
+      if (lat) tags.push("L=" + lat);
+      if (cf.delay_ns != null) tags.push(fmtNs(cf.delay_ns));
+      const badges = [n.auto_pipeline ? "AUTO_PIPELINE" : "", n.auto_fsm ? "AUTO_FSM" : "",
+        cf.kind === "vhdl" ? "vhdl" : "", cf.mcp ? "MCP" : "", cf.regs ? "regs" : ""].filter(Boolean);
+      const lines = [n.name];
+      if (tags.length) lines.push(tags.join("  "));
+      if (badges.length) lines.push(badges.join(" "));
+      const can = cf.kind !== "op" && hasGraph(n.callee);
+      return { id, cls: (can ? "click" : "") + (id === hl ? " hl" : ""), lines,
+        tip: () => funcTip(n.callee, ["instance: " + child, "latency: " + lat,
+          n.src ? "call: " + loc(n.src[0], n.src[1]) : "",
+          n.auto_pipeline ? "AUTO_PIPELINE " + n.auto_pipeline : "", n.auto_fsm ? "AUTO_FSM " + n.auto_fsm : ""].filter(Boolean)),
+        onclick: (ev) => {
+          if ((ev.ctrlKey || ev.metaKey) && n.src) { setSource(n.src[0], n.src[1]); $("src").click(); return; }
+          if (can) go({ inst: child });
+        } };
+    }
+    const kinds = { in: ["input", "first"], out: ["output", "last"], reg: ["Reg", "first"], reg_next: ["Reg next", "last"],
+      wire_read: ["wire read", "first"], wire_write: ["wire write", "last"], const: ["const", null], ce: ["clock enable", "first"] };
+    const [what, rank] = kinds[n.kind] || [n.kind, null];
+    const wire = (n.kind === "wire_read" || n.kind === "wire_write") ? D.wires[n.name] : null;
+    const bits = wire ? wire.bits : n.bits;
+    const lines = [wire ? wire.name : n.name, what + (bits != null ? " [" + bits + "]" : "")];
+    const hop = (n.kind === "wire_read" || n.kind === "wire_write") ? wireHop(n.name, n.kind, inst) : null;
+    return { id, cls: "port" + (hop ? " click" : "") + (id === hl ? " hl" : ""), lines, rank,
+      color: n.kind === "in" || n.kind === "out" ? clockColor(clock) : null,
+      tip: () => what + " " + n.name + (wire && wire.loc ? "\ndeclared: " + wire.loc : "") +
+        (bits != null ? "\nbits: " + bits : "") + (wire && wire.async ? "\nASYNC" : "") + (hop ? "\n" + hop.text : ""),
+      onclick: hop ? () => go(hop.route) : null };
+  });
+  nodes.forEach(measure);
+  const scale = $("f-scale").checked ? hardwareScale(nodes, g, f) : null;
+  const de = edges.map((e) => {
+    const labels = [...e.labels].sort();
+    return { s: e.s, d: e.d, bits: e.bits, fb: e.fb, text: labels.join(", "),
+      tip: (labels.join(", ") || "(unnamed)") + (e.bits ? "\n" + e.bits + " bits" : "") + (e.fb ? "\nthrough Feedback" : "") };
+  });
+  if (de.length > 60 || scale) for (const e of de) e.text = "";   // hover for names
+  let size = layout(nodes, de);
+  if (scale) size = scale.place(nodes, size);
+  const title = chain.length > 1 ? g_name(chain[chain.length - 2][1], chain[chain.length - 1][2]) : mainLabel(main);
+  draw(nodes, de, size, title + ": " + nodes.length + " blocks" +
+    (hiddenOps ? ", " + hiddenOps + " operators/constants hidden" : "") + (scale ? scale.note : ""),
+    scale ? scale.axis : null);
+  setSource(f.file, f.line);
+  return nodes.length;
+}
+// Hardware scale (as the old pipeline_map.png): a block is as wide as its
+// delay and as tall as its mean in/out bus width. With the compiler's
+// zero-added-clocks offsets (f.offsets) x is its start time; otherwise the
+// layered x positions stay.
+function hardwareScale(nodes, g, f) {
+  const subs = nodes.filter((n) => g.nodes[n.id].kind === "sub");
+  const delayOf = (n) => func(g.nodes[n.id].callee).delay_ns;
+  const busBits = (n) => {
+    const cf = func(g.nodes[n.id].callee), sum = (l) => (l || []).reduce((s, [, b]) => s + (b || 0), 0);
+    return cf.inputs ? (sum(cf.inputs) + sum(cf.outputs)) / 2 : 1;
+  };
+  const offsets = f.offsets || null;
+  const maxNs = offsets ? Math.max(0, ...Object.values(offsets).map((o) => o[1]))
+                        : Math.max(0, ...subs.map((n) => delayOf(n) || 0));
+  if (!(maxNs > 0)) return null;
+  const K = 1200 / maxNs;   // px per ns
+  for (const n of subs) {
+    n.h = Math.min(200, 16 + 3 * Math.sqrt(busBits(n)));
+    const d = delayOf(n);
+    if (d != null) n.w = Math.max(6, d * K);
+    const fit = Math.max(1, Math.floor((n.w - 10) / 6.4));   // name only, cut to the block
+    n.lines = [n.lines[0].length > fit ? n.lines[0].slice(0, Math.max(0, fit - 1)) + "…" : n.lines[0]];
+  }
+  let x0 = 0;   // where t = 0 lands once place() has shifted everything right
+  return {
+    note: offsets ? "  (x: start time, width: delay, height: bus bits)" : "  (width: delay, height: bus bits; no start times)",
+    place(nodes, size) {
+      if (!offsets) return size;
+      let right = 0;
+      for (const n of subs) {
+        const o = offsets[n.id.slice(2)];
+        if (o) { n.x = o[0] * K; right = Math.max(right, n.x + n.w); }
+      }
+      for (const n of nodes) {
+        if (n.rank === "first") n.x = -n.w - 40;
+        if (n.rank === "last") n.x = Math.max(right, maxNs * K) + 40;
+      }
+      const left = Math.min(...nodes.map((n) => n.x)), xe = nodes.map((n) => n.x + n.w);
+      for (const n of nodes) n.x -= left;
+      x0 = -left;
+      return { width: Math.max(...xe) - left, height: size.height };
+    },
+    axis(parent) {
+      if (!offsets) return;
+      const H = Math.max(...nodes.map((n) => n.y + n.h)) + 10;
+      const step = Math.pow(10, Math.floor(Math.log10(maxNs / 2))) * (maxNs / Math.pow(10, Math.floor(Math.log10(maxNs))) > 5 ? 2 : 1);
+      for (let t = 0; t <= maxNs + 1e-9; t += step) {
+        svgEl("line", { x1: x0 + t * K, x2: x0 + t * K, y1: -6, y2: H, class: "axis" }, parent.firstChild);
+        const tx = svgEl("text", { x: x0 + t * K + 2, y: H + 12, class: "el" }, parent);
+        tx.textContent = (Math.round(t * 100) / 100) + " ns";
+      }
+    },
+  };
+}
+// The header's "source" link: vscode://file/<path>:<line> (files on disk only)
+function setSource(file, line) {
+  const a = $("src");
+  if (file && file.startsWith("/") && !/^\/pypeline_/.test(file)) {
+    a.setAttribute("href", "vscode://file" + encodeURI(file) + ":" + (line || 1));
+    a.textContent = "source " + loc(file, line);
+  } else { a.removeAttribute("href"); a.textContent = ""; }
+}
+// The other ends of a global wire a function reads or writes
+function wireHop(wire, kind, inst) {
+  const mine = kind === "wire_read" ? "dst" : "src", other = kind === "wire_read" ? "src" : "dst";
+  const ends = [...new Set(D.links.filter((l) => l.wire === wire && l[mine] === inst).map((l) => l[other]))];
+  if (!ends.length) return null;
+  const route = ends[0].startsWith("pin:") ? { design: 1 } : { inst: ends[0] };
+  return { route, text: (kind === "wire_read" ? "written by " : "read by ") + ends.join(", ") };
+}
+
+// ---------- routing ----------
+function parseHash() {
+  const h = decodeURIComponent(location.hash.slice(1));
+  if (h.startsWith("inst=")) {
+    const rest = h.slice(5), at = rest.indexOf("&hl=");
+    return at < 0 ? { inst: rest } : { inst: rest.slice(0, at), hl: rest.slice(at + 4) };
+  }
+  if (h.startsWith("file=")) return { file: h.slice(5) };
+  return { design: 1 };
+}
+function go(r) {
+  const h = r.inst ? "inst=" + r.inst + (r.hl ? "&hl=" + r.hl : "") : r.file ? "file=" + r.file : "design";
+  if (decodeURIComponent(location.hash.slice(1)) === h) render(); else location.hash = encodeURIComponent(h);
+}
+function crumbs(r) {
+  const c = $("crumbs");
+  c.replaceChildren();
+  const add = (text, route) => {
+    if (c.childNodes.length) c.appendChild(el("span", "sep", "›"));
+    if (route) { const a = el("a", null, text); a.addEventListener("click", () => go(route)); c.appendChild(a); }
+    else c.appendChild(el("span", null, text));
+  };
+  add("design", r.design ? null : { design: 1 });
+  if (r.file) add(base(r.file), null);
+  if (r.inst) {
+    const chain = resolve(r.inst) || [];
+    const e = D.mains[chain.length ? chain[0][0] : ""];
+    if (e && e.file) add(base(e.file), { file: e.file });
+    chain.forEach(([p, fn, local], i) => {
+      const name = local == null ? mainLabel(p) : g_name(chain[i - 1][1], local);
+      add(name, i === chain.length - 1 ? null : { inst: p });
+    });
+  }
+}
+function g_name(parent, local) { const n = graphOf(parent).nodes["s:" + local]; return n ? n.name : local; }
+function render() {
+  hideTip();
+  const r = parseHash();
+  state.view = r;
+  crumbs(r);
+  document.querySelectorAll("#tree .item.sel").forEach((e) => e.classList.remove("sel"));
+  const key = r.inst ? "inst=" + r.inst : r.file ? "file=" + r.file : null;
+  if (key) document.querySelectorAll("#tree .item").forEach((e) => { if (e.dataset.route === key) e.classList.add("sel"); });
+  try {
+    if (r.inst) functionView(r.inst, r.hl);
+    else designView(r.file || null);
+    $("info").textContent = "";
+  } catch (err) {
+    vp.replaceChildren();
+    $("info").textContent = "cannot draw this view: " + err.message;
+  }
+}
+
+// ---------- search ----------
+let instIndex = null;   // [display path, instance, parent instance, node id] of non-operator instances
+function buildIndex() {
+  instIndex = [];
+  const walk = (inst, fname, label, depth) => {
+    const g = graphOf(fname);
+    if (!g || depth > 64 || instIndex.length > 50000) return;
+    for (const id of Object.keys(g.nodes).sort()) {
+      const n = g.nodes[id];
+      if (n.kind !== "sub" || func(n.callee).kind === "op") continue;
+      const child = inst + MARK + id.slice(2), text = label + "/" + n.name;
+      instIndex.push([text, child, inst, id]);
+      walk(child, n.callee, text, depth + 1);
+    }
+  };
+  for (const m of Object.keys(D.mains).sort()) { instIndex.push([mainLabel(m), m, null, null]); walk(m, m, mainLabel(m), 0); }
+}
+function search(text) {
+  const box = $("results");
+  box.replaceChildren();
+  text = text.trim().toLowerCase();
+  if (!text) { box.style.display = "none"; return; }
+  if (!instIndex) buildIndex();
+  const hits = instIndex.filter((r) => r[0].toLowerCase().includes(text)).slice(0, 200);
+  for (const [label, child, parent, id] of hits) {
+    const d = el("div", null, label);
+    d.addEventListener("click", () => {
+      box.style.display = "none";
+      go(parent == null || hasGraph(resolve(child).pop()[1]) ? { inst: child } : { inst: parent, hl: id });
+    });
+    box.appendChild(d);
+  }
+  if (!hits.length) box.appendChild(el("div", "dim", "no instance matches"));
+  const r = $("search").getBoundingClientRect();
+  box.style.left = Math.max(4, Math.min(r.left, innerWidth - 420)) + "px";
+  box.style.top = r.bottom + 4 + "px";
+  box.style.display = "block";
+}
+$("search").addEventListener("input", (ev) => search(ev.target.value));
+addEventListener("click", (ev) => { if (!$("results").contains(ev.target) && ev.target !== $("search")) $("results").style.display = "none"; });
+
+// ---------- copy as Mermaid ----------
+function mermaidText() {
+  const { nodes, edges } = state.last || { nodes: [], edges: [] };
+  const q = (t) => '"' + String(t).replace(/"/g, "#quot;") + '"';
+  const ids = new Map(nodes.map((n, i) => [n.id, "n" + i]));
+  const lines = ["flowchart LR"];
+  for (const n of nodes) lines.push("    " + ids.get(n.id) + "[" + q(n.lines.join("<br>")) + "]");
+  for (const e of edges) {
+    if (!ids.has(e.s) || !ids.has(e.d)) continue;
+    const arrow = e.fb ? "-.->" : "-->";
+    lines.push("    " + ids.get(e.s) + " " + arrow + (e.text ? "|" + q(e.text) + "|" : "") + " " + ids.get(e.d));
+  }
+  return lines.join("\n") + "\n";
+}
+$("mermaid").addEventListener("click", () => {
+  const text = mermaidText();
+  const fallback = () => { $("mm-text").value = text; $("mm").style.display = "flex"; $("mm-text").select(); };
+  if (navigator.clipboard && window.isSecureContext) {
+    navigator.clipboard.writeText(text).then(() => { $("info").textContent = "copied Mermaid text"; }, fallback);
+  } else fallback();
+});
+$("mm-close").addEventListener("click", () => { $("mm").style.display = "none"; });
+
+// ---------- start ----------
+function legend() {
+  const lg = $("legend");
+  for (const cid of clockIds) {
+    const c = D.clocks[cid], s = el("span");
+    const sw = el("span", "sw"); sw.style.background = clockColor(cid);
+    s.appendChild(sw);
+    s.appendChild(document.createTextNode(cid + (c.name ? " (" + c.name + ")" : "")));
+    lg.appendChild(s);
+  }
+}
+function selftest() {
+  // Draw every view once; the render test reads the result off <body>
+  let views = 0;
+  try {
+    views += designView(null) >= 0 ? 1 : 0;
+    for (const p of Object.keys(D.files)) { designView(p); views++; }
+    const done = new Set();
+    const walk = (inst, fname) => {
+      if (done.has(fname)) return;
+      done.add(fname);
+      functionView(inst); views++;
+      if (func(fname).offsets) { $("f-scale").checked = true; functionView(inst); $("f-scale").checked = false; views++; }
+      const g = graphOf(fname);
+      for (const id of Object.keys(g.nodes)) {
+        const n = g.nodes[id];
+        if (n.kind === "sub" && func(n.callee).kind !== "op" && hasGraph(n.callee)) walk(inst + MARK + id.slice(2), n.callee);
+      }
+    };
+    for (const m of Object.keys(D.mains).sort()) if (hasGraph(m)) walk(m, m);
+    if (!mermaidText().startsWith("flowchart LR")) throw new Error("mermaid text");
+    buildIndex(); search("a"); search("");
+    document.body.setAttribute("data-ready", String(views));
+  } catch (err) {
+    document.body.setAttribute("data-error", String(err && err.stack || err));
+  }
+}
+$("title").textContent = base(D.build.top) + " — design diagram";
+document.title = base(D.build.top) + " diagram";
+legend();
+for (const id of ["f-wiring", "f-ops", "f-fb", "f-scale"]) $(id).addEventListener("change", render);
+buildTree();
+if (location.hash === "#selftest") selftest();
+else { addEventListener("hashchange", render); render(); }
+</script>
+</body>
+</html>

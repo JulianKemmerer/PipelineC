@@ -506,11 +506,6 @@ to their blocking caller and reason. The trace, generated VHDL, mapped JSON, and
 together are the evidence for a placement claim; requested cut counts alone
 are not.
 
-`PIPELINEC_INTERNAL_SKIP_PIPELINE_MAP_PNG=1` is an internal switch that
-suppresses only diagnostic pipeline-map PNG rendering. Large fine-grained QoR
-probes use it, and the pypeline test runner sets it for every test (see
-[pypeline_TESTS.md](pypeline_TESTS.md#choosing-a-synthesis-tool)). The text map, placement trace, HDL, and default behavior
-
 The preserved
 [`divider_gate_clean_baseline_critical_paths.json`](../src/tests/pypeline_tests/qor/divider_gate_clean_baseline_critical_paths.json)
 records a clean, unmodified-planner baseline for the gate-Divider design

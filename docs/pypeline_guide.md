@@ -873,6 +873,10 @@ def top():
     video_out = px
 ```
 
+Every build draws this tree in `diagram.html` in its output directory: one graph per
+function, from each `@MAIN` down through its calls
+([Viewing the design](README.md#viewing-the-design)).
+
 ### Each call site is a separate instance
 
 Two calls to the same function produce two independent hardware instances.
@@ -2550,6 +2554,9 @@ is an operator you get. Two things make an innocent-looking line expensive:
 
 Global signals are module-level wires shared between `@MAIN` functions.
 They are declared at module scope (outside any function) using a type annotation.
+A build's `diagram.html` shows every `@MAIN` and the global wires between them, field
+by field and in the direction each field is driven
+([Viewing the design](README.md#viewing-the-design)).
 
 ### `Wire[T]` — shared combinational signal
 

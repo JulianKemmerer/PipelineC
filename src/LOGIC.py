@@ -3412,6 +3412,12 @@ class ParserState:
         # Pypeline global wires: name -> PY_TO_LOGIC WireDecl (its annotation,
         # with its ASYNC and clock markers, and where it was declared)
         self.pypeline_wire_decls = {}
+        # Pypeline design files: absolute .py path -> module prefix of its
+        # names (None for the top file), set once its imports are discovered
+        self.file_to_module_prefix = {}
+        # Pypeline import edges (importing file, imported file), absolute .py
+        # paths, both files queued for elaboration or not (DIAGRAM's file tree)
+        self.pypeline_file_imports = set()
         # Pypeline clock identity (mhz, name) -> the Python name of a clock
         # made by make_clock with it, for messages and the crossing report
         self.pypeline_clock_names = {}
@@ -3567,6 +3573,8 @@ class ParserState:
         rv.async_wires = set(self.async_wires)
         rv.pypeline_global_insts = dict(self.pypeline_global_insts)
         rv.pypeline_wire_decls = dict(self.pypeline_wire_decls)
+        rv.file_to_module_prefix = dict(self.file_to_module_prefix)
+        rv.pypeline_file_imports = set(self.pypeline_file_imports)
         rv.pypeline_clock_names = dict(self.pypeline_clock_names)
         rv.pypeline_module_clocks = list(getattr(self, "pypeline_module_clocks", []))
         rv.pypeline_clock_syn_mhz = dict(self.pypeline_clock_syn_mhz)

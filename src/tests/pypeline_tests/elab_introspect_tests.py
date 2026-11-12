@@ -374,6 +374,20 @@ def get_tests() -> list:
             cmd=[INST_DIR / "ord_char_literal_test.py"],
         )
     )
+    # The design diagram's data (DIAGRAM.WRITE_DIAGRAM after PARSE_FILE): the
+    # import tree, MAIN files and clocks, field-level wire links and their
+    # direction, @wires MAINs marked as wiring, function graphs with widths,
+    # labels and Feedback edges, call-site kinds (AUTO_PIPELINE, AUTO_FSM, raw
+    # VHDL, operators), async FIFO ends as one node, --no_synth latencies,
+    # byte-identical pages from two parses, no external references, and a C
+    # design (examples/shared_globals.c).
+    tests.append(
+        Test(
+            name="diagram_test",
+            category="elab_introspect",
+            cmd=[INST_DIR / "diagram_test.py"],
+        )
+    )
     # name_index.log side-tables: pypeline_name_full/pypeline_type_canonical
     # get populated exactly when a canonical name actually collapses, and
     # pypeline_canonical_name_owner raises on a genuine collision (two

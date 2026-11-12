@@ -21,7 +21,6 @@ def run_case(out, size, latency, seed):
     env = {
         **os.environ,
         "PIPELINEC_OPEN_TOOLS_SEED": str(seed),
-        "PIPELINEC_INTERNAL_SKIP_PIPELINE_MAP_PNG": "1",
     }
     cmd = [
         sys.executable,

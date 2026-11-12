@@ -5746,8 +5746,7 @@ class FuncElaborator:
             src_file = os.path.abspath(inspect.getsourcefile(func_for_source))
         except TypeError:
             src_file = None
-        file_to_module_prefix = getattr(self.parser_state, "file_to_module_prefix", {})
-        mod_prefix = file_to_module_prefix.get(src_file)
+        mod_prefix = self.parser_state.file_to_module_prefix.get(src_file)
         return HW_FUNC_NAME(mod_prefix, func_for_source.__name__)
 
     def _elaborate_live_func(self, module_level_name, func, key=None):
@@ -9039,6 +9038,7 @@ def _discover_and_queue_module(
     files_to_elaborate,
     top_file,
     processed_files,
+    importer_file,
 ):
     """Resolve an already-imported module object to its on-disk .py source,
     discover its structs/enums/global wires, recurse into its own imports (so
@@ -9068,6 +9068,10 @@ def _discover_and_queue_module(
     reused across two content-less modules that happen to share a bare name
     (e.g. two of Python's own standard-library internals) is never looked up
     for real wire resolution, so it isn't a real collision.
+
+    Every import of a resolvable .py file, with or without content, is also
+    recorded as the edge (importer_file, sub_file) in
+    parser_state.pypeline_file_imports, for the design diagram's file tree.
     """
     if not isinstance(sub_mod, _types.ModuleType):
         return False
@@ -9082,6 +9086,10 @@ def _discover_and_queue_module(
             return False
     if not os.path.isfile(sub_file):
         return False
+    if importer_file:
+        parser_state.pypeline_file_imports.add(
+            (os.path.abspath(importer_file), os.path.abspath(sub_file))
+        )
 
     if sub_file in processed_files:
         return processed_files[sub_file]  # repeat encounter (e.g. two
@@ -9228,6 +9236,7 @@ def _process_imports(
         processed_files = {entry[0]: True for entry in files_to_elaborate}
         if top_file:
             processed_files[os.path.abspath(top_file)] = True
+    importer_file = module_globals.get("__file__")
     for node, conditional in _module_level_imports(tree):
         if isinstance(node, ast.Import):
             aliases = (
@@ -9247,6 +9256,7 @@ def _process_imports(
                     files_to_elaborate,
                     top_file,
                     processed_files,
+                    importer_file,
                 )
                 if not has_content:
                     continue
@@ -9295,6 +9305,7 @@ def _process_imports(
                 files_to_elaborate,
                 top_file,
                 processed_files,
+                importer_file,
             )
 
 
@@ -9427,7 +9438,7 @@ def _new_parser_state(module_globals):
     # AUTO_FSM side tables, populated as a side effect of ordinary elaboration and
     # consumed only by src/AUTO_FSM.py's scheduler/code generator (see
     # docs/AUTO_FSM_DESIGN.md). Pypeline-only, set dynamically here the same way
-    # module_alias_to_actual / file_to_module_prefix are.
+    # module_alias_to_actual is.
     #   pypeline_entity_callables: entity func_name -> live Python callable that
     #     produced it, so a shared functional unit can be emitted as a direct call.
     #   pypeline_const_wire_values: func_name -> {const wire name -> Python value},
@@ -9820,9 +9831,8 @@ def _PARSE_FILE_ONCE(py_file, run_syn_initial_hooks=False, resolved_part=None):
     # the same FuncLogicLookupTable key for a top-level function reached via a
     # closure alias (e.g. the `func` parameter inside make_stream_multi_cycle /
     # make_stream_auto_pipeline / _auto_pipeline_with_io_regs) as Step 6/7 below use for that
-    # same function reached directly. Pypeline-only, set dynamically here the
-    # same way parser_state.module_alias_to_actual is (never declared in
-    # LOGIC.py's shared ParserState.__init__).
+    # same function reached directly, and the design diagram's file list
+    # (declared in LOGIC.ParserState.__init__).
     parser_state.file_to_module_prefix = {
         os.path.abspath(fp): mod_prefix
         for fp, _tree, _fg, mod_prefix in files_to_elaborate

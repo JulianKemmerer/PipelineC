@@ -54,13 +54,13 @@ def build(tool, out_dir, goal_mhz, timeout, comb=False):
     ]
     if comb:
         cmd.append("--comb")
-    env = dict(os.environ, PIPELINEC_INTERNAL_SKIP_PIPELINE_MAP_PNG="1")
     what = "comb" if comb else f"sweep goal {goal_mhz} MHz"
     print(f"[{tool}] {what} -> {log_path}", flush=True)
     with open(log_path, "w") as f:
         try:
-            rc = subprocess.call(cmd, stdout=f, stderr=subprocess.STDOUT, env=env,
-                                 timeout=timeout)
+            rc = subprocess.call(
+                cmd, stdout=f, stderr=subprocess.STDOUT, timeout=timeout
+            )
         except subprocess.TimeoutExpired:
             print(f"[{tool}] TIMEOUT after {timeout}s", flush=True)
             return False, log_path

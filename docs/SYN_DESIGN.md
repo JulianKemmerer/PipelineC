@@ -761,6 +761,9 @@ earlier run existed.
   `WRITE_INTEGER_MODULE_INSTANCES_REPORT` (`float_module_instances.log`,
   `integer_module_instances.log`: operator instance counts by type and width) are
   written with the zero-added-clocks files by `AUTO_PIPELINE.WRITE_0_ADDED_CLKS_INIT_FILES`.
+  The design diagram `diagram.html`, with each function's measured delay and its
+  zero-added-clocks offsets, is written by `DIAGRAM.WRITE_DIAGRAM`
+  ([`DIAGRAM_DESIGN.md`](DIAGRAM_DESIGN.md)).
 
 **A synthesized netlist with no timing paths is always an error.** A design that
 synthesizes away to nothing, typically because it drives no top-level output, has no
@@ -833,7 +836,7 @@ the index uses whatever source and timing information is available.
 line that names a function without a location: `"Synthesizing function:"`,
 `"Isolated effective stage-delay estimate ..."`, and every `[sweep]` WARNING/NOTE
 line in `SWEEP.py` that names a hotspot or a MAIN. Reading a failing build's own console
-output no longer requires separately grepping `module_instances.log`/`pipeline_map.log`
+output no longer requires separately grepping `module_instances.log`
 just to find which line of which file a printed name refers to.
 
 ### Also produced: elapsed time on stdout
@@ -915,7 +918,8 @@ in the module whose feature it serves. In order, it:
    nothing to do (`SIM.BUILT_HARDWARE_IS_CURRENT`). So does a native `--sim` of
    another top on the hardware built in `--out_dir` (`SIM.SIMULATE_BUILT_HARDWARE`,
    which otherwise removes that directory's hardware record before the build
-   replaces it). The build settings come after these shortcuts, and
+   replaces it). After these shortcuts the build removes the directory's previous
+   design diagram (`DIAGRAM.FORGET_DIAGRAM`). The build settings come next, and
    then the `atexit` hooks that end every build with `SYN.SYNTHESIS_REUSE_EXIT_REPORT`
    (§6) and then the elapsed summary (§7);
 2. installs `--latency_hints` starting latencies (`SWEEP.INSTALL_LATENCY_HINTS`). It
@@ -930,12 +934,14 @@ in the module whose feature it serves. In order, it:
    already read a `start_latency=` or a starting latency;
 5. for `--comb` or `--no_synth`, writes the final files with any fixed
    `AUTO_PIPELINE(latency=)` call sites (`AUTO_PIPELINE.WRITE_COMB_FINAL_FILES`).
-   For `--comb`, it then runs the comb-stage simulation (`SIM.DO_COMB_STAGE_SIM`);
+   A `--no_synth` build then writes its design diagram (`DIAGRAM.WRITE_DIAGRAM`,
+   [`DIAGRAM_DESIGN.md`](DIAGRAM_DESIGN.md#2-when-the-page-is-written)). For `--comb`,
+   it then runs the comb-stage simulation (`SIM.DO_COMB_STAGE_SIM`);
 6. for every build without `--no_synth` (`--comb` included: its synthesis run
    reports combinational fmax), runs `AUTO_PIPELINE.DO_PIPELINED_BUILD`
    ([build entry points](AUTO_PIPELINE_DESIGN.md#4-build-entry-points)). Next,
    `SWEEP.WRITE_SWEEP_RESULTS` writes the sweep history, final files and latency
-   profile. The build exits non-zero if a timing goal was missed
+   profile, and `DIAGRAM.WRITE_DIAGRAM` the design diagram. The build exits non-zero if a timing goal was missed
    (`SWEEP.PRINT_TIMING_FAILURES`). Otherwise it records the hardware, with the
    run's build inputs, for native simulation and the next build's up-to-date check
    (`SIM.WRITE_BUILT_HARDWARE`), generates the bitstream

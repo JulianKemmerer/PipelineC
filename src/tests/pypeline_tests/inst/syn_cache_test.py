@@ -274,7 +274,7 @@ def test_reuse_only(tmp):
 
 def run(args, cwd):
     cmd = [sys.executable, PYPELINEC] + args + ["--syn_tool", "pyrtl"]
-    env = dict(os.environ, PYTHONHASHSEED="0", PIPELINEC_INTERNAL_SKIP_PIPELINE_MAP_PNG="1")
+    env = dict(os.environ, PYTHONHASHSEED="0")
     print("Running:", " ".join(cmd), flush=True)
     result = subprocess.run(cmd, cwd=cwd, env=env, stdout=subprocess.PIPE,
                             stderr=subprocess.STDOUT, text=True)

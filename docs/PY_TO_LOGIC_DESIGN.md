@@ -2946,8 +2946,12 @@ which scans every module-level `ast.Import` **and** `ast.ImportFrom` node: those
 `tree.body`, plus those inside module-level `if`/`try`/`with`/loop blocks that actually ran
 (see [Conditional imports](#conditional-imports-module-level-if--try)). Both forms
 share one helper, `_discover_and_queue_module(sub_mod, actual_name, parser_state,
-files_to_elaborate, top_file, processed_files)`, so a module's structs/wires/functions are
-discovered identically regardless of which import form reached it:
+files_to_elaborate, top_file, processed_files, importer_file)`, so a module's
+structs/wires/functions are discovered identically regardless of which import form
+reached it. Every import of a local `.py` file, with hardware or not, also records the
+edge `(importer_file, sub_file)` in `parser_state.pypeline_file_imports`, from which the
+design diagram draws its file tree
+([DIAGRAM_DESIGN.md](DIAGRAM_DESIGN.md#files-and-imports)):
 
 For each imported module that is a local `.py` file:
 
@@ -3384,6 +3388,8 @@ are pre-existing and documented.
 | Concept | Storage / location |
 |---|---|
 | Alias → actual module name | `parser_state.module_alias_to_actual` (dict) |
+| File with hardware → its module prefix (`None` for the top file) | `parser_state.file_to_module_prefix` (declared in `LOGIC.ParserState`) |
+| Import edges, for the design diagram | `parser_state.pypeline_file_imports` (declared in `LOGIC.ParserState`) |
 | Cross-file alias collision guard | `_process_imports` — `ElaborationError` if an alias already maps to a different actual module |
 | Module-level imports, incl. inside `if`/`try`/`with`/loops | `_module_level_imports(tree)` → `(node, conditional)` |
 | Did a conditional import run? | `_nested_import_ran(node, module_globals)` — live-binding proof |

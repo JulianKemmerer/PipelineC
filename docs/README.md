@@ -1362,6 +1362,9 @@ Consume the explicit manifests and indexes instead of globbing generated directo
 - `name_index.log` maps emitted entities, types, helpers, instances, wires, shortened
   names, source paths/lines, generated sources, and pipeline variants back to Pypeline
   source. Use it instead of parsing a generated identifier or timing hash.
+- `diagram.html` is the design diagram: open it in a browser to see the files, MAINs,
+  global wires and call hierarchy ([Viewing the design](#viewing-the-design)). Every
+  build writes it; a build that stops early leaves none.
 - `pypeline_generated_source/` contains navigable Python source for generated interface,
   cast, byte-conversion, and other helper functions.
 - `<top>/sweep_history.json` records every whole-design timing iteration and its final
@@ -1392,6 +1395,41 @@ Consume the explicit manifests and indexes instead of globbing generated directo
 Timing-specific generated entities are not a stable integration API. Depend on the
 stable top, import record declarations from `c_structs_pkg`, or add a small scalar-port
 wrapper when external HDL needs a durable boundary.
+
+### Viewing the design
+
+Every build writes `diagram.html` into `--out_dir` and prints its path
+(`Design diagram: ...`). It is one self-contained page: open it in any browser,
+offline, with nothing to install.
+
+- **Left pane:** the top `.py` file and the files it imports, each with its
+  `@MAIN`s. Expand a MAIN to walk its instance hierarchy.
+- **Design view:** the MAINs, global instances, FIFOs and top-level pins, joined by
+  the global wires between them. Each wire field is drawn in the direction it flows,
+  so a stream's data runs one way and its `ready` the other. Click a file to see only
+  its MAINs and their neighbors.
+- **Function views:** click a MAIN or a block to see that function's graph: its
+  inputs on the left, its outputs on the right, and the functions it calls in
+  between, each labeled with its latency (`L=n`) and, after synthesis, its measured
+  delay. Click a block to go down a level, and a global wire read or write to jump to
+  the other end of the wire. The breadcrumb and the browser's back button go back up.
+- **Colors:** one color per clock domain, with a legend. A wire between clock domains
+  is red.
+- **Filters:** *hide wiring MAINs* (on by default) leaves out `@wires` MAINs and
+  MAINs that only connect wires, drawing their connections straight through. Each
+  MAIN's checkbox in the left pane hides it. *show operators* adds every operator,
+  constant and clock enable. *hide feedback edges* removes `Feedback` and stream
+  ready paths, which are otherwise dashed.
+- **hardware scale:** sizes each block by its delay (width) and bus width (height).
+  In a synthesizing build, a function the compiler can pipeline also gets a time
+  axis: each block starts at the time its inputs arrive.
+- **find instance** searches instance names. **source** opens the current function in
+  VS Code; Ctrl- or Cmd-click a block to open its call site. **copy as Mermaid**
+  copies the current view as a Mermaid `flowchart`, for a README.
+
+The page does not show AUTO_PIPELINE or AUTO_FSM internals. An AUTO_FSM call site is
+one block. C designs get the same page, with whole global wires rather than fields.
+How it is built: [`DIAGRAM_DESIGN.md`](DIAGRAM_DESIGN.md).
 
 ### Using the output in an existing project
 

@@ -291,12 +291,6 @@ def run_test(test: Test, tmp_root: Path) -> TestResult:
     # be set that way in the invoking shell), uncontained and never cleaned
     # up alongside the rest of that test's output.
     #
-    # PIPELINEC_INTERNAL_SKIP_PIPELINE_MAP_PNG: nothing in the suite reads the
-    # graphviz pipeline_map.gv/.png renders (the text pipeline_map.log is still
-    # written), and `dot` often costs more than a small test's whole build.
-    # Wrapper scripts copy os.environ into their own pypelinec subprocesses,
-    # so nested builds inherit it too.
-    #
     # PIPELINEC_INTERNAL_NO_LATENCY_MEMORY: a test's builds must not start from
     # latencies a previous run of the same test remembered (its out_dir is
     # reused, and a --syn_cache store may be shared), or its sweep -- and what
@@ -305,7 +299,6 @@ def run_test(test: Test, tmp_root: Path) -> TestResult:
     env = {
         **os.environ,
         "TMPDIR": str(test_dir),
-        "PIPELINEC_INTERNAL_SKIP_PIPELINE_MAP_PNG": "1",
         "PIPELINEC_INTERNAL_NO_LATENCY_MEMORY": "1",
         **{k: str(v) for k, v in test.env.items()},
     }

@@ -52,9 +52,6 @@ def characterized(mode="leaf", cached_delay=None, prepare=None, delay_model=None
             (MCP, "ISOLATED_MCP_EVIDENCE", {}),
         ]:
             stack.enter_context(patch.object(obj, name, value))
-        stack.enter_context(
-            patch.dict("os.environ", {"PIPELINEC_INTERNAL_SKIP_PIPELINE_MAP_PNG": "1"})
-        )
         pypeline.SET_AUTO_PIPELINE_BUILD_MODE("sweep")
         pypeline.SET_AUTO_PIPELINE_LATENCY_CACHE({})
         pypeline.SET_AUTO_MULTI_CYCLE_LATENCY_CACHE({})
