@@ -19,10 +19,11 @@ Also asserts, specific to the post-restructure `docs/pypeline_guide.md`:
     `#11-types`-style numbered anchors from the old numbered-heading scheme).
 
 And asserts the docs/ directory reads as reference material, not a logbook
-(see "Documentation conventions" in docs/pypeline_DESIGN.md):
+(see docs/pypeline_DESIGN.md#documentation-conventions):
   - no heading under docs/ names a date, outside a '## History' section.
   - no body text under docs/ names an ISO date, outside a '## History'
-    section or a fenced code block.
+    section or a fenced code block; docs/showcase.md is a dated bibliography
+    and is exempt from this body-text restriction.
   - every docs/*.md design doc and guide carries the convention note, and
     docs/pypeline_DESIGN.md itself carries the anchor that note links to.
 
@@ -324,6 +325,9 @@ def test_docs_have_no_dated_headings():
 def test_docs_have_no_dated_body_text():
     violations = []
     for f in _docs_md_files():
+        # Publication dates organize the showcase; its links are still checked.
+        if f == os.path.join(DOCS_DIR, "showcase.md"):
+            continue
         with open(f, encoding="utf-8") as fh:
             text = fh.read()
         hist_range = _history_line_range(text)

@@ -17,6 +17,8 @@ If a computation can be written as a [pure function](https://en.wikipedia.org/wi
 
 PypelineC consists of [**Pypeline**](docs/README.md) (new, Python based) and [**PipelineC**](https://github.com/JulianKemmerer/PipelineC/wiki) (legacy, C based). Pypeline is a work in progress in becoming feature complete with PipelineC, but already has many new features that PipelineC lacks.
 
+Show me what you got. Be inspired by some awesome PypelineC projects others have done, see the [showcase](docs/showcase.md). Reach out to have your project added.
+
 **Example code for blinking an LED:**
 
 <table>

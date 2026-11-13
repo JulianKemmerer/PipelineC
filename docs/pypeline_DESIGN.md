@@ -21,6 +21,9 @@ logbooks.
 - **`git log` is the change record.** Don't duplicate it in prose — no dated entries,
   no "recently added"/"now supports"/"used to"/"this round", no session write-ups, no
   status updates.
+- **The [showcase](showcase.md) is a dated bibliography.** Publication and event
+  dates organize its external links, so `doc_links_test` exempts that file from
+  the dated-body-text restriction while retaining its link and heading checks.
 - When behavior changes, **edit the affected section in place** so it states the
   current behavior.
 - If the *reason* something is the way it is is worth keeping — an alternative that
