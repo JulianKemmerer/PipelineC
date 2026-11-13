@@ -11,12 +11,14 @@
   --bg: #ffffff; --fg: #1d1d1f; --muted: #6b6b70; --line: #c8c8cc;
   --pane: #f5f5f7; --node: #ffffff; --node-border: #8a8a90; --accent: #2563eb;
   --edge: #7a7a80; --cross: #d62728; --ghost: #b0b0b5; --hl: #fde68a;
+  --cloud: #eaf0f8; --logic: #f4efe4;
 }
 @media (prefers-color-scheme: dark) {
   :root {
     --bg: #1b1b1e; --fg: #e6e6e9; --muted: #9a9aa2; --line: #3a3a40;
     --pane: #242428; --node: #2b2b30; --node-border: #8a8a90; --accent: #60a5fa;
     --edge: #9a9aa2; --cross: #ff6b6b; --ghost: #55555c; --hl: #6b5b1a;
+    --cloud: #263040; --logic: #3a3428;
   }
 }
 * { box-sizing: border-box; }
@@ -32,7 +34,7 @@ header .title { font-weight: 600; }
 a { color: var(--accent); text-decoration: none; cursor: pointer; }
 a:hover { text-decoration: underline; }
 label { white-space: nowrap; cursor: pointer; }
-button { font: inherit; cursor: pointer; }
+button, select { font: inherit; cursor: pointer; }
 #legend { display: flex; flex-wrap: wrap; gap: 4px 10px; }
 .sw { display: inline-block; width: 10px; height: 10px; border-radius: 2px; margin-right: 4px;
   vertical-align: -1px; }
@@ -41,6 +43,7 @@ button { font: inherit; cursor: pointer; }
 #tree ul { list-style: none; margin: 0; padding-left: 14px; }
 #tree > ul { padding-left: 0; }
 #tree li { white-space: nowrap; }
+#tree.hide-wiring li.wiring { display: none; }
 #tree .tw { display: inline-block; width: 12px; color: var(--muted); cursor: pointer; }
 #tree .item { cursor: pointer; padding: 0 2px; border-radius: 3px; }
 #tree .item:hover { background: var(--hl); }
@@ -55,7 +58,9 @@ button { font: inherit; cursor: pointer; }
 #svg .n.port rect { rx: 10; }
 #svg .n.ghost rect { stroke-dasharray: 4 3; stroke: var(--ghost); }
 #svg .n.ghost text { fill: var(--muted); }
-#svg .n.hl rect { fill: var(--hl); }
+#svg .n.cloud path { fill: var(--cloud); stroke: var(--node-border); }
+#svg .n.logic rect { fill: var(--logic); stroke-dasharray: 6 3; }
+#svg .n.hl rect, #svg .n.hl path { fill: var(--hl); }
 #svg .n.click { cursor: pointer; }
 #svg .n.click:hover rect { stroke: var(--accent); stroke-width: 2; }
 #svg .n .sub { fill: var(--muted); font-size: 11px; }
@@ -65,7 +70,7 @@ button { font: inherit; cursor: pointer; }
 #svg .e.async { stroke-dasharray: 2 3; }
 #svg .el { fill: var(--muted); font-size: 10px; }
 #svg .note { fill: var(--muted); font-size: 12px; }
-#tip { position: fixed; pointer-events: none; display: none; max-width: 520px; z-index: 5;
+#tip { position: fixed; pointer-events: none; display: none; max-width: 560px; z-index: 7;
   background: var(--pane); border: 1px solid var(--line); border-radius: 4px; padding: 6px 8px;
   white-space: pre-wrap; font: 12px/1.35 ui-monospace, Menlo, Consolas, monospace;
   box-shadow: 0 2px 8px rgba(0,0,0,.2); }
@@ -74,11 +79,23 @@ button { font: inherit; cursor: pointer; }
   box-shadow: 0 2px 8px rgba(0,0,0,.2); }
 #results div { padding: 1px 10px; white-space: nowrap; cursor: pointer; }
 #results div:hover { background: var(--hl); }
+.panel { position: fixed; z-index: 6; display: none; max-height: 80vh; overflow: auto;
+  background: var(--pane); border: 1px solid var(--line); border-radius: 6px; padding: 8px 10px;
+  box-shadow: 0 2px 8px rgba(0,0,0,.2); }
+.panel td { padding: 2px 6px 2px 0; white-space: nowrap; }
+.panel .note { color: var(--muted); font-size: 11px; max-width: 520px; white-space: normal; }
+#hidden-list div { padding: 1px 0; white-space: nowrap; }
+#ctx { padding: 4px 0; min-width: 170px; }
+#ctx div { padding: 3px 12px; cursor: pointer; white-space: nowrap; }
+#ctx div:hover { background: var(--hl); }
+#ctx div.head, #ctx div.head:hover { color: var(--muted); cursor: default; background: none; font-size: 11px; }
 #mm { position: fixed; inset: 10% 15%; z-index: 6; display: none; flex-direction: column; gap: 6px;
   background: var(--pane); border: 1px solid var(--line); border-radius: 6px; padding: 10px; }
 #mm textarea { flex: 1; font: 12px ui-monospace, Menlo, Consolas, monospace; background: var(--bg); color: var(--fg); }
 #svg .axis { stroke: var(--line); }
 #info { position: absolute; left: 10px; bottom: 8px; color: var(--muted); pointer-events: none; }
+#banner { position: absolute; left: 10px; top: 8px; display: none; padding: 2px 8px;
+  background: var(--pane); border: 1px solid var(--line); border-radius: 4px; color: var(--muted); }
 @media (max-width: 700px) {
   #app { grid-template-columns: 1fr; grid-template-rows: auto 35% 1fr; }
   header { grid-column: 1; }
@@ -91,9 +108,8 @@ button { font: inherit; cursor: pointer; }
   <header>
     <span class="title" id="title">Design diagram</span>
     <span id="crumbs"></span>
-    <label><input type="checkbox" id="f-wiring" checked> hide wiring MAINs</label>
-    <label><input type="checkbox" id="f-ops"> show operators</label>
-    <label><input type="checkbox" id="f-fb"> hide feedback edges</label>
+    <button id="filters-btn" type="button" title="what the views leave out, and how">filters ▾</button>
+    <button id="hidden-btn" type="button" title="nodes you hid (right-click a node to hide it)"></button>
     <label title="x: start time and delay in ns, height: bus width (functions with measured delays)"><input type="checkbox" id="f-scale"> hardware scale</label>
     <button id="fit" type="button">fit</button>
     <button id="mermaid" type="button" title="copy the current view as Mermaid flowchart text">copy as Mermaid</button>
@@ -104,11 +120,15 @@ button { font: inherit; cursor: pointer; }
   <nav id="tree"></nav>
   <div id="main">
     <svg id="svg" xmlns="http://www.w3.org/2000/svg"><g id="vp"></g></svg>
+    <div id="banner"></div>
     <div id="info"></div>
   </div>
 </div>
 <div id="tip"></div>
 <div id="results"></div>
+<div id="filters" class="panel"></div>
+<div id="hidden-list" class="panel"></div>
+<div id="ctx" class="panel"></div>
 <div id="mm"><div>Mermaid text of this view (the clipboard was not available):</div>
   <textarea id="mm-text" readonly></textarea><button id="mm-close" type="button">close</button></div>
 <script type="application/json" id="design">__DIAGRAM_DESIGN_JSON__</script>
@@ -121,8 +141,93 @@ const MARK = "____";                       // LOGIC.SUBMODULE_MARKER
 const SVGNS = "http://www.w3.org/2000/svg";
 const PALETTE = ["#1f77b4", "#2ca02c", "#9467bd", "#ff7f0e", "#8c564b", "#e377c2",
                  "#17becf", "#bcbd22", "#7f7f7f", "#aec7e8"];
+const SEP = "\u0001";                      // between the parts of a hidden node's key
 const $ = (id) => document.getElementById(id);
-const state = { hidden: new Set(), view: null };
+// hidden: key -> "pass" | "drop" of the nodes the viewer hid by hand; last: the
+// drawn view ({nodes, edges}); size: its extent
+const state = { hidden: new Map(), view: null, last: null, size: null };
+
+// ---------- types ----------
+const NO_TYPE = { c: "", bits: null };
+function T(i) { return i == null ? NO_TYPE : D.types[i] || NO_TYPE; }
+function bitsOf(i) { return T(i).bits; }
+function roleOf(i) { return T(i).role || "plain"; }
+const ROLE_TEXT = { fwd: "forward (stream, fwd_t)", fb: "feedback (fb_t)", plain: "plain" };
+// "readable_t (8b)", cut to fit a label
+function typeShort(i) {
+  const t = T(i);
+  if (!t.c) return "";
+  const name = t.name || t.c;
+  return (name.length > 30 ? name.slice(0, 29) + "…" : name) + (t.bits != null ? " (" + t.bits + "b)" : "");
+}
+function typeLong(i) {
+  const t = T(i);
+  if (!t.c) return "";
+  return (t.name ? t.name + " = " + t.c : t.c) + (t.bits != null ? ", " + t.bits + " bits" : "") +
+    (t.role ? ", " + ROLE_TEXT[t.role] : "");
+}
+
+// ---------- filters ----------
+// What a view can leave out, per kind of node or edge: show it, group it (operators
+// only: each connected cluster becomes one logic block), hide it with its edges
+// passing through ("pass"), or hide it with its edges ("drop"). A typed kind's mode
+// applies to the interface roles its scope names, the rest are shown.
+const KINDS = [
+  { id: "in", label: "inputs", tip: "function inputs and top-level Input pins", modes: ["show", "drop"], typed: true, def: "show" },
+  { id: "out", label: "outputs", tip: "function outputs and top-level Output pins", modes: ["show", "drop"], typed: true, def: "show" },
+  { id: "reg", label: "registers", tip: "a Reg's current and next value; passing through joins them as one edge", modes: ["show", "pass", "drop"], typed: true, def: "show" },
+  { id: "wire", label: "global wire reads and writes", tip: "a function's global wire read and write stubs", modes: ["show", "drop"], typed: true, def: "show" },
+  { id: "fb", label: "Feedback edges", tip: "edges through a Feedback variable, by the type the variable carries", modes: ["show", "drop"], typed: true, def: "drop", scope: "fb" },
+  { id: "wiring", label: "wiring", tip: "@wires functions, MAINs, functions and operators with no logic (casts, constant field selects)", modes: ["show", "pass", "drop"], def: "pass" },
+  { id: "op", label: "operators", tip: "operators and other built-ins", modes: ["show", "group", "pass", "drop"], def: "group" },
+  { id: "const", label: "constants, clock enable", modes: ["show", "drop"], def: "drop" },
+  { id: "ghost", label: "other files' MAINs", tip: "in a file's view, the MAINs of other files it connects to", modes: ["show", "drop"], def: "show" },
+];
+const KIND = new Map(KINDS.map((k) => [k.id, k]));
+const SCOPES = [
+  ["all", "of every type", ["fwd", "fb", "plain"]],
+  ["nonfwd", "except forward (streams, fwd_t)", ["fb", "plain"]],
+  ["fwd", "forward only (streams, fwd_t)", ["fwd"]],
+  ["fb", "feedback only (fb_t)", ["fb"]],
+  ["plain", "plain only (no interface)", ["plain"]],
+];
+const SCOPE = new Map(SCOPES.map(([id, , roles]) => [id, roles]));
+const MODE_TEXT = { show: "show", group: "group into logic blocks", pass: "hide, edges pass through", drop: "hide with edges" };
+const LABELS = [["both", "name: type"], ["name", "name"], ["type", "type"], ["none", "none"]];
+function defaults() {
+  const f = { labels: "both" };
+  for (const k of KINDS) f[k.id] = { mode: k.def, scope: k.scope || "all" };
+  return f;
+}
+let filt = defaults();
+// Per-viewer conveniences in the browser's storage; a page without it uses the defaults
+const STORE = "pypelinec-diagram:";
+let storageOff = false;   // the self-test leaves the browser's storage alone
+function loadStored(key) {
+  try { const v = localStorage.getItem(STORE + key); return v ? JSON.parse(v) : null; } catch (e) { return null; }
+}
+function store(key, value) {
+  if (storageOff) return;
+  try { localStorage.setItem(STORE + key, JSON.stringify(value)); } catch (e) { /* storage blocked */ }
+}
+function loadSettings() {
+  const f = defaults(), saved = loadStored("filters");
+  if (saved && typeof saved === "object") {
+    for (const k of KINDS) {
+      const s = saved[k.id];
+      if (!s) continue;
+      if (k.modes.includes(s.mode)) f[k.id].mode = s.mode;
+      if (k.typed && SCOPE.has(s.scope)) f[k.id].scope = s.scope;
+    }
+    if (LABELS.some(([id]) => id === saved.labels)) f.labels = saved.labels;
+  }
+  filt = f;
+  const hid = loadStored("hidden:" + D.build.top);
+  state.hidden = new Map(Array.isArray(hid) ? hid.filter((h) => Array.isArray(h) && (h[1] === "pass" || h[1] === "drop")) : []);
+}
+function saveSettings() { store("filters", filt); store("hidden:" + D.build.top, [...state.hidden]); }
+// Whether kind k's mode applies to something with this interface role
+function applies(k, role) { return !KIND.get(k).typed || SCOPE.get(filt[k].scope).includes(role || "plain"); }
 
 // ---------- names and lookups ----------
 const clockIds = Object.keys(D.clocks).sort();
@@ -145,7 +250,8 @@ function mainGroup(m) {
 function mainOf(inst) { return inst.startsWith("pin:") ? inst : inst.split(MARK)[0]; }
 function fmtNs(x) { return x == null ? "" : (Math.round(x * 100) / 100) + " ns"; }
 function hasGraph(fname) { const f = D.funcs[fname]; return !!(f && f.graph); }
-// A function's graph as {nodes: {id: node}, edges: [{s, sp, d, dp, bits, label, fb}]},
+const topFile = Object.keys(D.files).find((p) => D.files[p].top) || null;
+// A function's graph as {nodes: {id: node}, edges: [{s, sp, d, dp, t, names, fb}]},
 // unpacked once from the page's compact form (edges name nodes by index)
 const graphs = new Map();
 function graphOf(fname) {
@@ -155,13 +261,26 @@ function graphOf(fname) {
   if (f && f.graph) {
     const list = f.graph.nodes, nodes = {};
     for (const n of list) nodes[n.id] = n;
-    const edges = f.graph.edges.map(([s, sp, d, dp, bits, label, fb]) =>
-      ({ s: list[s].id, sp, d: list[d].id, dp, bits, label, fb: !!fb }));
+    const edges = f.graph.edges.map(([s, sp, d, dp, t, names, fb]) =>
+      ({ s: list[s].id, sp, d: list[d].id, dp, t, names, fb: !!fb }));
     g = { nodes, edges };
   }
   graphs.set(fname, g);
   return g;
 }
+// An operator's name from its function (BIN_OP_PLUS_uint8_t_uint8_t -> BIN_OP_PLUS)
+// and the symbol a logic block shows for it
+function opName(callee) {
+  const out = [];
+  for (const t of callee.split("_")) { if (/^[A-Z0-9]+$/.test(t)) out.push(t); else break; }
+  return out.length ? out.join("_") : callee;
+}
+const OP_SYMBOLS = { BIN_OP_PLUS: "+", BIN_OP_MINUS: "−", BIN_OP_MULT: "×", BIN_OP_INFERRED_MULT: "×",
+  BIN_OP_DIV: "÷", BIN_OP_MOD: "%", BIN_OP_EQ: "==", BIN_OP_NEQ: "!=", BIN_OP_LT: "<", BIN_OP_LTE: "<=",
+  BIN_OP_GT: ">", BIN_OP_GTE: ">=", BIN_OP_AND: "&", BIN_OP_OR: "|", BIN_OP_XOR: "^", BIN_OP_SL: "<<",
+  BIN_OP_SR: ">>", UNARY_OP_NOT: "~", UNARY_OP_NEGATE: "−x", MUX: "mux", VAR_REF_RD: "[i]",
+  VAR_REF_ASSIGN: "[i]=" };
+function opSymbol(name) { return OP_SYMBOLS[name] || name.toLowerCase(); }
 
 // Resolve an instance path (MAIN____local____local) to [[inst, func, local], ...]
 function resolve(inst) {
@@ -195,8 +314,7 @@ function instLatency(inst) {
 const fileOrder = [];      // [path, parent or null] in tree order
 (function orderFiles() {
   const seen = new Set();
-  const top = Object.keys(D.files).find((p) => D.files[p].top);
-  const queue = top ? [[top, null]] : [];
+  const queue = topFile ? [[topFile, null]] : [];
   while (queue.length) {
     const [p, parent] = queue.shift();
     if (seen.has(p) || !D.files[p]) continue;
@@ -206,6 +324,8 @@ const fileOrder = [];      // [path, parent or null] in tree order
   }
   for (const p of Object.keys(D.files).sort()) if (!seen.has(p)) fileOrder.push([p, null]);
 })();
+// The view a file's link shows: the top file is the whole design
+function fileRoute(p) { return D.files[p] && D.files[p].top ? { design: 1 } : { file: p }; }
 
 // ---------- tooltip ----------
 const tip = $("tip");
@@ -229,9 +349,10 @@ function funcTip(fname, extra) {
   lines.push("function: " + fname);
   if (f.def && f.def !== fname) lines.push("def: " + f.def);
   lines.push("kind: " + f.kind + (f.file ? "   " + loc(f.file, f.line) : ""));
+  if (f.wiring) lines.push("only wiring: " + f.wiring);
   if (f.delay_ns != null) lines.push("delay: " + fmtNs(f.delay_ns) + (f.delay_estimated ? " (estimated)" : ""));
   if (f.mcp) lines.push("multi-cycle paths");
-  const ports = (list) => list.map(([p, b]) => p + (b != null ? "[" + b + "]" : "")).join(", ");
+  const ports = (list) => list.map(([p, t]) => p + (T(t).c ? ": " + typeShort(t) : "")).join(", ");
   if (f.inputs && f.inputs.length) lines.push("in:  " + ports(f.inputs));
   if (f.outputs && f.outputs.length) lines.push("out: " + ports(f.outputs));
   if (f.regs) lines.push("regs: " + f.regs.join(", "));
@@ -246,7 +367,7 @@ function el(tag, cls, text) {
   return e;
 }
 function treeItem(label, opts) {
-  const li = el("li");
+  const li = el("li", opts.cls || null);
   const tw = el("span", "tw", opts.children ? "▸" : "");
   li.appendChild(tw);
   if (opts.check) li.appendChild(opts.check);
@@ -282,8 +403,9 @@ function instChildren(inst, fname) {
       const child = inst + MARK + id.slice(2);
       const lat = instLatency(child);
       ul.appendChild(treeItem(n.name, {
+        cls: cf.wiring ? "wiring" : null,
         badge: [cf.def && !cf.def.startsWith(n.name) ? cf.def : "", latBadge(lat), n.auto_fsm ? "AUTO_FSM" : "",
-                cf.kind === "vhdl" ? "vhdl" : ""].filter(Boolean).join(" "),
+                cf.kind === "vhdl" ? "vhdl" : "", cf.wiring ? "wiring" : ""].filter(Boolean).join(" "),
         route: "inst=" + (hasGraph(n.callee) ? child : inst),
         onclick: () => go(hasGraph(n.callee) ? { inst: child } : { inst: inst, hl: id }),
         children: hasGraph(n.callee) ? instChildren(child, n.callee) : null,
@@ -294,6 +416,10 @@ function instChildren(inst, fname) {
 }
 function buildTree() {
   const root = el("ul");
+  root.appendChild(treeItem("⌂ whole design", {
+    route: "design", onclick: () => go({ design: 1 }),
+    tip: () => "every MAIN, joined by its global wires",
+  }));
   const libs = [], byParent = new Map();
   for (const [p, parent] of fileOrder) {
     const f = D.files[p];
@@ -307,17 +433,19 @@ function buildTree() {
   const fileItem = (p) => {
     const f = D.files[p];
     return treeItem(base(p), {
-      badge: f.kind === "design" ? "" : f.kind,
-      route: "file=" + p,
-      onclick: () => go({ file: p }),
+      badge: f.top ? "top" : f.kind === "design" ? "" : f.kind,
+      route: f.top ? "design" : "file=" + p,
+      onclick: () => go(fileRoute(p)),
       open: f.top,
-      tip: () => p + "\nMAINs: " + f.mains.length + "\nimports: " + f.imports.map(base).join(", "),
+      tip: () => p + (f.top ? "\nthe top file: shows the whole design" : "\nshows this file's MAINs and what they connect to") +
+        "\nMAINs: " + f.mains.length + "\nimports: " + f.imports.map(base).join(", "),
       children: (ul) => {
         for (const m of f.mains) {
-          const e = D.mains[m];
-          const cb = el("input"); cb.type = "checkbox"; cb.checked = !state.hidden.has(m);
+          const e = D.mains[m], key = "main" + SEP + m;
+          const cb = el("input"); cb.type = "checkbox"; cb.checked = !state.hidden.has(key);
           cb.title = "show in the design view";
-          cb.addEventListener("change", () => { cb.checked ? state.hidden.delete(m) : state.hidden.add(m); render(); });
+          cb.dataset.key = key;
+          cb.addEventListener("change", () => setHidden([key], cb.checked ? null : "pass"));
           const side = e.group ? (m.endsWith("_wr") ? " write side" : m.endsWith("_rd") ? " read side" : "") : "";
           ul.appendChild(treeItem(mainLabel(m) + side, {
             check: cb, color: clockColor(e.clock), dim: !!e.wiring,
@@ -340,20 +468,23 @@ function buildTree() {
     }));
   }
   $("tree").replaceChildren(root);
+  treeFilterClass();
 }
+// Wiring instances leave the tree while the wiring filter hides them
+function treeFilterClass() { $("tree").classList.toggle("hide-wiring", filt.wiring.mode !== "show"); }
 function mainTip(m) {
   const e = D.mains[m], c = D.clocks[e.clock] || {};
   const lines = ["MAIN: " + m, "kind: " + e.kind + (e.decl ? "  " + e.decl : ""), "source: " + loc(e.file, e.line),
     "clock: " + e.clock + (c.name ? " (" + c.name + ")" : "") + (c.goal_mhz != null ? ", goal " + c.goal_mhz + " MHz" : ""),
     "latency: " + e.latency];
-  if (e.wiring) lines.push("only wiring: " + e.wiring);
   if (e.reset) lines.push("reset: " + e.reset);
   return funcTip(m, lines);
 }
 
 // ---------- layered layout ----------
-// nodes: [{id, w, h, rank: "first"|"last"|null}], edges: [{s, d, fb}]
-function layout(nodes, edges) {
+// nodes: [{id, w, h, rank: "first"|"last"|null}], edges: [{s, d, fb}]; gapX: room
+// between layers
+function layout(nodes, edges, gapX) {
   const idx = new Map(nodes.map((n, i) => [n.id, i]));
   const N = nodes.length;
   const out = Array.from({ length: N }, () => []);
@@ -429,7 +560,7 @@ function layout(nodes, edges) {
     }
   }
   // Coordinates
-  const GAPX = 70, GAPY = 18;
+  const GAPX = gapX || 70, GAPY = 18;
   let x = 0;
   const colH = layers.map((ly) => ly.reduce((s, v) => s + nodes[v].h + GAPY, -GAPY));
   const H = Math.max(0, ...colH);
@@ -454,51 +585,96 @@ function svgEl(tag, attrs, parent) {
 }
 const CH = 7.2;   // approximate character width at 12px
 const MAXCH = 40;  // longer names are cut on the block; the tooltip has them whole
+function isCloud(n) { return (n.cls || "").split(" ").includes("cloud"); }
 function measure(n) {
   n.lines = n.lines.map((t) => t.length > MAXCH ? t.slice(0, MAXCH - 1) + "…" : t);
-  const lines = n.lines;
-  n.w = Math.max(60, ...lines.map((t, i) => t.length * (i ? 6.4 : CH))) + 16;
-  n.h = Math.max(n.minH || 0, 10 + lines.length * 15);
+  const lines = n.lines, pad = isCloud(n) ? 14 : 0;   // a cloud's bumps take room
+  n.w = Math.max(60, ...lines.map((t, i) => t.length * (i ? 6.4 : CH))) + 16 + 2 * pad;
+  n.h = Math.max(n.minH || 0, 10 + lines.length * 15 + pad);
+}
+// A cloud outline filling w x h: half-ellipse bumps around an inset rectangle
+function cloudPath(w, h) {
+  const r = Math.min(h / 2, 10), nx = Math.max(2, Math.round((w - 2 * r) / 26)), ny = Math.max(1, Math.round((h - 2 * r) / 26));
+  const dx = (w - 2 * r) / nx, dy = (h - 2 * r) / ny;
+  let d = `M${r},${r}`;
+  for (let i = 0; i < nx; i++) d += ` a${dx / 2},${r} 0 0 1 ${dx},0`;
+  for (let i = 0; i < ny; i++) d += ` a${r},${dy / 2} 0 0 1 0,${dy}`;
+  for (let i = 0; i < nx; i++) d += ` a${dx / 2},${r} 0 0 1 ${-dx},0`;
+  for (let i = 0; i < ny; i++) d += ` a${r},${dy / 2} 0 0 1 0,${-dy}`;
+  return d + " z";
+}
+const LABEL_CH = 5.6;   // approximate character width of an edge label
+function labelText(e) { return e.text.length > 48 ? e.text.slice(0, 46) + "…" : e.text; }
+// The gap between layers: room for most edge labels, within bounds
+function labelGap(edges) {
+  const w = edges.filter((e) => e.text).map((e) => labelText(e).length * LABEL_CH).sort((a, b) => a - b);
+  return w.length ? Math.min(220, Math.max(70, w[Math.floor(w.length * 0.75)] + 24)) : 70;
 }
 function draw(nodes, edges, size, note, decorate) {
   vp.replaceChildren();
   state.last = { nodes, edges };
   const byId = new Map(nodes.map((n) => [n.id, n]));
   const eg = svgEl("g", {}, vp);
+  const labels = [];   // [edge, candidate label spots]
   for (const e of edges) {
     const a = byId.get(e.s), b = byId.get(e.d);
     if (!a || !b) continue;
     const x1 = a.x + a.w, y1 = a.y + a.h / 2, x2 = b.x, y2 = b.y + b.h / 2;
-    let d;
+    let d, spots;
     if (x2 > x1 + 4) {
       const c = Math.max(30, (x2 - x1) / 2);
       d = `M${x1},${y1} C${x1 + c},${y1} ${x2 - c},${y2} ${x2},${y2}`;
-    } else {   // back edge: under both nodes
+      const at = (t) => {   // a point on the curve
+        const u = 1 - t;
+        return [u * u * u * x1 + 3 * u * u * t * (x1 + c) + 3 * u * t * t * (x2 - c) + t * t * t * x2,
+                u * u * u * y1 + 3 * u * u * t * y1 + 3 * u * t * t * y2 + t * t * t * y2 - 4];
+      };
+      spots = [at(0.5), at(0.3), at(0.7)];
+    } else {   // back edge: under both nodes, its label at the bottom of the loop
       const yb = Math.max(a.y + a.h, b.y + b.h) + 24;
       d = `M${x1},${y1} C${x1 + 60},${y1} ${x1 + 60},${yb} ${(x1 + x2) / 2},${yb} S${x2 - 60},${y2} ${x2},${y2}`;
+      spots = [[(x1 + x2) / 2, yb + 12]];
     }
     const cls = "e" + (e.fb ? " fb" : "") + (e.cross ? " cross" : "") + (e.async ? " async" : "");
     const w = e.bits ? Math.min(6, 1 + Math.log2(e.bits) / 2) : 1.3;
     const p = svgEl("path", { d, class: cls, "stroke-width": w.toFixed(2), "marker-end": "url(#arr)" }, eg);
     if (e.tip) attachTip(p, () => e.tip);
-    if (e.text) {
-      const t = svgEl("text", { class: "el", x: (x1 + x2) / 2, y: (y1 + y2) / 2 - 4, "text-anchor": "middle" }, eg);
-      t.textContent = e.text.length > 40 ? e.text.slice(0, 38) + "…" : e.text;
+    if (e.text) labels.push([e, spots]);
+  }
+  // Labels, widest buses first, each at the first spot that overlaps no block and
+  // no other label; the rest are left to the tooltip
+  const taken = nodes.map((n) => [n.x, n.y, n.x + n.w, n.y + n.h]);
+  const clear = (r) => !taken.some((q) => r[0] < q[2] && q[0] < r[2] && r[1] < q[3] && q[1] < r[3]);
+  labels.sort((p, q) => (q[0].bits || 0) - (p[0].bits || 0));
+  for (const [e, spots] of labels) {
+    const text = labelText(e), half = text.length * LABEL_CH / 2;
+    for (const [x, y] of spots) {
+      const r = [x - half, y - 9, x + half, y + 2];
+      if (!clear(r)) continue;
+      taken.push(r);
+      const t = svgEl("text", { class: "el", x, y, "text-anchor": "middle" }, eg);
+      t.textContent = text;
       if (e.tip) attachTip(t, () => e.tip);
+      break;
     }
   }
   const ng = svgEl("g", {}, vp);
   for (const n of nodes) {
     const g = svgEl("g", { class: "n " + (n.cls || ""), transform: `translate(${n.x},${n.y})` }, ng);
-    const r = svgEl("rect", { width: n.w, height: n.h, rx: 4 }, g);
-    if (n.color) { r.style.stroke = n.color; r.style.strokeWidth = "2"; }
+    const pad = isCloud(n) ? 14 : 0;
+    if (pad) svgEl("path", { d: cloudPath(n.w, n.h) }, g);
+    else {
+      const r = svgEl("rect", { width: n.w, height: n.h, rx: 4 }, g);
+      if (n.color) { r.style.stroke = n.color; r.style.strokeWidth = "2"; }
+    }
     n.lines.forEach((t, i) => {
-      const tx = svgEl("text", { x: 8, y: 17 + i * 15, class: i ? "sub" : "" }, g);
+      const tx = svgEl("text", { x: 8 + pad, y: 17 + pad / 2 + i * 15, class: i ? "sub" : "" }, g);
       tx.textContent = t;
     });
     if (n.tip) attachTip(g, n.tip);
     if (n.onclick) g.addEventListener("click", (ev) => { if (!dragged) n.onclick(ev); });
     if (n.onclick && !(n.cls || "").includes("click")) g.style.cursor = "default";
+    if (n.hide) g.addEventListener("contextmenu", (ev) => { ev.preventDefault(); hideTip(); openMenu(ev, n.hide); });
   }
   const defs = svgEl("defs", {}, vp);
   const m = svgEl("marker", { id: "arr", viewBox: "0 0 10 10", refX: 9, refY: 5, markerWidth: 7,
@@ -531,7 +707,10 @@ svg.addEventListener("wheel", (ev) => {
   applyView();
 }, { passive: false });
 let drag = null;
-svg.addEventListener("mousedown", (ev) => { drag = { x: ev.clientX, y: ev.clientY, vx: view.x, vy: view.y }; dragged = false; });
+svg.addEventListener("mousedown", (ev) => {
+  if (ev.button !== 0) return;
+  drag = { x: ev.clientX, y: ev.clientY, vx: view.x, vy: view.y }; dragged = false;
+});
 addEventListener("mousemove", (ev) => {
   if (!drag) return;
   const dx = ev.clientX - drag.x, dy = ev.clientY - drag.y;
@@ -586,10 +765,32 @@ function wirePairs(main) {
   passCache.set(main, pairs);
   return pairs;
 }
+// An edge label: its first variable and its type, as the labels filter says
+function edgeText(names, t) {
+  const nm = names[0] || "", ty = typeShort(t);
+  if (filt.labels === "name") return nm;
+  if (filt.labels === "type") return ty;
+  if (filt.labels === "none") return "";
+  return nm && ty ? nm + ": " + ty : nm || ty;
+}
 
 // ---------- design view ----------
+// A design-view node's mode: hidden by hand (every member MAIN), the wiring filter,
+// or a pin's inputs/outputs filter
+function designMode(g, members) {
+  if (g.startsWith("pin:")) {
+    const name = g.slice(4), p = D.pins[name] || {};
+    const own = state.hidden.get("pin" + SEP + name);
+    if (own) return own;
+    const k = p.dir === "in" ? "in" : "out";
+    return applies(k, roleOf(p.t)) ? filt[k].mode : "show";
+  }
+  const ms = members.get(g), own = ms.map((m) => state.hidden.get("main" + SEP + m));
+  if (own.every(Boolean)) return own.includes("drop") ? "drop" : "pass";
+  if (ms.every((m) => D.mains[m].wiring)) return filt.wiring.mode;
+  return "show";
+}
 function designView(file) {
-  const showWiring = !$("f-wiring").checked;
   const inFile = file ? new Set(D.files[file] ? D.files[file].mains : []) : null;
   // Graph of MAIN groups and pins
   const nodeOf = (inst) => inst.startsWith("pin:") ? inst : mainGroup(mainOf(inst));
@@ -604,12 +805,11 @@ function designView(file) {
     const s = nodeOf(l.src), d = nodeOf(l.dst);
     if (s !== d) raw.push({ s, d, link: l });
   }
-  const isWiring = (g) => !g.startsWith("pin:") && members.get(g).every((m) => D.mains[m].wiring);
-  const userHidden = (g) => !g.startsWith("pin:") && members.get(g).every((m) => state.hidden.has(m));
   const all = new Set([...members.keys()]);
   for (const e of raw) { all.add(e.s); all.add(e.d); }
-  const ownMain = (g) => inFile && !g.startsWith("pin:") && members.get(g).some((m) => inFile.has(m));
-  const keep = (g) => !userHidden(g) && (showWiring || !isWiring(g) || ownMain(g));
+  const mode = new Map([...all].map((g) => [g, designMode(g, members)]));
+  const kept = raw.filter((e) => mode.get(e.s) !== "drop" && mode.get(e.d) !== "drop");
+  const keep = (g) => mode.get(g) === "show";
   // Through a hidden MAIN, a wire continues only into the wires its logic drives from it
   const step = (e, f) => {
     if (e.d.startsWith("pin:")) return true;
@@ -618,12 +818,13 @@ function designView(file) {
       return !pairs || pairs.has(e.link.wire + "\u0000" + f.link.wire);
     });
   };
-  let edges = contract([...all], raw, keep, (acc, s, d, path) => {
-    acc = acc || { s, d, names: new Set(), bits: 0, async: false, crossing: false, links: [] };
+  let edges = contract([...all], kept, keep, (acc, s, d, path) => {
+    acc = acc || { s, d, names: new Set(), bits: 0, async: false, t: null, links: [] };
     const last = path[path.length - 1].link;
     acc.names.add(path.map((p) => p.link.name).join(" → "));
-    acc.bits += last.bits || 0;
+    acc.bits += bitsOf(last.t) || 0;
     acc.async = acc.async || path.some((p) => p.link.async);
+    if (acc.t == null) acc.t = last.t;
     acc.links.push(path);
     return acc;
   }, step);
@@ -636,9 +837,11 @@ function designView(file) {
   if (inFile) {
     const mine = (g) => !g.startsWith("pin:") && members.get(g).some((m) => inFile.has(m));
     const near = new Set();
-    for (const e of edges) {
-      if (mine(e.s)) near.add(e.d);
-      if (mine(e.d)) near.add(e.s);
+    if (filt.ghost.mode === "show") {
+      for (const e of edges) {
+        if (mine(e.s)) near.add(e.d);
+        if (mine(e.d)) near.add(e.s);
+      }
     }
     ids = ids.filter((g) => mine(g) || near.has(g));
     ghost = new Set(ids.filter((g) => !mine(g)));
@@ -648,70 +851,169 @@ function designView(file) {
   const nodes = ids.sort().map((g) => {
     if (g.startsWith("pin:")) {
       const p = D.pins[g.slice(4)];
-      return { id: g, cls: "port", lines: [p.name, (p.dir === "in" ? "Input" : "Output") + (p.bits != null ? " [" + p.bits + "]" : "")],
-        rank: p.dir === "in" ? "first" : "last", tip: () => "pin " + p.name + "\n" + (p.loc || "") + "\nbits: " + p.bits };
+      return { id: g, cls: "port", lines: [p.name, (p.dir === "in" ? "Input" : "Output") + (T(p.t).c ? "  " + typeShort(p.t) : "")],
+        rank: p.dir === "in" ? "first" : "last",
+        tip: () => "pin " + p.name + "\n" + (p.loc || "") + (T(p.t).c ? "\ntype: " + typeLong(p.t) : ""),
+        hide: { label: "pin " + p.name, keys: ["pin" + SEP + g.slice(4)], modes: ["drop"] } };
     }
     const ms = members.get(g), e = D.mains[ms[0]];
     const clocks = [...new Set(ms.map((m) => D.mains[m].clock))];
     const lat = Math.max(...ms.map((m) => D.mains[m].latency));
     const kindTxt = e.kind === "main" ? "MAIN" : e.kind.replace("_", " ");
-    const n = {
+    const label = ms.length > 1 ? e.name : mainLabel(ms[0]);
+    return {
       id: g, cls: (ghost.has(g) ? "ghost " : "") + "click",
-      lines: [ms.length > 1 ? e.name : mainLabel(ms[0]),
-              [kindTxt, lat ? "L=" + lat : "", clocks.join(" → ")].filter(Boolean).join("  "),
+      lines: [label, [kindTxt, lat ? "L=" + lat : "", clocks.join(" → "), mode.get(g) === "show" && ms.every((m) => D.mains[m].wiring) ? "wiring" : ""].filter(Boolean).join("  "),
               loc(e.file, e.line)],
       color: clockColor(clocks[0]),
       tip: () => ms.map(mainTip).join("\n\n"),
       onclick: () => go({ inst: ms[0] }),
+      hide: { label, keys: ms.map((m) => "main" + SEP + m), modes: ["pass", "drop"] },
     };
-    return n;
   });
   nodes.forEach(measure);
   const de = edges.map((e) => {
     const names = [...e.names].sort();
     const cs = clockOf(e.s), cd = clockOf(e.d);
+    const one = e.links.length === 1 && e.links[0].length === 1;
     return { s: e.s, d: e.d, bits: e.bits, async: e.async, cross: cs && cd && cs !== cd,
-      text: names.length === 1 ? names[0] : names.length + " wires",
-      tip: names.join("\n") + (e.bits ? "\n" + e.bits + " bits" : "") };
+      text: names.length === 1 ? (one ? edgeText(names, e.t) : names[0]) : names.length + " wires",
+      tip: names.join("\n") + (one && T(e.t).c ? "\ntype: " + typeLong(e.t) : "") + (e.bits ? "\n" + e.bits + " bits" : "") };
   });
   if (de.length > 40) for (const e of de) e.text = "";   // hover for names
-  const size = layout(nodes, de);
-  const hiddenN = [...members.keys()].filter((g) => !keep(g)).length;
+  const size = layout(nodes, de, labelGap(de));
+  const hiddenN = [...all].filter((g) => !g.startsWith("pin:") && !keep(g)).length;
   draw(nodes, de, size, (file ? base(file) + ": " : "") + nodes.length + " blocks" +
-    (hiddenN ? ", " + hiddenN + " hidden (filters)" : ""));
+    (hiddenN ? ", " + hiddenN + " MAINs hidden (filters)" : ""));
   setSource(file || D.build.top, 1);
-  return nodes.length;
+  banner(file);
+  return { nodes, edges: de };
+}
+// A file view says so, with the way back to the whole design
+function banner(file) {
+  const b = $("banner");
+  b.replaceChildren();
+  if (!file) { b.style.display = "none"; return; }
+  b.appendChild(document.createTextNode("the MAINs of " + base(file) + (filt.ghost.mode === "show" ? " and what they connect to · " : " · ")));
+  const a = el("a", null, "whole design");
+  a.addEventListener("click", () => go({ design: 1 }));
+  b.appendChild(a);
+  b.style.display = "block";
 }
 
 // ---------- function view ----------
+// A function-graph node's filter kind, or null: drawn whatever the filters say
+function nodeKindOf(n) {
+  switch (n.kind) {
+    case "in": return "in";
+    case "out": return "out";
+    case "reg": case "reg_next": return "reg";
+    case "wire_read": case "wire_write": return "wire";
+    case "const": case "ce": return "const";
+    case "sub": {
+      const cf = func(n.callee);
+      if (cf.wiring) return "wiring";
+      return cf.kind === "op" ? "op" : null;
+    }
+  }
+  return null;
+}
+function nodeRole(n) {
+  if (n.kind === "wire_read" || n.kind === "wire_write") return roleOf((D.wires[n.name] || {}).t);
+  return roleOf(n.t);
+}
+function nodeMode(fname, n) {
+  const own = state.hidden.get(fname + SEP + n.id);
+  if (own) return own;
+  const k = nodeKindOf(n);
+  if (!k || !applies(k, nodeRole(n))) return "show";
+  return filt[k].mode;
+}
+// The keys that hide a node by hand: both values of a register
+function hideKeys(fname, n) {
+  if (n.kind === "reg" || n.kind === "reg_next") return [fname + SEP + "rq:" + n.name, fname + SEP + "rd:" + n.name];
+  return [fname + SEP + n.id];
+}
+// Operators in group mode, in connected clusters: group id ("g:" + first member)
+// -> {members, names: variables on the edges inside}
+function opGroups(ids, edges, mode) {
+  const parent = new Map();
+  for (const id of ids) if (mode.get(id) === "group") parent.set(id, id);
+  const find = (x) => {
+    while (parent.get(x) !== x) { parent.set(x, parent.get(parent.get(x))); x = parent.get(x); }
+    return x;
+  };
+  for (const e of edges) {
+    if (!parent.has(e.s) || !parent.has(e.d)) continue;
+    const a = find(e.s), b = find(e.d);
+    if (a < b) parent.set(b, a); else if (b < a) parent.set(a, b);
+  }
+  const groups = new Map();
+  for (const id of [...parent.keys()].sort()) {
+    const gid = "g:" + find(id);
+    if (!groups.has(gid)) groups.set(gid, { members: [], names: new Set() });
+    groups.get(gid).members.push(id);
+  }
+  return groups;
+}
+// [start, end] ns of a group's operators in its function's pipeline map, or null
+function groupSpan(members, f) {
+  if (!f.offsets) return null;
+  let lo = Infinity, hi = -Infinity;
+  for (const id of members) {
+    const o = f.offsets[id.slice(2)];
+    if (o) { lo = Math.min(lo, o[0]); hi = Math.max(hi, o[1]); }
+  }
+  return lo <= hi ? [lo, hi] : null;
+}
+// Merges the paths between two drawn nodes: their variables, the type into the
+// driven port, and the types of the Feedback variables on the way (fbTypes)
+function mergeEdges(acc, s, d, path) {
+  const first = path[0], last = path[path.length - 1];
+  acc = acc || { s, d, sp: first.sp, dp: last.dp, names: [], t: last.t, bits: 0, fbTypes: new Set(), reg: null, paths: 0 };
+  for (const e of path) for (const nm of e.names) if (!acc.names.includes(nm)) acc.names.push(nm);
+  acc.bits = Math.max(acc.bits, bitsOf(last.t) || 0);
+  for (const e of path) if (e.fb) acc.fbTypes.add(e.t);
+  if (!acc.reg) { const r = path.find((e) => e.reg); if (r) acc.reg = r.reg; }
+  acc.paths++;
+  return acc;
+}
 function functionView(inst, hl) {
   const chain = resolve(inst);
   if (!chain) throw new Error("unknown instance " + inst);
   const fname = chain[chain.length - 1][1];
   const f = func(fname), g = graphOf(fname);
   if (!g) throw new Error("no graph for " + fname);
-  const showOps = $("f-ops").checked, hideFb = $("f-fb").checked;
   const main = chain[0][0], clock = D.mains[main] ? D.mains[main].clock : null;
-  const visible = (id) => {
-    const n = g.nodes[id];
-    if (!n) return false;
-    if (n.kind === "sub") return showOps || func(n.callee).kind !== "op";
-    if (n.kind === "const" || n.kind === "ce") return showOps;
-    return true;
-  };
   const ids = Object.keys(g.nodes).sort();
-  const raw = g.edges.filter((e) => !(hideFb && e.fb));
-  const edges = contract(ids, raw, visible, (acc, s, d, path) => {
-    acc = acc || { s, d, labels: new Set(), bits: 0, fb: false };
-    const label = path.map((e) => e.label).find(Boolean);
-    if (label) acc.labels.add(label);
-    acc.bits = Math.max(acc.bits, path[path.length - 1].bits || 0);
-    acc.fb = acc.fb || path.some((e) => e.fb);
-    return acc;
-  });
-  const shown = ids.filter(visible);
-  const hiddenOps = ids.length - shown.length;
+  const mode = new Map(ids.map((id) => [id, nodeMode(fname, g.nodes[id])]));
+  // Dropped nodes leave with their edges, as do the Feedback edges the filter drops
+  const dropFb = filt.fb.mode === "drop";
+  const raw = g.edges.filter((e) => mode.get(e.s) !== "drop" && mode.get(e.d) !== "drop" &&
+    !(e.fb && dropFb && applies("fb", roleOf(e.t))));
+  // A register passed through joins its next value to its current value
+  for (const id of ids) {
+    const n = g.nodes[id], next = "rd:" + n.name;
+    if (n.kind === "reg" && mode.get(id) === "pass" && mode.get(next) === "pass")
+      raw.push({ s: next, sp: "", d: id, dp: "", t: n.t, names: [n.name], fb: false, reg: n.name });
+  }
+  const groups = opGroups(ids, raw, mode);
+  const groupOf = new Map();
+  for (const [gid, grp] of groups) for (const id of grp.members) groupOf.set(id, gid);
+  const ep = (id) => groupOf.get(id) || id;
+  const edges0 = [];
+  for (const e of raw) {
+    const s = ep(e.s), d = ep(e.d);
+    if (s === d && groupOf.has(e.s)) { for (const nm of e.names) groups.get(s).names.add(nm); continue; }
+    edges0.push(s === e.s && d === e.d ? e : Object.assign({}, e, { s, d }));
+  }
+  const keep = (id) => groups.has(id) || mode.get(id) === "show";
+  const nodeIds = ids.filter((id) => !groupOf.has(id)).concat([...groups.keys()]);
+  const edges = contract(nodeIds, edges0, keep, mergeEdges);
+  const shown = nodeIds.filter(keep);
+  const nameOf = (id) => groups.has(id) ? "logic" : g.nodes[id].name;
   const nodes = shown.map((id) => {
+    if (groups.has(id)) return groupNode(id, groups.get(id), fname, g, f, inst, hl);
     const n = g.nodes[id];
     if (n.kind === "sub") {
       const child = inst + MARK + id.slice(2);
@@ -721,7 +1023,7 @@ function functionView(inst, hl) {
       if (lat) tags.push("L=" + lat);
       if (cf.delay_ns != null) tags.push(fmtNs(cf.delay_ns));
       const badges = [n.auto_pipeline ? "AUTO_PIPELINE" : "", n.auto_fsm ? "AUTO_FSM" : "",
-        cf.kind === "vhdl" ? "vhdl" : "", cf.mcp ? "MCP" : "", cf.regs ? "regs" : ""].filter(Boolean);
+        cf.kind === "vhdl" ? "vhdl" : "", cf.mcp ? "MCP" : "", cf.regs ? "regs" : "", cf.wiring ? "wiring" : ""].filter(Boolean);
       const lines = [n.name];
       if (tags.length) lines.push(tags.join("  "));
       if (badges.length) lines.push(badges.join(" "));
@@ -733,58 +1035,123 @@ function functionView(inst, hl) {
         onclick: (ev) => {
           if ((ev.ctrlKey || ev.metaKey) && n.src) { setSource(n.src[0], n.src[1]); $("src").click(); return; }
           if (can) go({ inst: child });
-        } };
+        },
+        hide: { label: n.name, keys: hideKeys(fname, n), modes: ["pass", "drop"] } };
     }
     const kinds = { in: ["input", "first"], out: ["output", "last"], reg: ["Reg", "first"], reg_next: ["Reg next", "last"],
       wire_read: ["wire read", "first"], wire_write: ["wire write", "last"], const: ["const", null], ce: ["clock enable", "first"] };
     const [what, rank] = kinds[n.kind] || [n.kind, null];
     const wire = (n.kind === "wire_read" || n.kind === "wire_write") ? D.wires[n.name] : null;
-    const bits = wire ? wire.bits : n.bits;
-    const lines = [wire ? wire.name : n.name, what + (bits != null ? " [" + bits + "]" : "")];
-    const hop = (n.kind === "wire_read" || n.kind === "wire_write") ? wireHop(n.name, n.kind, inst) : null;
+    const t = wire ? wire.t : n.t;
+    const lines = [wire ? wire.name : n.name, what + (T(t).c ? "  " + typeShort(t) : "")];
+    const hop = wire ? wireHop(n.name, n.kind, inst) : null;
+    const isReg = n.kind === "reg" || n.kind === "reg_next";
     return { id, cls: "port" + (hop ? " click" : "") + (id === hl ? " hl" : ""), lines, rank,
       color: n.kind === "in" || n.kind === "out" ? clockColor(clock) : null,
       tip: () => what + " " + n.name + (wire && wire.loc ? "\ndeclared: " + wire.loc : "") +
-        (bits != null ? "\nbits: " + bits : "") + (wire && wire.async ? "\nASYNC" : "") + (hop ? "\n" + hop.text : ""),
-      onclick: hop ? () => go(hop.route) : null };
+        (T(t).c ? "\ntype: " + typeLong(t) : "") + (wire && wire.async ? "\nASYNC" : "") + (hop ? "\n" + hop.text : ""),
+      onclick: hop ? () => go(hop.route) : null,
+      hide: { label: what + " " + n.name, keys: hideKeys(fname, n), modes: isReg ? ["pass", "drop"] : ["drop"] } };
   });
   nodes.forEach(measure);
-  const scale = $("f-scale").checked ? hardwareScale(nodes, g, f) : null;
+  const endText = (id, port) => nameOf(id) + (port ? "." + port : "");
   const de = edges.map((e) => {
-    const labels = [...e.labels].sort();
-    return { s: e.s, d: e.d, bits: e.bits, fb: e.fb, text: labels.join(", "),
-      tip: (labels.join(", ") || "(unnamed)") + (e.bits ? "\n" + e.bits + " bits" : "") + (e.fb ? "\nthrough Feedback" : "") };
+    const lines = [e.names.length ? e.names.slice(0, 12).join(", ") + (e.names.length > 12 ? " …" : "")
+      : "(no variable) " + endText(e.s, e.sp) + " → " + endText(e.d, e.dp)];
+    if (T(e.t).c) lines.push("type: " + typeLong(e.t));
+    for (const t of e.fbTypes) lines.push("through a Feedback" + (T(t).c ? " of " + typeShort(t) + ", " + ROLE_TEXT[roleOf(t)] : ""));
+    if (e.reg) lines.push("through register " + e.reg);
+    if (e.paths > 1) lines.push(e.paths + " paths merged");
+    return { s: e.s, d: e.d, bits: e.bits, fb: e.fbTypes.size > 0 || !!e.reg, t: e.t,
+      feedbackRoles: [...e.fbTypes].map(roleOf), text: edgeText(e.names, e.t), tip: lines.join("\n") };
   });
+  const scale = $("f-scale").checked ? hardwareScale(nodes, de, g, f) : null;
   if (de.length > 60 || scale) for (const e of de) e.text = "";   // hover for names
-  let size = layout(nodes, de);
+  let size = layout(nodes, de, labelGap(de));
   if (scale) size = scale.place(nodes, size);
   const title = chain.length > 1 ? g_name(chain[chain.length - 2][1], chain[chain.length - 1][2]) : mainLabel(main);
+  let grouped = 0;
+  for (const grp of groups.values()) grouped += grp.members.length;
+  const hiddenN = ids.length - shown.filter((id) => !groups.has(id)).length - grouped;
   draw(nodes, de, size, title + ": " + nodes.length + " blocks" +
-    (hiddenOps ? ", " + hiddenOps + " operators/constants hidden" : "") + (scale ? scale.note : ""),
+    (grouped ? ", " + grouped + " operators in " + groups.size + " logic blocks" : "") +
+    (hiddenN ? ", " + hiddenN + " hidden (filters)" : "") + (scale ? scale.note : ""),
     scale ? scale.axis : null);
   setSource(f.file, f.line);
-  return nodes.length;
+  banner(null);
+  return { nodes, edges: de, groups };
+}
+// One logic block for a cluster of operators: a cloud when it is known to be
+// combinational. Pipelining puts its registers into operators, and lines up the
+// paths of a function with latency with more, between its submodules: so no
+// operator in it may have a latency, and its function instance none either.
+function groupNode(gid, grp, fname, g, f, inst, hl) {
+  const counts = new Map();
+  let lat = 0;
+  for (const id of grp.members) {
+    const k = opName(g.nodes[id].callee);
+    counts.set(k, (counts.get(k) || 0) + 1);
+    lat = Math.max(lat, instLatency(inst + MARK + id.slice(2)));
+  }
+  const ops = [...counts].sort((a, b) => b[1] - a[1] || (a[0] < b[0] ? -1 : a[0] > b[0] ? 1 : 0));
+  const fnLat = instLatency(inst), comb = !lat && !fnLat;
+  const span = groupSpan(grp.members, f);
+  const n = grp.members.length;
+  const tags = [n + (n === 1 ? " op" : " ops")];
+  if (lat) tags.push("L=" + lat); else if (!comb) tags.push("in L=" + fnLat);
+  if (span) tags.push(fmtNs(span[1] - span[0]));
+  const tipText = () => {
+    const lines = ["logic: " + n + " operator" + (n === 1 ? "" : "s") + " (filters › operators: show draws each)"];
+    for (const [k, c] of ops.slice(0, 16)) lines.push("  " + c + "× " + opSymbol(k) + (opSymbol(k) !== k.toLowerCase() ? "  " + k : ""));
+    if (ops.length > 16) lines.push("  … " + (ops.length - 16) + " more kinds");
+    if (grp.names.size) {
+      const names = [...grp.names].sort();
+      lines.push("variables inside: " + names.slice(0, 12).join(", ") + (names.length > 12 ? " …" : ""));
+    }
+    lines.push(lat ? "an operator in it has latency " + lat : comb ? "combinational: no registers inside"
+      : "this function instance has latency " + fnLat + ": registers that line up its paths may sit among these operators");
+    if (span) lines.push("delay through it: " + fmtNs(span[1] - span[0]) + " (" + fmtNs(span[0]) + " to " + fmtNs(span[1]) + ")");
+    return lines.join("\n");
+  };
+  return { id: gid, cls: (comb ? "cloud" : "logic") + (grp.members.includes(hl) ? " hl" : ""), members: grp.members,
+    lines: [ops.slice(0, 4).map(([k]) => opSymbol(k)).join(" ") + (ops.length > 4 ? " …" : ""), tags.join("  ")],
+    tip: tipText,
+    hide: { label: "logic (" + n + (n === 1 ? " operator)" : " operators)"), keys: grp.members.map((id) => fname + SEP + id), modes: ["pass", "drop"] } };
 }
 // Hardware scale (as the old pipeline_map.png): a block is as wide as its
 // delay and as tall as its mean in/out bus width. With the compiler's
 // zero-added-clocks offsets (f.offsets) x is its start time; otherwise the
 // layered x positions stay.
-function hardwareScale(nodes, g, f) {
-  const subs = nodes.filter((n) => g.nodes[n.id].kind === "sub");
-  const delayOf = (n) => func(g.nodes[n.id].callee).delay_ns;
-  const busBits = (n) => {
-    const cf = func(g.nodes[n.id].callee), sum = (l) => (l || []).reduce((s, [, b]) => s + (b || 0), 0);
-    return cf.inputs ? (sum(cf.inputs) + sum(cf.outputs)) / 2 : 1;
-  };
+function hardwareScale(nodes, edges, g, f) {
+  const blocks = nodes.filter((n) => n.members || (g.nodes[n.id] && g.nodes[n.id].kind === "sub"));
   const offsets = f.offsets || null;
+  const delayOf = (n) => {
+    if (!n.members) return func(g.nodes[n.id].callee).delay_ns;
+    const s = groupSpan(n.members, f);
+    if (s) return s[1] - s[0];
+    const most = Math.max(0, ...n.members.map((id) => func(g.nodes[id].callee).delay_ns || 0));
+    return most || null;
+  };
+  const startOf = (n) => {
+    if (!offsets) return null;
+    if (n.members) { const s = groupSpan(n.members, f); return s ? s[0] : null; }
+    const o = offsets[n.id.slice(2)];
+    return o ? o[0] : null;
+  };
+  const edgeBits = new Map();
+  for (const e of edges) for (const id of [e.s, e.d]) edgeBits.set(id, Math.max(edgeBits.get(id) || 0, e.bits || 0));
+  const busBits = (n) => {
+    const cf = n.members ? null : func(g.nodes[n.id].callee), sum = (l) => (l || []).reduce((s, [, t]) => s + (bitsOf(t) || 0), 0);
+    return cf && cf.inputs ? (sum(cf.inputs) + sum(cf.outputs)) / 2 : edgeBits.get(n.id) || 1;
+  };
   const maxNs = offsets ? Math.max(0, ...Object.values(offsets).map((o) => o[1]))
-                        : Math.max(0, ...subs.map((n) => delayOf(n) || 0));
+                        : Math.max(0, ...blocks.map((n) => delayOf(n) || 0));
   if (!(maxNs > 0)) return null;
   const K = 1200 / maxNs;   // px per ns
-  for (const n of subs) {
+  for (const n of blocks) {
     n.h = Math.min(200, 16 + 3 * Math.sqrt(busBits(n)));
     const d = delayOf(n);
-    if (d != null) n.w = Math.max(6, d * K);
+    if (d != null) n.w = Math.max(isCloud(n) ? 30 : 6, d * K);
     const fit = Math.max(1, Math.floor((n.w - 10) / 6.4));   // name only, cut to the block
     n.lines = [n.lines[0].length > fit ? n.lines[0].slice(0, Math.max(0, fit - 1)) + "…" : n.lines[0]];
   }
@@ -794,9 +1161,9 @@ function hardwareScale(nodes, g, f) {
     place(nodes, size) {
       if (!offsets) return size;
       let right = 0;
-      for (const n of subs) {
-        const o = offsets[n.id.slice(2)];
-        if (o) { n.x = o[0] * K; right = Math.max(right, n.x + n.w); }
+      for (const n of blocks) {
+        const s = startOf(n);
+        if (s != null) { n.x = s * K; right = Math.max(right, n.x + n.w); }
       }
       for (const n of nodes) {
         if (n.rank === "first") n.x = -n.w - 40;
@@ -843,7 +1210,7 @@ function parseHash() {
     const rest = h.slice(5), at = rest.indexOf("&hl=");
     return at < 0 ? { inst: rest } : { inst: rest.slice(0, at), hl: rest.slice(at + 4) };
   }
-  if (h.startsWith("file=")) return { file: h.slice(5) };
+  if (h.startsWith("file=") && D.files[h.slice(5)] && !D.files[h.slice(5)].top) return { file: h.slice(5) };
   return { design: 1 };
 }
 function go(r) {
@@ -859,11 +1226,11 @@ function crumbs(r) {
     else c.appendChild(el("span", null, text));
   };
   add("design", r.design ? null : { design: 1 });
-  if (r.file) add(base(r.file), null);
+  if (r.file) add(base(r.file) + " (its MAINs)", null);
   if (r.inst) {
     const chain = resolve(r.inst) || [];
     const e = D.mains[chain.length ? chain[0][0] : ""];
-    if (e && e.file) add(base(e.file), { file: e.file });
+    if (e && e.file && !(D.files[e.file] && D.files[e.file].top)) add(base(e.file), fileRoute(e.file));
     chain.forEach(([p, fn, local], i) => {
       const name = local == null ? mainLabel(p) : g_name(chain[i - 1][1], local);
       add(name, i === chain.length - 1 ? null : { inst: p });
@@ -877,8 +1244,8 @@ function render() {
   state.view = r;
   crumbs(r);
   document.querySelectorAll("#tree .item.sel").forEach((e) => e.classList.remove("sel"));
-  const key = r.inst ? "inst=" + r.inst : r.file ? "file=" + r.file : null;
-  if (key) document.querySelectorAll("#tree .item").forEach((e) => { if (e.dataset.route === key) e.classList.add("sel"); });
+  const key = r.inst ? "inst=" + r.inst : r.file ? "file=" + r.file : "design";
+  document.querySelectorAll("#tree .item").forEach((e) => { if (e.dataset.route === key) e.classList.add("sel"); });
   try {
     if (r.inst) functionView(r.inst, r.hl);
     else designView(r.file || null);
@@ -888,6 +1255,113 @@ function render() {
     $("info").textContent = "cannot draw this view: " + err.message;
   }
 }
+
+// ---------- panels: filters, hidden nodes, a node's menu ----------
+function closePanels() { for (const id of ["filters", "hidden-list", "ctx"]) $(id).style.display = "none"; }
+function placePanel(box, x, y) {
+  box.style.display = "block";
+  const w = box.offsetWidth, h = box.offsetHeight;
+  box.style.left = Math.max(4, Math.min(x, innerWidth - w - 4)) + "px";
+  box.style.top = Math.max(4, Math.min(y, innerHeight - h - 4)) + "px";
+}
+function placeBelow(box, anchor) { const r = anchor.getBoundingClientRect(); placePanel(box, r.left, r.bottom + 4); }
+function filtersChanged() { saveSettings(); treeFilterClass(); render(); }
+function buildFilters() {
+  const box = $("filters");
+  box.replaceChildren();
+  const table = el("table");
+  const select = (options, value, onchange) => {
+    const s = el("select");
+    for (const [v, text] of options) { const o = el("option", null, text); o.value = v; s.appendChild(o); }
+    s.value = value;
+    s.addEventListener("change", () => onchange(s.value));
+    const td = el("td"); td.appendChild(s);
+    return td;
+  };
+  for (const k of KINDS) {
+    const tr = el("tr");
+    const name = el("td", null, k.label);
+    if (k.tip) name.title = k.tip;
+    tr.appendChild(name);
+    const modes = k.modes.map((m) => [m, k.modes.length === 2 && m === "drop" ? "hide" : MODE_TEXT[m]]);
+    tr.appendChild(select(modes, filt[k.id].mode, (v) => { filt[k.id].mode = v; filtersChanged(); }));
+    if (k.typed) tr.appendChild(select(SCOPES.map(([id, text]) => [id, text]), filt[k.id].scope, (v) => { filt[k.id].scope = v; filtersChanged(); }));
+    table.appendChild(tr);
+  }
+  const tr = el("tr");
+  tr.appendChild(el("td", null, "edge labels"));
+  tr.appendChild(select(LABELS, filt.labels, (v) => { filt.labels = v; filtersChanged(); }));
+  table.appendChild(tr);
+  box.appendChild(table);
+  box.appendChild(el("div", "note", "Hidden things either pass their edges through or take them along; " +
+    "a typed kind's mode applies to the interface roles its second choice names (forward: streams " +
+    "{data, valid} and fwd_t; feedback: fb_t), the rest are shown. Right-click a node to hide just it."));
+  const reset = el("button", null, "defaults");
+  reset.type = "button";
+  reset.addEventListener("click", () => { filt = defaults(); buildFilters(); filtersChanged(); });
+  box.appendChild(reset);
+}
+$("filters-btn").addEventListener("click", (ev) => {
+  const open = $("filters").style.display === "block";
+  closePanels();
+  if (!open) placeBelow($("filters"), ev.currentTarget);
+});
+// The header button lists what was hidden by hand
+function hiddenButton() {
+  const b = $("hidden-btn");
+  b.textContent = state.hidden.size + " hidden";
+  b.style.display = state.hidden.size ? "" : "none";
+}
+function setHidden(keys, mode) {   // mode null shows them again
+  for (const k of keys) { if (mode) state.hidden.set(k, mode); else state.hidden.delete(k); }
+  saveSettings();
+  hiddenButton();
+  document.querySelectorAll("#tree input[data-key]").forEach((cb) => { cb.checked = !state.hidden.has(cb.dataset.key); });
+  render();
+}
+function hiddenLabel(key) {
+  const i = key.indexOf(SEP), a = key.slice(0, i), b = key.slice(i + 1);
+  if (a === "main") return "MAIN " + mainLabel(b);
+  if (a === "pin") return "pin " + ((D.pins[b] || {}).name || b);
+  const g = graphOf(a), n = g && g.nodes[b];
+  const what = n ? (n.kind === "sub" ? n.name : n.kind + " " + n.name) : b;
+  return what + " in " + ((D.funcs[a] || {}).def || a);
+}
+function showHiddenList() {
+  const box = $("hidden-list");
+  box.replaceChildren();
+  const keys = [...state.hidden.keys()].sort();
+  for (const k of keys) {
+    const row = el("div");
+    row.appendChild(document.createTextNode(hiddenLabel(k) + (state.hidden.get(k) === "pass" ? " (edges pass through) " : " (with edges) ")));
+    const a = el("a", null, "show");
+    a.addEventListener("click", () => { setHidden([k], null); if (state.hidden.size) showHiddenList(); else closePanels(); });
+    row.appendChild(a);
+    box.appendChild(row);
+  }
+  const all = el("button", null, "show all");
+  all.type = "button";
+  all.addEventListener("click", () => { closePanels(); setHidden(keys, null); });
+  box.appendChild(all);
+  placeBelow(box, $("hidden-btn"));
+}
+$("hidden-btn").addEventListener("click", () => {
+  const open = $("hidden-list").style.display === "block";
+  closePanels();
+  if (!open) showHiddenList();
+});
+function openMenu(ev, hide) {
+  closePanels();
+  const box = $("ctx");
+  box.replaceChildren(el("div", "head", hide.label));
+  for (const m of hide.modes) {
+    const item = el("div", null, hide.modes.length === 1 ? "hide" : MODE_TEXT[m]);
+    item.addEventListener("click", () => { closePanels(); setHidden(hide.keys, m); });
+    box.appendChild(item);
+  }
+  placePanel(box, ev.clientX, ev.clientY);
+}
+addEventListener("keydown", (ev) => { if (ev.key === "Escape") closePanels(); });
 
 // ---------- search ----------
 let instIndex = null;   // [display path, instance, parent instance, node id] of non-operator instances
@@ -928,7 +1402,12 @@ function search(text) {
   box.style.display = "block";
 }
 $("search").addEventListener("input", (ev) => search(ev.target.value));
-addEventListener("click", (ev) => { if (!$("results").contains(ev.target) && ev.target !== $("search")) $("results").style.display = "none"; });
+addEventListener("click", (ev) => {
+  if (!$("results").contains(ev.target) && ev.target !== $("search")) $("results").style.display = "none";
+  for (const [panel, button] of [["filters", "filters-btn"], ["hidden-list", "hidden-btn"], ["ctx", null]]) {
+    if (!$(panel).contains(ev.target) && (!button || !$(button).contains(ev.target))) $(panel).style.display = "none";
+  }
+});
 
 // ---------- copy as Mermaid ----------
 function mermaidText() {
@@ -936,7 +1415,7 @@ function mermaidText() {
   const q = (t) => '"' + String(t).replace(/"/g, "#quot;") + '"';
   const ids = new Map(nodes.map((n, i) => [n.id, "n" + i]));
   const lines = ["flowchart LR"];
-  for (const n of nodes) lines.push("    " + ids.get(n.id) + "[" + q(n.lines.join("<br>")) + "]");
+  for (const n of nodes) lines.push("    " + ids.get(n.id) + (isCloud(n) ? "((" + q(n.lines.join("<br>")) + "))" : "[" + q(n.lines.join("<br>")) + "]"));
   for (const e of edges) {
     if (!ids.has(e.s) || !ids.has(e.d)) continue;
     const arrow = e.fb ? "-.->" : "-->";
@@ -953,6 +1432,114 @@ $("mermaid").addEventListener("click", () => {
 });
 $("mm-close").addEventListener("click", () => { $("mm").style.display = "none"; });
 
+// ---------- self-test ----------
+// Draws every view with the default filters, everything shown and everything
+// hidden, checking what each must and must not draw, then marks <body>
+// data-ready="<views drawn>" (data-error on any failure), which the render test reads
+function withFilters(change, fn) {
+  const saved = JSON.stringify(filt);
+  change(filt);
+  try { return fn(); } finally { filt = JSON.parse(saved); }
+}
+const ALL_SHOWN = (f) => { for (const k of KINDS) f[k.id].mode = "show"; };
+const ALL_HIDDEN = (f) => {
+  for (const k of KINDS) { f[k.id].mode = k.modes.includes("pass") ? "pass" : "drop"; f[k.id].scope = "all"; }
+};
+function selftest() {
+  let views = 0;
+  const check = (ok, what) => { if (!ok) throw new Error("self-test: " + what); };
+  const drawnIds = (v) => new Set(v.nodes.map((n) => n.id));
+  // What a graph node is, from the data alone (not from the filters' own nodeKindOf)
+  const isOp = (gn) => gn.kind === "sub" && func(gn.callee).kind === "op" && !func(gn.callee).wiring;
+  const isWiring = (gn) => gn.kind === "sub" && !!func(gn.callee).wiring;
+  const isBlock = (gn) => gn.kind === "sub" && !isOp(gn) && !isWiring(gn);
+  try {
+    storageOff = true;
+    filt = defaults();
+    state.hidden = new Map();
+    const home = designView(null); views++;
+    check($("banner").style.display === "none", "the whole design has a file banner");
+    for (const n of home.nodes) {
+      if (n.id.startsWith("pin:")) continue;
+      const ms = Object.keys(D.mains).filter((m) => mainGroup(m) === n.id);
+      check(!ms.every((m) => D.mains[m].wiring), "wiring MAIN drawn by default: " + n.id);
+    }
+    if (topFile) check(fileRoute(topFile).design, "the top file does not open the whole design");
+    for (const p of Object.keys(D.files)) {
+      designView(p); views++;
+      check($("banner").style.display === "block", "a file view has no banner: " + p);
+    }
+    const done = new Set();
+    const walk = (inst, fname) => {
+      if (done.has(fname)) return;
+      done.add(fname);
+      const g = graphOf(fname);
+      const v = functionView(inst); views++;
+      const ids = drawnIds(v);
+      for (const e of v.edges) check(ids.has(e.s) && ids.has(e.d), "edge to an undrawn node in " + fname);
+      for (const n of v.nodes) {
+        const gn = g.nodes[n.id];
+        if (!gn) continue;
+        check(!isOp(gn), "a default view draws an operator " + n.id + " in " + fname);
+        check(!isWiring(gn), "a default view draws a wiring call site " + n.id + " in " + fname);
+        check(gn.kind !== "const" && gn.kind !== "ce", "a default view draws a constant " + n.id + " in " + fname);
+      }
+      for (const e of v.edges) check(!e.feedbackRoles.includes("fb"), "a default view draws an fb_t Feedback edge in " + fname);
+      // Operators joined by a surviving edge share one logic block
+      const gid = new Map();
+      for (const [id, grp] of v.groups) for (const m of grp.members) gid.set(m, id);
+      for (const e of g.edges) {
+        if (e.fb && roleOf(e.t) === "fb") continue;
+        if (gid.has(e.s) && gid.has(e.d)) check(gid.get(e.s) === gid.get(e.d), "joined operators in two logic blocks in " + fname);
+      }
+      withFilters(ALL_SHOWN, () => {
+        const w = functionView(inst); views++;
+        const shown = drawnIds(w);
+        for (const id of Object.keys(g.nodes)) check(shown.has(id), "not every node drawn with everything shown: " + id + " in " + fname);
+      });
+      withFilters(ALL_HIDDEN, () => {
+        const w = functionView(inst); views++;
+        for (const n of w.nodes) {
+          const gn = g.nodes[n.id];
+          check(gn && isBlock(gn), "drawn with everything hidden: " + n.id + " in " + fname);
+        }
+        for (const e of w.edges) check(!e.feedbackRoles.length, "Feedback edge drawn with everything hidden in " + fname);
+      });
+      if (func(fname).offsets) { $("f-scale").checked = true; functionView(inst); $("f-scale").checked = false; views++; }
+      for (const id of Object.keys(g.nodes)) {
+        const n = g.nodes[id];
+        if (n.kind === "sub" && func(n.callee).kind !== "op" && hasGraph(n.callee)) walk(inst + MARK + id.slice(2), n.callee);
+      }
+    };
+    for (const m of Object.keys(D.mains).sort()) if (hasGraph(m)) walk(m, m);
+    // Hiding one node by hand as its menu does (render() draws the design view
+    // at #selftest), with its edges passing through and with them
+    const rendered = () => check(!$("info").textContent, "render: " + $("info").textContent);
+    const first = home.nodes.find((n) => n.hide && n.hide.modes.includes("pass"));
+    if (first) {
+      openMenu({ clientX: 10, clientY: 10 }, first.hide);
+      for (const m of ["pass", "drop"]) {
+        setHidden(first.hide.keys, m); views++; rendered();
+        check(!drawnIds(state.last).has(first.id), "a MAIN hidden by hand is drawn (" + m + ")");
+        showHiddenList();
+        setHidden(first.hide.keys, null); views++; rendered();
+        check(drawnIds(state.last).has(first.id), "a MAIN shown again is not drawn (" + m + ")");
+      }
+    }
+    // A filter changed as the panel does
+    buildFilters();
+    filt.ghost.mode = "drop";
+    filtersChanged(); views++; rendered();
+    filt = defaults();
+    closePanels();
+    if (!mermaidText().startsWith("flowchart LR")) throw new Error("mermaid text");
+    buildIndex(); search("a"); search("");
+    document.body.setAttribute("data-ready", String(views));
+  } catch (err) {
+    document.body.setAttribute("data-error", String(err && err.stack || err));
+  }
+}
+
 // ---------- start ----------
 function legend() {
   const lg = $("legend");
@@ -964,36 +1551,13 @@ function legend() {
     lg.appendChild(s);
   }
 }
-function selftest() {
-  // Draw every view once; the render test reads the result off <body>
-  let views = 0;
-  try {
-    views += designView(null) >= 0 ? 1 : 0;
-    for (const p of Object.keys(D.files)) { designView(p); views++; }
-    const done = new Set();
-    const walk = (inst, fname) => {
-      if (done.has(fname)) return;
-      done.add(fname);
-      functionView(inst); views++;
-      if (func(fname).offsets) { $("f-scale").checked = true; functionView(inst); $("f-scale").checked = false; views++; }
-      const g = graphOf(fname);
-      for (const id of Object.keys(g.nodes)) {
-        const n = g.nodes[id];
-        if (n.kind === "sub" && func(n.callee).kind !== "op" && hasGraph(n.callee)) walk(inst + MARK + id.slice(2), n.callee);
-      }
-    };
-    for (const m of Object.keys(D.mains).sort()) if (hasGraph(m)) walk(m, m);
-    if (!mermaidText().startsWith("flowchart LR")) throw new Error("mermaid text");
-    buildIndex(); search("a"); search("");
-    document.body.setAttribute("data-ready", String(views));
-  } catch (err) {
-    document.body.setAttribute("data-error", String(err && err.stack || err));
-  }
-}
 $("title").textContent = base(D.build.top) + " — design diagram";
 document.title = base(D.build.top) + " diagram";
+if (location.hash !== "#selftest") loadSettings();
 legend();
-for (const id of ["f-wiring", "f-ops", "f-fb", "f-scale"]) $(id).addEventListener("change", render);
+buildFilters();
+hiddenButton();
+$("f-scale").addEventListener("change", render);
 buildTree();
 if (location.hash === "#selftest") selftest();
 else { addEventListener("hashchange", render); render(); }

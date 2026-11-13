@@ -1,15 +1,16 @@
 """Design diagram: diagram.html, a self-contained page every build writes into
 its output directory, showing the design's files, its MAINs joined by global
 wires, and one graph per function of the call hierarchy, labeled with latency,
-measured delay and clock domain. See docs/DIAGRAM_DESIGN.md.
+measured delay, clock domain and the types the wires carry. See
+docs/DIAGRAM_DESIGN.md.
 
 Reads only what parsing and timing already computed: the shared Logic and
 ParserState tables of both front ends, plus the Pypeline-only tables (import
 edges, Python clock names, global instances and FIFOs, field-level wire
-access records) where they exist. Those, and the Logic fields newer than the
-first C front end, are read with getattr as the rest of the shared back end
-reads them: a C build can reuse a parser state an older compiler pickled
-(C_TO_LOGIC.GET_PARSER_STATE_CACHE) that lacks them."""
+access records, type descriptions) where they exist. Those, and the Logic
+fields newer than the first C front end, are read with getattr as the rest of
+the shared back end reads them: a C build can reuse a parser state an older
+compiler pickled (C_TO_LOGIC.GET_PARSER_STATE_CACHE) that lacks them."""
 
 import json
 import os
@@ -22,8 +23,8 @@ import VHDL
 
 # The page's file name in the output directory
 DIAGRAM_FILE = "diagram.html"
-# Version of the embedded design data (DIAGRAM_DESIGN.md#data-model)
-SCHEMA_VERSION = 1
+# Version of the embedded design data (DIAGRAM_DESIGN.md#3-data-model)
+SCHEMA_VERSION = 2
 # The viewer page the design data is embedded into
 _TEMPLATE_PATH = os.path.join(
     os.path.dirname(os.path.abspath(__file__)), "diagram", "viewer.html"
@@ -34,6 +35,8 @@ _DATA_PLACEHOLDER = "__DIAGRAM_DESIGN_JSON__"
 _SRC_DIR = os.path.dirname(os.path.abspath(__file__))
 # Libraries shipped with the compiler (include/pypeline, the C headers)
 _INCLUDE_DIR = os.path.join(os.path.dirname(_SRC_DIR), "include") + os.sep
+# Description kinds (pypeline.py's _NameInfo.kind) of an @interface's halves
+_HALF_ROLES = {"interface_fwd": "fwd", "interface_fb": "fb"}
 
 
 def FORGET_DIAGRAM(out_dir):
@@ -71,11 +74,11 @@ def _design_data(parser_state, timing_params, src_file):
         lookup = timing_params.TimingParamsLookupTable
     else:
         lookup = AUTO_PIPELINE.GET_ZERO_ADDED_CLKS_TIMING_PARAMS_LOOKUP(ps)
-    bits = _BitWidths(ps)
+    types = _Types(ps)
     mains = _mains(ps, lookup)
-    funcs, inst_latency = _funcs(ps, lookup, bits)
+    funcs, inst_latency = _funcs(ps, lookup, types)
     files = _files(ps, src_file, mains)
-    return {
+    data = {
         "schema": SCHEMA_VERSION,
         "build": {
             "top": os.path.abspath(src_file),
@@ -89,40 +92,68 @@ def _design_data(parser_state, timing_params, src_file):
         "files": files,
         "clocks": _clocks(ps),
         "mains": mains,
-        "pins": _pins(ps, bits),
-        "wires": _wires(ps, bits),
-        "links": _links(ps, bits),
+        "pins": _pins(ps, types),
+        "wires": _wires(ps, types),
+        "links": _links(ps, types),
         "funcs": funcs,
         "inst_latency": inst_latency,
     }
+    return types.resolve(data)
 
 
-class _BitWidths:
-    """Bit width of a C type string (VHDL.C_TYPE_STR_TO_VHDL_SLV_LEN_NUM),
-    memoized; None for a type with no width (void, say), which the VHDL helper
-    would treat as a fatal error."""
+class _TypeRef:
+    """Where the design data names a C type, until _Types.resolve replaces it
+    by the type's index into the page's type table."""
+
+    __slots__ = ("c_type",)
+
+    def __init__(self, c_type):
+        self.c_type = c_type
+
+
+class _Types:
+    """The page's type table: every C type a drawn port, register, global wire,
+    link or edge carries, with its bit width, interface role and readable name
+    (DIAGRAM_DESIGN.md#types-and-interface-roles). The data names a type by
+    its index; ref() holds the place until resolve() has seen every type."""
 
     def __init__(self, parser_state):
         self.ps = parser_state
-        self.memo = {}
+        # C type -> its Pypeline descriptions (pypeline.py's _NameInfo); the
+        # same table holds function keys, and nothing for a C design
+        self.descriptions = getattr(parser_state, "pypeline_name_descriptions", {})
+        self.used = set()  # C types ref() was given
+        self._bits = {}  # C type -> width memo
+        self._roles = {}  # C type -> role memo
+        self._halves = None  # @interface half fields -> [(role, half C type)]
 
-    def __call__(self, c_type):
+    def ref(self, c_type):
         if c_type is None:
             return None
-        if c_type not in self.memo:
+        self.used.add(c_type)
+        return _TypeRef(c_type)
+
+    def bits(self, c_type):
+        """Bit width (VHDL.C_TYPE_STR_TO_VHDL_SLV_LEN_NUM), memoized; None for
+        a type with no width (void, say), which the VHDL helper would treat as
+        a fatal error."""
+        if c_type is None:
+            return None
+        if c_type not in self._bits:
             known = (
                 LOGIC.GET_WIDTH_FROM_C_TYPE_STR(self.ps, c_type, allow_fail=True)
                 is not None
                 or LOGIC.C_TYPE_IS_STRUCT(c_type, self.ps)
                 or LOGIC.C_TYPE_IS_ARRAY(c_type)
             )
-            self.memo[c_type] = (
+            self._bits[c_type] = (
                 VHDL.C_TYPE_STR_TO_VHDL_SLV_LEN_NUM(c_type, self.ps) if known else None
             )
-        return self.memo[c_type]
+        return self._bits[c_type]
 
-    def of_path(self, c_type, path):
-        """Width of the field `path` (struct field names, array indices) of c_type."""
+    def field_type(self, c_type, path):
+        """The type of the field `path` (struct field names, array indices) of
+        c_type, or None."""
         for tok in path:
             if c_type is None:
                 return None
@@ -133,7 +164,150 @@ class _BitWidths:
                 c_type = elem + "".join(f"[{d}]" for d in dims[1:])
             else:
                 c_type = self.ps.struct_to_field_type_dict.get(c_type, {}).get(tok)
-        return self(c_type)
+        return c_type
+
+    def _info(self, c_type):
+        """The type's description, or None (a scalar, an array, a C type)."""
+        infos = self.descriptions.get(c_type)
+        if not infos:
+            return None
+        return min(infos, key=lambda i: (i.kind, i.symbol, i.module, i.source, i.line))
+
+    def _halves_like(self, c_type):
+        """[(role, half C type)] of the @interface halves with c_type's fields.
+        A generated interface function types each Feedback with a plain copy
+        of a half (interface_func._plain_shape_of), which keeps the fields but
+        not the role; every stream interface's .fb_t has the same fields."""
+        if self._halves is None:
+            self._halves = {}
+            for key in sorted(self.descriptions):
+                roles = {
+                    _HALF_ROLES[i.kind]
+                    for i in self.descriptions[key]
+                    if i.kind in _HALF_ROLES
+                }
+                fields = self.ps.struct_to_field_type_dict.get(key)
+                if len(roles) == 1 and fields:
+                    shape = tuple(sorted(fields.items()))
+                    self._halves.setdefault(shape, []).append((roles.pop(), key))
+        fields = self.ps.struct_to_field_type_dict.get(c_type)
+        if not fields:
+            return []
+        return self._halves.get(tuple(sorted(fields.items())), [])
+
+    def role(self, c_type):
+        """fwd: an @interface's .fwd_t, a plain {data, valid} stream, or a type
+        holding one; fb: an .fb_t, or a type holding one and nothing forward;
+        plain: anything else."""
+        if c_type is None:
+            return "plain"
+        if c_type in self._roles:
+            return self._roles[c_type]
+        self._roles[c_type] = "plain"  # guards a type that holds itself
+        if LOGIC.C_TYPE_IS_ARRAY(c_type):
+            elem, _dims = LOGIC.C_ARRAY_TYPE_TO_ELEM_TYPE_AND_DIMS(c_type)
+            role = self.role(elem)
+        else:
+            role = self._struct_role(c_type)
+        self._roles[c_type] = role
+        return role
+
+    def _struct_role(self, c_type):
+        own = {
+            _HALF_ROLES[i.kind]
+            for i in self.descriptions.get(c_type, ())
+            if i.kind in _HALF_ROLES
+        }
+        if len(own) == 1:
+            return own.pop()
+        halves = {role for role, _half in self._halves_like(c_type)}
+        if len(halves) == 1:
+            return halves.pop()
+        fields = self.ps.struct_to_field_type_dict.get(c_type)
+        if not fields:
+            return "plain"
+        if set(fields) == {"data", "valid"} and fields["valid"] == "uint1_t":
+            return "fwd"  # stream.make_stream_t's shape
+        held = {self.role(t) for t in fields.values()}
+        if "fwd" in held:
+            return "fwd"
+        return "fb" if "fb" in held else "plain"
+
+    def _name_parts(self, c_type):
+        """(Python name, its factory arguments' names, array dims) of a type
+        with a description, else None: its C name is what the source says."""
+        dims = ""
+        if LOGIC.C_TYPE_IS_ARRAY(c_type):
+            c_type, sizes = LOGIC.C_ARRAY_TYPE_TO_ELEM_TYPE_AND_DIMS(c_type)
+            dims = "".join(f"[{d}]" for d in sizes)
+        info = self._info(c_type)
+        if info is None:
+            return None
+        suffix = ""
+        if info.kind not in _HALF_ROLES and info.symbol.endswith("_plain"):
+            # interface_func._plain_shape_of's copy is the class <half class>_plain,
+            # and the half's C name starts with the half's class name
+            cls = info.symbol[: -len("_plain")]
+            halves = [h for _r, h in self._halves_like(c_type) if h.startswith(cls)]
+            if len(halves) == 1:
+                info, suffix = self._info(halves[0]), "_plain"
+        if info.user_name:
+            return info.user_name, "", dims
+
+        def short(v):
+            return getattr(v, "user_name", "") or getattr(v, "symbol", None) or str(v)
+
+        # Factory arguments tell same-named types apart, or else their fields
+        args = [short(v) for _k, v in info.params] or [
+            short(v) for _k, v in info.fields
+        ]
+        return info.symbol + suffix, "<" + ", ".join(args) + ">" if args else "", dims
+
+    def _names(self, c_types):
+        """{C type: readable name} of the types in c_types that have one: the
+        Python name, with its factory arguments' names when another type in
+        c_types has the same Python name."""
+        parts = {}
+        clash = {}
+        for c_type in c_types:
+            p = self._name_parts(c_type)
+            if p is not None:
+                parts[c_type] = p
+                key = p[0] + p[2]
+                clash[key] = clash.get(key, 0) + 1
+        names = {}
+        for c_type, (name, args, dims) in parts.items():
+            names[c_type] = name + (args if clash[name + dims] > 1 else "") + dims
+        return names
+
+    def resolve(self, data):
+        """data with the type table added and every _TypeRef replaced by its
+        index into it."""
+        order = sorted(self.used)
+        index = {c_type: i for i, c_type in enumerate(order)}
+        names = self._names(order)
+        table = []
+        for c_type in order:
+            row = {"c": c_type, "bits": self.bits(c_type)}
+            role = self.role(c_type)
+            if role != "plain":
+                row["role"] = role
+            if names.get(c_type, c_type) != c_type:
+                row["name"] = names[c_type]
+            table.append(row)
+
+        def walk(obj):
+            if isinstance(obj, _TypeRef):
+                return index[obj.c_type]
+            if isinstance(obj, dict):
+                return {k: walk(v) for k, v in obj.items()}
+            if isinstance(obj, list):
+                return [walk(v) for v in obj]
+            return obj
+
+        resolved = walk(data)
+        resolved["types"] = table
+        return resolved
 
 
 def _clock_id(mhz, group):
@@ -206,12 +380,15 @@ def _mains(ps, lookup):
 
 
 def _wiring_reason(logic, ps):
-    """Why a MAIN does nothing but connect wires (the clutter filter hides
-    it), or None. Uses the compiler's own zero-delay rule
-    (SYN.LOGIC_IS_ZERO_DELAY); a MAIN with registers anywhere in its hierarchy
-    (LOGIC.LOGIC_NEEDS_CLOCK_ENABLE) is never only wiring."""
+    """Why a MAIN or an operator does nothing but connect wires (the viewer's
+    wiring filter hides it), or None. Uses the compiler's own zero-delay rule
+    (SYN.LOGIC_IS_ZERO_DELAY); something with registers anywhere in its
+    hierarchy (LOGIC.LOGIC_NEEDS_CLOCK_ENABLE), raw VHDL, a clock crossing or
+    a black box is never only wiring."""
     if logic.func_name in ps.func_marked_wires:
         return "@wires"
+    if logic.is_clock_crossing or logic.func_name in ps.func_marked_blackbox:
+        return None
     if LOGIC.LOGIC_NEEDS_CLOCK_ENABLE(logic, ps):
         return None
     if logic.vhdl_module_text is not None:
@@ -221,7 +398,7 @@ def _wiring_reason(logic, ps):
     return None
 
 
-def _pins(ps, bits):
+def _pins(ps, types):
     """Top-level Input and Output pins."""
     pins = {}
     decls = getattr(ps, "pypeline_wire_decls", {})
@@ -230,7 +407,7 @@ def _pins(ps, bits):
         decl = decls.get(name)
         pins[name] = {
             "dir": "in" if name in ps.input_wires else "out",
-            "bits": bits(info.type_name if info is not None else None),
+            "t": types.ref(info.type_name if info is not None else None),
             "name": decl.bare_name if decl is not None else name,
             "loc": decl.loc if decl is not None else None,
             "clock_pin": decl is not None and decl.binding is not None,
@@ -238,8 +415,8 @@ def _pins(ps, bits):
     return pins
 
 
-def _wires(ps, bits):
-    """Each global wire: its Python name, where it is declared, its width and
+def _wires(ps, types):
+    """Each global wire: its Python name, where it is declared, its type and
     whether it is ASYNC."""
     wires = {}
     for var in sorted(ps.global_vars):
@@ -247,7 +424,7 @@ def _wires(ps, bits):
         wires[var] = {
             "name": decl.bare_name if decl is not None else var,
             "loc": decl.loc if decl is not None else None,
-            "bits": bits(ps.global_vars[var].type_name),
+            "t": types.ref(ps.global_vars[var].type_name),
             "async": var in ps.async_wires,
         }
     return wires
@@ -257,7 +434,7 @@ def _path_str(path):
     return "".join(f"[{t}]" if isinstance(t, int) else f".{t}" for t in path)
 
 
-def _links(ps, bits):
+def _links(ps, types):
     """Writer -> reader links of every global wire, one per field leaf a reader
     reads (whole wires for C), and one per clock crossing (write MAIN -> read
     MAIN). Endpoints are instance names, or "pin:<name>" for a top-level pin.
@@ -310,7 +487,7 @@ def _links(ps, bits):
                                 reader,
                                 var,
                                 _path_str(path),
-                                bits.of_path(info.type_name, path),
+                                types.field_type(info.type_name, path),
                                 is_async,
                                 False,
                             )
@@ -322,7 +499,7 @@ def _links(ps, bits):
             for reader in sorted(read_mains):
                 links.add((writer, reader, var, "", None, True, True))
     rows = []
-    for writer, reader, var, path, nbits, is_async, crossing in sorted(
+    for writer, reader, var, path, c_type, is_async, crossing in sorted(
         links, key=lambda t: tuple("" if v is None else str(v) for v in t)
     ):
         decl = decls.get(var)
@@ -332,7 +509,7 @@ def _links(ps, bits):
                 "dst": reader,
                 "wire": var,
                 "name": (decl.bare_name if decl is not None else var) + path,
-                "bits": nbits,
+                "t": types.ref(c_type),
                 "async": is_async,
                 "crossing": crossing,
             }
@@ -379,11 +556,12 @@ def _def_name(logic):
     return name if isinstance(name, str) else None
 
 
-def _funcs(ps, lookup, bits):
+def _funcs(ps, lookup, types):
     """Each function reachable from a MAIN, with its graph unless it is an
-    operator; and the latency of every non-operator instance on the way that
-    has one. The walk does not enter an AUTO_FSM call site: the FSM it
-    generates is not the user's hierarchy."""
+    operator, and the latency of every instance on the way that has one:
+    pipelining puts its registers into operators (and raw VHDL), so an
+    operator's latency is where they are. The walk does not enter an AUTO_FSM
+    call site: the FSM it generates is not the user's hierarchy."""
     funcs = {}
     inst_latency = {}
     seen = set()
@@ -392,13 +570,13 @@ def _funcs(ps, lookup, bits):
         inst, func = stack.pop()
         logic = ps.FuncLogicLookupTable[func]
         kind = _func_kind(logic, ps)
-        if kind != "op" and inst in lookup:
+        if inst in lookup:
             latency = lookup[inst].GET_TOTAL_LATENCY(ps, lookup)
             if latency:
                 inst_latency[inst] = latency
         if func not in seen:
             seen.add(func)
-            funcs[func] = _func_entry(logic, kind, ps, bits)
+            funcs[func] = _func_entry(logic, kind, ps, types)
         if kind == "op" or kind == "vhdl":
             continue
         for local in sorted(logic.submodule_instances, reverse=True):
@@ -408,7 +586,7 @@ def _funcs(ps, lookup, bits):
                 if callee not in funcs:
                     seen.add(callee)
                     funcs[callee] = _func_entry(
-                        ps.FuncLogicLookupTable[callee], "fsm", ps, bits
+                        ps.FuncLogicLookupTable[callee], "fsm", ps, types
                     )
                 if child in lookup:
                     latency = lookup[child].GET_TOTAL_LATENCY(ps, lookup)
@@ -424,27 +602,39 @@ def _funcs(ps, lookup, bits):
     return funcs, inst_latency
 
 
-def _func_entry(logic, kind, ps, bits):
+def _func_entry(logic, kind, ps, types):
     entry = {"kind": kind}
     if logic.delay is not None:
         entry["delay_ns"] = round(logic.delay / SYN.DELAY_UNIT_MULT, 4)
         if getattr(logic, "delay_is_estimated", False):
             entry["delay_estimated"] = True
-    if kind == "op":
+    # Wiring call sites: @wires functions (casts among them) and operators that
+    # are only wiring. A user's own function with no logic stays a block of its
+    # hierarchy (one that only routes fields, say).
+    if kind == "wires":
+        entry["wiring"] = "@wires"
+    elif kind == "op":
+        wiring = _wiring_reason(logic, ps)
+        if wiring is not None:
+            entry["wiring"] = wiring
         return entry
     src, line = _src_loc(logic)
     entry["file"] = src
     entry["line"] = line
     entry["def"] = _def_name(logic)
-    entry["inputs"] = [[p, bits(logic.wire_to_c_type.get(p))] for p in logic.inputs]
-    entry["outputs"] = [[p, bits(logic.wire_to_c_type.get(p))] for p in logic.outputs]
+    entry["inputs"] = [
+        [p, types.ref(logic.wire_to_c_type.get(p))] for p in logic.inputs
+    ]
+    entry["outputs"] = [
+        [p, types.ref(logic.wire_to_c_type.get(p))] for p in logic.outputs
+    ]
     if logic.mcp_tuples:
         entry["mcp"] = True
     if logic.state_regs:
         entry["regs"] = sorted(logic.state_regs)
     if kind in ("vhdl", "fsm"):
         return entry
-    entry["graph"] = _graph(logic, ps, bits)
+    entry["graph"] = _graph(logic, ps, types)
     offsets = _offsets(logic, ps)
     if offsets is not None:
         entry["offsets"] = offsets
@@ -490,15 +680,15 @@ def _display_local(local):
     return local[:i] if i > 0 else local
 
 
-def _graph(logic, ps, bits):
+def _graph(logic, ps, types):
     """The function as nodes (inputs, outputs, submodule call sites, register
     current/next values, global wire read/write stubs, constants, the clock
     enable) and edges [source node index, its port, driven node index, its
-    port, bits, label, fb] between their ports. An edge follows wire_drives through
-    plain wires (variables and their aliases) from a driving endpoint to a
-    driven one, as PipelineMap.write_png did; it is labeled with the first
-    variable on the way and marked fb when it passes through a Feedback
-    variable."""
+    port, type, names, fb] between their ports. An edge follows wire_drives
+    through plain wires (variables and their aliases) from a driving endpoint
+    to a driven one, as PipelineMap.write_png did; it carries the driving
+    wire's type, the variables on the way (the driving one first) and fb when
+    it passes through a Feedback variable."""
     subs = logic.submodule_instances
     inputs = set(logic.inputs)
     outputs = set(logic.outputs)
@@ -547,7 +737,8 @@ def _graph(logic, ps, bits):
         orig = logic.alias_to_orig_var_name.get(wire, wire)
         return orig if orig in logic.variable_names else None
 
-    # wire -> ((sink id, sink port), label, fb) reached through plain wires
+    # wire -> ((sink id, sink port), names, fb) reached through plain wires;
+    # names are the variables after the wire itself on the way
     memo = {}
 
     def reach(start):
@@ -567,18 +758,23 @@ def _graph(logic, ps, bits):
                     if sink(kid) is None and kid not in memo and kid not in active:
                         stack.append((kid, False))
                 continue
-            label = var_of(wire) if wire != start else None
+            own = var_of(wire) if wire != start else None
             fb = wire in logic.feedback_vars or (
                 logic.alias_to_orig_var_name.get(wire) in logic.feedback_vars
             )
             found = {}
             for kid in kids:
                 end = sink(kid)
-                items = [(end, None, False)] if end is not None else memo.get(kid, ())
-                for item_end, item_label, item_fb in items:
+                items = [(end, (), False)] if end is not None else memo.get(kid, ())
+                for item_end, item_names, item_fb in items:
                     if item_end not in found:
-                        found[item_end] = (label or item_label, fb or item_fb)
-            memo[wire] = tuple((end, lab, f) for end, (lab, f) in sorted(found.items()))
+                        names = item_names
+                        if own is not None and own not in names:
+                            names = (own,) + names
+                        found[item_end] = (names, fb or item_fb)
+            memo[wire] = tuple(
+                (end, names, f) for end, (names, f) in sorted(found.items())
+            )
             active.discard(wire)
         return memo[start]
 
@@ -589,9 +785,9 @@ def _graph(logic, ps, bits):
             nodes[node_id] = info
 
     for p in logic.inputs:
-        add_node("i:" + p, kind="in", name=p, bits=bits(logic.wire_to_c_type.get(p)))
+        add_node("i:" + p, kind="in", name=p, t=logic.wire_to_c_type.get(p))
     for p in logic.outputs:
-        add_node("o:" + p, kind="out", name=p, bits=bits(logic.wire_to_c_type.get(p)))
+        add_node("o:" + p, kind="out", name=p, t=logic.wire_to_c_type.get(p))
     origins = getattr(logic, "submodule_instance_to_source_origins", {})
     for local in sorted(subs):
         callee = subs[local]
@@ -613,19 +809,25 @@ def _graph(logic, ps, bits):
         start = source(wire)
         if start is None:
             continue
-        nbits = bits(logic.wire_to_c_type.get(wire))
-        for (end, end_port), label, fb in reach(wire):
-            edges.add((start[0], start[1], end, end_port, nbits, label or "", fb))
+        c_type = logic.wire_to_c_type.get(wire)
+        own = var_of(wire)
+        for (end, end_port), names, fb in reach(wire):
+            if own is not None and own not in names:
+                names = (own,) + names
+            edges.add((start[0], start[1], end, end_port, c_type, names, fb))
 
-    for src_id, _sp, dst_id, _dp, nbits, _l, _f in edges:
+    for src_id, _sp, dst_id, _dp, _t, _n, _f in edges:
         for node_id in (src_id, dst_id):
             kind, _, name = node_id.partition(":")
             if node_id == "ce":
                 add_node("ce", kind="ce", name=LOGIC.CLOCK_ENABLE_NAME)
-            elif kind == "rq":
-                add_node(node_id, kind="reg", name=name, bits=nbits)
-            elif kind == "rd":
-                add_node(node_id, kind="reg_next", name=name)
+            elif kind in ("rq", "rd"):
+                add_node(
+                    node_id,
+                    kind="reg" if kind == "rq" else "reg_next",
+                    name=name,
+                    t=logic.wire_to_c_type.get(name),
+                )
             elif kind == "gr":
                 add_node(node_id, kind="wire_read", name=name)
             elif kind == "gw":
@@ -636,14 +838,17 @@ def _graph(logic, ps, bits):
                     kind="const",
                     name=LOGIC.GET_VAL_STR_FROM_CONST_WIRE(name, logic, ps),
                 )
+    for node in nodes.values():
+        if "t" in node:
+            node["t"] = types.ref(node["t"])
     # Edges name their nodes by index: operator call sites have long names
     order = sorted(nodes)
     index = {node_id: i for i, node_id in enumerate(order)}
     return {
         "nodes": [dict(nodes[node_id], id=node_id) for node_id in order],
         "edges": [
-            [index[s], sp, index[d], dp, b, lab, 1 if f else 0]
-            for s, sp, d, dp, b, lab, f in sorted(
+            [index[s], sp, index[d], dp, types.ref(c_type), list(names), 1 if f else 0]
+            for s, sp, d, dp, c_type, names, f in sorted(
                 edges, key=lambda t: tuple("" if v is None else str(v) for v in t)
             )
         ],

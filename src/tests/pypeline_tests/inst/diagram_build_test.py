@@ -11,6 +11,9 @@ One sky130 build of built_hardware_top_design.py (an AUTO_PIPELINE region the
   measured, and the pipelined region's offsets are the compiler's own
   zero-added-clocks pipeline map: each call site spans its callee's delay,
   starting no earlier than 0;
+- test_operator_latencies_are_recorded: the operators the pipelining put
+  registers into have their latencies in inst_latency (so the viewer does not
+  draw their groups as combinational clouds);
 - test_no_synth_build_writes_structure: a --no_synth build of the same top in
   a second out_dir writes a diagram with the same MAINs and links and no
   delays;
@@ -59,6 +62,29 @@ def diagram(out_dir):
     return json.loads(html[start : html.index("</script>", start)])
 
 
+def links(data):
+    """The page's links, each type index replaced by its C type: two pages
+    number the types they use each for itself."""
+    types = data["types"]
+    return [dict(l, t=None if l["t"] is None else types[l["t"]]["c"]) for l in data["links"]]
+
+
+def callee_of(data, inst):
+    """The function an instance path (MAIN____local____local) calls."""
+    toks = inst.split("____")
+    func, i = toks[0], 1
+    while i < len(toks):
+        nodes = {n["id"]: n for n in data["funcs"][func]["graph"]["nodes"]}
+        for j in range(i, len(toks)):
+            node = nodes.get("s:" + "____".join(toks[i : j + 1]))
+            if node is not None:
+                func, i = node["callee"], j + 1
+                break
+        else:
+            raise AssertionError(f"no call site for {inst}")
+    return func
+
+
 def body_site(data):
     """The AUTO_PIPELINE call site's instance name in the body MAIN."""
     g = data["funcs"][BODY_SITE_FUNC]["graph"]
@@ -104,12 +130,25 @@ def test_measured_delays_are_recorded(hw):
     print("test_measured_delays_are_recorded PASS")
 
 
+def test_operator_latencies_are_recorded(hw):
+    data = diagram(hw)
+    _node, site = body_site(data)
+    ops = [
+        inst
+        for inst in data["inst_latency"]
+        if inst.startswith(site + "____")
+        and data["funcs"][callee_of(data, inst)]["kind"] == "op"
+    ]
+    assert ops, f"no operator among {len(data['inst_latency'])} instance latencies"
+    print("test_operator_latencies_are_recorded PASS")
+
+
 def test_no_synth_build_writes_structure(designs, hw, root):
     other = root / "no_synth"
     pypelinec(designs / "built_hardware_top_design.py", other, "--no_synth")
     built, plain = diagram(hw), diagram(other)
     assert sorted(plain["mains"]) == sorted(built["mains"])
-    assert plain["links"] == built["links"]
+    assert links(plain) == links(built)
     assert plain["build"]["delays_known"] == 0, plain["build"]
     assert all("offsets" not in f for f in plain["funcs"].values())
     print("test_no_synth_build_writes_structure PASS")
@@ -150,6 +189,7 @@ def main():
     )
     test_diagram_latencies_match_built_hardware(hw)
     test_measured_delays_are_recorded(hw)
+    test_operator_latencies_are_recorded(hw)
     test_no_synth_build_writes_structure(designs, hw, root)
     test_failed_build_removes_old_diagram(designs, hw)
 

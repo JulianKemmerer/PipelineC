@@ -15,8 +15,10 @@ from common import INST_DIR, Test, main
 
 def get_tests() -> list:
     tests = []
-    # The design diagram page renders in headless Chrome: every view of three
-    # designs (two Pypeline, one C) draws without a script error.
+    # The design diagram page renders in headless Chrome: every view of four
+    # designs (three Pypeline, one C) draws without a script error, with the
+    # default filters, everything shown and everything hidden, and draws what
+    # each filter setting allows (the page's own #selftest checks).
     tests.append(
         Test(
             name="diagram_render_test",

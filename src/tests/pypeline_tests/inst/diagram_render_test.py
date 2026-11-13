@@ -1,15 +1,19 @@
 #!/usr/bin/env python3
 """The design diagram page (src/diagram/viewer.html) renders in a real
-browser: headless Chrome loads pages written for three designs and
+browser: headless Chrome loads pages written for four designs and
 
 - test_every_view_draws: the #selftest route draws the design view, every
-  file's view and one view per function with a graph, and marks <body>
-  data-ready (data-error on any exception);
+  file's view, and each function with a graph three times (default filters,
+  everything shown, everything hidden), checking what each must and must not
+  draw (DIAGRAM_DESIGN.md#self-test); it marks <body> data-ready (data-error on
+  any failed check or exception);
 - test_design_view_draws_blocks: the default route draws blocks and no error.
 
 Pages are written in-process (PARSE_FILE + DIAGRAM.WRITE_DIAGRAM, as a
---no_synth build) for built_hardware_top_design.py, multi_clock_design.py and
-the C example examples/shared_globals.c. Needs google-chrome.
+--no_synth build) for built_hardware_top_design.py, multi_clock_design.py,
+diagram_interfaces_design.py (Feedback edges of each interface role, operators
+in logic blocks, a @wires call site) and the C example examples/shared_globals.c.
+Needs google-chrome.
 """
 
 import functools
@@ -33,6 +37,7 @@ REPO_ROOT = os.path.abspath(os.path.join(INST_DIR, "../../../.."))
 DESIGNS = (
     os.path.join(INST_DIR, "built_hardware_top_design.py"),
     os.path.join(INST_DIR, "multi_clock_design.py"),
+    os.path.join(INST_DIR, "diagram_interfaces_design.py"),
     os.path.join(REPO_ROOT, "examples", "shared_globals.c"),
 )
 

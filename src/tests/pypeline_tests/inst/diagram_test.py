@@ -7,9 +7,11 @@ JSON embedded in the page is checked.
 Designs: built_hardware_top_design.py (+ its imported core: three MAINs over
 two files, an @wires port MAIN, an AUTO_PIPELINE and an AUTO_FSM call site),
 multi_clock_design.py (two clocks, a sync and an async global FIFO, an ASYNC
-wire), a small design written here (a call graph with a register, a Feedback
-wire, a global wire and a @pipeline_latency function), and the C example
-examples/shared_globals.c.
+wire), diagram_interfaces_design.py (a generated interface function's Feedback
+variables typed with plain copies of an interface's halves, two plain stream
+types, a @wires call site), a small design written here (a call graph with a
+register, a Feedback wire, a global wire and a @pipeline_latency function), and
+the C example examples/shared_globals.c.
 """
 
 import functools
@@ -35,6 +37,7 @@ REPO_ROOT = os.path.dirname(REPO_SRC)
 TOP = os.path.join(INST_DIR, "built_hardware_top_design.py")
 CORE = os.path.join(INST_DIR, "built_hardware_core_design.py")
 MULTI_CLOCK = os.path.join(INST_DIR, "multi_clock_design.py")
+INTERFACES = os.path.join(INST_DIR, "diagram_interfaces_design.py")
 C_DESIGN = os.path.join(REPO_ROOT, "examples", "shared_globals.c")
 
 _GRAPH_SRC = textwrap.dedent(
@@ -101,15 +104,20 @@ def _graph_design():
     return _page(path)[0]
 
 
+def _type(data, t):
+    """The type table row of type index t ({} for no type)."""
+    return data["types"][t] if t is not None else {}
+
+
 def _graph(data, func):
-    """{node id: node}, [(src id, src port, dst id, dst port, bits, label, fb)]"""
+    """{node id: node}, [(src id, src port, dst id, dst port, bits, names, fb)]"""
     g = data["funcs"][func]["graph"]
     ids = [n["id"] for n in g["nodes"]]
     return (
         {n["id"]: n for n in g["nodes"]},
         [
-            (ids[s], sp, ids[d], dp, b, lab, fb)
-            for s, sp, d, dp, b, lab, fb in g["edges"]
+            (ids[s], sp, ids[d], dp, _type(data, t).get("bits"), tuple(names), fb)
+            for s, sp, d, dp, t, names, fb in g["edges"]
         ],
     )
 
@@ -177,25 +185,84 @@ def test_function_graph_connects_instances():
     first, second = _subs(nodes, "add1")
     plus = _subs(nodes, "BIN_OP_PLUS")[0]
     # x -> add1 (the second call) -> f -> add1 (the first) -> + -> total
-    assert ("i:x", "", second, "a", 8, "", 0) in edges, edges
+    assert any(e[0] == "i:x" and e[2] == second and e[4] == 8 for e in edges), edges
     out_of_plus = [e for e in edges if e[0] == plus]
     assert {e[2] for e in out_of_plus} == {
         "o:return_output",
         "rd:acc",
         "gw:tap",
     }, out_of_plus
-    assert all(e[5] == "total" for e in out_of_plus), out_of_plus
-    assert ("rq:acc", "", plus, "right", 8, "acc", 0) not in edges  # source unlabeled
+    assert all(e[5] == ("total",) for e in out_of_plus), out_of_plus
     assert any(e[0] == "rq:acc" and e[2] == plus for e in edges), edges
     assert nodes[first]["callee"] == nodes[second]["callee"]
     assert _graph_design()["funcs"][nodes[plus]["callee"]]["kind"] == "op"
+
+
+def test_edge_names_start_at_the_driving_variable():
+    nodes, edges = _graph(_graph_design(), "graph_main")
+    first, second = _subs(nodes, "add1")
+    plus = _subs(nodes, "BIN_OP_PLUS")[0]
+    # An input and a register name the edges they drive
+    assert ("i:x", "", second, "a", 8, ("x",), 0) in edges, edges
+    assert ("rq:acc", "", plus, "right", 8, ("acc",), 0) in edges, edges
+    # A call's result passed straight into + is no variable
+    assert (first, "return_output", plus, "left", 8, (), 0) in edges, edges
 
 
 def test_feedback_edges_are_marked():
     nodes, edges = _graph(_graph_design(), "graph_main")
     first, second = _subs(nodes, "add1")
     fb = [e for e in edges if e[6]]
-    assert [(e[0], e[2], e[5]) for e in fb] == [(second, first, "f")], fb
+    assert [(e[0], e[2], e[5]) for e in fb] == [(second, first, ("f",))], fb
+
+
+def test_types_carry_interface_roles():
+    data = _page(INTERFACES)[0]
+    roles = {t.get("name", t["c"]): t.get("role") for t in data["types"]}
+    assert roles["chan_intrf_fwd_t"] == "fwd", roles
+    assert roles["chan_intrf_fb_t"] == "fb", roles
+    # A generated interface function types its Feedbacks with plain copies
+    # of the halves, which keep the fields but not the role
+    assert roles["chan_intrf_fwd_t_plain"] == "fwd", roles
+    assert roles["chan_intrf_fb_t_plain"] == "fb", roles
+    assert roles["stream_t<uint8_t>"] == "fwd", roles  # a plain {data, valid} stream
+    assert roles["route_t"] == "fwd", roles  # holds a forward half
+    assert roles["uint8_t"] is None, roles
+
+
+def test_type_names_read_like_the_source():
+    data = _page(INTERFACES)[0]
+    named = {t["c"]: t.get("name") for t in data["types"]}
+    # Two stream types are classes named stream_t: their factory arguments
+    # tell them apart
+    streams = sorted(n for n in named.values() if n and n.startswith("stream_t"))
+    assert streams == ["stream_t<uint1_t>", "stream_t<uint8_t>"], named
+    assert named["chan_intrf_t_data_uint16_t_valid_uint1_t"] == "chan_intrf_fwd_t", named
+    assert named["uint8_t"] is None, named  # a scalar's C name is its source name
+
+
+def test_feedback_edges_carry_their_types():
+    data = _page(INTERFACES)[0]
+    (merge,) = [f for f in data["funcs"] if f.startswith("merge_if")]
+    _nodes, edges = _graph(data, merge)
+    g = data["funcs"][merge]["graph"]
+    roles = sorted(_type(data, e[4]).get("role") for e in g["edges"] if e[6])
+    # What the later call feeds back to the earlier one is forward data; the
+    # backpressure it returns is feedback
+    assert set(roles) == {"fb", "fwd"}, roles
+    assert all(e[5] for e in edges if e[6]), edges  # each names its Feedback
+
+
+def test_wiring_call_sites_are_marked():
+    funcs = _page(INTERFACES)[0]["funcs"]
+    assert funcs["pass_through"]["wiring"] == "@wires", funcs["pass_through"]
+    # A constant field select is only wiring, an adder is not
+    selects = [f for n, f in funcs.items() if n.startswith("CONST_REF_RD")]
+    assert selects and all(f.get("wiring") == "no logic" for f in selects), selects
+    adds = [f for n, f in funcs.items() if n.startswith("BIN_OP_PLUS")]
+    assert adds and all("wiring" not in f for f in adds), adds
+    # A user's function that only routes fields stays a block of its own
+    assert "wiring" not in funcs["route"], funcs["route"]
 
 
 def test_call_site_kinds():
@@ -273,7 +340,9 @@ def test_c_design_gets_a_diagram():
         "not_same_clk_read_main",
         "read_main",
     ], links
-    assert all(l["wire"] == "the_global" and l["bits"] == 32 for l in links), links
+    assert all(
+        l["wire"] == "the_global" and _type(data, l["t"])["bits"] == 32 for l in links
+    ), links
     nodes, _ = _graph(data, "write_main")
     assert [n["callee"] for n in nodes.values() if n["kind"] == "sub"] == ["write_func"]
     assert data["mains"]["not_same_clk_read_main"]["clock"] == "50 MHz", data["mains"]
