@@ -4,7 +4,7 @@
 
 We are happy to help, reach out: [PipelineC Discord](https://discord.gg/Aupm3DDrK2), [Mastodon](http://fosstodon.org/@pypelinec), [BlueSky](https://bsky.app/profile/pypelinec.bsky.social), [Discussions](https://github.com/JulianKemmerer/PipelineC/discussions) :)
 
-Show me what you got. Be inspired by some awesome PypelineC projects others have done, see the [showcase](docs/showcase.md). Reach out to have your project added.
+Show me what you got. Be inspired by some awesome PypelineC projects others have done, see the [showcase](showcase.md).
 
 ## Table of Contents
 
