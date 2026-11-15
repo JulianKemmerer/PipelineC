@@ -5404,7 +5404,7 @@ elaboration and initialized in `PARSE_FILE`:
 | `pypeline_const_wire_values` | func name → {constant wire → Python value} | reserved for constants that cannot be recovered from the wire name |
 | `pypeline_builtin_op_info` | built-in operator entity → (op name, operand c types) | `_bin_func_name`, at the two `_elab_binop` / `_elab_compare` sites that build a built-in operator instance |
 | `pypeline_bit_manip_info` | bit-manipulation entity → (which builtin produced it, its constant arguments) | `_record_bit_manip_render`, beside every `_register_bit_manip_logic` call |
-| `pypeline_compare_impl_ops` | registered comparison implementation entity → the comparison op names dispatched to it | `_elab_compare`, at its registered-operator site |
+| `pypeline_operator_impl_ops` | registered operator implementation entity → the op names dispatched to it | `_record_operator_impl`, at the registered-operator sites of `_elab_unary`, `_elab_binop` (variable shifts and the general case) and `_elab_compare` |
 | `pypeline_name_full` | collapsed canonical func name → full, uncollapsed name | `_elaborate_live_func`, only when a name actually collapsed |
 | `pypeline_type_canonical` | collapsed `@struct`/`@enum` canonical name → full, uncollapsed name | `_register_struct_recursive` / `_register_enum`, only when a name actually collapsed |
 | `pypeline_canonical_name_owner` | canonical func name → `(module, qualname, src_file, line)` of the closure that first produced it | `_elaborate_live_func`; also the collision guard (see below) |
@@ -5425,13 +5425,15 @@ each answers a question the entity NAME cannot be trusted for:
   something, and a soft adder's body is almost entirely bit reads and
   `bit_assign`s: without this table, descending into one would fail to
   regenerate and silently fall back to keeping the operation atomic.
-- **`pypeline_compare_impl_ops`.** A comparison dispatched to a registered
+- **`pypeline_operator_impl_ops`.** An operator dispatched to a registered
   implementation, such as the default soft comparator, elaborates as an ordinary
-  call. The call keeps the operator's meaning, and this table tells AUTO's
-  cleanup which comparison it computes, so the range proof can fold one the
-  operand widths decide, such as `uint1 > 1`
-  ([AUTO_FSM_DESIGN.md](AUTO_FSM_DESIGN.md#31-building-the-dag)). It collects a set
-  of op names; the proof uses an entity only when exactly one was dispatched to it.
+  call. The call keeps the operator's meaning, and this table says which operators
+  an entity computes. AUTO's cleanup takes the comparison from it, so the range
+  proof can fold one the operand widths decide, such as `uint1 > 1`
+  ([AUTO_FSM_DESIGN.md](AUTO_FSM_DESIGN.md#31-building-the-dag)); it collects a set
+  of op names, and the proof uses an entity only when exactly one comparison was
+  dispatched to it. The design diagram draws such a call as the operator
+  ([DIAGRAM_DESIGN.md](DIAGRAM_DESIGN.md#which-functions-are-drawn)).
 
 `setdefault` in every writer: first writer wins, matching
 `_elaborate_live_func`'s own dedup. Live callables are kept off `Logic` entirely

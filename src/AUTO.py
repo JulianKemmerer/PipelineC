@@ -441,7 +441,7 @@ def _comparison_op(node, parser_state):
     if node["kind"] == "binop":
         op = node["op"].get("op")
     elif node["kind"] == "call":
-        ops = getattr(parser_state, "pypeline_compare_impl_ops", {}).get(
+        ops = getattr(parser_state, "pypeline_operator_impl_ops", {}).get(
             node["entity"], ()
         )
         op = _BIN_OP_SRC.get(next(iter(ops))) if len(ops) == 1 else None

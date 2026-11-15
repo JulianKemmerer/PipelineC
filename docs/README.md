@@ -1402,45 +1402,64 @@ wrapper when external HDL needs a durable boundary.
 
 Every build writes `diagram.html` into `--out_dir` and prints its path
 (`Design diagram: ...`). It is one self-contained page: open it in any browser,
-offline, with nothing to install.
+offline, with nothing to install. Each view is one level of your code's hierarchy,
+and by default it is drawn the way you would sketch that block next to a description
+of it: the data path between the blocks it calls, named as your code names it, with
+the details below one click away.
 
 - **Left pane:** *whole design* and the top `.py` file both open the design view;
   below them are the files the top file imports, each with its `@MAIN`s. Expand a
   MAIN to walk its instance hierarchy.
 - **Design view:** the MAINs, global instances, FIFOs and top-level pins, joined by
-  the global wires between them. Each wire field is drawn in the direction it flows,
-  so a stream's data runs one way and its `ready` the other. Click another file to
-  see only its MAINs and what they connect to; the banner at the top links back.
+  the global wires between them. Each wire field is drawn in the direction it flows.
+  Pins that an `@wires` I/O MAIN packs into one global wire (the `tdata`, `tkeep`,
+  `tlast` and `tvalid` of an AXIS port) are drawn as the one port they form,
+  `s_axis`. Click another file to see only its MAINs and what they connect to; the
+  banner at the top links back.
 - **Function views:** click a MAIN or a block to see that function's graph: its
   inputs on the left, its outputs on the right, and the functions it calls in
   between, each labeled with its latency (`L=n`) and, after synthesis, its measured
-  delay. Click a block to go down a level, and a global wire read or write to jump to
-  the other end of the wire. The breadcrumb and the browser's back button go back up.
+  delay. A function returning a struct has an output per field, as a Python function
+  returning several values does. Click a block to go down a level, and a global wire
+  read or write to jump to the other end of the wire. The breadcrumb and the
+  browser's back button go back up. A generated interface function shows the name
+  you gave the function it was made from.
 - **Wires:** hover an edge to see its wire's name and type, `x: frag_t (290b)`, or
   for an edge that bundles several wires, each of them; the edge lights up, and
-  hovering a block lights up all its edges. A wire is named by its variable, or,
-  with none, by the input it feeds (`mac_func.data_in_if`). Types show the names
-  your modules give them (`axis_intrf.fwd_t`). Labels are off until you tick **wire
-  labels**, or right-click an edge to show or hide just its label; *filters* picks
-  whether a label says the name, the type or both. An edge through a `Feedback` or a
-  register is dashed.
-- **Logic blocks:** operators (`+`, `==`, muxes, ...) are grouped: each connected
-  cluster of them is one block, a cloud when it is combinational. Hover to see what
-  it holds.
+  hovering a block lights up all its edges. A wire is named as your code names it:
+  `p.second` for a field of a call's result, `o.first` for a field it fills in, a
+  variable, or, with no name in the code, by its two ends,
+  `make_pair.first → bump.v`. Each edge is labeled with its wires' names, the fields
+  of one variable on one line (`result: valid, data`); untick **wire labels** to hide
+  the labels, or right-click an edge to hide or show just its label; *filters* picks
+  whether a label says the name, the type or both. Types show the names your modules
+  give them (`axis_intrf.fwd_t`). An edge through a `Feedback` or a register is
+  dashed.
+- **Logic blocks:** operators (`+`, `==`, muxes, ...) and registers are grouped:
+  each connected cluster of them is one block, a cloud when it is combinational. An
+  operator the compiler implements with a call (the default soft comparator for
+  `<`) counts as the operator. Hover to see what a block holds.
 - **Colors:** one color per clock domain, with a legend. A wire between clock domains
   is red.
 - **filters** sets what each view leaves out, by kind: inputs, outputs, registers,
-  global wire reads and writes, `Feedback` edges, wiring (`@wires` functions and
-  MAINs, casts, MAINs and operators with no logic), operators, constants, and other
-  files' MAINs. Each kind can be shown, or hidden either with its edges passing
-  straight through or with its edges; operators can also be grouped. Inputs,
-  outputs, registers, wire reads and writes, and `Feedback` edges also choose by
-  [interface](pypeline_guide.md#bidirectional-ports-interface) role: forward
-  (streams `{data, valid}` and `.fwd_t`), feedback (`.fb_t`) or plain. So *inputs:
-  hide, all but forward* keeps only the stream inputs. By default `Feedback` edges
-  that carry an `.fb_t` (a `ready`) are hidden, while forward data fed back to an
-  earlier call stays; wiring passes through; operators are grouped; constants are
-  hidden. The browser remembers the settings.
+  global wire reads and writes, feedback data, `Feedback` edges, wiring (`@wires`
+  functions and MAINs, casts, MAINs and operators with no logic), operators,
+  constants, and other files' MAINs. Each kind can be shown, or hidden either with
+  its edges passing straight through or with its edges; operators and registers can
+  also be grouped. Inputs, outputs, registers, wire reads and writes, and `Feedback`
+  edges also choose by [interface](pypeline_guide.md#bidirectional-ports-interface)
+  role: forward (streams `{data, valid}` and `.fwd_t`), feedback (`.fb_t`) or plain.
+  So *inputs: hide, all but forward* keeps only the stream inputs. By default:
+  - feedback data (an interface's `ready`, whatever carries it) is hidden, and so is
+    a `Feedback` edge carrying an `.fb_t`, while forward data fed back to an earlier
+    call stays;
+  - in a view whose inputs and outputs both include forward interfaces, the plain
+    ports beside them are sideband and hidden (an `aad_len` next to the streams); a
+    view without such interfaces keeps its plain ports;
+  - wiring passes through, operators and registers are grouped, logic that feeds
+    nothing drawn is hidden, and constants are hidden.
+
+  The browser remembers the settings.
 - **Hiding one node:** right-click it. **N hidden** lists what you hid, to show it
   again; a MAIN's checkbox in the left pane hides it too.
 - **hardware scale:** sizes each block by its delay (width) and bus width (height).

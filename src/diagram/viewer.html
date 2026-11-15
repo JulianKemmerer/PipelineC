@@ -71,7 +71,7 @@ button, select { font: inherit; cursor: pointer; }
 #svg .e.hot { stroke: var(--hot); }
 #svg .hit { fill: none; stroke: transparent; stroke-width: 12; pointer-events: stroke; }
 #svg .hotl { pointer-events: none; }
-#svg .el { fill: var(--muted); font-size: 10px; }
+#svg .el { fill: var(--muted); font-size: 10px; paint-order: stroke; stroke: var(--bg); stroke-width: 3px; stroke-linejoin: round; }
 #svg .el.hot { fill: var(--hot); font-weight: 600; }
 #svg .tick { fill: var(--muted); font-size: 10px; }
 #svg .note { fill: var(--muted); font-size: 12px; }
@@ -173,20 +173,50 @@ function typeLong(i) {
   return (t.name ? t.name + " = " + t.c : t.c) + (t.bits != null ? ", " + t.bits + " bits" : "") +
     (t.role ? ", " + ROLE_TEXT[t.role] : "");
 }
+// The fields a returned struct stands for, an output each, or null: not a
+// struct, or one interface's own type (one port)
+function splitFields(i) { const t = T(i); return t.fields && !t.interface ? t.fields : null; }
+function fieldType(i, name) {
+  const f = (T(i).fields || []).find((x) => x[0] === name);
+  return f ? f[1] : null;
+}
+// The role of the data at field path p of type i (DIAGRAM._Types.path_role):
+// fb inside a wire_t's Feedback field, else the role of the first interface
+// type on the way, or of the deepest type the table describes
+function pathRole(i, p) {
+  for (const tok of p) {
+    const t = T(i);
+    if (!t.c) return "plain";
+    if (typeof tok === "number") continue;   // an array element: the array's role
+    if ((t.feedback || []).includes(tok)) return "fb";
+    if (t.interface && !t.feedback) return roleOf(i);
+    const f = fieldType(i, tok);
+    if (f == null) return roleOf(i);
+    i = f;
+  }
+  return roleOf(i);
+}
+function pathStr(p) { return p.map((tok) => typeof tok === "number" ? "[" + tok + "]" : "." + tok).join(""); }
+function startsWith(a, b) { return b.length <= a.length && b.every((x, i) => x === a[i]); }
 
 // ---------- filters ----------
 // What a view can leave out, per kind of node or edge: show it, group it (operators
 // only: each connected cluster becomes one logic block), hide it with its edges
 // passing through ("pass"), or hide it with its edges ("drop"). A typed kind's mode
-// applies to the interface roles its scope names, the rest are shown.
+// applies to the interface roles its scope names, the rest are shown. The
+// defaults draw what a hand-drawn diagram of the data path shows
+// (DIAGRAM_DESIGN.md#filters): forward interface data between the blocks,
+// without feedback (ready), sideband ports beside forward interfaces, or
+// registers and operators apart from the logic blocks they make up.
 const KINDS = [
-  { id: "in", label: "inputs", tip: "function inputs and top-level Input pins", modes: ["show", "drop"], typed: true, def: "show" },
-  { id: "out", label: "outputs", tip: "function outputs and top-level Output pins", modes: ["show", "drop"], typed: true, def: "show" },
-  { id: "reg", label: "registers", tip: "a Reg's current and next value; passing through joins them as one edge", modes: ["show", "pass", "drop"], typed: true, def: "show" },
-  { id: "wire", label: "global wire reads and writes", tip: "a function's global wire read and write stubs", modes: ["show", "drop"], typed: true, def: "show" },
+  { id: "in", label: "inputs", tip: "function inputs and top-level Input pins", modes: ["show", "drop"], typed: true, def: "drop", scope: "auto" },
+  { id: "out", label: "outputs", tip: "function outputs (one per field of a returned struct) and top-level Output pins", modes: ["show", "drop"], typed: true, def: "drop", scope: "auto" },
+  { id: "reg", label: "registers", tip: "a Reg's current and next value; grouping puts the register in the logic block of what it connects to, passing through joins its two values as one edge", modes: ["show", "group", "pass", "drop"], typed: true, def: "group" },
+  { id: "wire", label: "global wire reads and writes", tip: "a function's global wire read and write stubs", modes: ["show", "drop"], typed: true, def: "drop", scope: "auto" },
+  { id: "fbdata", label: "feedback data", tip: "wires carrying an interface's feedback (an fb_t, a wire_t's Feedback fields: ready), and the logic blocks, ports and pins they leave with nothing else", modes: ["show", "drop"], def: "drop" },
   { id: "fb", label: "Feedback edges", tip: "edges through a Feedback variable, by the type the variable carries", modes: ["show", "drop"], typed: true, def: "drop", scope: "fb" },
   { id: "wiring", label: "wiring", tip: "@wires functions, MAINs, functions and operators with no logic (casts, constant field selects)", modes: ["show", "pass", "drop"], def: "pass" },
-  { id: "op", label: "operators", tip: "operators and other built-ins", modes: ["show", "group", "pass", "drop"], def: "group" },
+  { id: "op", label: "operators", tip: "operators and other built-ins, and the calls operators in the source were implemented by (a soft comparator, say); grouped, a logic block with no drawn output is left out", modes: ["show", "group", "pass", "drop"], def: "group" },
   { id: "const", label: "constants, clock enable", modes: ["show", "drop"], def: "drop" },
   { id: "ghost", label: "other files' MAINs", tip: "in a file's view, the MAINs of other files it connects to", modes: ["show", "drop"], def: "show" },
 ];
@@ -197,19 +227,23 @@ const SCOPES = [
   ["fwd", "forward only (streams, fwd_t)", ["fwd"]],
   ["fb", "feedback only (fb_t)", ["fb"]],
   ["plain", "plain only (no interface)", ["plain"]],
+  ["auto", "feedback, and plain beside forward interfaces", null],
 ];
 const SCOPE = new Map(SCOPES.map(([id, , roles]) => [id, roles]));
 const MODE_TEXT = { show: "show", group: "group into logic blocks", pass: "hide, edges pass through", drop: "hide with edges" };
 // What a wire's label says
 const LABEL_TEXT = [["both", "name: type"], ["name", "name"], ["type", "type"]];
 function defaults() {
-  const f = { wireLabels: false, labelText: "both" };
+  const f = { wireLabels: true, labelText: "name" };
   for (const k of KINDS) f[k.id] = { mode: k.def, scope: k.scope || "all" };
   return f;
 }
 let filt = defaults();
 // Per-viewer conveniences in the browser's storage; a page without it uses the defaults
 const STORE = "pypelinec-diagram:";
+// Key of the saved filters: a new key when the defaults change, so filters
+// saved under the old defaults do not keep them
+const FILTERS_KEY = "filters.3";
 let storageOff = false;   // the self-test leaves the browser's storage alone
 function loadStored(key) {
   try { const v = localStorage.getItem(STORE + key); return v ? JSON.parse(v) : null; } catch (e) { return null; }
@@ -219,7 +253,7 @@ function store(key, value) {
   try { localStorage.setItem(STORE + key, JSON.stringify(value)); } catch (e) { /* storage blocked */ }
 }
 function loadSettings() {
-  const f = defaults(), saved = loadStored("filters");
+  const f = defaults(), saved = loadStored(FILTERS_KEY);
   if (saved && typeof saved === "object") {
     for (const k of KINDS) {
       const s = saved[k.id];
@@ -237,12 +271,24 @@ function loadSettings() {
   state.labels = new Map(Array.isArray(lab) ? lab.filter((h) => Array.isArray(h) && typeof h[0] === "string" && typeof h[1] === "boolean") : []);
 }
 function saveSettings() {
-  store("filters", filt);
+  store(FILTERS_KEY, filt);
   store("hidden:" + D.build.top, [...state.hidden]);
   store("labels:" + D.build.top, [...state.labels]);
 }
-// Whether kind k's mode applies to something with this interface role
-function applies(k, role) { return !KIND.get(k).typed || SCOPE.get(filt[k].scope).includes(role || "plain"); }
+// Whether kind k's mode applies to something with this interface role, in a
+// view whose inputs and outputs include forward interface ports (iface) or
+// not: "auto" takes feedback ports, and plain ones beside forward interfaces
+function applies(k, role, iface) {
+  if (!KIND.get(k).typed) return true;
+  const scope = filt[k].scope;
+  if (scope === "auto") return role === "fb" || (role === "plain" && !!iface);
+  return SCOPE.get(scope).includes(role || "plain");
+}
+// Whether ports [{dir: "in" | "out", role}] include a forward interface each way
+function hasIface(ports) {
+  const fwd = (dir) => ports.some((p) => p.dir === dir && p.role === "fwd");
+  return fwd("in") && fwd("out");
+}
 
 // ---------- names and lookups ----------
 const clockIds = Object.keys(D.clocks).sort();
@@ -294,8 +340,11 @@ const OP_SYMBOLS = { BIN_OP_PLUS: "+", BIN_OP_MINUS: "−", BIN_OP_MULT: "×", B
   BIN_OP_DIV: "÷", BIN_OP_MOD: "%", BIN_OP_EQ: "==", BIN_OP_NEQ: "!=", BIN_OP_LT: "<", BIN_OP_LTE: "<=",
   BIN_OP_GT: ">", BIN_OP_GTE: ">=", BIN_OP_AND: "&", BIN_OP_OR: "|", BIN_OP_XOR: "^", BIN_OP_SL: "<<",
   BIN_OP_SR: ">>", UNARY_OP_NOT: "~", UNARY_OP_NEGATE: "−x", MUX: "mux", VAR_REF_RD: "[i]",
-  VAR_REF_ASSIGN: "[i]=" };
-function opSymbol(name) { return OP_SYMBOLS[name] || name.toLowerCase(); }
+  VAR_REF_ASSIGN: "[i]=", SIM_ASSERT: "assert" };
+// name: an operator function's (BIN_OP_PLUS) or a dispatched op's (PLUS)
+function opSymbol(name) {
+  return OP_SYMBOLS[name] || OP_SYMBOLS["BIN_OP_" + name] || OP_SYMBOLS["UNARY_OP_" + name] || name.toLowerCase();
+}
 
 // Resolve an instance path (MAIN____local____local) to [[inst, func, local], ...]
 function resolve(inst) {
@@ -498,6 +547,7 @@ function mainTip(m) {
 
 // ---------- layered layout ----------
 const GAP_Y_MIN = 18, GAP_Y_MAX = 180;   // room between the blocks of a layer
+const VIA_H = 6;   // the height a skipping edge takes in a layer it crosses
 // The pane's height over its width, or 0 when it has no size yet
 function paneAspect() {
   const W = svg.clientWidth, H = svg.clientHeight;
@@ -505,7 +555,9 @@ function paneAspect() {
 }
 // nodes: [{id, w, h, rank: "first"|"last"|null}], edges: [{s, d, fb}]; gapX: room
 // between layers; aspect: the pane's height over its width, which the rows of
-// a wide, flat drawing spread out towards (0: no spreading)
+// a wide, flat drawing spread out towards (0: no spreading). A forward edge
+// that skips layers gets points: [[left, right, y]] where it crosses each
+// layer between its ends, a place of its own there that no block takes
 function layout(nodes, edges, gapX, aspect) {
   const idx = new Map(nodes.map((n, i) => [n.id, i]));
   const N = nodes.length;
@@ -516,16 +568,21 @@ function layout(nodes, edges, gapX, aspect) {
     if (a == null || b == null || a === b) continue;
     es.push({ a, b, fb: !!e.fb, e });
   }
-  // Break cycles: feedback edges first, then the narrower edge of a two-way
-  // pair (a stream's ready against its data), then DFS back edges, wide
-  // edges explored first so narrow ones end up reversed
+  // Break cycles: the narrower edge of a two-way pair (a stream's ready
+  // against its data), then DFS back edges of the other edges, wide edges
+  // explored first so narrow ones end up reversed; a Feedback edge is laid
+  // out forward unless it closes a cycle (a value used before it is assigned
+  // need not flow backwards)
   const width = (x) => x.e.bits || 0;
   const pair = new Map();
   for (const x of es) pair.set(x.a + "," + x.b, Math.max(pair.get(x.a + "," + x.b) || 0, width(x)));
+  const loops = es.filter((x) => x.fb);
+  for (const x of es) x.fb = false;
   for (const x of es) {
     const other = pair.get(x.b + "," + x.a);
     if (other != null && (width(x) < other || (width(x) === other && x.a > x.b))) x.fb = true;
   }
+  for (const x of loops) x.fb = true;
   const fwd = es.filter((x) => !x.fb);
   for (const x of fwd) out[x.a].push(x);
   for (const list of out) list.sort((p, q) => width(q) - width(p));
@@ -541,6 +598,24 @@ function layout(nodes, edges, gapX, aspect) {
         else if (!color[x.b]) { color[x.b] = 1; st.push([x.b, 0]); }
       } else { color[v] = 2; st.pop(); }
     }
+  }
+  // Each Feedback edge then goes forward if its end does not already reach its start
+  const ahead = Array.from({ length: N }, () => []);
+  for (const x of fwd) if (!back.has(x)) ahead[x.a].push(x.b);
+  const reaches = (from, to) => {
+    const seen = new Uint8Array(N), st = [from];
+    seen[from] = 1;
+    while (st.length) {
+      const v = st.pop();
+      if (v === to) return true;
+      for (const w of ahead[v]) if (!seen[w]) { seen[w] = 1; st.push(w); }
+    }
+    return false;
+  };
+  for (const x of loops) {
+    if (reaches(x.b, x.a)) continue;
+    x.fb = false;
+    ahead[x.a].push(x.b);
   }
   const dag = es.map((x) => (x.fb || back.has(x)) ? { a: x.b, b: x.a, x } : { a: x.a, b: x.b, x });
   // Longest-path layers
@@ -562,12 +637,33 @@ function layout(nodes, edges, gapX, aspect) {
   const L = used.length;
   const layers = Array.from({ length: L }, () => []);
   for (let i = 0; i < N; i++) layers[layer[i]].push(i);
+  // A forward edge that skips layers runs through a point in each layer it
+  // crosses: the points are ordered and placed with the blocks (items), so no
+  // block sits on the edge's way
+  const items = nodes.slice(), links = [], vias = [];
+  for (const y of dag) {
+    if (y.x.fb || back.has(y.x) || layer[y.b] - layer[y.a] < 2) { links.push([y.a, y.b]); continue; }
+    let prev = y.a;
+    const via = [];
+    for (let l = layer[y.a] + 1; l < layer[y.b]; l++) {
+      const v = items.length;
+      items.push({ w: 0, h: VIA_H });
+      layer.push(l);
+      layers[l].push(v);
+      via.push(v);
+      links.push([prev, v]);
+      prev = v;
+    }
+    links.push([prev, y.b]);
+    vias.push([y.x.e, via]);
+  }
+  const M = items.length;
   // Barycenter ordering sweeps, alternately by the neighbors in earlier layers
   // and by those in later ones. A position is taken relative to its layer's
   // size, so an edge that skips layers (an input feeding a late block) counts
-  const nb = Array.from({ length: N }, () => []);
-  for (const y of dag) { nb[y.a].push(y.b); nb[y.b].push(y.a); }
-  const pos = new Float64Array(N);
+  const nb = Array.from({ length: M }, () => []);
+  for (const [a, b] of links) { nb[a].push(b); nb[b].push(a); }
+  const pos = new Float64Array(M);
   layers.forEach((ly) => ly.forEach((v, i) => { pos[v] = i; }));
   const rel = (w) => (pos[w] + 0.5) / layers[layer[w]].length;
   for (let it = 0; it < 8; it++) {
@@ -587,9 +683,9 @@ function layout(nodes, edges, gapX, aspect) {
   // the blocks of a layer grows until the tallest layer is about as tall as
   // the pane's shape allows at that width, within [GAP_Y_MIN, GAP_Y_MAX]
   const GAPX = gapX || 70;
-  const colW = layers.map((ly) => Math.max(...ly.map((v) => nodes[v].w)));
+  const colW = layers.map((ly) => Math.max(...ly.map((v) => items[v].w)));
   const totalW = Math.max(0, colW.reduce((s, w) => s + w + GAPX, -GAPX));
-  const sumH = layers.map((ly) => ly.reduce((s, v) => s + nodes[v].h, 0));
+  const sumH = layers.map((ly) => ly.reduce((s, v) => s + items[v].h, 0));
   let gapY = GAP_Y_MIN;
   if (aspect > 0) {
     let g = GAP_Y_MAX;
@@ -601,25 +697,29 @@ function layout(nodes, edges, gapX, aspect) {
   // neighbors as far as its layer's order and gap allow
   const colH = layers.map((ly, l) => sumH[l] + gapY * (ly.length - 1));
   const H0 = Math.max(0, ...colH);
+  const colX = [];
   let x = 0;
   for (let l = 0; l < L; l++) {
     let y = (H0 - colH[l]) / 2;
+    colX.push(x);
     for (const v of layers[l]) {
-      nodes[v].x = x + (colW[l] - nodes[v].w) / 2; nodes[v].y = y; y += nodes[v].h + gapY;
+      items[v].x = x + (colW[l] - items[v].w) / 2; items[v].y = y; y += items[v].h + gapY;
     }
     x += colW[l] + GAPX;
   }
-  const mid = (v) => nodes[v].y + nodes[v].h / 2;
+  const mid = (v) => items[v].y + items[v].h / 2;
   for (let it = 0; it < 8; it++) {
     const order = it % 2 ? [...layers.keys()].reverse() : [...layers.keys()];
     for (const l of order) {
-      placeLayer(layers[l].map((v) => nodes[v]), layers[l].map((v) =>
-        (nb[v].length ? nb[v].reduce((s, w) => s + mid(w), 0) / nb[v].length : mid(v)) - nodes[v].h / 2), gapY);
+      placeLayer(layers[l].map((v) => items[v]), layers[l].map((v) =>
+        (nb[v].length ? nb[v].reduce((s, w) => s + mid(w), 0) / nb[v].length : mid(v)) - items[v].h / 2), gapY);
     }
   }
-  const top = N ? Math.min(...nodes.map((n) => n.y)) : 0;
-  for (const n of nodes) n.y -= top;
-  return { width: totalW, height: Math.max(0, ...nodes.map((n) => n.y + n.h)) };
+  const top = M ? Math.min(...items.map((n) => n.y)) : 0;
+  for (const n of items) n.y -= top;
+  for (const e of edges) e.points = null;
+  for (const [e, via] of vias) e.points = via.map((v) => [colX[layer[v]], colX[layer[v]] + colW[layer[v]], mid(v)]);
+  return { width: totalW, height: Math.max(0, ...items.map((n) => n.y + n.h)) };
 }
 // Places a layer's blocks (top to bottom) with their tops as near the wanted
 // tops as their order and the gap between them allow, in least squares: with
@@ -717,7 +817,17 @@ function draw(nodes, edges, size, note, decorate) {
     e.title = a.lines[0] + " → " + b.lines[0];
     const x1 = a.x + a.w, y1 = a.y + a.h / 2, x2 = b.x, y2 = b.y + b.h / 2;
     let d, spots;
-    if (x2 > x1 + 4) {
+    if (e.points && e.points.length) {   // through its own place in each layer it skips
+      d = `M${x1},${y1}`;
+      let px = x1, py = y1;
+      const hop = (qx, qy) => {
+        const c = Math.max(20, (qx - px) / 2);
+        d += ` C${px + c},${py} ${qx - c},${qy} ${qx},${qy}`;
+      };
+      for (const [left, right, y] of e.points) { hop(left, y); d += ` L${right},${y}`; px = right; py = y; }
+      hop(x2, y2);
+      spots = e.points.map(([left, right, y]) => [(left + right) / 2, y - 4, false]);
+    } else if (x2 > x1 + 4) {
       const c = Math.max(30, (x2 - x1) / 2);
       d = `M${x1},${y1} C${x1 + c},${y1} ${x2 - c},${y2} ${x2},${y2}`;
       const at = (t) => {   // a point on the curve, a label sitting just above it
@@ -899,10 +1009,63 @@ function wireLine(w) {
 function edgeKey(viewKey, s, d) { return viewKey + SEP + s + SEP + d; }
 function labelShown(e) { return state.labels.has(e.key) ? state.labels.get(e.key) : filt.wireLabels; }
 const LABEL_WRAP = 40;   // a longer "name: type" line breaks after the colon
+// A bundle's wires as its label and tooltip list them: wires whose names differ
+// only in one array index, with one type, as one entry (key_bytes[0..31])
+function compactWires(wires) {
+  const out = [], runs = new Map();
+  for (const w of wires) {
+    const m = /^(.*)\[(\d+)\]([^[]*)$/.exec(w.name || "");
+    if (!m) { out.push(w); continue; }
+    const key = m[1] + "\u0000" + m[3] + "\u0000" + w.t;
+    if (!runs.has(key)) { const x = { head: m[1], tail: m[3], t: w.t, idx: [] }; runs.set(key, x); out.push(x); }
+    runs.get(key).idx.push(+m[2]);
+  }
+  return out.map((x) => {
+    if (!x.idx) return x;
+    const idx = [...new Set(x.idx)].sort((a, b) => a - b), spans = [];
+    for (const i of idx) {
+      const last = spans[spans.length - 1];
+      if (last && last[1] === i - 1) last[1] = i; else spans.push([i, i]);
+    }
+    return { name: x.head + "[" + spans.map(([a, b]) => a === b ? a : a + ".." + b).join(",") + "]" + x.tail, t: x.t };
+  });
+}
+// With names only, the fields one variable carries share a line: their common
+// path, then each field after it (prepared_if.stream: valid, data.r, data.s),
+// none left out, wrapped between fields
+function nameLines(wires) {
+  const toks = (n) => n.split(/(?=[.[])/);   // a.b[0].c -> a .b [0] .c
+  const groups = new Map();
+  for (const n of new Set(compactWires(wires).map((w) => w.name).filter(Boolean))) {
+    const k = toks(n)[0];
+    if (!groups.has(k)) groups.set(k, []);
+    groups.get(k).push(toks(n));
+  }
+  const out = [];
+  for (const list of groups.values()) {
+    let common = list[0];
+    for (const t of list) {
+      let i = 0;
+      while (i < common.length && i < t.length && t[i] === common[i]) i++;
+      common = common.slice(0, i);
+    }
+    if (list.some((t) => t.length === common.length)) common = common.slice(0, -1);   // each keeps a field
+    if (list.length === 1 || !common.length) { for (const t of list) out.push(t.join("")); continue; }
+    const fields = list.map((t) => t.slice(common.length).join("").replace(/^\./, ""));
+    let line = common.join("") + ":";
+    for (const [i, field] of fields.entries()) {
+      const piece = field + (i < fields.length - 1 ? "," : "");
+      if (line.length + 1 + piece.length > LABEL_WRAP && line.length) { out.push(line); line = piece; } else line += " " + piece;
+    }
+    out.push(line.trim());
+  }
+  return out;
+}
 function labelLines(e) {
   if (!labelShown(e)) return [];
+  if (filt.labelText === "name" && e.wires.some((w) => w.name)) return nameLines(e.wires);
   const out = [];
-  for (const line of new Set(e.wires.map(wireLine).filter(Boolean))) {
+  for (const line of new Set(compactWires(e.wires).map(wireLine).filter(Boolean))) {
     const at = line.indexOf(": ");
     if (line.length > LABEL_WRAP && at > 0) out.push(line.slice(0, at + 1), line.slice(at + 2));
     else out.push(line);
@@ -915,7 +1078,7 @@ function wiresTip(wires) {
     const w = wires[0];
     return (w.name || "(no name)") + (T(w.t).c ? "\ntype: " + typeLong(w.t) : "");
   }
-  return wires.length + " wires:\n" + wires.map((w) => "  " + (w.name || "(no name)") + (T(w.t).c ? ": " + typeShort(w.t) : "")).join("\n");
+  return wires.length + " wires:\n" + compactWires(wires).map((w) => "  " + (w.name || "(no name)") + (T(w.t).c ? ": " + typeShort(w.t) : "")).join("\n");
 }
 // A wire's own label shown or hidden from its menu; the same as the wire
 // labels setting, it follows the setting again
@@ -927,14 +1090,14 @@ function setLabel(key, on) {
 
 // ---------- design view ----------
 // A design-view node's mode: hidden by hand (every member MAIN), the wiring filter,
-// or a pin's inputs/outputs filter
-function designMode(g, members) {
+// or a pin's inputs/outputs filter (iface: the pins include forward interfaces each way)
+function designMode(g, members, iface) {
   if (g.startsWith("pin:")) {
     const name = g.slice(4), p = D.pins[name] || {};
     const own = state.hidden.get("pin" + SEP + name);
     if (own) return own;
     const k = p.dir === "in" ? "in" : "out";
-    return applies(k, roleOf(p.t)) ? filt[k].mode : "show";
+    return applies(k, roleOf(p.t), iface) ? filt[k].mode : "show";
   }
   const ms = members.get(g), own = ms.map((m) => state.hidden.get("main" + SEP + m));
   if (own.every(Boolean)) return own.includes("drop") ? "drop" : "pass";
@@ -958,8 +1121,13 @@ function designView(file) {
   }
   const all = new Set([...members.keys()]);
   for (const e of raw) { all.add(e.s); all.add(e.d); }
-  const mode = new Map([...all].map((g) => [g, designMode(g, members)]));
-  const kept = raw.filter((e) => mode.get(e.s) !== "drop" && mode.get(e.d) !== "drop");
+  const iface = hasIface(Object.values(D.pins).map((p) => ({ dir: p.dir, role: roleOf(p.t) })));
+  const mode = new Map([...all].map((g) => [g, designMode(g, members, iface)]));
+  // Feedback data (a link to or from an interface's Feedback field) leaves with
+  // its links, and so does a pin it leaves with no connection (below)
+  const dropFbData = filt.fbdata.mode === "drop";
+  const kept = raw.filter((e) => mode.get(e.s) !== "drop" && mode.get(e.d) !== "drop" &&
+    !(dropFbData && e.link.role === "fb"));
   const keep = (g) => mode.get(g) === "show";
   // Through a hidden MAIN, a wire continues only into the wires its logic drives from it
   const step = (e, f) => {
@@ -969,25 +1137,80 @@ function designView(file) {
       return !pairs || pairs.has(e.link.wire + "\u0000" + f.link.wire);
     });
   };
-  // A wire of an edge is a chain of links, named by their wires
+  // A wire of an edge is a chain of links, named by their wires. Next to a
+  // pin, a path through a hidden MAIN goes on in a global wire (nextTo: pin ->
+  // {wires, roles} of the links there, direct when a path has none)
+  const nextTo = new Map();
+  const nearPin = (pin, link) => {
+    if (!nextTo.has(pin)) nextTo.set(pin, { wires: new Set(), roles: new Set(), names: new Set(), direct: false });
+    const x = nextTo.get(pin);
+    if (!link) x.direct = true; else { x.wires.add(link.wire); x.roles.add(link.role || "plain"); x.names.add(link.name); }
+  };
   let edges = contract([...all], kept, keep, (acc, s, d, path) => {
-    acc = acc || { s, d, wires: [], bits: 0, async: false };
+    acc = acc || { s, d, wires: [], bits: 0, async: false, feedback: false };
     const last = path[path.length - 1].link, name = path.map((p) => p.link.name).join(" → ");
+    acc.feedback = acc.feedback || path.some((p) => p.link.role === "fb");
     if (!acc.wires.some((w) => w.name === name)) {
       acc.wires.push({ name, t: last.t });
       acc.bits += bitsOf(last.t) || 0;
     }
     acc.async = acc.async || path.some((p) => p.link.async);
+    if (s.startsWith("pin:")) nearPin(s, path.length > 1 ? path[1].link : null);
+    if (d.startsWith("pin:")) nearPin(d, path.length > 1 ? path[path.length - 2].link : null);
     return acc;
   }, step);
-  let ids = [...all].filter(keep);
+  // Pins a hidden MAIN packs into one global wire (an I/O @wires MAIN's AXIS
+  // pins, say) stand for that wire's interface port: they are drawn as one
+  // port, with the role of the wire's data there. The pins beside such ports
+  // both ways are sideband, which the inputs and outputs filters take as they
+  // take a function's plain ports
+  const pinGroups = new Map(), groupOf = new Map();
+  for (const [pin, x] of [...nextTo].sort()) {
+    if (x.direct || x.wires.size !== 1) continue;
+    const dir = D.pins[pin.slice(4)].dir, wire = [...x.wires][0], key = "pins:" + dir + ":" + wire;
+    if (!pinGroups.has(key)) pinGroups.set(key, { dir, wire, pins: [], roles: new Set(), names: new Set() });
+    const grp = pinGroups.get(key);
+    grp.pins.push(pin);
+    for (const r of x.roles) grp.roles.add(r);
+    for (const n of x.names) grp.names.add(n);
+  }
+  for (const [key, grp] of [...pinGroups]) {
+    if (grp.pins.length < 2) { pinGroups.delete(key); continue; }
+    grp.role = grp.roles.has("fwd") ? "fwd" : grp.roles.size === 1 && grp.roles.has("fb") ? "fb" : "plain";
+    for (const p of grp.pins) groupOf.set(p, key);
+    // Its edge carries one wire: the part of the global wire its pins' links share
+    const toks = [...grp.names].map((n) => n.split(/(?=[.[])/));
+    let common = toks[0];
+    for (const t of toks) { let i = 0; while (i < common.length && i < t.length && t[i] === common[i]) i++; common = common.slice(0, i); }
+    const path = common.slice(1).map((t) => t.startsWith("[") ? +t.slice(1, -1) : t.slice(1));
+    grp.carried = { name: common.join(""), t: partType((D.wires[grp.wire] || {}).t, path) };
+  }
+  const ports = hasIface([...pinGroups.values()].map((grp) => ({ dir: grp.dir, role: grp.role })));
+  const sideband = (g) => {
+    if (!g.startsWith("pin:") || groupOf.has(g) || state.hidden.has("pin" + SEP + g.slice(4))) return false;
+    const p = D.pins[g.slice(4)], k = p.dir === "in" ? "in" : "out";
+    return filt[k].mode === "drop" && applies(k, roleOf(p.t), ports);
+  };
+  const joined = new Map();
+  for (const e of edges) {
+    if (sideband(e.s) || sideband(e.d)) continue;
+    const s = groupOf.get(e.s) || e.s, d = groupOf.get(e.d) || e.d, k = s + "\u0000" + d;
+    let x = joined.get(k);
+    if (!x) joined.set(k, x = { s, d, wires: [], bits: 0, async: false, feedback: false });
+    const grp = pinGroups.get(s) || pinGroups.get(d);
+    for (const w of grp ? [grp.carried] : e.wires) if (!x.wires.some((y) => y.name === w.name)) { x.wires.push(w); x.bits += bitsOf(w.t) || 0; }
+    x.async = x.async || e.async;
+    x.feedback = x.feedback || e.feedback;
+  }
+  edges = [...joined.values()];
   // Pins with no connection are left out; a file view keeps its MAINs and their neighbors
+  const isPin = (g) => g.startsWith("pin:") || g.startsWith("pins:");
   const connected = new Set();
   for (const e of edges) { connected.add(e.s); connected.add(e.d); }
-  ids = ids.filter((g) => !g.startsWith("pin:") || connected.has(g));
+  let ids = [...all].filter(keep).concat([...pinGroups.keys()]).filter((g) => !isPin(g) || connected.has(g));
   let ghost = new Set();
   if (inFile) {
-    const mine = (g) => !g.startsWith("pin:") && members.get(g).some((m) => inFile.has(m));
+    const mine = (g) => !isPin(g) && members.get(g).some((m) => inFile.has(m));
     const near = new Set();
     if (filt.ghost.mode === "show") {
       for (const e of edges) {
@@ -999,8 +1222,23 @@ function designView(file) {
     ghost = new Set(ids.filter((g) => !mine(g)));
     edges = edges.filter((e) => ids.includes(e.s) && ids.includes(e.d) && (mine(e.s) || mine(e.d)));
   }
-  const clockOf = (g) => g.startsWith("pin:") ? null : D.mains[members.get(g)[0]].clock;
+  const clockOf = (g) => isPin(g) ? null : D.mains[members.get(g)[0]].clock;
   const nodes = ids.sort().map((g) => {
+    if (g.startsWith("pins:")) {
+      const grp = pinGroups.get(g), ps = grp.pins.map((p) => D.pins[p.slice(4)]);
+      // Named by what the pins' names share up to a "_", or by the wire
+      let pre = ps[0].name;
+      for (const p of ps) while (!p.name.startsWith(pre)) pre = pre.slice(0, -1);
+      pre = pre.slice(0, pre.lastIndexOf("_") + 1).replace(/_+$/, "");
+      const wire = D.wires[g.slice(g.indexOf(":", 5) + 1)] || {};
+      const label = pre.length >= 3 ? pre : wire.name || g;
+      const bits = ps.reduce((b, p) => b + (bitsOf(p.t) || 0), 0);
+      return { id: g, cls: "port", lines: [label, (grp.dir === "in" ? "Input" : "Output") + " pins (" + ps.length + ")  " + bits + "b"],
+        rank: grp.dir === "in" ? "first" : "last",
+        tip: () => ps.length + (grp.dir === "in" ? " Input" : " Output") + " pins, one global wire " + (wire.name || "") +
+          " (" + ROLE_TEXT[grp.role] + "):\n" + ps.map((p) => "  " + p.name + (T(p.t).c ? ": " + typeShort(p.t) : "")).join("\n"),
+        hide: { label: "pins " + label, keys: grp.pins.map((p) => "pin" + SEP + p.slice(4)), modes: ["drop"] } };
+    }
     if (g.startsWith("pin:")) {
       const p = D.pins[g.slice(4)];
       return { id: g, cls: "port", lines: [p.name, (p.dir === "in" ? "Input" : "Output") + (T(p.t).c ? "  " + typeShort(p.t) : "")],
@@ -1013,10 +1251,11 @@ function designView(file) {
     const lat = Math.max(...ms.map((m) => D.mains[m].latency));
     const kindTxt = e.kind === "main" ? "MAIN" : e.kind.replace("_", " ");
     const label = ms.length > 1 ? e.name : mainLabel(ms[0]);
+    const head = [label, [kindTxt, lat ? "L=" + lat : "", clocks.join(" → ")].filter(Boolean).join("  ")];
     return {
       id: g, cls: (ghost.has(g) ? "ghost " : "") + "click",
-      lines: [label, [kindTxt, lat ? "L=" + lat : "", clocks.join(" → ")].filter(Boolean).join("  "),
-              loc(e.file, e.line)],
+      lines: head.concat([loc(e.file, e.line)]),
+      mermaid: head,   // no source line in text meant for a README, where it goes stale
       color: clockColor(clocks[0]),
       tip: () => ms.map(mainTip).join("\n\n"),
       onclick: () => go({ inst: ms[0] }),
@@ -1027,7 +1266,7 @@ function designView(file) {
   const de = edges.map((e) => {
     const wires = e.wires.sort((a, b) => a.name < b.name ? -1 : a.name > b.name ? 1 : 0);
     const cs = clockOf(e.s), cd = clockOf(e.d), cross = !!(cs && cd && cs !== cd);
-    const x = { s: e.s, d: e.d, key: edgeKey("design", e.s, e.d), wires, bits: e.bits, async: e.async, cross,
+    const x = { s: e.s, d: e.d, key: edgeKey("design", e.s, e.d), wires, bits: e.bits, async: e.async, cross, feedback: e.feedback,
       tip: wiresTip(wires) + (wires.length > 1 && e.bits ? "\n" + e.bits + " bits in all" : "") +
         (cross ? "\ncrosses clocks: " + cs + " → " + cd : "") };
     x.lines = labelLines(x);
@@ -1065,44 +1304,73 @@ function nodeKindOf(n) {
     case "sub": {
       const cf = func(n.callee);
       if (cf.wiring) return "wiring";
-      return cf.kind === "op" ? "op" : null;
+      // n.op: an operator in the source, implemented by a call
+      return cf.kind === "op" || n.op ? "op" : null;
     }
   }
   return null;
 }
+// A global wire stub's role is that of the fields it reads or drives (n.role)
 function nodeRole(n) {
-  if (n.kind === "wire_read" || n.kind === "wire_write") return roleOf((D.wires[n.name] || {}).t);
+  if (n.kind === "wire_read" || n.kind === "wire_write") return n.role || roleOf((D.wires[n.name] || {}).t);
   return roleOf(n.t);
 }
-function nodeMode(fname, n) {
+function nodeMode(fname, n, iface) {
   const own = state.hidden.get(fname + SEP + n.id);
   if (own) return own;
   const k = nodeKindOf(n);
-  if (!k || !applies(k, nodeRole(n))) return "show";
+  if (!k || !applies(k, nodeRole(n), iface)) return "show";
   return filt[k].mode;
+}
+// A function's returned structs, each as its outputs: struct port id ->
+// [{id, kind: "out", name: field, t, of: struct port id}], in field order
+function splitOutputs(g) {
+  const split = new Map();
+  for (const n of Object.values(g.nodes)) {
+    const fields = n.kind === "out" ? splitFields(n.t) : null;
+    if (fields) split.set(n.id, fields.map(([name, t]) => ({ id: n.id + "." + name, kind: "out", name, t, of: n.id })));
+  }
+  return split;
+}
+// Whether a function's inputs (and global wire reads) and outputs (and wire
+// writes) include a forward interface each way: its other ports are sideband
+function viewIface(g, split) {
+  const ports = [];
+  for (const n of Object.values(g.nodes)) {
+    if (n.kind === "in" || n.kind === "wire_read") ports.push({ dir: "in", role: nodeRole(n) });
+    if ((n.kind === "out" && !split.has(n.id)) || n.kind === "wire_write") ports.push({ dir: "out", role: nodeRole(n) });
+  }
+  for (const fields of split.values()) for (const fn of fields) ports.push({ dir: "out", role: roleOf(fn.t) });
+  return hasIface(ports);
 }
 // The keys that hide a node by hand: both values of a register
 function hideKeys(fname, n) {
   if (n.kind === "reg" || n.kind === "reg_next") return [fname + SEP + "rq:" + n.name, fname + SEP + "rd:" + n.name];
   return [fname + SEP + n.id];
 }
-// Operators in group mode, in connected clusters: group id ("g:" + first member)
-// -> {members, names: variables on the edges inside}
-function opGroups(ids, edges, mode) {
+// Operators and registers in group mode, in connected clusters (a register's
+// two values in one), joined through wiring whose edges pass through it (a
+// field select between two operators): group id ("g:" + first member) ->
+// {members, names: variables on the edges inside}
+function opGroups(ids, edges, mode, through) {
   const parent = new Map();
-  for (const id of ids) if (mode.get(id) === "group") parent.set(id, id);
+  for (const id of ids) if (mode.get(id) === "group" || through(id)) parent.set(id, id);
   const find = (x) => {
     while (parent.get(x) !== x) { parent.set(x, parent.get(parent.get(x))); x = parent.get(x); }
     return x;
   };
-  for (const e of edges) {
-    if (!parent.has(e.s) || !parent.has(e.d)) continue;
-    const a = find(e.s), b = find(e.d);
+  const join = (x, y) => {
+    const a = find(x), b = find(y);
     if (a < b) parent.set(b, a); else if (b < a) parent.set(a, b);
-  }
-  const groups = new Map();
+  };
+  for (const e of edges) if (parent.has(e.s) && parent.has(e.d)) join(e.s, e.d);
+  for (const id of ids) if (id.startsWith("rq:") && parent.has(id) && parent.has("rd:" + id.slice(3))) join(id, "rd:" + id.slice(3));
+  const groups = new Map(), first = new Map();
   for (const id of [...parent.keys()].sort()) {
-    const gid = "g:" + find(id);
+    if (mode.get(id) !== "group") continue;
+    const root = find(id);
+    if (!first.has(root)) first.set(root, "g:" + id);
+    const gid = first.get(root);
     if (!groups.has(gid)) groups.set(gid, { members: [], names: new Set() });
     groups.get(gid).members.push(id);
   }
@@ -1113,27 +1381,89 @@ function groupSpan(members, f) {
   if (!f.offsets) return null;
   let lo = Infinity, hi = -Infinity;
   for (const id of members) {
-    const o = f.offsets[id.slice(2)];
+    const o = id.startsWith("s:") ? f.offsets[id.slice(2)] : null;
     if (o) { lo = Math.min(lo, o[0]); hi = Math.max(hi, o[1]); }
   }
   return lo <= hi ? [lo, hi] : null;
 }
-// Merges the paths between two drawn nodes: the wires they carry (wireName
-// names a path; its type is the driven port's), the variables on the way, the
-// types of the Feedback variables on the way (fbTypes) and a register passed through
-function mergeEdges(acc, s, d, path, wireName) {
-  const first = path[0], last = path[path.length - 1];
-  acc = acc || { s, d, sp: first.sp, dp: last.dp, wires: [], vars: [], t: last.t, bits: 0, fbTypes: new Set(), reg: null, paths: 0 };
-  const name = wireName(path);
-  if (!acc.wires.some((w) => w.name === name && w.t === last.t)) {
-    acc.wires.push({ name, t: last.t });
-    acc.bits += bitsOf(last.t) || 0;
+// Every path from a kept node through nodes that are not kept to a kept node,
+// with the state step() carries along it: step(null, null, e) starts a path at
+// its first edge e, step(st, e, f) carries it through the node between edges e
+// and f (a list of states: one path each), and a null state ends the path
+// there. visit(s, d, path, st) gets each path, once for each state its edges
+// are reached with.
+function tracePaths(nodeIds, edges, keep, step, visit) {
+  const out = new Map(), index = new Map();
+  edges.forEach((e, i) => {
+    index.set(e, i);
+    if (!out.has(e.s)) out.set(e.s, []);
+    out.get(e.s).push(e);
+  });
+  for (const s of nodeIds) {
+    if (!keep(s)) continue;
+    const seen = new Set(), stack = [];
+    for (const e of out.get(s) || []) {
+      const st = step(null, null, e);
+      if (st) stack.push([e, [e], st]);
+    }
+    while (stack.length) {
+      const [e, path, st] = stack.pop();
+      if (keep(e.d)) { visit(s, e.d, path, st); continue; }
+      const k = index.get(e) + "\u0000" + JSON.stringify(st);
+      if (seen.has(k)) continue;
+      seen.add(k);
+      for (const f of out.get(e.d) || []) {
+        if (f.d === s) continue;
+        const next = step(st, e, f);
+        for (const x of Array.isArray(next) ? next : next ? [next] : []) stack.push([f, path.concat([f]), x]);
+      }
+    }
   }
-  for (const e of path) for (const nm of e.names) if (!acc.vars.includes(nm)) acc.vars.push(nm);
-  for (const e of path) if (e.fb) acc.fbTypes.add(e.t);
-  if (!acc.reg) { const r = path.find((e) => e.reg); if (r) acc.reg = r.reg; }
-  acc.paths++;
-  return acc;
+}
+// How a path's data moves through the node between its edges e and f (see
+// tracePaths). src: the part of the path's source value it carries, exact until
+// a function computes from it (fn); dst: its place in the current wire's value;
+// sel, asm: the variable and fields the code calls it by at its last field
+// select and its last assembly. A constant field select or assembly (n.ref:
+// [variable, read path, [path per input]]) moves the data by field paths, and
+// ends a path whose part of the input the output does not hold. In an
+// assembly, inputs with longer paths override parts of one with a shorter
+// path (a global wire written field by field over its read-back value): the
+// path goes on as the fields left, one each. Anything else (a function, a
+// register passed through) outputs a value of its own.
+const FIELD_DEPTH = 16;   // deeper paths only come from loops through registers
+function fieldStep(g, st, e, f) {
+  if (!st) return { src: [], dst: [], fn: false, sel: null, asm: null };
+  const n = g.nodes[e.d], m = /^ref_toks_(\d+)$/.exec(e.dp || "");
+  const ref = n && n.ref, drv = ref && m ? ref[2][+m[1]] : null;
+  if (!drv) return Object.assign({}, st, { dst: [], fn: true });
+  const [base, read] = ref, at = drv.concat(st.dst), next = Object.assign({}, st);
+  const over = startsWith(at, read) && ref[2].some((p) => p.length > at.length && startsWith(p, at));
+  if (startsWith(read, at) && !over) {   // a part of it selected (or all of it)
+    next.dst = [];
+    if (!st.fn) next["src"] = st.src.concat(read.slice(at.length));   // bracketed: the page test flags the dotted form
+    if (base) next.sel = base + pathStr(read);
+  } else if (startsWith(at, read)) {     // assembled into a larger value
+    next.dst = at.slice(read.length);
+    if (base) next.asm = base + pathStr(at);
+    const fields = over && T(partType(f.t, next.dst)).fields;
+    if (fields) {
+      const whole = (name) => ref[2].some((p) => p.length === at.length + 1 && startsWith(p, at) && p[at.length] === name);
+      return fields.filter(([name]) => !whole(name)).map(([name]) => Object.assign({}, next, {
+        dst: next.dst.concat([name]), src: st.fn ? st.src : st.src.concat([name]),
+        asm: base ? base + pathStr(at.concat([name])) : next.asm }));
+    }
+  } else return null;
+  return next.src.length > FIELD_DEPTH || next.dst.length > FIELD_DEPTH ? null : next;
+}
+// The type of the part at field path p of type i, as far as the table describes it
+function partType(i, p) {
+  for (const tok of p) {
+    const f = typeof tok === "string" ? fieldType(i, tok) : null;
+    if (f == null) return i;
+    i = f;
+  }
+  return i;
 }
 function functionView(inst, hl) {
   const chain = resolve(inst);
@@ -1143,7 +1473,17 @@ function functionView(inst, hl) {
   if (!g) throw new Error("no graph for " + fname);
   const main = chain[0][0], clock = D.mains[main] ? D.mains[main].clock : null;
   const ids = Object.keys(g.nodes).sort();
-  const mode = new Map(ids.map((id) => [id, nodeMode(fname, g.nodes[id])]));
+  // A returned struct is drawn as one output per field: its port stays in the
+  // graph while one of them is shown, and paths arriving at it go to the fields
+  const split = splitOutputs(g), fieldById = new Map();
+  for (const fields of split.values()) for (const x of fields) fieldById.set(x.id, x);
+  const nodeOf = (id) => fieldById.get(id) || g.nodes[id];
+  const iface = viewIface(g, split);
+  const mode = new Map(ids.map((id) => [id, nodeMode(fname, g.nodes[id], iface)]));
+  for (const [id, fields] of split) {
+    for (const x of fields) mode.set(x.id, nodeMode(fname, x, iface));
+    mode.set(id, fields.some((x) => mode.get(x.id) !== "drop") ? "show" : "drop");
+  }
   // Dropped nodes leave with their edges, as do the Feedback edges the filter drops
   const dropFb = filt.fb.mode === "drop";
   const raw = g.edges.filter((e) => mode.get(e.s) !== "drop" && mode.get(e.d) !== "drop" &&
@@ -1154,7 +1494,7 @@ function functionView(inst, hl) {
     if (n.kind === "reg" && mode.get(id) === "pass" && mode.get(next) === "pass")
       raw.push({ s: next, sp: "", d: id, dp: "", t: n.t, names: [n.name], fb: false, reg: n.name });
   }
-  const groups = opGroups(ids, raw, mode);
+  const groups = opGroups(ids, raw, mode, (id) => mode.get(id) === "pass" && nodeKindOf(g.nodes[id] || {}) === "wiring");
   const groupOf = new Map();
   for (const [gid, grp] of groups) for (const id of grp.members) groupOf.set(id, gid);
   const ep = (id) => groupOf.get(id) || id;
@@ -1166,26 +1506,100 @@ function functionView(inst, hl) {
   }
   const keep = (id) => groups.has(id) || mode.get(id) === "show";
   const nodeIds = ids.filter((id) => !groupOf.has(id)).concat([...groups.keys()]);
-  // A path's wire is named by its first variable, or else by the input it
-  // feeds (a call's argument, an output, a register, a global wire), or else
-  // by the output it comes from: a logic block's ports have no names
-  const endName = (id, port) => {
-    const n = groups.has(id) ? null : g.nodes[id];
+  // Where a path arrives: its end, or the outputs of a returned struct its
+  // data reaches (every one, with the field named, when the whole value does)
+  const arrive = (d, st) => {
+    const fields = split.get(d), n = g.nodes[d];
+    // A global wire write takes only the fields it drives (n.driven)
+    if (n && n.driven && !n.driven.some((p) => startsWith(p, st.dst) || startsWith(st.dst, p))) return [];
+    if (!fields) return [[d, st, null, false]];
+    if (st.dst.length) {
+      const x = fields.find((y) => y.name === st.dst[0]);
+      return x ? [[x.id, Object.assign({}, st, { dst: st.dst.slice(1) }), x, false]] : [];
+    }
+    return fields.map((x) => [x.id, Object.assign({}, st, { src: st.fn ? st.src : st.src.concat([x.name]) }), x, true]);
+  };
+  // A wire is named as the code names it: the variable and fields of its last
+  // field select, or else of its last assembly, or else its first variable, or
+  // else by the ports at its ends (source → destination; a logic block's ports
+  // have no names)
+  const endText = (id, port, p, isSource) => {
+    const n = g.nodes[id];
     if (!n) return "";
-    if (n.kind === "sub") return n.name + (port ? "." + port : "");
-    if (n.kind === "wire_read" || n.kind === "wire_write") return (D.wires[n.name] || {}).name || n.name;
-    return n.name;
+    const own = n.kind === "wire_read" || n.kind === "wire_write" ? (D.wires[n.name] || {}).name || n.name : n.name;
+    if (isSource) return own + pathStr(p);
+    return n.kind === "sub" && port ? own + "." + port : own;
   };
-  const wireName = (path) => {
-    for (const e of path) if (e.names.length) return e.names[0];
+  const wireName = (path, st, field, whole) => {
+    const suffix = whole ? "." + field.name : "";
+    if (st.sel || st.asm) return (st.sel || st.asm) + suffix;
+    for (const e of path) if (e.names.length) return e.names[0] + suffix;
     const first = path[0], last = path[path.length - 1];
-    return endName(last.d, last.dp) || endName(first.s, first.sp);
+    const a = endText(first.s, first.sp, st.src, true);
+    const b = field ? field.name : endText(last.d, last.dp, null, false);
+    return a && b ? a + " → " + b : a || b;
   };
-  const edges = contract(nodeIds, edges0, keep, (acc, s, d, path) => mergeEdges(acc, s, d, path, wireName));
-  const shown = nodeIds.filter(keep);
+  // Merges the paths between two drawn nodes: the wires they carry (each a
+  // name, the driven port's type, whether it is feedback data: an end's part
+  // of its port has the feedback role, and the driven port's place among its
+  // block's inputs), the variables on the way, the types of the Feedback
+  // variables on the way (fbTypes) and a register passed through
+  const portRank = (id, port) => {
+    const n = g.nodes[id];
+    return n && n.kind === "sub" ? (func(n.callee).inputs || []).findIndex((p) => p[0] === port) : -1;
+  };
+  const merged = new Map();
+  tracePaths(nodeIds, edges0, keep, (st, e, x) => fieldStep(g, st, e, x), (s, d, path, st) => {
+    const first = path[0], last = path[path.length - 1];
+    for (const [dd, at, field, whole] of arrive(d, st)) {
+      if (field && mode.get(dd) === "drop") continue;
+      const port = field ? field.t : last.t, t = partType(port, at.dst), name = wireName(path, at, field, whole);
+      const fb = pathRole(first.t, at.src) === "fb" || pathRole(port, at.dst) === "fb";
+      const k = s + "\u0000" + dd;
+      let x = merged.get(k);
+      if (!x) merged.set(k, x = { s, d: dd, wires: [], vars: [], fbTypes: new Set(), reg: null, paths: 0 });
+      const w = x.wires.find((y) => y.name === name && y.t === t);
+      if (!w) x.wires.push({ name, t, fb, rank: portRank(last.d, last.dp) }); else if (!fb) w.fb = false;
+      for (const e of path) for (const nm of e.names) if (!x.vars.includes(nm)) x.vars.push(nm);
+      for (const e of path) if (e.fb) x.fbTypes.add(e.t);
+      if (!x.reg) { const r = path.find((e) => e.reg); if (r) x.reg = r.reg; }
+      x.paths++;
+    }
+  });
+  // Feedback data leaves with its wires; a port or wire stub whose every wire
+  // was feedback data leaves too, and so does a logic block with no drawn
+  // output (one that fed only feedback, hidden ports or nothing: an assertion)
+  const dropFbData = filt.fbdata.mode === "drop";
+  const all = [...merged.values()];
+  for (const e of all) e.wires = dropFbData ? e.wires.filter((w) => !w.fb) : e.wires;
+  let live = all.filter((e) => e.wires.length);
+  const gone = new Set(), liveEnds = new Set();
+  for (const e of live) { liveEnds.add(e.s); liveEnds.add(e.d); }
+  for (const e of all) for (const id of [e.s, e.d]) if (/^(i|o|gr|gw):/.test(id) && !liveEnds.has(id)) gone.add(id);
+  for (let changed = true; changed;) {
+    changed = false;
+    for (const gid of groups.keys()) {
+      if (gone.has(gid) || live.some((e) => e.s === gid && !gone.has(e.d))) continue;
+      gone.add(gid);
+      changed = true;
+    }
+  }
+  live = live.filter((e) => !gone.has(e.s) && !gone.has(e.d));
+  for (const e of live) {
+    // In the order of the ports they drive, as the call lists its arguments, then by name
+    e.wires.sort((a, b) => a.rank - b.rank || (a.name < b.name ? -1 : a.name > b.name ? 1 : 0));
+    e.bits = e.wires.reduce((b, w) => b + (bitsOf(w.t) || 0), 0);
+    e.t = e.wires[0].t;
+  }
+  const shown = [];
+  for (const id of nodeIds) {
+    if (!keep(id) || gone.has(id)) continue;
+    if (!split.has(id)) { shown.push(id); continue; }
+    for (const x of split.get(id)) if (mode.get(x.id) !== "drop" && !gone.has(x.id)) shown.push(x.id);
+  }
   const nodes = shown.map((id) => {
     if (groups.has(id)) return groupNode(id, groups.get(id), fname, g, f, inst, hl);
-    const n = g.nodes[id];
+    const n = nodeOf(id);
     if (n.kind === "sub") {
       const child = inst + MARK + id.slice(2);
       const cf = func(n.callee), lat = instLatency(child);
@@ -1196,13 +1610,14 @@ function functionView(inst, hl) {
       // How the block is built; what is inside it is in its tooltip
       const badges = [n.auto_pipeline ? "AUTO_PIPELINE" : "", n.auto_fsm ? "AUTO_FSM" : "",
         cf.kind === "vhdl" ? "vhdl" : "", cf.mcp ? "MCP" : ""].filter(Boolean);
-      const lines = [n.name];
+      // An operator in the source shows as one, then the call implementing it
+      const lines = n.op ? [n.op.map(opSymbol).join(" "), n.name] : [n.name];
       if (tags.length) lines.push(tags.join("  "));
       if (badges.length) lines.push(badges.join(" "));
       const can = cf.kind !== "op" && hasGraph(n.callee);
       return { id, cls: (can ? "click" : "") + (id === hl ? " hl" : ""), lines,
         tip: () => funcTip(n.callee, ["instance: " + child, "latency: " + lat,
-          n.src ? "call: " + loc(n.src[0], n.src[1]) : "",
+          n.src ? "call: " + loc(n.src[0], n.src[1]) : "", n.op ? "implements: " + n.op.map(opSymbol).join(" ") : "",
           n.auto_pipeline ? "AUTO_PIPELINE " + n.auto_pipeline : "", n.auto_fsm ? "AUTO_FSM " + n.auto_fsm : ""].filter(Boolean)),
         onclick: (ev) => {
           if ((ev.ctrlKey || ev.metaKey) && n.src) { setSource(n.src[0], n.src[1]); $("src").click(); return; }
@@ -1220,13 +1635,14 @@ function functionView(inst, hl) {
     const isReg = n.kind === "reg" || n.kind === "reg_next";
     return { id, cls: "port" + (hop ? " click" : "") + (id === hl ? " hl" : ""), lines, rank,
       color: n.kind === "in" || n.kind === "out" ? clockColor(clock) : null,
-      tip: () => what + " " + n.name + (wire && wire.loc ? "\ndeclared: " + wire.loc : "") +
+      tip: () => what + " " + n.name + (n.of ? " (a field of " + g.nodes[n.of].name + ")" : "") +
+        (wire && wire.loc ? "\ndeclared: " + wire.loc : "") +
         (T(t).c ? "\ntype: " + typeLong(t) : "") + (wire && wire.async ? "\nASYNC" : "") + (hop ? "\n" + hop.text : ""),
       onclick: hop ? () => go(hop.route) : null,
       hide: { label: what + " " + n.name, keys: hideKeys(fname, n), modes: isReg ? ["pass", "drop"] : ["drop"] } };
   });
   nodes.forEach(measure);
-  const de = edges.map((e) => {
+  const de = live.map((e) => {
     const lines = [wiresTip(e.wires)];
     const others = e.vars.filter((v) => !e.wires.some((w) => w.name === v));
     if (others.length) lines.push("through " + others.slice(0, 12).join(", ") + (others.length > 12 ? " …" : ""));
@@ -1240,55 +1656,84 @@ function functionView(inst, hl) {
   });
   const scale = $("f-scale").checked ? hardwareScale(nodes, de, g, f) : null;
   let size = layout(nodes, de, labelGap(de), paneAspect());
-  if (scale) size = scale.place(nodes, size);
+  if (scale) {   // blocks move to their times: no layer has a place kept for an edge
+    size = scale.place(nodes, size);
+    for (const e of de) e.points = null;
+  }
   const title = chain.length > 1 ? g_name(chain[chain.length - 2][1], chain[chain.length - 1][2]) : mainLabel(main);
-  let grouped = 0;
-  for (const grp of groups.values()) grouped += grp.members.length;
-  const hiddenN = ids.length - shown.filter((id) => !groups.has(id)).length - grouped;
+  let opsIn = 0, valuesIn = 0, blocks = 0;
+  const regsIn = new Set();
+  for (const id of shown) {
+    if (!groups.has(id)) continue;
+    blocks++;
+    for (const m of groups.get(id).members) {
+      if (g.nodes[m].kind === "sub") opsIn++; else { valuesIn++; regsIn.add(g.nodes[m].name); }
+    }
+  }
+  // Every node the view could draw (a returned struct's outputs in place of
+  // its port), less those drawn and those inside drawn logic blocks
+  const hiddenN = ids.length - split.size + fieldById.size - (shown.length - blocks) - opsIn - valuesIn;
+  const inside = [opsIn ? opsIn + " operator" + (opsIn === 1 ? "" : "s") : "",
+    regsIn.size ? regsIn.size + " register" + (regsIn.size === 1 ? "" : "s") : ""];
   draw(nodes, de, size, title + ": " + nodes.length + " blocks" +
-    (grouped ? ", " + grouped + " operators in " + groups.size + " logic blocks" : "") +
+    (blocks ? ", " + inside.filter(Boolean).join(" and ") + " in " + blocks + " logic block" + (blocks === 1 ? "" : "s") : "") +
     (hiddenN ? ", " + hiddenN + " hidden (filters)" : "") + (scale ? scale.note : ""),
     scale ? scale.axis : null);
   setSource(f.file, f.line);
   banner(null);
   return { nodes, edges: de, groups };
 }
-// One logic block for a cluster of operators: a cloud when it is known to be
-// combinational. Pipelining puts its registers into operators, and lines up the
-// paths of a function with latency with more, between its submodules: so no
-// operator in it may have a latency, and its function instance none either.
+// One logic block for a cluster of operators and registers: a cloud when it is
+// known to be combinational. Pipelining puts its registers into operators, and
+// lines up the paths of a function with latency with more, between its
+// submodules: so no operator in it may have a latency, its function instance
+// none either, and it holds no Reg.
 function groupNode(gid, grp, fname, g, f, inst, hl) {
-  const counts = new Map();
-  let lat = 0;
+  const counts = new Map(), regs = [];
+  let lat = 0, n = 0;
   for (const id of grp.members) {
-    const k = opName(g.nodes[id].callee);
+    const m = g.nodes[id];
+    if (m.kind !== "sub") { if (!regs.includes(m.name)) regs.push(m.name); continue; }
+    n++;
+    const k = m.op ? m.op[0] : func(m.callee).assert ? "SIM_ASSERT" : opName(m.callee);
     counts.set(k, (counts.get(k) || 0) + 1);
     lat = Math.max(lat, instLatency(inst + MARK + id.slice(2)));
   }
+  regs.sort();
   const ops = [...counts].sort((a, b) => b[1] - a[1] || (a[0] < b[0] ? -1 : a[0] > b[0] ? 1 : 0));
-  const fnLat = instLatency(inst), comb = !lat && !fnLat;
+  const fnLat = instLatency(inst), comb = !lat && !fnLat && !regs.length;
   const span = groupSpan(grp.members, f);
-  const n = grp.members.length;
-  const tags = [n + (n === 1 ? " op" : " ops")];
-  if (lat) tags.push("L=" + lat); else if (!comb) tags.push("in L=" + fnLat);
+  const tags = [];
+  if (n) tags.push(n + (n === 1 ? " op" : " ops"));
+  if (regs.length) tags.push(regs.length + (regs.length === 1 ? " reg" : " regs"));
+  if (lat) tags.push("L=" + lat); else if (fnLat) tags.push("in L=" + fnLat);
   if (span) tags.push(fmtNs(span[1] - span[0]));
+  // The label names hardware first: assertions are simulation only
+  const shown = ops.filter(([k]) => k !== "SIM_ASSERT").concat(ops.filter(([k]) => k === "SIM_ASSERT"));
+  const head = shown.length ? shown.slice(0, 4).map(([k]) => opSymbol(k)).join(" ") + (shown.length > 4 ? " …" : "")
+    : regs.slice(0, 2).join(", ") + (regs.length > 2 ? " …" : "");
   const tipText = () => {
-    const lines = ["logic: " + n + " operator" + (n === 1 ? "" : "s") + " (filters › operators: show draws each)"];
+    const lines = ["logic: " + n + " operator" + (n === 1 ? "" : "s") +
+      (regs.length ? " and " + regs.length + " register" + (regs.length === 1 ? "" : "s") : "") +
+      " (filters › operators, registers: show draws each)"];
     for (const [k, c] of ops.slice(0, 16)) lines.push("  " + c + "× " + opSymbol(k) + (opSymbol(k) !== k.toLowerCase() ? "  " + k : ""));
     if (ops.length > 16) lines.push("  … " + (ops.length - 16) + " more kinds");
+    if (regs.length) lines.push("registers: " + regs.slice(0, 12).join(", ") + (regs.length > 12 ? " …" : ""));
     if (grp.names.size) {
       const names = [...grp.names].sort();
       lines.push("variables inside: " + names.slice(0, 12).join(", ") + (names.length > 12 ? " …" : ""));
     }
     lines.push(lat ? "an operator in it has latency " + lat : comb ? "combinational: no registers inside"
+      : regs.length ? "holds registers" + (fnLat ? "; this function instance has latency " + fnLat : "")
       : "this function instance has latency " + fnLat + ": registers that line up its paths may sit among these operators");
     if (span) lines.push("delay through it: " + fmtNs(span[1] - span[0]) + " (" + fmtNs(span[0]) + " to " + fmtNs(span[1]) + ")");
     return lines.join("\n");
   };
   return { id: gid, cls: (comb ? "cloud" : "logic") + (grp.members.includes(hl) ? " hl" : ""), members: grp.members,
-    lines: [ops.slice(0, 4).map(([k]) => opSymbol(k)).join(" ") + (ops.length > 4 ? " …" : ""), tags.join("  ")],
+    lines: [head, tags.join("  ")],
     tip: tipText,
-    hide: { label: "logic (" + n + (n === 1 ? " operator)" : " operators)"), keys: grp.members.map((id) => fname + SEP + id), modes: ["pass", "drop"] } };
+    hide: { label: "logic (" + n + (n === 1 ? " operator" : " operators") + (regs.length ? ", " + regs.length + (regs.length === 1 ? " register)" : " registers)") : ")"),
+      keys: grp.members.map((id) => fname + SEP + id), modes: ["pass", "drop"] } };
 }
 // Hardware scale (as the old pipeline_map.png): a block is as wide as its
 // delay and as tall as its mean in/out bus width. With the compiler's
@@ -1476,7 +1921,8 @@ function buildFilters() {
   box.appendChild(table);
   box.appendChild(el("div", "note", "Hidden things either pass their edges through or take them along; " +
     "a typed kind's mode applies to the interface roles its second choice names (forward: streams " +
-    "{data, valid} and fwd_t; feedback: fb_t), the rest are shown. Right-click a node to hide just it, " +
+    "{data, valid} and fwd_t; feedback: fb_t), the rest are shown; the default for ports takes feedback ports, " +
+    "and plain ones in a view whose inputs and outputs include forward interfaces. Right-click a node to hide just it, " +
     "a wire to show or hide just its label."));
   const reset = el("button", null, "defaults");
   reset.type = "button";
@@ -1622,7 +2068,7 @@ function mermaidText() {
   const esc = (t) => String(t).replace(/"/g, "#quot;").replace(/</g, "#lt;").replace(/>/g, "#gt;");
   const q = (lines) => '"' + lines.map(esc).join("<br>") + '"';
   const ids = new Map(nodes.map((n, i) => [n.id, "n" + i]));
-  const shape = (n) => ids.get(n.id) + (isCloud(n) ? "((" + q(n.lines) + "))" : "[" + q(n.lines) + "]");
+  const shape = (n) => ids.get(n.id) + (isCloud(n) ? "((" + q(n.mermaid || n.lines) + "))" : "[" + q(n.mermaid || n.lines) + "]");
   const out = ["flowchart LR"];
   for (const n of nodes) if (n.rank !== "first" && n.rank !== "last") out.push("    " + shape(n));
   for (const [rank, sub] of [["first", "inputs"], ["last", "outputs"]]) {
@@ -1642,6 +2088,14 @@ function mermaidText() {
     i++;
   }
   if (cross.length) out.push("    linkStyle " + cross.join(",") + " stroke:#d62728");
+  // dagre ranks an output right after what feeds it, which can be before
+  // blocks of later layers (a view with loops): invisible links from the
+  // page's last middle layer put the outputs after it
+  const middle = nodes.filter((n) => n.rank !== "first" && n.rank !== "last");
+  const center = (n) => Math.round(n.x + n.w / 2);
+  const lastX = Math.max(...middle.map(center));
+  const last = nodes.filter((n) => n.rank === "last");
+  if (last.length) for (const m of middle) if (center(m) === lastX) out.push("    " + ids.get(m.id) + " ~~~ " + ids.get(last[0].id));
   return out.join("\n") + "\n";
 }
 $("mermaid").addEventListener("click", () => {
@@ -1656,7 +2110,10 @@ $("mm-close").addEventListener("click", () => { $("mm").style.display = "none"; 
 // ---------- self-test ----------
 // Draws every view with the default filters, everything shown and everything
 // hidden, checking what each must and must not draw, then marks <body>
-// data-ready="<views drawn>" (data-error on any failure), which the render test reads
+// data-ready="<views drawn>" (data-error on any failure), which the render test
+// reads, with what each default view drew in <script id="drawn">: view ("design"
+// or a function) -> {blocks: first lines, wires: wire names, edges: [source's
+// first line, destination's first line], labels: each edge's label lines}
 function withFilters(change, fn) {
   const saved = JSON.stringify(filt);
   change(filt);
@@ -1668,10 +2125,16 @@ const ALL_HIDDEN = (f) => {
 };
 function selftest() {
   let views = 0;
+  const drawn = {};
+  const record = (key, v) => {
+    const first = new Map(v.nodes.map((n) => [n.id, n.lines[0]]));
+    drawn[key] = { blocks: v.nodes.map((n) => n.lines[0]), wires: [].concat(...v.edges.map((e) => e.wires.map((w) => w.name))),
+      edges: v.edges.map((e) => [first.get(e.s), first.get(e.d)]), labels: v.edges.map((e) => e.lines) };
+  };
   const check = (ok, what) => { if (!ok) throw new Error("self-test: " + what); };
   const drawnIds = (v) => new Set(v.nodes.map((n) => n.id));
   // What a graph node is, from the data alone (not from the filters' own nodeKindOf)
-  const isOp = (gn) => gn.kind === "sub" && func(gn.callee).kind === "op" && !func(gn.callee).wiring;
+  const isOp = (gn) => gn.kind === "sub" && (func(gn.callee).kind === "op" || !!gn.op) && !func(gn.callee).wiring;
   const isWiring = (gn) => gn.kind === "sub" && !!func(gn.callee).wiring;
   const isBlock = (gn) => gn.kind === "sub" && !isOp(gn) && !isWiring(gn);
   try {
@@ -1684,11 +2147,36 @@ function selftest() {
     const fan = [{ s: "a", d: "b" }, { s: "a", d: "c" }, { s: "a", d: "d" }];
     const flat = layout(three(), fan, 70, 0), tall = layout(three(), fan, 70, 1);
     check(flat.height < tall.height && tall.height <= tall.width, "rows do not spread to the pane's shape");
+    // An edge that skips a layer runs through a place of its own, clear of the
+    // block in that layer; a Feedback edge closing no cycle is laid out forward
+    const chain = three().slice(0, 3), skip = [{ s: "a", d: "b" }, { s: "b", d: "c" }, { s: "a", d: "c" }];
+    layout(chain, skip, 70, 0);
+    const via = skip[2].points, mid = chain[1].y + chain[1].h / 2;
+    check(via && via.length === 1 && Math.abs(via[0][2] - mid) >= chain[1].h / 2 + GAP_Y_MIN, "an edge that skips a layer runs over a block");
+    // A bundle's array elements are listed as index runs
+    const run = compactWires(["k[1]", "k[0]", "k[3]", "x.y"].map((name) => ({ name, t: null }))).map((w) => w.name);
+    check(run.join(" ") === "k[0..1,3] x.y", "array elements not listed as index runs: " + run.join(" "));
+    // ... and a name label puts the fields one variable carries on one line
+    const named = nameLines(["r.valid", "r.data", "x", "a", "a.b"].map((name) => ({ name, t: null })));
+    check(named.join(" | ") === "r: valid, data | x | a | a.b", "fields of one variable not on one label line: " + named.join(" | "));
+    const loopless = three().slice(0, 2);
+    layout(loopless, [{ s: "a", d: "b", fb: true }], 70, 0);
+    check(loopless[1].x > loopless[0].x, "a Feedback edge closing no cycle is laid out backwards");
     const home = designView(null); views++;
-    check(!labelsDrawn(), "a wire label drawn with wire labels off");
+    record("design", home);
+    // By default every edge is labeled, by its wires' names
+    check(home.edges.every((e) => e.lines.length) && labelsDrawn() === home.edges.length, "an edge drawn without its label");
+    for (const e of home.edges) check(!e.feedback, "the design view draws feedback data " + e.s + " → " + e.d);
+    // Pins packed into one global wire are drawn as one port, and none of them on its own
+    const homeIds = drawnIds(home);
+    for (const n of home.nodes) {
+      if (!n.id.startsWith("pins:")) continue;
+      check(n.hide.keys.length > 1, "a pin group of one pin " + n.id);
+      for (const k of n.hide.keys) check(!homeIds.has("pin:" + k.split(SEP)[1]), "a grouped pin drawn on its own " + k);
+    }
     check($("banner").style.display === "none", "the whole design has a file banner");
     for (const n of home.nodes) {
-      if (n.id.startsWith("pin:")) continue;
+      if (n.id.startsWith("pin:") || n.id.startsWith("pins:")) continue;
       const ms = Object.keys(D.mains).filter((m) => mainGroup(m) === n.id);
       check(!ms.every((m) => D.mains[m].wiring), "wiring MAIN drawn by default: " + n.id);
     }
@@ -1703,28 +2191,59 @@ function selftest() {
       done.add(fname);
       const g = graphOf(fname);
       const v = functionView(inst); views++;
+      record(fname, v);
       const ids = drawnIds(v);
       for (const e of v.edges) check(ids.has(e.s) && ids.has(e.d), "edge to an undrawn node in " + fname);
+      // A returned struct is drawn as its fields; ports are neither feedback
+      // nor, beside forward interfaces each way, plain
+      const split = splitOutputs(g), fields = new Map();
+      for (const fl of split.values()) for (const x of fl) fields.set(x.id, x);
+      const sideband = viewIface(g, split);
       for (const n of v.nodes) {
         const gn = g.nodes[n.id];
+        const port = fields.get(n.id) || (gn && /^(in|out|wire_read|wire_write)$/.test(gn.kind) ? gn : null);
+        if (port) {
+          const role = fields.has(n.id) ? roleOf(port.t) : nodeRole(port);
+          check(role !== "fb", "a default view draws a feedback port " + n.id + " in " + fname);
+          check(!sideband || role !== "plain", "a default view draws a plain port beside forward interfaces " + n.id + " in " + fname);
+        }
         if (!gn) continue;
+        check(!split.has(n.id), "a returned struct drawn as one output " + n.id + " in " + fname);
         check(!isOp(gn), "a default view draws an operator " + n.id + " in " + fname);
         check(!isWiring(gn), "a default view draws a wiring call site " + n.id + " in " + fname);
+        check(gn.kind !== "reg" && gn.kind !== "reg_next", "a default view draws a register " + n.id + " in " + fname);
         check(gn.kind !== "const" && gn.kind !== "ce", "a default view draws a constant " + n.id + " in " + fname);
       }
       for (const e of v.edges) check(!e.feedbackRoles.includes("fb"), "a default view draws an fb_t Feedback edge in " + fname);
-      check(!labelsDrawn(), "a wire label drawn with wire labels off in " + fname);
-      // Operators joined by a surviving edge share one logic block
+      for (const e of v.edges) for (const w of e.wires) check(!w.fb, "a default view draws feedback data " + w.name + " in " + fname);
+      // Every logic block drawn has a drawn output
+      for (const n of v.nodes) if (n.members) check(v.edges.some((e) => e.s === n.id), "a logic block with no output drawn in " + fname);
+      check(v.edges.every((e) => e.lines.length) && labelsDrawn() === v.edges.length, "an edge drawn without its label in " + fname);
+      // Operators and registers joined by a surviving edge, directly or through
+      // wiring, share one logic block, as do a register's two values
       const gid = new Map();
       for (const [id, grp] of v.groups) for (const m of grp.members) gid.set(m, id);
+      const viaWiring = new Map();   // wiring node -> the logic blocks it touches
       for (const e of g.edges) {
         if (e.fb && roleOf(e.t) === "fb") continue;
         if (gid.has(e.s) && gid.has(e.d)) check(gid.get(e.s) === gid.get(e.d), "joined operators in two logic blocks in " + fname);
+        for (const [w, m] of [[e.s, e.d], [e.d, e.s]]) {
+          if (!gid.has(m) || !g.nodes[w] || !isWiring(g.nodes[w])) continue;
+          if (!viaWiring.has(w)) viaWiring.set(w, new Set());
+          viaWiring.get(w).add(gid.get(m));
+        }
+      }
+      for (const [w, blocks] of viaWiring) check(blocks.size === 1, "operators joined through wiring " + w + " in two logic blocks in " + fname);
+      for (const id of gid.keys()) {
+        if (id.startsWith("rq:") && gid.has("rd:" + id.slice(3))) check(gid.get(id) === gid.get("rd:" + id.slice(3)), "a register's values in two logic blocks in " + fname);
       }
       withFilters((f) => { ALL_SHOWN(f); f.wireLabels = true; }, () => {
         const w = functionView(inst); views++;
-        const shown = drawnIds(w);
-        for (const id of Object.keys(g.nodes)) check(shown.has(id), "not every node drawn with everything shown: " + id + " in " + fname);
+        const shown = drawnIds(w), split = splitOutputs(g);
+        for (const id of Object.keys(g.nodes)) {
+          for (const x of split.has(id) ? split.get(id).map((y) => y.id) : [id])
+            check(shown.has(x), "not every node drawn with everything shown: " + x + " in " + fname);
+        }
         // Every wire has a name (a variable, or else the port it feeds) and
         // every edge's label is drawn
         for (const e of w.edges) for (const x of e.wires) check(x.name, "an unnamed wire " + e.s + " → " + e.d + " in " + fname);
@@ -1768,14 +2287,14 @@ function selftest() {
     closePanels();
     const edges = state.last.edges;
     if (edges.length) {
-      // One wire's label shown from its menu, then back to the setting
-      const e0 = edges[0];
+      // One wire's label hidden from its menu, then back to the setting
+      const e0 = edges[0], labeled = () => mermaidText().split("\n").filter((l) => /-\.?->\|/.test(l)).length;
       edgeMenu({ clientX: 10, clientY: 10 }, e0);
-      setLabel(e0.key, true); views++; rendered();
-      check(labelsDrawn() === 1, "a label shown by hand is not the one label drawn");
-      check(mermaidText().split("\n").filter((l) => /-\.?->\|/.test(l)).length === 1, "the Mermaid text has other labels than the one shown");
       setLabel(e0.key, false); views++; rendered();
-      check(!state.labels.size && !labelsDrawn(), "a label hidden again is still set by hand or drawn");
+      check(labelsDrawn() === edges.length - 1, "a label hidden by hand is drawn, or another one is not");
+      check(labeled() === edges.length - 1, "the Mermaid text labels the edge whose label is hidden");
+      setLabel(e0.key, true); views++; rendered();
+      check(!state.labels.size && labelsDrawn() === edges.length, "a label shown again is still set by hand or not drawn");
       // Hovering a wire lights it up, hovering a block all its edges
       const hot = () => vp.querySelector(".hotl").childNodes.length;
       const hit = vp.querySelector("path.hit");
@@ -1793,7 +2312,15 @@ function selftest() {
     for (const [rank, sub] of [["first", "inputs"], ["last", "outputs"]]) {
       check(mm.includes("subgraph " + sub + "[") === state.last.nodes.some((n) => n.rank === rank), "Mermaid " + sub + " subgraph");
     }
+    // ... and its outputs after its last blocks
+    const hasMiddle = state.last.nodes.some((n) => n.rank !== "first" && n.rank !== "last");
+    check(mm.includes(" ~~~ ") === (hasMiddle && state.last.nodes.some((n) => n.rank === "last")), "Mermaid outputs not after the last blocks");
     buildIndex(); search("a"); search("");
+    const out = document.createElement("script");
+    out.type = "application/json";
+    out.id = "drawn";
+    out.textContent = JSON.stringify(drawn).replace(/</g, "\\u003c");
+    document.body.appendChild(out);
     document.body.setAttribute("data-ready", String(views));
   } catch (err) {
     document.body.setAttribute("data-error", String(err && err.stack || err));

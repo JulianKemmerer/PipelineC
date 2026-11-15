@@ -257,7 +257,7 @@ def top(x: input_t, valid: uint1_t) -> uint8_t:
         path = Path(tmp) / "width_decided_comparison.py"
         path.write_text(source)
         parser = PY_TO_LOGIC.PARSE_FILE(str(path))
-        ((comparator, ops),) = parser.pypeline_compare_impl_ops.items()
+        ((comparator, ops),) = parser.pypeline_operator_impl_ops.items()
         assert ops == {"GT"}, ops
         wrapped = sorted(
             shape["values"]

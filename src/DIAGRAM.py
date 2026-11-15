@@ -26,7 +26,7 @@ import VHDL
 # The page's file name in the output directory
 DIAGRAM_FILE = "diagram.html"
 # Version of the embedded design data (DIAGRAM_DESIGN.md#3-data-model)
-SCHEMA_VERSION = 2
+SCHEMA_VERSION = 3
 # The viewer page the design data is embedded into
 _TEMPLATE_PATH = os.path.join(
     os.path.dirname(os.path.abspath(__file__)), "diagram", "viewer.html"
@@ -39,6 +39,8 @@ _SRC_DIR = os.path.dirname(os.path.abspath(__file__))
 _INCLUDE_DIR = os.path.join(os.path.dirname(_SRC_DIR), "include") + os.sep
 # Description kinds (pypeline.py's _NameInfo.kind) of an @interface's halves
 _HALF_ROLES = {"interface_fwd": "fwd", "interface_fb": "fb"}
+# Description kind of an @interface's wire_t (every field, both directions)
+_WIRE_KIND = "interface_wire"
 # The types an @interface class carries, each named <interface>.<attribute>
 _INTERFACE_TYPES = ("fwd_t", "fb_t", "stream_t", "wire_t")
 
@@ -132,6 +134,7 @@ class _Types:
         self._bits = {}  # C type -> width memo
         self._roles = {}  # C type -> role memo
         self._halves = None  # @interface half fields -> [(role, half C type)]
+        self._fb_fields = None  # @interface identity -> its Feedback field names
 
     def ref(self, c_type):
         if c_type is None:
@@ -204,7 +207,7 @@ class _Types:
     def role(self, c_type):
         """fwd: an @interface's .fwd_t, a plain {data, valid} stream, or a type
         holding one; fb: an .fb_t, or a type holding one and nothing forward;
-        plain: anything else."""
+        plain: anything else (an array has its element's role)."""
         if c_type is None:
             return "plain"
         if c_type in self._roles:
@@ -219,6 +222,21 @@ class _Types:
         return role
 
     def _struct_role(self, c_type):
+        own = self._own_role(c_type)
+        if own is not None:
+            return own
+        fields = self.ps.struct_to_field_type_dict.get(c_type)
+        if not fields:
+            return "plain"
+        held = {self.role(t) for t in fields.values()}
+        if "fwd" in held:
+            return "fwd"
+        return "fb" if "fb" in held else "plain"
+
+    def _own_role(self, c_type):
+        """The role a struct has as a type of its own, not from the fields it
+        holds: an @interface half, a plain copy of one, or a {data, valid}
+        stream; else None."""
         own = {
             _HALF_ROLES[i.kind]
             for i in self.descriptions.get(c_type, ())
@@ -230,14 +248,53 @@ class _Types:
         if len(halves) == 1:
             return halves.pop()
         fields = self.ps.struct_to_field_type_dict.get(c_type)
-        if not fields:
-            return "plain"
-        if set(fields) == {"data", "valid"} and fields["valid"] == "uint1_t":
+        if fields and set(fields) == {"data", "valid"} and fields["valid"] == "uint1_t":
             return "fwd"  # stream.make_stream_t's shape
-        held = {self.role(t) for t in fields.values()}
-        if "fwd" in held:
-            return "fwd"
-        return "fb" if "fb" in held else "plain"
+        return None
+
+    def is_interface(self, c_type):
+        """Whether a struct is one interface's own type: a half, a plain copy of
+        one, a {data, valid} stream or an @interface's wire_t. A function
+        returning one has one output; any other struct it returns stands for
+        an output per field (DIAGRAM_DESIGN.md#struct-returns)."""
+        if self._own_role(c_type) is not None:
+            return True
+        return any(i.kind == _WIRE_KIND for i in self.descriptions.get(c_type, ()))
+
+    def feedback_fields(self, c_type):
+        """The fields of an @interface's wire_t that are its Feedback fields
+        (the .fb_t half's fields), sorted; [] for any other type."""
+        wire = [i for i in self.descriptions.get(c_type, ()) if i.kind == _WIRE_KIND]
+        if not wire:
+            return []
+        if self._fb_fields is None:
+            self._fb_fields = {}
+            for key in sorted(self.descriptions):
+                for i in self.descriptions[key]:
+                    if i.kind == "interface_fb":
+                        self._fb_fields.setdefault(_iface_key(i), set()).update(
+                            name for name, _v in i.fields
+                        )
+        names = set()
+        for i in wire:
+            names |= self._fb_fields.get(_iface_key(i), set())
+        return sorted(names)
+
+    def path_role(self, c_type, path):
+        """The role of the data at field path `path` of c_type: fb when the
+        path enters an @interface's Feedback field or a type whose own role is
+        fb; else the role of the first type on the way with a role of its own,
+        or of the leaf."""
+        for tok in path:
+            if c_type is None:
+                return "plain"
+            if not isinstance(tok, int) and tok in self.feedback_fields(c_type):
+                return "fb"
+            own = None if LOGIC.C_TYPE_IS_ARRAY(c_type) else self._own_role(c_type)
+            if own is not None:
+                return own
+            c_type = self.field_type(c_type, (tok,))
+        return self.role(c_type)
 
     def _name_parts(self, c_type):
         """(Python name, its factory arguments' names, array dims) of a type
@@ -292,6 +349,14 @@ class _Types:
     def resolve(self, data):
         """data with the type table added and every _TypeRef replaced by its
         index into it."""
+        # A struct the data names lists its fields (one level: their own
+        # fields are not needed), so the types of those fields get rows too
+        structs = {}
+        for c_type in sorted(self.used):
+            fields = self.ps.struct_to_field_type_dict.get(c_type)
+            if fields:
+                structs[c_type] = list(fields.items())
+                self.used.update(t for _name, t in structs[c_type])
         order = sorted(self.used)
         index = {c_type: i for i, c_type in enumerate(order)}
         names = self._names(order)
@@ -303,6 +368,14 @@ class _Types:
                 row["role"] = role
             if names.get(c_type, c_type) != c_type:
                 row["name"] = names[c_type]
+            if c_type in structs:
+                # Declaration order: a split return's outputs follow it
+                row["fields"] = [[name, index[t]] for name, t in structs[c_type]]
+            if self.is_interface(c_type):
+                row["interface"] = True
+            feedback = self.feedback_fields(c_type)
+            if feedback:
+                row["feedback"] = feedback
             table.append(row)
 
         def walk(obj):
@@ -317,6 +390,12 @@ class _Types:
         resolved = walk(data)
         resolved["types"] = table
         return resolved
+
+
+def _iface_key(info):
+    """What the descriptions derived from one @interface class share
+    (pypeline.py's _derived_type keeps the class's own)."""
+    return (info.module, info.qualname, info.source, info.line, info.params)
 
 
 def _module_type_names(ps):
@@ -490,7 +569,9 @@ def _links(ps, types):
     state reg) and drives global_wire_driven_paths; a reader has it in
     read_only_global_wires, or reads it back through readback_global_wires,
     at its global_wire_read_paths. A reader path links to each writer whose
-    driven paths overlap it."""
+    driven paths overlap it. A link has the interface role of its data
+    (_Types.path_role), left out when plain: fb for an @interface's
+    Feedback data."""
     decls = getattr(ps, "pypeline_wire_decls", {})
     links = set()
     for var in sorted(ps.global_vars):
@@ -536,6 +617,7 @@ def _links(ps, types):
                                 types.field_type(info.type_name, path),
                                 is_async,
                                 False,
+                                types.path_role(info.type_name, path),
                             )
                         )
     for var in sorted(ps.clk_cross_var_info):
@@ -543,23 +625,24 @@ def _links(ps, types):
         write_mains, read_mains = cross.write_read_main_funcs
         for writer in sorted(write_mains):
             for reader in sorted(read_mains):
-                links.add((writer, reader, var, "", None, True, True))
+                links.add((writer, reader, var, "", None, True, True, "plain"))
     rows = []
-    for writer, reader, var, path, c_type, is_async, crossing in sorted(
+    for writer, reader, var, path, c_type, is_async, crossing, role in sorted(
         links, key=lambda t: tuple("" if v is None else str(v) for v in t)
     ):
         decl = decls.get(var)
-        rows.append(
-            {
-                "src": writer,
-                "dst": reader,
-                "wire": var,
-                "name": (decl.bare_name if decl is not None else var) + path,
-                "t": types.ref(c_type),
-                "async": is_async,
-                "crossing": crossing,
-            }
-        )
+        row = {
+            "src": writer,
+            "dst": reader,
+            "wire": var,
+            "name": (decl.bare_name if decl is not None else var) + path,
+            "t": types.ref(c_type),
+            "async": is_async,
+            "crossing": crossing,
+        }
+        if role != "plain":
+            row["role"] = role
+        rows.append(row)
     return rows
 
 
@@ -663,11 +746,21 @@ def _func_entry(logic, kind, ps, types):
         wiring = _wiring_reason(logic, ps)
         if wiring is not None:
             entry["wiring"] = wiring
+        if logic.func_name.startswith(LOGIC.SIM_ASSERT_FUNC_NAME):
+            entry["assert"] = True  # simulation only, no hardware
         return entry
     src, line = _src_loc(logic)
     entry["file"] = src
     entry["line"] = line
     entry["def"] = _def_name(logic)
+    origin = _generated_origin(logic, ps) if kind == "generated" else None
+    if origin is not None:
+        # A generated function (an interface function's hw_func, say) shows
+        # the function the user wrote, and where
+        entry["def"] = origin.symbol
+        if origin.source and os.path.isfile(origin.source):
+            entry["file"] = os.path.abspath(origin.source)
+            entry["line"] = origin.line
     entry["inputs"] = [
         [p, types.ref(logic.wire_to_c_type.get(p))] for p in logic.inputs
     ]
@@ -685,6 +778,17 @@ def _func_entry(logic, kind, ps, types):
     if offsets is not None:
         entry["offsets"] = offsets
     return entry
+
+
+def _generated_origin(logic, ps):
+    """The description (pypeline.py's _NameInfo) of the function a generated
+    function was made from, which elaboration records under the generated
+    function's key in pypeline_name_descriptions; else None."""
+    descriptions = getattr(ps, "pypeline_name_descriptions", {})
+    infos = [i for i in descriptions.get(logic.func_name, ()) if i.kind == "function"]
+    if not infos:
+        return None
+    return min(infos, key=lambda i: (i.symbol, i.module, i.source, i.line))
 
 
 def _offsets(logic, ps):
@@ -781,7 +885,7 @@ def _graph(logic, ps, types):
 
     def var_of(wire):
         orig = logic.alias_to_orig_var_name.get(wire, wire)
-        return orig if orig in logic.variable_names else None
+        return orig if _is_user_variable(logic, orig) else None
 
     # wire -> ((sink id, sink port), names, fb) reached through plain wires;
     # names are the variables after the wire itself on the way
@@ -835,6 +939,8 @@ def _graph(logic, ps, types):
     for p in logic.outputs:
         add_node("o:" + p, kind="out", name=p, t=logic.wire_to_c_type.get(p))
     origins = getattr(logic, "submodule_instance_to_source_origins", {})
+    # Registered operator implementation -> the operators dispatched to it
+    op_impls = getattr(ps, "pypeline_operator_impl_ops", {})
     for local in sorted(subs):
         callee = subs[local]
         info = {"kind": "sub", "name": _display_local(local), "callee": callee}
@@ -848,6 +954,12 @@ def _graph(logic, ps, types):
         fsm_key = getattr(logic, "sub_inst_to_auto_fsm_key", {}).get(local)
         if fsm_key is not None:
             info["auto_fsm"] = fsm_key
+        ref = _const_ref(logic, local, callee, ps)
+        if ref is not None:
+            info["ref"] = ref
+        ops = op_impls.get(callee)
+        if ops:
+            info["op"] = sorted(ops)
         add_node("s:" + local, **info)
 
     edges = set()
@@ -875,9 +987,21 @@ def _graph(logic, ps, types):
                     t=logic.wire_to_c_type.get(name),
                 )
             elif kind == "gr":
-                add_node(node_id, kind="wire_read", name=name)
+                reads = getattr(logic, "global_wire_read_paths", {}).get(name)
+                add_node(
+                    node_id,
+                    kind="wire_read",
+                    name=name,
+                    role=_parts_role(types, ps, name, reads or [()]),
+                )
             elif kind == "gw":
-                add_node(node_id, kind="wire_write", name=name)
+                # The fields it drives: the elaborated value also passes the
+                # rest through from its read-back, which no hardware drives
+                driven = getattr(logic, "global_wire_driven_paths", {}).get(name)
+                info = {"role": _parts_role(types, ps, name, driven or [()])}
+                if driven and () not in driven:
+                    info["driven"] = sorted(([*p] for p in driven), key=repr)
+                add_node(node_id, kind="wire_write", name=name, **info)
             elif kind == "c":
                 add_node(
                     node_id,
@@ -899,6 +1023,55 @@ def _graph(logic, ps, types):
             )
         ],
     }
+
+
+def _is_user_variable(logic, name):
+    """Whether name is a variable the user wrote, not an elaboration
+    temporary (the local an inline struct constructor is built in)."""
+    return name in logic.variable_names and not name.startswith(
+        PY_TO_LOGIC.INLINE_CTOR_PREFIX
+    )
+
+
+def _parts_role(types, ps, var, paths):
+    """The role of the parts of global wire var a function reads or drives
+    (field paths): fb when all of them are feedback data, fwd when one is
+    forward, else plain."""
+    info = ps.global_vars.get(var)
+    c_type = info.type_name if info is not None else None
+    roles = {types.path_role(c_type, tuple(p)) for p in paths}
+    if roles == {"fb"}:
+        return "fb"
+    return "fwd" if "fwd" in roles else "plain"
+
+
+def _const_ref(logic, local, callee, ps):
+    """[variable, read path, [path per input port]] of a constant field
+    select or assembly call site (CONST_REF_RD), each path a field path
+    (names, array indices) below the variable they all refer to: input k
+    drives the part of the variable at its path, and the output is the part
+    at the read path. The variable is the user's name for it (a global
+    wire's by its declared name), null for an elaboration temporary. None
+    for any other call site."""
+    if not callee.startswith(LOGIC.CONST_REF_RD_FUNC_NAME_PREFIX + "_"):
+        return None
+    read = logic.ref_submodule_instance_to_ref_toks.get(local)
+    driven = logic.ref_submodule_instance_to_input_port_driven_ref_toks.get(local)
+    if not read or driven is None:
+        return None
+    for path in [read] + list(driven):
+        if not path or path[0] != read[0]:
+            return None
+        for tok in path[1:]:
+            if not isinstance(tok, (str, int)) or isinstance(tok, bool):
+                return None
+    base = logic.alias_to_orig_var_name.get(read[0], read[0])
+    if base in ps.global_vars:
+        decl = getattr(ps, "pypeline_wire_decls", {}).get(base)
+        base = decl.bare_name if decl is not None else base
+    elif not _is_user_variable(logic, base):
+        base = None
+    return [base, list(read[1:]), [list(path[1:]) for path in driven]]
 
 
 def _files(ps, src_file, mains):

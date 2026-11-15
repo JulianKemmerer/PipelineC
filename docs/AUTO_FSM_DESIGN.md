@@ -301,7 +301,7 @@ operand with no known interval, such as a function input, holds some value of
 the first type its cast chain applies, so `uint1 > 1` folds to 0 by widths alone.
 The proof covers built-in comparisons and calls to the implementation a
 comparison was dispatched to, such as the default soft comparator: elaboration
-records those in `parser_state.pypeline_compare_impl_ops`, and the call keeps
+records those in `parser_state.pypeline_operator_impl_ops`, and the call keeps
 the operator's meaning. Bootstrap preparation registers
 constant-operand primitive wrappers for independent characterization; their
 measured delay includes the constant. A comparison the range proof decides gets

@@ -9,9 +9,10 @@ two files, an @wires port MAIN, an AUTO_PIPELINE and an AUTO_FSM call site),
 multi_clock_design.py (two clocks, a sync and an async global FIFO, an ASYNC
 wire), diagram_interfaces_design.py (a generated interface function's Feedback
 variables typed with plain copies of an interface's halves, two plain stream
-types, a @wires call site), a small design written here (a call graph with a
-register, a Feedback wire, a global wire and a @pipeline_latency function), and
-the C example examples/shared_globals.c.
+types, a @wires call site, returned structs, a soft comparison, a Wire of an
+interface with ready flowing back), a small design written here (a call graph
+with a register, a Feedback wire, a global wire and a @pipeline_latency
+function), and the C example examples/shared_globals.c.
 """
 
 import functools
@@ -242,6 +243,78 @@ def test_type_names_read_like_the_source():
     streams = sorted(n for n in names if n and n.startswith("stream_t"))
     assert streams == ["stream_t<uint2_t>", "stream_t<uint4_t>"], named
     assert named["uint8_t"] is None, named  # a scalar's C name is its source name
+
+
+def test_struct_types_list_their_fields():
+    data = _page(INTERFACES)[0]
+    rows = {t.get("name", t["c"]): t for t in data["types"]}
+    # In declaration order, a returned struct's outputs in the order written
+    fields = [(name, _type(data, t)["c"]) for name, t in rows["pair_t"]["fields"]]
+    assert fields == [("first", "uint8_t"), ("second", "uint8_t")], fields
+    # A struct of interface halves is a bundle of ports, a half one port
+    assert "interface" not in rows["route_t"], rows["route_t"]
+    assert rows["chan_intrf.fwd_t"]["interface"], rows["chan_intrf.fwd_t"]
+    assert rows["byte_stream_t"]["interface"], rows["byte_stream_t"]
+
+
+def test_interface_wire_type_names_its_feedback_fields():
+    rows = {t.get("name", t["c"]): t for t in _page(INTERFACES)[0]["types"]}
+    wire = rows["chan_intrf.wire_t"]
+    assert wire["feedback"] == ["ready"] and wire["interface"], wire
+    assert "feedback" not in rows["chan_intrf.fwd_t"], rows["chan_intrf.fwd_t"]
+
+
+def test_field_selects_and_assemblies_record_their_paths():
+    nodes, _ = _graph(_page(INTERFACES)[0], "pair_main")
+    refs = sorted(n["ref"] for n in nodes.values() if "ref" in n)
+    # o.first = bump(p.second); o.second = p.first; return o
+    assert refs == [
+        ["o", [], [["first"], ["second"]]],
+        ["p", ["first"], [[]]],
+        ["p", ["second"], [[]]],
+    ], refs
+
+
+def test_elaboration_temporaries_name_no_wire():
+    # first_of(pair_t(x, x + 1)) builds its argument in a synthetic local
+    nodes, edges = _graph(_page(INTERFACES)[0], "ctor_main")
+    names = {n for e in edges for n in e[5]}
+    assert names == {"x"}, names
+    refs = [n["ref"] for n in nodes.values() if "ref" in n]
+    assert refs and all(r[0] is None for r in refs), refs
+
+
+def test_operators_implemented_by_calls_are_marked():
+    nodes, _ = _graph(_page(INTERFACES)[0], "side_main")
+    ops = {n["name"]: n.get("op") for n in nodes.values() if n["kind"] == "sub"}
+    # gain > 100 goes to the default soft comparator; + is a built-in operator
+    assert ops["soft_cmp_prefix"] == ["GT"] and ops["BIN_OP_PLUS"] is None, ops
+
+
+def test_generated_function_shows_its_source_function():
+    funcs = _page(INTERFACES)[0]["funcs"]
+    (merge,) = [f for n, f in funcs.items() if n.startswith("merge_if")]
+    with open(INTERFACES) as f:
+        lines = f.read().split("\n")
+    line = lines.index("def merge(axis_in_if: chan_intrf) -> chan_intrf:") + 1
+    assert (merge["def"], merge["file"], merge["line"]) == ("merge", INTERFACES, line)
+
+
+def test_links_carry_the_role_of_their_data():
+    links = [l for l in _page(INTERFACES)[0]["links"] if l["wire"] == "link"]
+    roles = sorted((l["name"], l.get("role")) for l in links)
+    # The Feedback field of a Wire of the interface itself is feedback data
+    assert roles == [("link.data", None), ("link.ready", "fb")], roles
+
+
+def test_wire_stubs_take_the_role_of_the_fields_they_touch():
+    data = _page(INTERFACES)[0]
+    tx, _ = _graph(data, "link_tx_main")
+    rx, _ = _graph(data, "link_rx_main")
+    # link_tx_main drives data and valid and reads ready; link_rx_main the reverse
+    assert tx["gw:link"]["driven"] == [["data"], ["valid"]], tx["gw:link"]
+    assert (tx["gr:link"]["role"], tx["gw:link"]["role"]) == ("fb", "plain"), tx
+    assert (rx["gr:link"]["role"], rx["gw:link"]["role"]) == ("plain", "fb"), rx
 
 
 def test_feedback_edges_carry_their_types():

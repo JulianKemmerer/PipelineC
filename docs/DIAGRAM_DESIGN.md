@@ -35,6 +35,7 @@ domain and the types the wires carry.
   - [Views and navigation](#views-and-navigation)
   - [Filters](#filters)
   - [Edge contraction and operator groups](#edge-contraction-and-operator-groups)
+  - [Struct returns](#struct-returns)
   - [Hiding single nodes](#hiding-single-nodes)
   - [Edge labels](#edge-labels)
   - [Layout](#layout)
@@ -91,7 +92,7 @@ nothing from the network and opens from `file://`. It prints
 
 ## 3. Data model
 
-The embedded JSON (`schema` 2). Every collection is sorted, so the same Pypeline
+The embedded JSON (`schema` 3). Every collection is sorted, so the same Pypeline
 design gives a byte-identical page (C instance names carry per-parse hash suffixes,
 so a C page is not reproducible). Wherever the data names a type it holds `t`, an
 index into `types`.
@@ -104,19 +105,21 @@ index into `types`.
 | `mains` | MAIN → `clock`, `latency`, `kind` (`main`, `global_inst`, `fifo`), `file`, `line`, `wiring` (reason or null), `reset`; global instances add `name`, `decl` and, for an async FIFO's two side MAINs, a shared `group` |
 | `pins` | top-level Input/Output → `dir`, `t`, Python `name`, `loc`, `clock_pin` |
 | `wires` | global wire → Python `name`, `loc`, `t`, `async` |
-| `links` | `{src, dst, wire, name, t, async, crossing}`: one writer→reader connection of a global wire field (`t` is the field's type), or a clock crossing (`crossing: true`); `src`/`dst` are instance names or `pin:<name>` |
+| `links` | `{src, dst, wire, name, t, async, crossing, role}`: one writer→reader connection of a global wire field (`t` is the field's type, `role` the [interface role](#types-and-interface-roles) of its data, left out when plain), or a clock crossing (`crossing: true`); `src`/`dst` are instance names or `pin:<name>` |
 | `funcs` | function → see below |
 | `inst_latency` | instance → total latency in clocks, for instances (operators included) whose latency is not 0 |
-| `types` | list of `{c, bits, role, name}`, sorted by `c` ([Types and interface roles](#types-and-interface-roles)) |
+| `types` | list of `{c, bits, role, name, fields, interface, feedback}`, sorted by `c` ([Types and interface roles](#types-and-interface-roles)) |
 
 A `funcs` entry has `kind`: `op` (operators and other built-ins), `vhdl` (a raw HDL
 leaf), `wires` (`@wires`), `fsm` (the entity at an AUTO_FSM call site), `generated`
 (source that is not a file on disk), `library` (under `include/`, or in `src/` itself
 such as `pypeline.py`) or `user`. All kinds carry `delay_ns` (and
 `delay_estimated`) when the function has a delay, and `wiring` (the reason) on a
-wiring call site ([§4](#mains-clocks-and-the-wiring-flag)). Non-operators add
-`file`, `line`, `def` (the Python or C name in the source), `inputs`/`outputs` as
-`[port, t]`, `mcp` and `regs`. Every kind except `op`, `vhdl` and `fsm` adds
+wiring call site ([§4](#mains-clocks-and-the-wiring-flag)); a `sim_assert` operator
+has `assert`. Non-operators add `file`, `line`, `def` (the Python or C name in the
+source; for a generated function, the function it was made from,
+[§4](#which-functions-are-drawn)), `inputs`/`outputs` as `[port, t]`, `mcp` and
+`regs`. Every kind except `op`, `vhdl` and `fsm` adds
 `graph`, and `offsets` when [§4](#latency-delay-and-offsets) allows.
 
 ### Function graphs
@@ -126,9 +129,9 @@ wiring call site ([§4](#mains-clocks-and-the-wiring-flag)). Non-operators add
 | id | kind | What |
 |---|---|---|
 | `i:<port>` / `o:<port>` | `in` / `out` | function ports, with `t` |
-| `s:<local instance>` | `sub` | a call site: `name` (local name without its `[file_py_lN…]` origin), `callee`, `src` (call-site file and line), `auto_pipeline` / `auto_fsm` keys |
+| `s:<local instance>` | `sub` | a call site: `name` (local name without its `[file_py_lN…]` origin), `callee`, `src` (call-site file and line), `auto_pipeline` / `auto_fsm` keys, `ref` on a constant field select or assembly, `op` on a call an operator was dispatched to |
 | `rq:<reg>` / `rd:<reg>` | `reg` / `reg_next` | a register's current value (a source) and next value (a sink), with `t` |
-| `gr:<wire>` / `gw:<wire>` | `wire_read` / `wire_write` | a global wire read or written here (a readback wire maps to its wire) |
+| `gr:<wire>` / `gw:<wire>` | `wire_read` / `wire_write` | a global wire read or written here (a readback wire maps to its wire), with the `role` of the fields it reads or drives (`fb` when all are feedback data, `fwd` when one is forward); a write lists the field paths it drives in `driven` |
 | `c:<wire>` | `const` | a constant, `name` is its value |
 | `ce` | `ce` | the clock enable input |
 
@@ -137,6 +140,17 @@ driven port, t, names, fb]`, indices into `graph.nodes` (operator call sites hav
 long names and are named once). `t` is the driving wire's type, `names` the
 variables on the way (the driving one first), `fb` 1 when the way passes through a
 `Feedback` variable.
+
+`ref` is `[variable, read path, [path per input port]]`, from
+`ref_submodule_instance_to_ref_toks` and
+`ref_submodule_instance_to_input_port_driven_ref_toks`: input `ref_toks_k` drives
+the part of the variable at its path (field names, array indices), and the output
+is the part at the read path. A select reads a part of one input (`p.second` from
+`p`); an assembly builds a value from parts (`o` from `o.first` and `o.second`, a
+global wire written field by field over its read-back value). The variable is the
+source's name (a global wire's by its declared name), or null for an elaboration
+temporary. `op` lists the op names dispatched to the callee
+(`pypeline_operator_impl_ops`).
 
 ### Types and interface roles
 
@@ -153,6 +167,14 @@ variables on the way (the driving one first), `fb` 1 when the way passes through
     struct of that shape), or a type that holds one in a field or as array
     elements;
   - `fb`: an `.fb_t`, or a type that holds one and nothing forward.
+
+  An `@interface`'s `.wire_t` (the struct of a `Wire` of the interface itself)
+  holds its fields plain, so it has the role its fields give it; its `feedback`
+  lists the fields that are `Feedback` fields of the interface (the `.fb_t`'s,
+  matched by the class's description). `_Types.path_role` gives the role of the
+  data at a field path: `fb` inside such a field, else the role of the first type
+  on the way with a role of its own (a half, a copy of one, a stream), else the
+  leaf's.
 
   A half is recognized by its description (`pypeline_name_descriptions`, kind
   `interface_fwd` / `interface_fb`). A generated interface function types each
@@ -172,6 +194,11 @@ variables on the way (the driving one first), `fb` 1 when the way passes through
   stream interface's `.fb_t` has the same fields. Where several types in the page
   share a name, each adds its factory arguments (`stream_t<uint8_t>`), or its field
   types when it has none. Scalars and C types keep their C names.
+- `fields`: a struct's fields as `[name, t]`, in declaration order, for the
+  structs the data names (their own fields' rows have none).
+- `interface`: the struct is one interface's own type (a half, a plain copy of one,
+  a `{data, valid}` stream, a `.wire_t`): one port, never split
+  ([Struct returns](#struct-returns)).
 
 ## 4. Extraction rules
 
@@ -227,7 +254,8 @@ global wires" section. For each global wire, over its `used_in_funcs`:
 
 A reader path links to each other writer whose driven paths overlap it
 (`PY_TO_LOGIC._path_overlaps`); the link carries the longer of the two paths, so a
-stream's `.stream.data` and `.ready` run in opposite directions. Each
+stream's `.stream.data` and `.ready` run in opposite directions, and the role of the
+data at that path (`_Types.path_role`): a `.wire_t`'s `ready` is feedback data. Each
 `clk_cross_var_info` entry adds write-MAIN → read-MAIN links with `crossing: true`:
 C clock crossings, and the internal crossing between an async FIFO's two side MAINs.
 
@@ -248,9 +276,24 @@ output port) through plain wires (variables and their aliases) to each driven
 endpoint (an output, a register's next value, a global wire write, a call site's
 input port), memoized per wire, iteratively. An edge's `names` are the wires on the
 way, the driving wire first, whose original variable (`alias_to_orig_var_name`) is
-in `variable_names`, without repeats; a call's output passed straight into another
-call has none. `fb` is set when the way passes through a `feedback_vars` variable.
+in `variable_names` and is not an elaboration temporary (the local an inline struct
+constructor is built in, `PY_TO_LOGIC.INLINE_CTOR_PREFIX`), without repeats; a
+call's output passed straight into another call has none. `fb` is set when the way passes through a `feedback_vars` variable.
 `t` is the driving wire's type.
+
+A generated function (kind `generated`: an interface function's hw_func, made by
+`make_hw_func_from_interface_func` in a module with no file) shows the function it
+was made from: elaboration records that function's description under the
+generated function's key in `pypeline_name_descriptions` (kind `function`), and
+its `symbol`, `source` and `line` become the entry's `def`, `file` and `line`
+(`_generated_origin`), so the block reads `merge`, not `merge_if55c8d8ad`, and the
+source link opens the interface function.
+
+A call site's `op` comes from `pypeline_operator_impl_ops`, which elaboration fills
+at every operator it dispatches to a registered implementation (unary, binary,
+comparison, variable shift; `FuncElaborator._record_operator_impl`): the default
+soft comparator, divider or shifter, or a design's own. The table is per callee, so
+a direct call to the same specialization is drawn as an operator too.
 
 ### Latency, delay and offsets
 
@@ -283,6 +326,12 @@ times of its own.
   instances leave the tree while the wiring filter hides them.
 - **Design view** (`#design`): MAINs and connected pins joined by aggregated wire
   links; an async FIFO's two sides are one node. The top file's link opens it too.
+  Pins that a hidden MAIN packs into one global wire (an I/O `@wires` MAIN's AXIS
+  pins) stand for that wire's interface port and are drawn as one port, named by
+  what the pins' names share up to a `_` (`decrypt_s_axis`), else by the wire; its
+  edge carries one wire, the part of the global wire its pins' links share
+  (`axis_in_if.stream`), with the role of the data there. Pins that a path reaches
+  without passing a hidden MAIN, or that go on into more than one wire, stay pins.
   **File view** (`#file=<path>`, any other file): the file's MAINs and the MAINs of
   other files they connect to, drawn as ghosts, under a banner that links back to
   the whole design. The filters apply to the file's own MAINs as well.
@@ -301,14 +350,21 @@ times of its own.
   hovering a block does that for every edge of the block.
 - A block shows its instance name, then its def name where it differs, `L=n` and
   its delay, then how it is built (`AUTO_PIPELINE`, `AUTO_FSM`, `vhdl`, `MCP`);
-  its registers and the wiring reason are in the tooltip.
+  its registers and the wiring reason are in the tooltip. A call an operator was
+  dispatched to shows the operator's symbol first (`<`, then `soft_cmp_prefix`).
 
 ### Filters
+
+The defaults aim at the diagram a person draws of the block, one level of the
+hierarchy at a time, to sit beside a description of it: the forward data path
+between the blocks the code calls, without the handshake that goes back
+(`ready`), the sideband beside the interfaces, or the operators and registers apart
+from the logic they make up.
 
 The **filters** panel sets, for each kind of node or edge, a mode:
 
 - **show**;
-- **group** (operators only): see [operator groups](#edge-contraction-and-operator-groups);
+- **group** (operators and registers): see [operator groups](#edge-contraction-and-operator-groups);
 - **pass**: hidden, with its edges continuing through it;
 - **drop**: hidden with its edges.
 
@@ -317,56 +373,110 @@ out has no pass mode: its kind offers show and hide only.
 
 | Kind | Applies to | Modes | Default |
 |---|---|---|---|
-| inputs | function inputs, Input pins | show, drop | show |
-| outputs | function outputs, Output pins | show, drop | show |
-| registers | `reg` and `reg_next`; pass joins a register's next value to its current value as one edge | show, pass, drop | show |
-| global wire reads and writes | `wire_read` / `wire_write` stubs | show, drop | show |
+| inputs | function inputs, Input pins | show, drop | drop, feedback and sideband |
+| outputs | function outputs (a returned struct's fields), Output pins | show, drop | drop, feedback and sideband |
+| registers | `reg` and `reg_next`; group puts both values in the logic block of what they connect to, pass joins the next value to the current value as one edge | show, group, pass, drop | group |
+| global wire reads and writes | `wire_read` / `wire_write` stubs | show, drop | drop, feedback and sideband |
+| feedback data | wires whose data is feedback ([Edge contraction](#edge-contraction-and-operator-groups)), design-view links with role `fb` | show, drop | drop |
 | Feedback edges | function-graph edges with `fb` | show, drop | drop, feedback only |
 | wiring | wiring MAINs and call sites ([§4](#mains-clocks-and-the-wiring-flag)) | show, pass, drop | pass |
-| operators | `op` call sites that are not wiring | show, group, pass, drop | group |
+| operators | `op` call sites that are not wiring, and calls with `op` | show, group, pass, drop | group |
 | constants, clock enable | `const`, `ce` | show, drop | drop |
 | other files' MAINs | a file view's ghosts | show, drop | show |
 
-The first five kinds are typed: a second setting picks which [interface
-roles](#types-and-interface-roles) the mode applies to (every type, all but
-forward, forward only, feedback only, plain only), and the rest are shown. A node's
-role is its type's (a wire stub's is its wire's); a `Feedback` edge's is the type
-of the edge. So *inputs: hide, all but forward* keeps only stream and `.fwd_t`
-inputs, and the default *Feedback edges: hide, feedback only* drops the `.fb_t`
-(ready) loops while forward data fed back to an earlier call, and plain-typed
-`Feedback`s, stay. Design-view links are not filtered by role: a global FIFO's or a
-plain wire's `ready` field has no interface type.
+Inputs, outputs, registers, wire stubs and `Feedback` edges are typed: a second
+setting picks which [interface roles](#types-and-interface-roles) the mode applies
+to (every type, all but forward, forward only, feedback only, plain only, or
+*feedback, and plain beside forward interfaces*), and the rest are shown. A node's
+role is its type's (a wire stub's is the role of the fields it reads or drives, a
+returned struct's output the field's); a `Feedback` edge's is the type of the edge.
+The default for ports, *feedback, and plain beside forward interfaces*, takes
+feedback ports always and plain ones in a view whose inputs (and wire reads) and
+outputs (and wire writes) both include a forward interface port: there the plain
+ones are sideband (an `aad_len` beside the streams). A view without forward
+interfaces both ways keeps its plain ports. The design view does the same with its
+pins, a pin group taking its wire's role ([Views](#views-and-navigation)). So
+*inputs: hide, all but forward* keeps only stream and `.fwd_t` inputs, and the
+default *Feedback edges: hide, feedback only* drops the `.fb_t` (ready) loops while
+forward data fed back to an earlier call, and plain-typed `Feedback`s, stay. A
+global FIFO's or a plain wire's `ready` field has no interface type, so the
+feedback-data filter does not take it.
 
-The panel's *wire label text* picks what a label says, and the header's **wire
-labels** box shows every label ([Edge labels](#edge-labels)). Settings persist in
-the browser's storage (`localStorage`, per browser profile, not per design); a page
-that cannot use it starts from the defaults.
+The panel's *wire label text* picks what a label says (the name by default), and
+the header's **wire labels** box (on by default) shows every label
+([Edge labels](#edge-labels)). Settings persist in the browser's storage
+(`localStorage`, per browser profile, not per design), under a key that changes
+when the defaults do (`filters.3`), so settings saved under old defaults do not
+keep them; a page that cannot use it starts from the defaults.
 
 ### Edge contraction and operator groups
 
 - Dropped nodes leave with their edges, before anything else; so do the `Feedback`
   edges the filter drops. A passed-through register adds an edge from its next
   value to its current value.
-- In **group** mode, operators joined by an edge form one group (union-find over
-  the remaining edges between grouped operators); each group is one block with the
-  id `g:<first member id>`. Edges between two members disappear into the group,
-  keeping their variable names for its tooltip.
-- `contract()` then draws each pass-mode node out of the graph: from each drawn node
-  it follows edges through hidden nodes to the next drawn ones, one edge per pair,
-  merging the wires of its paths ([Edge labels](#edge-labels)), their variables,
-  widths (summed over the wires), and the types of the `Feedback` variables and
-  registers on the way.
+- In **group** mode, operators and registers joined by an edge, directly or through
+  wiring in pass mode (a field select between two operators), form one group
+  (union-find); a register's two values are in one group. Each group is one block
+  with the id `g:<first member id>`. Edges between two members disappear into the
+  group, keeping their variable names for its tooltip.
+- In a function view, `tracePaths` then draws each pass-mode node out of the graph:
+  from each drawn node it follows edges through hidden nodes to the next drawn ones,
+  carrying where the path's data sits in its values ([Struct
+  returns](#struct-returns)), one edge per pair, merging the wires of its paths
+  ([Edge labels](#edge-labels)), their variables, widths (summed over the wires),
+  and the types of the `Feedback` variables and registers on the way. A path is
+  visited once per edge and state. The design view does the same with
+  `contract()`, without data positions.
+- A wire is **feedback data** when the part of its source's value it carries, or
+  its part of the driven port, has the role `fb` (`pathRole`): a `ready` selected
+  from an `.fb_t` input or from a `.wire_t`'s `ready` field, or a value fed into an
+  `.fb_t` port. The feedback-data filter drops such wires from their edges, and an
+  edge left with none. A port or wire stub left with no edge that way is hidden too.
+  A logic block with no drawn output (one that fed only feedback, hidden ports or
+  nothing at all, such as assertions) is hidden, again until none is left.
 - A group is a cloud when it is known to be combinational: no member has a latency
-  of its own (`inst_latency`) and the function instance drawn has none either (a
+  of its own (`inst_latency`), the function instance drawn has none either (a
   function with latency lines up its paths with registers between its submodules,
-  which may fall among the group's operators). Otherwise it is a dashed block marked
-  with its operators' latency (`L=n`), or the function's (`in L=n`). The group's label lists
-  the most common operators as symbols (`+`, `==`, `mux`); its tooltip counts every
-  operator kind, lists the variables inside, and, where the function has
-  `offsets`, the delay from the group's first start to its last end.
+  which may fall among the group's operators), and it holds no register. Otherwise
+  it is a dashed block marked with its operators' latency (`L=n`), the function's
+  (`in L=n`) and its register count. The group's label lists the most common
+  operators as symbols (`+`, `==`, `mux`, an operator dispatched to a call by its
+  symbol, and `assert` for a `sim_assert` only after the hardware ones), or, with
+  none, its registers' names; its
+  tooltip counts every operator kind, lists the registers and the variables inside,
+  and, where the function has `offsets`, the delay from the group's first start to
+  its last end.
 - In the design view, through a hidden MAIN a link continues only into the wires that
   MAIN's own graph drives from it (its graph contracted to wire reads and writes),
   so an I/O MAIN does not join every pin to every pin.
+
+### Struct returns
+
+A function returning a struct that is not one interface's own type (a `route_t` of
+interface halves, a `pair_t`, a generated interface function's result) stands for
+an output per field, as a Python function returning several values does. Its output
+is drawn as one port per direct field (`o:return_output.<field>`, `splitOutputs`),
+in declaration order, one level deep; inputs are never split. Each field port has
+the field's type and role, its own filter mode, and its own hide key.
+
+To know which field a path reaches, `fieldStep` carries a state along each path:
+`src`, the part of the path's source value it carries (exact until a function on
+the way computes from it); `dst`, its place in the current wire's value; and the
+names the code gives it at its last field select and its last assembly. A constant
+field select or assembly (a node's `ref`) moves the data by field paths: a select
+whose read path is inside the data's place takes that part (the source part grows);
+an assembly puts the data at its input's path inside the output; a path whose part
+of the input the output does not hold ends. In an assembly, inputs with longer
+paths override parts of one with a shorter path (a global wire written field by
+field over its read-back value), so the path goes on as each field left. Any other
+node (a function, a register passed through) outputs a value of its own. Paths deeper
+than 16 tokens end (they come only from loops through registers).
+
+A path arriving at a returned struct's port goes to the field its `dst` names, or,
+when the whole value arrives, to every field (the source part growing by the field
+when nothing computed from it). A global wire write takes only the parts the
+function drives (its node's `driven`): the elaborated value also passes its other
+fields through from the read-back, which no hardware drives.
 
 ### Hiding single nodes
 
@@ -381,40 +491,57 @@ instance of that function.
 
 ### Edge labels
 
-An edge carries one wire, or a bundle: every path merged into it. A wire is named:
+An edge carries one wire, or a bundle: every path merged into it. A wire is named
+as the code names it:
 
 - in the design view, by the global wire fields it chains, `a → b` through a hidden
-  MAIN;
-- in a function view, by its path's first variable; with none (a call's result
-  passed straight into another call through field selects, as a generated interface
-  function does), by the input it feeds: the callee's argument
-  (`mac_func.data_in_if`), the output, register or global wire; and where it feeds a
-  logic block, whose ports have no names, by the output it comes from.
+  MAIN (a pin group's edge by the part of the wire its pins share);
+- in a function view, by the variable and fields of its path's last field select
+  (`p.second`, `chacha.key_if`, `bcast.axis_out_if[1]`), else of its last assembly
+  (`o.first`, a global wire's field `link.data`), else by its first variable; with
+  none, by its ends, `source → destination`: the output it comes from (the call and
+  the field of its returned struct, `make_pair.first`, an input or register and the
+  part taken) and the input it feeds (the callee's argument, `mac_func.data_in_if`,
+  an output's field, a register or global wire). A logic block's ports have no
+  names, so a wire from or to one is named by its other end. A whole value reaching
+  a returned struct's outputs adds the field to its name.
 
-A wire's type is the driven port's; a type shows its readable `name`, cut to 48
-characters. Labels are off by default: the tooltip says the wire's name and type,
-or `N wires:` and one line per wire. The header's **wire labels** box shows every
-label, and right-clicking an edge (or its label) opens a menu that shows or hides
-just its label; a choice that matches the box is dropped, so the edge follows the
-box again. Those choices are stored per top file in the browser's storage, keyed
+A wire's type is the type of its part of the driven port (`o.data` into a
+`byte_stream_t` output is a `uint8_t`); a type shows its readable `name`, cut to 48
+characters. The tooltip says the wire's name and type, or `N wires:` and one line
+per wire. Labels show the names by default; the header's **wire labels** box hides
+or shows every label, and right-clicking an edge (or its label) opens a menu that
+shows or hides just its label; a choice that matches the box is dropped, so the
+edge follows the box again. Those choices are stored per top file in the browser's storage, keyed
 `<view>\u0001<source>\u0001<driven>` with the view `design` or the function; the
 menu can return a view's labels to the box, and the filters panel resets them all.
 
-A shown label has a line per wire, `name: type (bits)` (the *wire label text*
-setting: name and type, the name, or the type), each cut to 80 characters, none
-left out. Labels are placed widest bus first, each at the first of five points along
-its curve (the middle, then 35, 65, 25 and 75 % of the way; the bottom of a back
-edge's loop) that overlaps no block and no placed label, else where it overlaps
-least; a label above its curve grows upward, one below a loop downward. The gap
+A shown label names every wire, none left out, in the order of the ports they drive
+(a call's arguments, as the code lists them), then by name. With the *wire label text* name
+(the default), the fields one variable carries share a line, their common path and
+then each field after it, wrapped between fields at 40 characters
+(`prepared_if.stream: valid, data.context_v, data.r, …`; `nameLines`); with name
+and type, or the type, a label has a line per wire, `name: type (bits)`, each cut
+to 80 characters. Wires whose names differ only in one array index, with one type,
+share an entry as index runs (`key_bytes[0..31]`, `k[0..1,3]`; `compactWires`),
+here and in the tooltip. A label's text has an outline in the background color, so
+an edge crossing it does not hide it. Labels are placed widest bus first, each at the first of five points along
+its curve (the middle, then 35, 65, 25 and 75 % of the way; the middle of each place
+of an edge that skips layers; the bottom of a back edge's loop) that overlaps no
+block and no placed label, else where it overlaps least; a label above its curve grows upward, one below a loop downward. The gap
 between layers widens to fit three quarters of the shown labels, up to 360 px.
 
 ### Layout
 
-A small layered layout in the page (no library): cycles are broken by reversing
-`fb` edges, then the narrower edge of each two-way pair (a stream's `ready` against
-its data), then DFS back edges with wide edges explored first. Layers are longest
-paths, with inputs, register current values and wire reads forced first and outputs,
-register next values and wire writes last. Eight barycenter sweeps order each
+A small layered layout in the page (no library): cycles are broken by reversing the
+narrower edge of each two-way pair (a stream's `ready` against its data), then DFS
+back edges with wide edges explored first; a `Feedback` edge is laid out forward
+unless its end already reaches its start (a value used before it is assigned need
+not flow backwards). Layers are longest paths, with inputs, register current values
+and wire reads forced first and outputs, register next values and wire writes last.
+A forward edge that skips layers gets a place of its own (6 px high) in each layer it
+crosses, ordered and placed with the blocks, and is drawn through those places, so
+no block sits on its way. Eight barycenter sweeps order each
 layer, alternately by its blocks' neighbors in all earlier layers and in all later
 ones, a neighbor's position taken relative to its layer's size, so an edge that
 skips layers (an input feeding a late block) counts. The layers' widths fix the
@@ -424,9 +551,10 @@ tallest layer is 85 % of that width times the pane's height over its width, up t
 bound by its width). Each layer starts as a centered column; eight sweeps, from the
 left and from the right in turn, then move each block level with the mean middle of
 its neighbors, as far as its layer's order and gap allow (`placeLayer`: least
-squares, by pool-adjacent-violators isotonic regression). A resized window lays the
-view out again. Edges are Bézier curves; reversed edges loop underneath. Wheel
-zooms, dragging pans, **fit** fits everything drawn (`getBBox`).
+squares, by pool-adjacent-violators isotonic regression); the places of skipping
+edges move the same way. A resized window lays the view out again. Edges are Bézier
+curves, straight through their places; reversed edges loop underneath. Wheel zooms,
+dragging pans, **fit** fits everything drawn (`getBBox`).
 
 ### Hardware scale
 
@@ -434,7 +562,8 @@ The **hardware scale** toggle sizes blocks as `PipelineMap.write_png` did: width
 the callee's delay, height the mean of its input and output bus widths (a block
 without port data, an operator or a group, takes its widest edge). When the function
 has `offsets`, x is the block's start time on a ns axis (inputs left, outputs right);
-otherwise the layered x positions stay. An operator group spans from its first
+otherwise the layered x positions stay. Edges are then plain curves: the places kept
+for edges that skip layers no longer line up with the blocks. An operator group spans from its first
 member's start to its last member's end, or, without offsets, is as wide as its
 slowest member.
 
@@ -448,7 +577,8 @@ slowest member.
   site and opens it. Generated sources have no link.
 - **copy as Mermaid** writes the current view as `flowchart LR` text to the
   clipboard, or into a text box where a `file://` page may not use the clipboard: the
-  blocks' lines (a group as a round node), the edges with the labels the view shows
+  blocks' lines (a group as a round node; a MAIN without its source location, which
+  goes stale in a README), the edges with the labels the view shows
   (dashed through a `Feedback`, red between clocks by `linkStyle`), `"`, `<` and
   `>` as Mermaid's `#quot;`, `#lt;` and `#gt;`. Mermaid's layout (dagre) ranks a
   block next to what it connects to, which puts an input that feeds a late block, or
@@ -456,39 +586,56 @@ slowest member.
   register current values, wire reads) go in one subgraph and its last-layer nodes
   in another, both untitled and unstyled: dagre keeps a subgraph's span of ranks
   small, so each becomes one column, left of everything the inputs feed and right of
-  everything feeding the outputs (checked in VS Code's Mermaid renderer).
+  everything feeding the outputs (checked in VS Code's Mermaid renderer). In a view
+  with loops dagre can still rank an output right after the block feeding it, before
+  blocks of later layers, so invisible links (`~~~`) run from each block of the
+  page's last middle layer to the first output, after the real edges (which keeps
+  the `linkStyle` indices).
 
 ### Self-test
 
 `#selftest` resets the filters to their defaults and nothing hidden (it reads and
 writes no browser storage), checks that `layout` spreads a three-block layer
-further apart for a square pane than for none, then draws:
+further apart for a square pane than for none, runs an edge that skips a layer
+through a place clear of the block in that layer, lays a `Feedback` edge that
+closes no cycle out forward, lists array elements as index runs, and puts the fields
+of one variable on one name-label line, then draws:
 
-- the design view, checking that no wiring MAIN and no wire label is drawn and
-  there is no file banner, that the top file's link opens it, and every file view,
-  checking each has its banner;
+- the design view, checking that no wiring MAIN and no feedback data is drawn,
+  every edge's label is, a pin group holds more than one pin and none of its pins is drawn
+  on its own, and there is no file banner; that the top file's link opens it; and
+  every file view, checking each has its banner;
 - each function with a graph three times: with the defaults, checking that no
-  operator, wiring call site, constant, clock enable or wire label is drawn, no drawn
-  edge passes a `Feedback` whose type is `fb`, every edge ends at drawn nodes, and
-  two operators joined by a remaining edge share a group; with everything shown and
-  wire labels on, checking that every graph node is drawn, every wire has a name and
-  every edge's label is drawn; and with everything hidden (pass where a kind has it,
-  drop otherwise), checking that only non-operator, non-wiring call sites and no
-  `Feedback` edges are drawn. The checks classify nodes from the data, not with the
-  filters' own code;
+  operator (a call with `op` included), wiring call site, register, constant or clock
+  enable is drawn, every edge's label is, no returned struct is drawn as one output, no port
+  or wire stub is feedback and, in a view with forward interfaces both ways, none is
+  plain, no drawn edge passes a `Feedback` whose type is `fb` or carries feedback
+  data, every logic block drawn has a drawn output, every edge ends at drawn nodes,
+  and operators and registers joined by a remaining edge, directly or through
+  wiring, share a group, as do a register's two values; with everything shown
+  and wire labels on, checking that every graph node (a returned struct as its
+  fields) is drawn, every wire has a name and every edge's label is drawn; and with
+  everything hidden (pass where a kind has it, drop otherwise), checking that only
+  non-operator, non-wiring call sites and no `Feedback` edges are drawn. The checks
+  classify nodes from the data, not with the filters' own code;
 - the hardware-scale view of each function with `offsets`;
 - the design view with one MAIN hidden by hand through `setHidden`, as its menu
   does, pass and drop, checking it is not drawn and is drawn again once shown; a
-  filter changed through `filtersChanged`, as the panel does; one edge's label shown
-  through `setLabel`, as its menu does, checking it is the one label drawn and in
-  the Mermaid text, then hidden again, checking nothing stays set; an edge hovered,
+  filter changed through `filtersChanged`, as the panel does; one edge's label hidden
+  through `setLabel`, as its menu does, checking it alone is not drawn and has no
+  label in the Mermaid text, then shown again, checking nothing stays set; an edge hovered,
   checking it alone is lit, and a block hovered, checking its edges are; the Mermaid
   text's inputs and outputs subgraphs, present exactly when the view has
-  first-layer and last-layer nodes; and, each checked to draw without an error, the
+  first-layer and last-layer nodes, and its invisible links to the outputs, present
+  exactly when it has outputs and blocks before them; and, each checked to draw
+  without an error, the
   hidden list, a node's and an edge's menu, the filters panel and a search.
 
 It sets `data-ready="<views drawn>"` on `<body>`, or `data-error` with the failed
-check or exception.
+check or exception, and records what each default view drew (blocks, wire names,
+edges by their ends' first lines, their label lines) in a `<script id="drawn">`
+JSON element, so the
+render test can check what a particular design's views show.
 
 ## 6. Sharing the page
 
@@ -501,12 +648,16 @@ where the same paths exist.
 ## 7. Limits
 
 - Wire pass-through of a hidden wiring MAIN and C links are whole-wire: a struct
-  wire split into several output pins inside an `@wires` MAIN reaches each of them.
+  wire split into several output pins inside an `@wires` MAIN reaches each of them
+  (a pin group's edge names the shared part instead of every pair).
 - Variable names come from `variable_names`; a generated interface function's names
   show as they are (`rev3_if0df2bd50`).
-- A function-view wire named by a variable that holds a whole struct is labeled with
-  the variable, though a field select on the way passes only one field
-  (`f`, not `f.to_pipe_if`); the type shown is the field's.
+- Field positions follow constant field selects and assemblies only: after a
+  function on the way (a cast, an `@wires` function, a register passed through) a
+  wire is named by what it was before it, and a variable index select ends nothing.
+- A call is drawn as an operator when an operator was dispatched to its callee
+  anywhere in the parse (`pypeline_operator_impl_ops` is per callee), so a direct
+  call to the same specialization is drawn as one too.
 - The Mermaid text's columns hold only for its first and last layers; dagre places
   the blocks between them by its own ranking and cycle breaking, which can differ
   from the page's.
@@ -519,19 +670,23 @@ where the same paths exist.
   `divide_body` measures 57.2 ns while its soft divider's composed delay is 244.5 ns.
 - An operator group in a function instance with latency is marked `in L=n`
   without saying whether or where registers fall among its operators.
-- The layout does not route around blocks; long edges can cross them.
+- Reversed edges (back edges, a cycle's `Feedback`) loop underneath without places
+  of their own and can cross blocks.
 
 ## 8. Tests
 
 | Test | Category | What |
 |---|---|---|
-| `inst/diagram_test.py` | elab_introspect | the data of four Pypeline designs and one C example, parsed in-process: files, clocks, links, graphs, edge names, `Feedback` edges and their types, type roles and names (module-level names, same-named classes told apart), wiring call sites, call-site kinds |
+| `inst/diagram_test.py` | elab_introspect | the data of four Pypeline designs and one C example, parsed in-process: files, clocks, links and their roles, graphs, edge names, `Feedback` edges and their types, type roles, names and fields (an interface wire's feedback fields), field selects and assemblies, operators dispatched to calls, a generated function's source function, wire stubs' roles and driven fields, wiring call sites, call-site kinds |
 | `inst/diagram_build_test.py` | build_report_device_models | a sky130 build's latencies against `built_hardware.json`, delays and offsets, the pipelined divider's operator latencies, a `--no_synth` build, a failed build removing the page |
-| `inst/diagram_render_test.py` | unit (needs `google-chrome`) | the [self-test](#self-test) of four designs' pages in headless Chrome |
+| `inst/diagram_render_test.py` | unit (needs `google-chrome`) | the [self-test](#self-test) of four designs' pages in headless Chrome, and what `diagram_interfaces_design.py`'s default views draw: a returned struct's outputs, wire names, sideband and feedback ports and data left out, an operator's call in a logic block, a global wire write taking only its fields, a label with one variable's fields on one line, packed pins as one port |
 
 `inst/diagram_interfaces_design.py` is the fixture for interface roles, type names
-(named and unnamed stream types), `Feedback` edges of both roles and wiring call
-sites. See
+(named and unnamed stream types), `Feedback` edges of both roles, wiring call sites,
+sideband ports, returned structs (and two fields of one passed to a call), a soft comparison, a
+`Wire` of an interface with `ready` flowing back, a plain struct `Wire` written
+field by field from two MAINs,
+and pins an I/O `@wires` MAIN packs into stream wires. See
 [`pypeline_TESTS.md`](pypeline_TESTS.md).
 
 ## History
@@ -552,7 +707,20 @@ an interface function (`diagram_interfaces_design.py`'s `route`), and with it th
 loop. A MAIN with no logic is top-level glue; a function with none is still part of
 the hierarchy its author wrote.
 
-**Wire labels are off by default.** A label on every edge crowded flat views, and a
-bundle's `N wires` said nothing a hover does not; a label shows where its reader
-asks for it, for every edge or for one, and then lists every wire. A wire with no
-variable used to be labeled with its type alone; it is named by the input it feeds.
+**The defaults draw what a person draws.** A block's default view is meant to sit
+beside a description of the block, so it shows what such a diagram does: the
+forward interface data between the blocks of one level of the code's hierarchy
+(no level skipped or merged), named as the code names it. Feedback data (`ready`)
+is left implicit, as in a hand-drawn data path, unless it travels in a forward type;
+sideband ports beside forward interfaces (an `aad_len`) are left out; a returned
+struct is the several outputs it stands for; operators and registers make up logic
+blocks, and logic that feeds nothing drawn goes with what it feeds; a compiler's
+implementation of an operator is the operator; pins packed into one wire are the one
+port they form. Every filter can bring the rest back.
+
+**Wire labels show names by default.** Labels were off by default while they said
+little a reader would write: a bundle's `N wires`, a wire with no variable labeled
+with its type alone, then a type after every name. Once wires are named as the code
+names them, by their field selects and by both ends, a label is what a hand-drawn
+diagram writes on the line, so labels are on, with names only (types in the
+tooltip), the fields of one variable on one line, and still every wire listed.

@@ -537,6 +537,11 @@ _MAX_MANGLE_NAME_LEN = 128
 # recursion (each nesting level consumes ~2 of these, one per direction).
 _MAX_CALLABLE_RECURSION_DEPTH = 16
 
+# Prefix of the synthetic local an inline struct constructor is built in (a
+# call argument, a single-field cast): an elaboration temporary, not a name the
+# user wrote, which the design diagram does not name wires by
+INLINE_CTOR_PREFIX = "INLINE_CTOR_"
+
 # Safety limit shared by _elab_for and _elab_while: prevents a non-terminating
 # (or absurdly long) compile-time loop from hanging the compiler.
 _MAX_LOOP_UNROLL = 65536
@@ -4780,6 +4785,7 @@ class FuncElaborator:
             impl_name = None
         if impl_name is not None:
             callee_def = self._resolve_registered_impl(impl_name, expr)
+            self._record_operator_impl(callee_def, op_name)
             inst = self._inst(
                 impl_name if isinstance(impl_name, str) else impl_name.__name__, expr
             )
@@ -4923,6 +4929,7 @@ class FuncElaborator:
                         f" (at {_loc_str(self.src_file, expr)})"
                     )
                 callee_def = self._resolve_registered_impl(impl_name, expr)
+                self._record_operator_impl(callee_def, op_name)
                 inst = self._inst(
                     impl_name if isinstance(impl_name, str) else impl_name.__name__,
                     expr,
@@ -4961,6 +4968,7 @@ class FuncElaborator:
             _gen_impl = None
         if _gen_impl is not None:
             _callee = self._resolve_registered_impl(_gen_impl, expr)
+            self._record_operator_impl(_callee, op_name)
             _inst = self._inst(
                 _gen_impl if isinstance(_gen_impl, str) else _gen_impl.__name__, expr
             )
@@ -5031,10 +5039,7 @@ class FuncElaborator:
             _gen_impl = None
         if _gen_impl is not None:
             _callee = self._resolve_registered_impl(_gen_impl, expr)
-            # See the pypeline_compare_impl_ops note in PARSE_FILE.
-            self.parser_state.pypeline_compare_impl_ops.setdefault(
-                _callee.func_name, set()
-            ).add(op_name)
+            self._record_operator_impl(_callee, op_name)
             _inst = self._inst(
                 _gen_impl if isinstance(_gen_impl, str) else _gen_impl.__name__, expr
             )
@@ -5281,7 +5286,7 @@ class FuncElaborator:
                 # LOGIC.CONST_PREFIX is special-cased elsewhere as a literal
                 # constant value wire (its suffix is parsed as the literal's text),
                 # which this synthetic variable name is not.
-                synth_name = f"INLINE_CTOR_{_loc_str(self.src_file, arg_expr)}"
+                synth_name = INLINE_CTOR_PREFIX + _loc_str(self.src_file, arg_expr)
                 self._declare_var(synth_name, port_typ, arg_expr)
                 self._elab_compound_init(synth_name, arg_expr, arg_expr)
                 # Compound (non-scalar) values are stored as a base wire plus
@@ -5463,7 +5468,7 @@ class FuncElaborator:
             # mirrors _elab_call's own inline-ctor-as-argument handling
             # (bound_args loop, above), since _elab_expr alone has no case
             # for a bare struct-ctor Call node.
-            synth_name = f"INLINE_CTOR_{_loc_str(self.src_file, arg_node)}"
+            synth_name = INLINE_CTOR_PREFIX + _loc_str(self.src_file, arg_node)
             src_str = (
                 getattr(arg_callee, "_pypeline_ctype_name", None) or arg_callee.__name__
             )
@@ -5500,7 +5505,7 @@ class FuncElaborator:
             )
         if hasattr(dst_t, "_fields") and len(dst_t._fields) == 1:
             fname = dst_t._fields[0]
-            synth_name = f"INLINE_CTOR_{_loc_str(self.src_file, expr)}"
+            synth_name = INLINE_CTOR_PREFIX + _loc_str(self.src_file, expr)
             self._declare_var(synth_name, dst_str, expr)
             self._write_ref((synth_name, fname), arg_wire, src_str, expr)
             return self._read_ref((synth_name,), dst_str, expr)
@@ -5711,6 +5716,13 @@ class FuncElaborator:
             return _emit(func_name, ["x"], [x_type], out_type, [x_wire])
 
         raise NotImplementedError(f"Unknown bit manip function: {callee_name!r}")
+
+    def _record_operator_impl(self, callee, op_name):
+        """Note that an operator was dispatched to the registered implementation
+        callee (see the pypeline_operator_impl_ops note in PARSE_FILE)."""
+        self.parser_state.pypeline_operator_impl_ops.setdefault(
+            callee.func_name, set()
+        ).add(op_name)
 
     def _resolve_registered_impl(self, func, expr):
         """Resolve a registered operator impl callable to a Logic().
@@ -9449,11 +9461,12 @@ def _new_parser_state(module_globals):
     #     that it can, which is what lets the area search descend past the
     #     operator level. Recorded rather than parsed back out of the entity
     #     name: the name is a formatting decision, this is the actual semantics.
-    #   pypeline_compare_impl_ops: registered comparison implementation entity
-    #     (a soft comparator, say) -> the comparison op names it was dispatched
-    #     for. The call keeps the operator's meaning, so AUTO's range proof can
-    #     fold one the operand widths decide (uint1 > 1) instead of measuring a
-    #     wrapper that synthesizes to no timing path.
+    #   pypeline_operator_impl_ops: registered operator implementation entity
+    #     (a soft comparator, say) -> the op names dispatched to it. The call
+    #     keeps the operator's meaning: AUTO's range proof can fold a comparison
+    #     the operand widths decide (uint1 > 1) instead of measuring a wrapper
+    #     that synthesizes to no timing path, and the design diagram draws the
+    #     call site as the operator the source wrote.
     #   pypeline_bit_manip_info: bit-manip entity -> (builtin name, trailing
     #     constant args), so AUTO_FSM can re-emit e.g. bit_assign(base, x, 5).
     #     Without it a soft adder's body -- which is mostly bit_assign -- could
@@ -9469,7 +9482,7 @@ def _new_parser_state(module_globals):
     parser_state.pypeline_entity_callables = {}
     parser_state.pypeline_const_wire_values = {}
     parser_state.pypeline_builtin_op_info = {}
-    parser_state.pypeline_compare_impl_ops = {}
+    parser_state.pypeline_operator_impl_ops = {}
     parser_state.pypeline_bit_manip_info = {}
     parser_state.pypeline_canonical_name_owner = {}
     parser_state.pypeline_specialization_identities = {}
