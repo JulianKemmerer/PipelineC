@@ -7,7 +7,9 @@ with a feedforward loop, as interface_func_loop_test.py does: its Feedback
 variables carry a plain copy of the interface's .fwd_t (data flowing back to an
 earlier call) and of its .fb_t (backpressure). stream_main holds a plain
 {data, valid} stream (stream.make_stream_t) in a register and passes it through
-a @wires function; flag_main holds a second stream type of the same class name."""
+a @wires function; flag_main holds a second named stream type, and two more no
+module-level name gives (attributes of the class held), whose classes are both
+named stream_t."""
 import os
 import sys
 
@@ -22,6 +24,8 @@ from pypeline import (
     hw_func,
     struct,
     uint1_t,
+    uint2_t,
+    uint4_t,
     uint8_t,
     uint16_t,
     wires,
@@ -122,10 +126,20 @@ def stream_main(x: uint8_t) -> uint8_t:
 flag_stream_t = make_stream_t(uint1_t)
 
 
+# Two stream types no module-level name gives
+class held:
+    narrow_t = make_stream_t(uint2_t)
+    wide_t = make_stream_t(uint4_t)
+
+
 @MAIN
 def flag_main(b: uint1_t) -> uint1_t:
     seen: Reg[flag_stream_t]
+    narrow: Reg[held.narrow_t]
+    wide: Reg[held.wide_t]
     last: uint1_t = seen.data
     seen.data = b
     seen.valid = 1
+    narrow.valid = b
+    wide.valid = narrow.valid
     return last

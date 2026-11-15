@@ -11,14 +11,14 @@
   --bg: #ffffff; --fg: #1d1d1f; --muted: #6b6b70; --line: #c8c8cc;
   --pane: #f5f5f7; --node: #ffffff; --node-border: #8a8a90; --accent: #2563eb;
   --edge: #7a7a80; --cross: #d62728; --ghost: #b0b0b5; --hl: #fde68a;
-  --cloud: #eaf0f8; --logic: #f4efe4;
+  --cloud: #eaf0f8; --logic: #f4efe4; --hot: #d97706;
 }
 @media (prefers-color-scheme: dark) {
   :root {
     --bg: #1b1b1e; --fg: #e6e6e9; --muted: #9a9aa2; --line: #3a3a40;
     --pane: #242428; --node: #2b2b30; --node-border: #8a8a90; --accent: #60a5fa;
     --edge: #9a9aa2; --cross: #ff6b6b; --ghost: #55555c; --hl: #6b5b1a;
-    --cloud: #263040; --logic: #3a3428;
+    --cloud: #263040; --logic: #3a3428; --hot: #fbbf24;
   }
 }
 * { box-sizing: border-box; }
@@ -64,11 +64,16 @@ button, select { font: inherit; cursor: pointer; }
 #svg .n.click { cursor: pointer; }
 #svg .n.click:hover rect { stroke: var(--accent); stroke-width: 2; }
 #svg .n .sub { fill: var(--muted); font-size: 11px; }
-#svg .e { fill: none; stroke: var(--edge); stroke-width: 1.3; }
+#svg .e { fill: none; stroke: var(--edge); stroke-width: 1.3; pointer-events: none; }
 #svg .e.fb { stroke-dasharray: 5 4; }
 #svg .e.cross { stroke: var(--cross); }
 #svg .e.async { stroke-dasharray: 2 3; }
+#svg .e.hot { stroke: var(--hot); }
+#svg .hit { fill: none; stroke: transparent; stroke-width: 12; pointer-events: stroke; }
+#svg .hotl { pointer-events: none; }
 #svg .el { fill: var(--muted); font-size: 10px; }
+#svg .el.hot { fill: var(--hot); font-weight: 600; }
+#svg .tick { fill: var(--muted); font-size: 10px; }
 #svg .note { fill: var(--muted); font-size: 12px; }
 #tip { position: fixed; pointer-events: none; display: none; max-width: 560px; z-index: 7;
   background: var(--pane); border: 1px solid var(--line); border-radius: 4px; padding: 6px 8px;
@@ -110,6 +115,7 @@ button, select { font: inherit; cursor: pointer; }
     <span id="crumbs"></span>
     <button id="filters-btn" type="button" title="what the views leave out, and how">filters ▾</button>
     <button id="hidden-btn" type="button" title="nodes you hid (right-click a node to hide it)"></button>
+    <label title="label every wire (right-click a wire to show or hide just its label)"><input type="checkbox" id="f-labels"> wire labels</label>
     <label title="x: start time and delay in ns, height: bus width (functions with measured delays)"><input type="checkbox" id="f-scale"> hardware scale</label>
     <button id="fit" type="button">fit</button>
     <button id="mermaid" type="button" title="copy the current view as Mermaid flowchart text">copy as Mermaid</button>
@@ -143,9 +149,10 @@ const PALETTE = ["#1f77b4", "#2ca02c", "#9467bd", "#ff7f0e", "#8c564b", "#e377c2
                  "#17becf", "#bcbd22", "#7f7f7f", "#aec7e8"];
 const SEP = "\u0001";                      // between the parts of a hidden node's key
 const $ = (id) => document.getElementById(id);
-// hidden: key -> "pass" | "drop" of the nodes the viewer hid by hand; last: the
-// drawn view ({nodes, edges}); size: its extent
-const state = { hidden: new Map(), view: null, last: null, size: null };
+// hidden: key -> "pass" | "drop" of the nodes the viewer hid by hand; labels:
+// edge key -> whether its label is shown, where set by hand against the wire
+// labels setting; last: the drawn view ({nodes, edges}); size: its extent
+const state = { hidden: new Map(), labels: new Map(), view: null, last: null, size: null };
 
 // ---------- types ----------
 const NO_TYPE = { c: "", bits: null };
@@ -153,12 +160,12 @@ function T(i) { return i == null ? NO_TYPE : D.types[i] || NO_TYPE; }
 function bitsOf(i) { return T(i).bits; }
 function roleOf(i) { return T(i).role || "plain"; }
 const ROLE_TEXT = { fwd: "forward (stream, fwd_t)", fb: "feedback (fb_t)", plain: "plain" };
-// "readable_t (8b)", cut to fit a label
+// "readable_t (8b)", a C name cut to fit a label (the tooltip has it whole)
 function typeShort(i) {
   const t = T(i);
   if (!t.c) return "";
   const name = t.name || t.c;
-  return (name.length > 30 ? name.slice(0, 29) + "…" : name) + (t.bits != null ? " (" + t.bits + "b)" : "");
+  return (name.length > 48 ? name.slice(0, 47) + "…" : name) + (t.bits != null ? " (" + t.bits + "b)" : "");
 }
 function typeLong(i) {
   const t = T(i);
@@ -193,9 +200,10 @@ const SCOPES = [
 ];
 const SCOPE = new Map(SCOPES.map(([id, , roles]) => [id, roles]));
 const MODE_TEXT = { show: "show", group: "group into logic blocks", pass: "hide, edges pass through", drop: "hide with edges" };
-const LABELS = [["both", "name: type"], ["name", "name"], ["type", "type"], ["none", "none"]];
+// What a wire's label says
+const LABEL_TEXT = [["both", "name: type"], ["name", "name"], ["type", "type"]];
 function defaults() {
-  const f = { labels: "both" };
+  const f = { wireLabels: false, labelText: "both" };
   for (const k of KINDS) f[k.id] = { mode: k.def, scope: k.scope || "all" };
   return f;
 }
@@ -219,13 +227,20 @@ function loadSettings() {
       if (k.modes.includes(s.mode)) f[k.id].mode = s.mode;
       if (k.typed && SCOPE.has(s.scope)) f[k.id].scope = s.scope;
     }
-    if (LABELS.some(([id]) => id === saved.labels)) f.labels = saved.labels;
+    if (typeof saved.wireLabels === "boolean") f.wireLabels = saved.wireLabels;
+    if (LABEL_TEXT.some(([id]) => id === saved.labelText)) f.labelText = saved.labelText;
   }
   filt = f;
   const hid = loadStored("hidden:" + D.build.top);
   state.hidden = new Map(Array.isArray(hid) ? hid.filter((h) => Array.isArray(h) && (h[1] === "pass" || h[1] === "drop")) : []);
+  const lab = loadStored("labels:" + D.build.top);
+  state.labels = new Map(Array.isArray(lab) ? lab.filter((h) => Array.isArray(h) && typeof h[0] === "string" && typeof h[1] === "boolean") : []);
 }
-function saveSettings() { store("filters", filt); store("hidden:" + D.build.top, [...state.hidden]); }
+function saveSettings() {
+  store("filters", filt);
+  store("hidden:" + D.build.top, [...state.hidden]);
+  store("labels:" + D.build.top, [...state.labels]);
+}
 // Whether kind k's mode applies to something with this interface role
 function applies(k, role) { return !KIND.get(k).typed || SCOPE.get(filt[k].scope).includes(role || "plain"); }
 
@@ -482,9 +497,16 @@ function mainTip(m) {
 }
 
 // ---------- layered layout ----------
+const GAP_Y_MIN = 18, GAP_Y_MAX = 180;   // room between the blocks of a layer
+// The pane's height over its width, or 0 when it has no size yet
+function paneAspect() {
+  const W = svg.clientWidth, H = svg.clientHeight;
+  return W > 0 && H > 0 ? H / W : 0;
+}
 // nodes: [{id, w, h, rank: "first"|"last"|null}], edges: [{s, d, fb}]; gapX: room
-// between layers
-function layout(nodes, edges, gapX) {
+// between layers; aspect: the pane's height over its width, which the rows of
+// a wide, flat drawing spread out towards (0: no spreading)
+function layout(nodes, edges, gapX, aspect) {
   const idx = new Map(nodes.map((n, i) => [n.id, i]));
   const N = nodes.length;
   const out = Array.from({ length: N }, () => []);
@@ -540,39 +562,83 @@ function layout(nodes, edges, gapX) {
   const L = used.length;
   const layers = Array.from({ length: L }, () => []);
   for (let i = 0; i < N; i++) layers[layer[i]].push(i);
-  // Barycenter ordering sweeps
+  // Barycenter ordering sweeps, alternately by the neighbors in earlier layers
+  // and by those in later ones. A position is taken relative to its layer's
+  // size, so an edge that skips layers (an input feeding a late block) counts
   const nb = Array.from({ length: N }, () => []);
   for (const y of dag) { nb[y.a].push(y.b); nb[y.b].push(y.a); }
   const pos = new Float64Array(N);
-  const setPos = () => layers.forEach((ly) => ly.forEach((v, i) => { pos[v] = i; }));
-  setPos();
-  for (let it = 0; it < 6; it++) {
-    const order = it % 2 ? [...layers.keys()].reverse() : [...layers.keys()];
+  layers.forEach((ly) => ly.forEach((v, i) => { pos[v] = i; }));
+  const rel = (w) => (pos[w] + 0.5) / layers[layer[w]].length;
+  for (let it = 0; it < 8; it++) {
+    const down = it % 2 === 0;
+    const order = down ? [...layers.keys()] : [...layers.keys()].reverse();
     for (const l of order) {
-      const ref = it % 2 ? l + 1 : l - 1;
       const bc = (v) => {
-        const ns = nb[v].filter((w) => layer[w] === ref);
-        return ns.length ? ns.reduce((s, w) => s + pos[w], 0) / ns.length : pos[v];
+        const ns = nb[v].filter((w) => down ? layer[w] < l : layer[w] > l);
+        return ns.length ? ns.reduce((s, w) => s + rel(w), 0) / ns.length : rel(v);
       };
       const vals = new Map(layers[l].map((v) => [v, bc(v)]));
       layers[l].sort((a, b) => vals.get(a) - vals.get(b) || a - b);
       layers[l].forEach((v, i) => { pos[v] = i; });
     }
   }
-  // Coordinates
-  const GAPX = gapX || 70, GAPY = 18;
-  let x = 0;
-  const colH = layers.map((ly) => ly.reduce((s, v) => s + nodes[v].h + GAPY, -GAPY));
-  const H = Math.max(0, ...colH);
-  for (let l = 0; l < L; l++) {
-    const w = Math.max(...layers[l].map((v) => nodes[v].w));
-    let y = (H - colH[l]) / 2;
-    for (const v of layers[l]) {
-      nodes[v].x = x + (w - nodes[v].w) / 2; nodes[v].y = y; y += nodes[v].h + GAPY;
-    }
-    x += w + GAPX;
+  // Coordinates. The layers' widths fix the drawing's width; the gap between
+  // the blocks of a layer grows until the tallest layer is about as tall as
+  // the pane's shape allows at that width, within [GAP_Y_MIN, GAP_Y_MAX]
+  const GAPX = gapX || 70;
+  const colW = layers.map((ly) => Math.max(...ly.map((v) => nodes[v].w)));
+  const totalW = Math.max(0, colW.reduce((s, w) => s + w + GAPX, -GAPX));
+  const sumH = layers.map((ly) => ly.reduce((s, v) => s + nodes[v].h, 0));
+  let gapY = GAP_Y_MIN;
+  if (aspect > 0) {
+    let g = GAP_Y_MAX;
+    layers.forEach((ly, l) => { if (ly.length > 1) g = Math.min(g, (0.85 * totalW * aspect - sumH[l]) / (ly.length - 1)); });
+    gapY = Math.max(GAP_Y_MIN, g);
   }
-  return { width: Math.max(0, x - GAPX), height: H };
+  // Each layer starts as a centered column; then, sweeping from the left and
+  // from the right in turn, each block moves level with the middle of its
+  // neighbors as far as its layer's order and gap allow
+  const colH = layers.map((ly, l) => sumH[l] + gapY * (ly.length - 1));
+  const H0 = Math.max(0, ...colH);
+  let x = 0;
+  for (let l = 0; l < L; l++) {
+    let y = (H0 - colH[l]) / 2;
+    for (const v of layers[l]) {
+      nodes[v].x = x + (colW[l] - nodes[v].w) / 2; nodes[v].y = y; y += nodes[v].h + gapY;
+    }
+    x += colW[l] + GAPX;
+  }
+  const mid = (v) => nodes[v].y + nodes[v].h / 2;
+  for (let it = 0; it < 8; it++) {
+    const order = it % 2 ? [...layers.keys()].reverse() : [...layers.keys()];
+    for (const l of order) {
+      placeLayer(layers[l].map((v) => nodes[v]), layers[l].map((v) =>
+        (nb[v].length ? nb[v].reduce((s, w) => s + mid(w), 0) / nb[v].length : mid(v)) - nodes[v].h / 2), gapY);
+    }
+  }
+  const top = N ? Math.min(...nodes.map((n) => n.y)) : 0;
+  for (const n of nodes) n.y -= top;
+  return { width: totalW, height: Math.max(0, ...nodes.map((n) => n.y + n.h)) };
+}
+// Places a layer's blocks (top to bottom) with their tops as near the wanted
+// tops as their order and the gap between them allow, in least squares: with
+// each top less its place in the packed column, an isotonic regression (pool
+// adjacent violators)
+function placeLayer(blocks, want, gap) {
+  const off = [];
+  let acc = 0;
+  for (const b of blocks) { off.push(acc); acc += b.h + gap; }
+  const pools = [];   // [sum, count, first index]
+  blocks.forEach((b, i) => {
+    let p = [want[i] - off[i], 1, i];
+    while (pools.length && pools[pools.length - 1][0] / pools[pools.length - 1][1] > p[0] / p[1]) {
+      const q = pools.pop();
+      p = [q[0] + p[0], q[1] + p[1], q[2]];
+    }
+    pools.push(p);
+  });
+  for (const [sum, n, first] of pools) for (let i = first; i < first + n; i++) blocks[i].y = sum / n + off[i];
 }
 
 // ---------- drawing ----------
@@ -603,60 +669,101 @@ function cloudPath(w, h) {
   for (let i = 0; i < ny; i++) d += ` a${r},${dy / 2} 0 0 1 0,${-dy}`;
   return d + " z";
 }
-const LABEL_CH = 5.6;   // approximate character width of an edge label
-function labelText(e) { return e.text.length > 48 ? e.text.slice(0, 46) + "…" : e.text; }
+const LABEL_CH = 5.6;    // approximate character width of an edge label
+const LABEL_LINE = 12;  // and its line height
+const LABEL_MAX = 80;   // longer label lines are cut; the tooltip has them whole
 // The gap between layers: room for most edge labels, within bounds
 function labelGap(edges) {
-  const w = edges.filter((e) => e.text).map((e) => labelText(e).length * LABEL_CH).sort((a, b) => a - b);
-  return w.length ? Math.min(220, Math.max(70, w[Math.floor(w.length * 0.75)] + 24)) : 70;
+  const w = edges.filter((e) => e.lines.length).map((e) => labelWidth(e)).sort((a, b) => a - b);
+  return w.length ? Math.min(360, Math.max(70, w[Math.floor(w.length * 0.75)] + 24)) : 70;
+}
+function labelWidth(e) { return Math.max(...e.lines.map((t) => Math.min(t.length, LABEL_MAX))) * LABEL_CH; }
+// The drawn edges ({e, path, label}) lit up by hovering, and the layer their copies go in
+let lit = [], hotLayer = null;
+function heat(list) {
+  for (const x of lit) if (x.label) x.label.classList.remove("hot");
+  lit = list;
+  if (!hotLayer) return;
+  hotLayer.replaceChildren();
+  for (const x of list) {
+    const c = x.path.cloneNode(false);
+    c.setAttribute("class", x.path.getAttribute("class") + " hot");
+    c.setAttribute("stroke-width", (parseFloat(x.path.getAttribute("stroke-width")) + 1.5).toFixed(2));
+    c.setAttribute("marker-end", "url(#arrh)");
+    hotLayer.appendChild(c);
+    if (x.label) x.label.classList.add("hot");
+  }
+}
+// An edge's tooltip, its highlight while hovered and its label menu
+function edgeEvents(target, x) {
+  target.addEventListener("mouseenter", () => heat([x]));
+  target.addEventListener("mouseleave", () => heat([]));
+  attachTip(target, () => x.e.tip + "\n(right-click: " + (labelShown(x.e) ? "hide" : "show") + " its label)");
+  target.addEventListener("contextmenu", (ev) => { ev.preventDefault(); hideTip(); edgeMenu(ev, x.e); });
 }
 function draw(nodes, edges, size, note, decorate) {
   vp.replaceChildren();
+  lit = [];
   state.last = { nodes, edges };
   const byId = new Map(nodes.map((n) => [n.id, n]));
   const eg = svgEl("g", {}, vp);
-  const labels = [];   // [edge, candidate label spots]
+  hotLayer = svgEl("g", { class: "hotl" }, vp);
+  const lg = svgEl("g", {}, vp);
+  const byNode = new Map();   // node id -> its drawn edges
+  const labels = [];   // [drawn edge, candidate label spots [x, y, below]]
   for (const e of edges) {
     const a = byId.get(e.s), b = byId.get(e.d);
     if (!a || !b) continue;
+    e.title = a.lines[0] + " → " + b.lines[0];
     const x1 = a.x + a.w, y1 = a.y + a.h / 2, x2 = b.x, y2 = b.y + b.h / 2;
     let d, spots;
     if (x2 > x1 + 4) {
       const c = Math.max(30, (x2 - x1) / 2);
       d = `M${x1},${y1} C${x1 + c},${y1} ${x2 - c},${y2} ${x2},${y2}`;
-      const at = (t) => {   // a point on the curve
+      const at = (t) => {   // a point on the curve, a label sitting just above it
         const u = 1 - t;
         return [u * u * u * x1 + 3 * u * u * t * (x1 + c) + 3 * u * t * t * (x2 - c) + t * t * t * x2,
-                u * u * u * y1 + 3 * u * u * t * y1 + 3 * u * t * t * y2 + t * t * t * y2 - 4];
+                u * u * u * y1 + 3 * u * u * t * y1 + 3 * u * t * t * y2 + t * t * t * y2 - 4, false];
       };
-      spots = [at(0.5), at(0.3), at(0.7)];
+      spots = [0.5, 0.35, 0.65, 0.25, 0.75].map(at);
     } else {   // back edge: under both nodes, its label at the bottom of the loop
       const yb = Math.max(a.y + a.h, b.y + b.h) + 24;
       d = `M${x1},${y1} C${x1 + 60},${y1} ${x1 + 60},${yb} ${(x1 + x2) / 2},${yb} S${x2 - 60},${y2} ${x2},${y2}`;
-      spots = [[(x1 + x2) / 2, yb + 12]];
+      spots = [[(x1 + x2) / 2, yb + 12, true]];
     }
     const cls = "e" + (e.fb ? " fb" : "") + (e.cross ? " cross" : "") + (e.async ? " async" : "");
     const w = e.bits ? Math.min(6, 1 + Math.log2(e.bits) / 2) : 1.3;
-    const p = svgEl("path", { d, class: cls, "stroke-width": w.toFixed(2), "marker-end": "url(#arr)" }, eg);
-    if (e.tip) attachTip(p, () => e.tip);
-    if (e.text) labels.push([e, spots]);
+    const x = { e, path: svgEl("path", { d, class: cls, "stroke-width": w.toFixed(2), "marker-end": "url(#arr)" }, eg), label: null };
+    // A wide invisible copy takes the mouse: an edge is hard to hit
+    edgeEvents(svgEl("path", { d, class: "hit" }, eg), x);
+    for (const id of [e.s, e.d]) { if (!byNode.has(id)) byNode.set(id, []); byNode.get(id).push(x); }
+    if (e.lines.length) labels.push([x, spots]);
   }
-  // Labels, widest buses first, each at the first spot that overlaps no block and
-  // no other label; the rest are left to the tooltip
+  // Labels, widest buses first, each at the first spot that overlaps no block
+  // and no other label, or else where it overlaps least
   const taken = nodes.map((n) => [n.x, n.y, n.x + n.w, n.y + n.h]);
-  const clear = (r) => !taken.some((q) => r[0] < q[2] && q[0] < r[2] && r[1] < q[3] && q[1] < r[3]);
-  labels.sort((p, q) => (q[0].bits || 0) - (p[0].bits || 0));
-  for (const [e, spots] of labels) {
-    const text = labelText(e), half = text.length * LABEL_CH / 2;
-    for (const [x, y] of spots) {
-      const r = [x - half, y - 9, x + half, y + 2];
-      if (!clear(r)) continue;
-      taken.push(r);
-      const t = svgEl("text", { class: "el", x, y, "text-anchor": "middle" }, eg);
-      t.textContent = text;
-      if (e.tip) attachTip(t, () => e.tip);
-      break;
+  const overlap = (r) => taken.reduce((s, q) =>
+    s + Math.max(0, Math.min(r[2], q[2]) - Math.max(r[0], q[0])) * Math.max(0, Math.min(r[3], q[3]) - Math.max(r[1], q[1])), 0);
+  labels.sort((p, q) => (q[0].e.bits || 0) - (p[0].e.bits || 0));
+  for (const [x, spots] of labels) {
+    const lines = x.e.lines.map((t) => t.length > LABEL_MAX ? t.slice(0, LABEL_MAX - 1) + "…" : t);
+    const half = labelWidth(x.e) / 2, h = lines.length * LABEL_LINE;
+    let best = null;
+    for (const [sx, sy, below] of spots) {
+      // Above the curve the last line sits on the spot, below it the first
+      const top = below ? sy - 9 : sy - 9 - (lines.length - 1) * LABEL_LINE;
+      const r = [sx - half, top, sx + half, top + h], cost = overlap(r);
+      if (!best || cost < best.cost) best = { r, sx, top, cost };
+      if (!cost) break;
     }
+    taken.push(best.r);
+    const t = svgEl("text", { class: "el", x: best.sx, y: best.top + 9, "text-anchor": "middle" }, lg);
+    lines.forEach((line, i) => {
+      const s = svgEl("tspan", { x: best.sx, y: best.top + 9 + i * LABEL_LINE }, t);
+      s.textContent = line;
+    });
+    x.label = t;
+    edgeEvents(t, x);
   }
   const ng = svgEl("g", {}, vp);
   for (const n of nodes) {
@@ -672,14 +779,19 @@ function draw(nodes, edges, size, note, decorate) {
       tx.textContent = t;
     });
     if (n.tip) attachTip(g, n.tip);
+    // Hovering a block lights up its edges
+    g.addEventListener("mouseenter", () => heat(byNode.get(n.id) || []));
+    g.addEventListener("mouseleave", () => heat([]));
     if (n.onclick) g.addEventListener("click", (ev) => { if (!dragged) n.onclick(ev); });
     if (n.onclick && !(n.cls || "").includes("click")) g.style.cursor = "default";
     if (n.hide) g.addEventListener("contextmenu", (ev) => { ev.preventDefault(); hideTip(); openMenu(ev, n.hide); });
   }
   const defs = svgEl("defs", {}, vp);
-  const m = svgEl("marker", { id: "arr", viewBox: "0 0 10 10", refX: 9, refY: 5, markerWidth: 7,
-    markerHeight: 7, orient: "auto-start-reverse", markerUnits: "userSpaceOnUse" }, defs);
-  svgEl("path", { d: "M0,0 L10,5 L0,10 z", fill: "var(--edge)" }, m);
+  for (const [id, color] of [["arr", "var(--edge)"], ["arrh", "var(--hot)"]]) {
+    const m = svgEl("marker", { id, viewBox: "0 0 10 10", refX: 9, refY: 5, markerWidth: 7,
+      markerHeight: 7, orient: "auto-start-reverse", markerUnits: "userSpaceOnUse" }, defs);
+    svgEl("path", { d: "M0,0 L10,5 L0,10 z", fill: color }, m);
+  }
   if (note) {
     const t = svgEl("text", { x: 0, y: -14, class: "note" }, vp);
     t.textContent = note;
@@ -692,11 +804,17 @@ function draw(nodes, edges, size, note, decorate) {
 // ---------- pan and zoom ----------
 let view = { x: 0, y: 0, k: 1 }, dragged = false;
 function applyView() { vp.setAttribute("transform", `translate(${view.x},${view.y}) scale(${view.k})`); }
+// Everything drawn (labels below a loop and the note included) centered in the pane
 function fit() {
-  const s = state.size || { width: 1, height: 1 };
+  let b = null;
+  try { b = vp.getBBox(); } catch (e) { b = null; }
+  if (!b || !b.width) {
+    const s = state.size || { width: 1, height: 1 };
+    b = { x: 0, y: -30, width: s.width, height: s.height + 30 };
+  }
   const W = svg.clientWidth || 800, H = svg.clientHeight || 600, pad = 30;
-  const k = Math.min(1.1, (W - 2 * pad) / Math.max(1, s.width), (H - 2 * pad) / Math.max(1, s.height + 30));
-  view = { k, x: (W - s.width * k) / 2, y: (H - s.height * k) / 2 + 10 * k };
+  const k = Math.min(1.1, (W - 2 * pad) / Math.max(1, b.width), (H - 2 * pad) / Math.max(1, b.height));
+  view = { k, x: (W - b.width * k) / 2 - b.x * k, y: (H - b.height * k) / 2 - b.y * k };
   applyView();
 }
 svg.addEventListener("wheel", (ev) => {
@@ -719,7 +837,9 @@ addEventListener("mousemove", (ev) => {
 });
 addEventListener("mouseup", () => { drag = null; setTimeout(() => { dragged = false; }, 0); });
 $("fit").addEventListener("click", fit);
-addEventListener("resize", fit);
+// The rows spread out to the pane's shape: a resized pane lays the view out again
+let resizeTimer = null;
+addEventListener("resize", () => { clearTimeout(resizeTimer); resizeTimer = setTimeout(render, 150); });
 
 // ---------- edge contraction through hidden nodes ----------
 // edges: [{s, d, ...}]; keep(id) says whether a node is drawn. Returns edges
@@ -765,13 +885,44 @@ function wirePairs(main) {
   passCache.set(main, pairs);
   return pairs;
 }
-// An edge label: its first variable and its type, as the labels filter says
-function edgeText(names, t) {
-  const nm = names[0] || "", ty = typeShort(t);
-  if (filt.labels === "name") return nm;
-  if (filt.labels === "type") return ty;
-  if (filt.labels === "none") return "";
-  return nm && ty ? nm + ": " + ty : nm || ty;
+// ---------- edge labels ----------
+// An edge carries wires ({name, t}): one, or a bundle of the paths drawn as one
+// edge. Its label, when shown, has a line per wire, as the label text setting
+// says; the wire labels setting shows them all, the edge's menu just its own.
+function wireLine(w) {
+  const ty = typeShort(w.t);
+  if (filt.labelText === "name") return w.name || ty;
+  if (filt.labelText === "type") return ty || w.name;
+  return w.name && ty ? w.name + ": " + ty : w.name || ty;
+}
+// An edge's key, unique in its view: "design" or a function, then its ends
+function edgeKey(viewKey, s, d) { return viewKey + SEP + s + SEP + d; }
+function labelShown(e) { return state.labels.has(e.key) ? state.labels.get(e.key) : filt.wireLabels; }
+const LABEL_WRAP = 40;   // a longer "name: type" line breaks after the colon
+function labelLines(e) {
+  if (!labelShown(e)) return [];
+  const out = [];
+  for (const line of new Set(e.wires.map(wireLine).filter(Boolean))) {
+    const at = line.indexOf(": ");
+    if (line.length > LABEL_WRAP && at > 0) out.push(line.slice(0, at + 1), line.slice(at + 2));
+    else out.push(line);
+  }
+  return out;
+}
+// The wires of an edge for its tooltip: one wire's name and type, or a list
+function wiresTip(wires) {
+  if (wires.length === 1) {
+    const w = wires[0];
+    return (w.name || "(no name)") + (T(w.t).c ? "\ntype: " + typeLong(w.t) : "");
+  }
+  return wires.length + " wires:\n" + wires.map((w) => "  " + (w.name || "(no name)") + (T(w.t).c ? ": " + typeShort(w.t) : "")).join("\n");
+}
+// A wire's own label shown or hidden from its menu; the same as the wire
+// labels setting, it follows the setting again
+function setLabel(key, on) {
+  if (on === filt.wireLabels) state.labels.delete(key); else state.labels.set(key, on);
+  saveSettings();
+  render();
 }
 
 // ---------- design view ----------
@@ -818,14 +969,15 @@ function designView(file) {
       return !pairs || pairs.has(e.link.wire + "\u0000" + f.link.wire);
     });
   };
+  // A wire of an edge is a chain of links, named by their wires
   let edges = contract([...all], kept, keep, (acc, s, d, path) => {
-    acc = acc || { s, d, names: new Set(), bits: 0, async: false, t: null, links: [] };
-    const last = path[path.length - 1].link;
-    acc.names.add(path.map((p) => p.link.name).join(" → "));
-    acc.bits += bitsOf(last.t) || 0;
+    acc = acc || { s, d, wires: [], bits: 0, async: false };
+    const last = path[path.length - 1].link, name = path.map((p) => p.link.name).join(" → ");
+    if (!acc.wires.some((w) => w.name === name)) {
+      acc.wires.push({ name, t: last.t });
+      acc.bits += bitsOf(last.t) || 0;
+    }
     acc.async = acc.async || path.some((p) => p.link.async);
-    if (acc.t == null) acc.t = last.t;
-    acc.links.push(path);
     return acc;
   }, step);
   let ids = [...all].filter(keep);
@@ -863,7 +1015,7 @@ function designView(file) {
     const label = ms.length > 1 ? e.name : mainLabel(ms[0]);
     return {
       id: g, cls: (ghost.has(g) ? "ghost " : "") + "click",
-      lines: [label, [kindTxt, lat ? "L=" + lat : "", clocks.join(" → "), mode.get(g) === "show" && ms.every((m) => D.mains[m].wiring) ? "wiring" : ""].filter(Boolean).join("  "),
+      lines: [label, [kindTxt, lat ? "L=" + lat : "", clocks.join(" → ")].filter(Boolean).join("  "),
               loc(e.file, e.line)],
       color: clockColor(clocks[0]),
       tip: () => ms.map(mainTip).join("\n\n"),
@@ -873,15 +1025,15 @@ function designView(file) {
   });
   nodes.forEach(measure);
   const de = edges.map((e) => {
-    const names = [...e.names].sort();
-    const cs = clockOf(e.s), cd = clockOf(e.d);
-    const one = e.links.length === 1 && e.links[0].length === 1;
-    return { s: e.s, d: e.d, bits: e.bits, async: e.async, cross: cs && cd && cs !== cd,
-      text: names.length === 1 ? (one ? edgeText(names, e.t) : names[0]) : names.length + " wires",
-      tip: names.join("\n") + (one && T(e.t).c ? "\ntype: " + typeLong(e.t) : "") + (e.bits ? "\n" + e.bits + " bits" : "") };
+    const wires = e.wires.sort((a, b) => a.name < b.name ? -1 : a.name > b.name ? 1 : 0);
+    const cs = clockOf(e.s), cd = clockOf(e.d), cross = !!(cs && cd && cs !== cd);
+    const x = { s: e.s, d: e.d, key: edgeKey("design", e.s, e.d), wires, bits: e.bits, async: e.async, cross,
+      tip: wiresTip(wires) + (wires.length > 1 && e.bits ? "\n" + e.bits + " bits in all" : "") +
+        (cross ? "\ncrosses clocks: " + cs + " → " + cd : "") };
+    x.lines = labelLines(x);
+    return x;
   });
-  if (de.length > 40) for (const e of de) e.text = "";   // hover for names
-  const size = layout(nodes, de, labelGap(de));
+  const size = layout(nodes, de, labelGap(de), paneAspect());
   const hiddenN = [...all].filter((g) => !g.startsWith("pin:") && !keep(g)).length;
   draw(nodes, de, size, (file ? base(file) + ": " : "") + nodes.length + " blocks" +
     (hiddenN ? ", " + hiddenN + " MAINs hidden (filters)" : ""));
@@ -966,13 +1118,18 @@ function groupSpan(members, f) {
   }
   return lo <= hi ? [lo, hi] : null;
 }
-// Merges the paths between two drawn nodes: their variables, the type into the
-// driven port, and the types of the Feedback variables on the way (fbTypes)
-function mergeEdges(acc, s, d, path) {
+// Merges the paths between two drawn nodes: the wires they carry (wireName
+// names a path; its type is the driven port's), the variables on the way, the
+// types of the Feedback variables on the way (fbTypes) and a register passed through
+function mergeEdges(acc, s, d, path, wireName) {
   const first = path[0], last = path[path.length - 1];
-  acc = acc || { s, d, sp: first.sp, dp: last.dp, names: [], t: last.t, bits: 0, fbTypes: new Set(), reg: null, paths: 0 };
-  for (const e of path) for (const nm of e.names) if (!acc.names.includes(nm)) acc.names.push(nm);
-  acc.bits = Math.max(acc.bits, bitsOf(last.t) || 0);
+  acc = acc || { s, d, sp: first.sp, dp: last.dp, wires: [], vars: [], t: last.t, bits: 0, fbTypes: new Set(), reg: null, paths: 0 };
+  const name = wireName(path);
+  if (!acc.wires.some((w) => w.name === name && w.t === last.t)) {
+    acc.wires.push({ name, t: last.t });
+    acc.bits += bitsOf(last.t) || 0;
+  }
+  for (const e of path) for (const nm of e.names) if (!acc.vars.includes(nm)) acc.vars.push(nm);
   for (const e of path) if (e.fb) acc.fbTypes.add(e.t);
   if (!acc.reg) { const r = path.find((e) => e.reg); if (r) acc.reg = r.reg; }
   acc.paths++;
@@ -1009,9 +1166,23 @@ function functionView(inst, hl) {
   }
   const keep = (id) => groups.has(id) || mode.get(id) === "show";
   const nodeIds = ids.filter((id) => !groupOf.has(id)).concat([...groups.keys()]);
-  const edges = contract(nodeIds, edges0, keep, mergeEdges);
+  // A path's wire is named by its first variable, or else by the input it
+  // feeds (a call's argument, an output, a register, a global wire), or else
+  // by the output it comes from: a logic block's ports have no names
+  const endName = (id, port) => {
+    const n = groups.has(id) ? null : g.nodes[id];
+    if (!n) return "";
+    if (n.kind === "sub") return n.name + (port ? "." + port : "");
+    if (n.kind === "wire_read" || n.kind === "wire_write") return (D.wires[n.name] || {}).name || n.name;
+    return n.name;
+  };
+  const wireName = (path) => {
+    for (const e of path) if (e.names.length) return e.names[0];
+    const first = path[0], last = path[path.length - 1];
+    return endName(last.d, last.dp) || endName(first.s, first.sp);
+  };
+  const edges = contract(nodeIds, edges0, keep, (acc, s, d, path) => mergeEdges(acc, s, d, path, wireName));
   const shown = nodeIds.filter(keep);
-  const nameOf = (id) => groups.has(id) ? "logic" : g.nodes[id].name;
   const nodes = shown.map((id) => {
     if (groups.has(id)) return groupNode(id, groups.get(id), fname, g, f, inst, hl);
     const n = g.nodes[id];
@@ -1022,8 +1193,9 @@ function functionView(inst, hl) {
       if (cf.def && !cf.def.startsWith(n.name)) tags.push(cf.def);   // a factory's def extends the name
       if (lat) tags.push("L=" + lat);
       if (cf.delay_ns != null) tags.push(fmtNs(cf.delay_ns));
+      // How the block is built; what is inside it is in its tooltip
       const badges = [n.auto_pipeline ? "AUTO_PIPELINE" : "", n.auto_fsm ? "AUTO_FSM" : "",
-        cf.kind === "vhdl" ? "vhdl" : "", cf.mcp ? "MCP" : "", cf.regs ? "regs" : "", cf.wiring ? "wiring" : ""].filter(Boolean);
+        cf.kind === "vhdl" ? "vhdl" : "", cf.mcp ? "MCP" : ""].filter(Boolean);
       const lines = [n.name];
       if (tags.length) lines.push(tags.join("  "));
       if (badges.length) lines.push(badges.join(" "));
@@ -1054,20 +1226,20 @@ function functionView(inst, hl) {
       hide: { label: what + " " + n.name, keys: hideKeys(fname, n), modes: isReg ? ["pass", "drop"] : ["drop"] } };
   });
   nodes.forEach(measure);
-  const endText = (id, port) => nameOf(id) + (port ? "." + port : "");
   const de = edges.map((e) => {
-    const lines = [e.names.length ? e.names.slice(0, 12).join(", ") + (e.names.length > 12 ? " …" : "")
-      : "(no variable) " + endText(e.s, e.sp) + " → " + endText(e.d, e.dp)];
-    if (T(e.t).c) lines.push("type: " + typeLong(e.t));
+    const lines = [wiresTip(e.wires)];
+    const others = e.vars.filter((v) => !e.wires.some((w) => w.name === v));
+    if (others.length) lines.push("through " + others.slice(0, 12).join(", ") + (others.length > 12 ? " …" : ""));
     for (const t of e.fbTypes) lines.push("through a Feedback" + (T(t).c ? " of " + typeShort(t) + ", " + ROLE_TEXT[roleOf(t)] : ""));
     if (e.reg) lines.push("through register " + e.reg);
-    if (e.paths > 1) lines.push(e.paths + " paths merged");
-    return { s: e.s, d: e.d, bits: e.bits, fb: e.fbTypes.size > 0 || !!e.reg, t: e.t,
-      feedbackRoles: [...e.fbTypes].map(roleOf), text: edgeText(e.names, e.t), tip: lines.join("\n") };
+    if (e.paths > e.wires.length) lines.push(e.paths + " paths merged");
+    const x = { s: e.s, d: e.d, key: edgeKey(fname, e.s, e.d), wires: e.wires, bits: e.bits, fb: e.fbTypes.size > 0 || !!e.reg,
+      t: e.t, feedbackRoles: [...e.fbTypes].map(roleOf), tip: lines.join("\n") };
+    x.lines = labelLines(x);
+    return x;
   });
   const scale = $("f-scale").checked ? hardwareScale(nodes, de, g, f) : null;
-  if (de.length > 60 || scale) for (const e of de) e.text = "";   // hover for names
-  let size = layout(nodes, de, labelGap(de));
+  let size = layout(nodes, de, labelGap(de), paneAspect());
   if (scale) size = scale.place(nodes, size);
   const title = chain.length > 1 ? g_name(chain[chain.length - 2][1], chain[chain.length - 1][2]) : mainLabel(main);
   let grouped = 0;
@@ -1180,7 +1352,7 @@ function hardwareScale(nodes, edges, g, f) {
       const step = Math.pow(10, Math.floor(Math.log10(maxNs / 2))) * (maxNs / Math.pow(10, Math.floor(Math.log10(maxNs))) > 5 ? 2 : 1);
       for (let t = 0; t <= maxNs + 1e-9; t += step) {
         svgEl("line", { x1: x0 + t * K, x2: x0 + t * K, y1: -6, y2: H, class: "axis" }, parent.firstChild);
-        const tx = svgEl("text", { x: x0 + t * K + 2, y: H + 12, class: "el" }, parent);
+        const tx = svgEl("text", { x: x0 + t * K + 2, y: H + 12, class: "tick" }, parent);
         tx.textContent = (Math.round(t * 100) / 100) + " ns";
       }
     },
@@ -1265,7 +1437,7 @@ function placePanel(box, x, y) {
   box.style.top = Math.max(4, Math.min(y, innerHeight - h - 4)) + "px";
 }
 function placeBelow(box, anchor) { const r = anchor.getBoundingClientRect(); placePanel(box, r.left, r.bottom + 4); }
-function filtersChanged() { saveSettings(); treeFilterClass(); render(); }
+function filtersChanged() { saveSettings(); treeFilterClass(); $("f-labels").checked = filt.wireLabels; render(); }
 function buildFilters() {
   const box = $("filters");
   box.replaceChildren();
@@ -1289,13 +1461,23 @@ function buildFilters() {
     table.appendChild(tr);
   }
   const tr = el("tr");
-  tr.appendChild(el("td", null, "edge labels"));
-  tr.appendChild(select(LABELS, filt.labels, (v) => { filt.labels = v; filtersChanged(); }));
+  const what = el("td", null, "wire label text");
+  what.title = "what a wire's label says (header: wire labels shows them all)";
+  tr.appendChild(what);
+  tr.appendChild(select(LABEL_TEXT, filt.labelText, (v) => { filt.labelText = v; filtersChanged(); }));
+  if (state.labels.size) {
+    const td = el("td"), a = el("a", null, "reset " + state.labels.size + " set by hand");
+    a.title = "wires whose label you showed or hid from its menu";
+    a.addEventListener("click", () => { state.labels.clear(); buildFilters(); filtersChanged(); });
+    td.appendChild(a);
+    tr.appendChild(td);
+  }
   table.appendChild(tr);
   box.appendChild(table);
   box.appendChild(el("div", "note", "Hidden things either pass their edges through or take them along; " +
     "a typed kind's mode applies to the interface roles its second choice names (forward: streams " +
-    "{data, valid} and fwd_t; feedback: fb_t), the rest are shown. Right-click a node to hide just it."));
+    "{data, valid} and fwd_t; feedback: fb_t), the rest are shown. Right-click a node to hide just it, " +
+    "a wire to show or hide just its label."));
   const reset = el("button", null, "defaults");
   reset.type = "button";
   reset.addEventListener("click", () => { filt = defaults(); buildFilters(); filtersChanged(); });
@@ -1304,8 +1486,9 @@ function buildFilters() {
 $("filters-btn").addEventListener("click", (ev) => {
   const open = $("filters").style.display === "block";
   closePanels();
-  if (!open) placeBelow($("filters"), ev.currentTarget);
+  if (!open) { buildFilters(); placeBelow($("filters"), ev.currentTarget); }
 });
+$("f-labels").addEventListener("change", (ev) => { filt.wireLabels = ev.target.checked; filtersChanged(); });
 // The header button lists what was hidden by hand
 function hiddenButton() {
   const b = $("hidden-btn");
@@ -1361,6 +1544,25 @@ function openMenu(ev, hide) {
   }
   placePanel(box, ev.clientX, ev.clientY);
 }
+// A wire's menu: show or hide its label, or let this view's labels follow the
+// wire labels setting again
+function edgeMenu(ev, e) {
+  closePanels();
+  const box = $("ctx");
+  box.replaceChildren(el("div", "head", e.title || "wire"));
+  const on = labelShown(e);
+  const item = el("div", null, on ? "hide label" : "show label");
+  item.addEventListener("click", () => { closePanels(); setLabel(e.key, !on); });
+  box.appendChild(item);
+  const view = e.key.slice(0, e.key.indexOf(SEP) + 1);
+  const mine = [...state.labels.keys()].filter((k) => k.startsWith(view));
+  if (mine.length) {
+    const reset = el("div", null, "labels here as the wire labels setting (" + mine.length + " set by hand)");
+    reset.addEventListener("click", () => { closePanels(); for (const k of mine) state.labels.delete(k); saveSettings(); render(); });
+    box.appendChild(reset);
+  }
+  placePanel(box, ev.clientX, ev.clientY);
+}
 addEventListener("keydown", (ev) => { if (ev.key === "Escape") closePanels(); });
 
 // ---------- search ----------
@@ -1410,18 +1612,37 @@ addEventListener("click", (ev) => {
 });
 
 // ---------- copy as Mermaid ----------
+// The drawn view as Mermaid flowchart text: its blocks, and its edges with the
+// labels shown. Mermaid's layout (dagre) puts a block next to what it connects
+// to, so the inputs (and registers, global wire reads) go in one subgraph and
+// the outputs in another: dagre keeps each subgraph's blocks in one column,
+// left of everything they feed and right of everything feeding them.
 function mermaidText() {
   const { nodes, edges } = state.last || { nodes: [], edges: [] };
-  const q = (t) => '"' + String(t).replace(/"/g, "#quot;") + '"';
+  const esc = (t) => String(t).replace(/"/g, "#quot;").replace(/</g, "#lt;").replace(/>/g, "#gt;");
+  const q = (lines) => '"' + lines.map(esc).join("<br>") + '"';
   const ids = new Map(nodes.map((n, i) => [n.id, "n" + i]));
-  const lines = ["flowchart LR"];
-  for (const n of nodes) lines.push("    " + ids.get(n.id) + (isCloud(n) ? "((" + q(n.lines.join("<br>")) + "))" : "[" + q(n.lines.join("<br>")) + "]"));
+  const shape = (n) => ids.get(n.id) + (isCloud(n) ? "((" + q(n.lines) + "))" : "[" + q(n.lines) + "]");
+  const out = ["flowchart LR"];
+  for (const n of nodes) if (n.rank !== "first" && n.rank !== "last") out.push("    " + shape(n));
+  for (const [rank, sub] of [["first", "inputs"], ["last", "outputs"]]) {
+    const members = nodes.filter((n) => n.rank === rank);
+    if (!members.length) continue;
+    out.push("    subgraph " + sub + '[" "]');
+    for (const n of members) out.push("        " + shape(n));
+    out.push("    end", "    style " + sub + " fill:none,stroke:none");
+  }
+  const cross = [];
+  let i = 0;
   for (const e of edges) {
     if (!ids.has(e.s) || !ids.has(e.d)) continue;
     const arrow = e.fb ? "-.->" : "-->";
-    lines.push("    " + ids.get(e.s) + " " + arrow + (e.text ? "|" + q(e.text) + "|" : "") + " " + ids.get(e.d));
+    out.push("    " + ids.get(e.s) + " " + arrow + (e.lines.length ? "|" + q(e.lines) + "|" : "") + " " + ids.get(e.d));
+    if (e.cross) cross.push(i);
+    i++;
   }
-  return lines.join("\n") + "\n";
+  if (cross.length) out.push("    linkStyle " + cross.join(",") + " stroke:#d62728");
+  return out.join("\n") + "\n";
 }
 $("mermaid").addEventListener("click", () => {
   const text = mermaidText();
@@ -1457,7 +1678,14 @@ function selftest() {
     storageOff = true;
     filt = defaults();
     state.hidden = new Map();
+    const labelsDrawn = () => vp.querySelectorAll("text.el").length;
+    // A wide, flat layered drawing spreads its rows out towards the pane's shape
+    const three = () => ["a", "b", "c", "d"].map((id) => ({ id, w: 100, h: 40 }));
+    const fan = [{ s: "a", d: "b" }, { s: "a", d: "c" }, { s: "a", d: "d" }];
+    const flat = layout(three(), fan, 70, 0), tall = layout(three(), fan, 70, 1);
+    check(flat.height < tall.height && tall.height <= tall.width, "rows do not spread to the pane's shape");
     const home = designView(null); views++;
+    check(!labelsDrawn(), "a wire label drawn with wire labels off");
     check($("banner").style.display === "none", "the whole design has a file banner");
     for (const n of home.nodes) {
       if (n.id.startsWith("pin:")) continue;
@@ -1485,6 +1713,7 @@ function selftest() {
         check(gn.kind !== "const" && gn.kind !== "ce", "a default view draws a constant " + n.id + " in " + fname);
       }
       for (const e of v.edges) check(!e.feedbackRoles.includes("fb"), "a default view draws an fb_t Feedback edge in " + fname);
+      check(!labelsDrawn(), "a wire label drawn with wire labels off in " + fname);
       // Operators joined by a surviving edge share one logic block
       const gid = new Map();
       for (const [id, grp] of v.groups) for (const m of grp.members) gid.set(m, id);
@@ -1492,10 +1721,14 @@ function selftest() {
         if (e.fb && roleOf(e.t) === "fb") continue;
         if (gid.has(e.s) && gid.has(e.d)) check(gid.get(e.s) === gid.get(e.d), "joined operators in two logic blocks in " + fname);
       }
-      withFilters(ALL_SHOWN, () => {
+      withFilters((f) => { ALL_SHOWN(f); f.wireLabels = true; }, () => {
         const w = functionView(inst); views++;
         const shown = drawnIds(w);
         for (const id of Object.keys(g.nodes)) check(shown.has(id), "not every node drawn with everything shown: " + id + " in " + fname);
+        // Every wire has a name (a variable, or else the port it feeds) and
+        // every edge's label is drawn
+        for (const e of w.edges) for (const x of e.wires) check(x.name, "an unnamed wire " + e.s + " → " + e.d + " in " + fname);
+        check(labelsDrawn() === w.edges.filter((e) => e.lines.length).length, "not every wire label drawn in " + fname);
       });
       withFilters(ALL_HIDDEN, () => {
         const w = functionView(inst); views++;
@@ -1531,8 +1764,35 @@ function selftest() {
     filt.ghost.mode = "drop";
     filtersChanged(); views++; rendered();
     filt = defaults();
+    filtersChanged(); views++; rendered();
     closePanels();
-    if (!mermaidText().startsWith("flowchart LR")) throw new Error("mermaid text");
+    const edges = state.last.edges;
+    if (edges.length) {
+      // One wire's label shown from its menu, then back to the setting
+      const e0 = edges[0];
+      edgeMenu({ clientX: 10, clientY: 10 }, e0);
+      setLabel(e0.key, true); views++; rendered();
+      check(labelsDrawn() === 1, "a label shown by hand is not the one label drawn");
+      check(mermaidText().split("\n").filter((l) => /-\.?->\|/.test(l)).length === 1, "the Mermaid text has other labels than the one shown");
+      setLabel(e0.key, false); views++; rendered();
+      check(!state.labels.size && !labelsDrawn(), "a label hidden again is still set by hand or drawn");
+      // Hovering a wire lights it up, hovering a block all its edges
+      const hot = () => vp.querySelector(".hotl").childNodes.length;
+      const hit = vp.querySelector("path.hit");
+      hit.dispatchEvent(new MouseEvent("mouseenter"));
+      check(hot() === 1, "a hovered wire is not lit");
+      hit.dispatchEvent(new MouseEvent("mouseleave"));
+      check(!hot(), "a wire stays lit");
+      const n0 = state.last.nodes[0];
+      vp.querySelector("g.n").dispatchEvent(new MouseEvent("mouseenter"));
+      check(hot() === state.last.edges.filter((e) => e.s === n0.id || e.d === n0.id).length, "a hovered block's edges are not lit");
+    }
+    // The Mermaid text keeps the inputs together on the left, the outputs on the right
+    const mm = mermaidText();
+    check(mm.startsWith("flowchart LR"), "mermaid text");
+    for (const [rank, sub] of [["first", "inputs"], ["last", "outputs"]]) {
+      check(mm.includes("subgraph " + sub + "[") === state.last.nodes.some((n) => n.rank === rank), "Mermaid " + sub + " subgraph");
+    }
     buildIndex(); search("a"); search("");
     document.body.setAttribute("data-ready", String(views));
   } catch (err) {
@@ -1554,6 +1814,7 @@ function legend() {
 $("title").textContent = base(D.build.top) + " — design diagram";
 document.title = base(D.build.top) + " diagram";
 if (location.hash !== "#selftest") loadSettings();
+$("f-labels").checked = filt.wireLabels;
 legend();
 buildFilters();
 hiddenButton();

@@ -159,9 +159,15 @@ variables on the way (the driving one first), `fb` 1 when the way passes through
   `Feedback` with a plain copy of a half (`interface_func._plain_shape_of`) that
   keeps the half's fields but not its role; a struct whose fields equal the fields
   of halves that all have one role gets that role.
-- `name`: the name the source uses, when it differs from `c`: the description's
-  class name (or the user's `name=`), with array dimensions. A plain copy
-  (`<half class>_plain`) is named after its half, `chan_intrf_fb_t_plain`; it is
+- `name`: the name the source uses, when it differs from `c`, with array
+  dimensions: the user's `name=`, else the name the design's own modules give the
+  type at module level (`_module_type_names`: a `@struct` or `@enum` class by its
+  global's name, `byte_stream_t = make_stream_t(uint8_t)`; an `@interface`'s
+  types as `<global>.fwd_t`, `.fb_t`, `.stream_t`, `.wire_t`; a type with several
+  such names takes the one the most modules use, then the shortest), else the
+  description's class name. The modules are the top file's (`top_level_module_globals`)
+  and the non-library files of `file_to_module_prefix` found in `sys.modules`. A plain
+  copy (`<half class>_plain`) is named after its half, `chan_intrf.fb_t_plain`; it is
   matched to the half whose C name starts with the copy's class name, since every
   stream interface's `.fb_t` has the same fields. Where several types in the page
   share a name, each adds its factory arguments (`stream_t<uint8_t>`), or its field
@@ -285,10 +291,17 @@ times of its own.
   its other end. The breadcrumb and `location.hash` make browser back and forward
   work.
 - Tooltips give full names, file:line, ports with their types, latency, delay, and
-  for an edge its variables (or, with none, its two endpoints), its type, and the
-  type of each `Feedback` or register it passes through. One color per clock, from
-  a fixed palette in sorted clock order; an edge between clocks is red, an ASYNC one
-  dotted, one through a `Feedback` or a passed-through register dashed.
+  for an edge its wire (or `N wires:` and a list) with types
+  ([Edge labels](#edge-labels)), the other variables on the way, and the type of
+  each `Feedback` or register it passes through. One color per clock, from a fixed
+  palette in sorted clock order; an edge between clocks is red, an ASYNC one dotted,
+  one through a `Feedback` or a passed-through register dashed.
+- Hovering an edge (a 12 px invisible copy of it takes the mouse) draws it again in
+  the highlight color, thicker, over the other edges, and highlights its label;
+  hovering a block does that for every edge of the block.
+- A block shows its instance name, then its def name where it differs, `L=n` and
+  its delay, then how it is built (`AUTO_PIPELINE`, `AUTO_FSM`, `vhdl`, `MCP`);
+  its registers and the wiring reason are in the tooltip.
 
 ### Filters
 
@@ -324,9 +337,10 @@ inputs, and the default *Feedback edges: hide, feedback only* drops the `.fb_t`
 `Feedback`s, stay. Design-view links are not filtered by role: a global FIFO's or a
 plain wire's `ready` field has no interface type.
 
-A label setting picks what edge labels show ([Edge labels](#edge-labels)).
-Settings persist in the browser's storage (`localStorage`, per browser profile, not
-per design); a page that cannot use it starts from the defaults.
+The panel's *wire label text* picks what a label says, and the header's **wire
+labels** box shows every label ([Edge labels](#edge-labels)). Settings persist in
+the browser's storage (`localStorage`, per browser profile, not per design); a page
+that cannot use it starts from the defaults.
 
 ### Edge contraction and operator groups
 
@@ -339,8 +353,9 @@ per design); a page that cannot use it starts from the defaults.
   keeping their variable names for its tooltip.
 - `contract()` then draws each pass-mode node out of the graph: from each drawn node
   it follows edges through hidden nodes to the next drawn ones, one edge per pair,
-  merging their variables, the type into the driven port, widths, and the types of
-  the `Feedback` variables and registers on the way.
+  merging the wires of its paths ([Edge labels](#edge-labels)), their variables,
+  widths (summed over the wires), and the types of the `Feedback` variables and
+  registers on the way.
 - A group is a cloud when it is known to be combinational: no member has a latency
   of its own (`inst_latency`) and the function instance drawn has none either (a
   function with latency lines up its paths with registers between its submodules,
@@ -366,15 +381,32 @@ instance of that function.
 
 ### Edge labels
 
-An edge's label is its first variable and the type into its driven port,
-`name: type (bits)`, or just the type when it has no variable; the label setting can
-show the name, the type or nothing. A type shows its readable `name`, cut to 30
-characters. Labels are placed widest bus first, each at the first of three points
-along its curve (the middle, then a third of the way from each end; the bottom of a
-back edge's loop) that overlaps no block and no placed label; one that fits nowhere
-is left to the tooltip. The gap between layers widens to fit three quarters of the
-labels, up to 220 px. Views with more edges (40 in the design view, 60 in a function
-view) and the hardware scale show no labels, only tooltips.
+An edge carries one wire, or a bundle: every path merged into it. A wire is named:
+
+- in the design view, by the global wire fields it chains, `a → b` through a hidden
+  MAIN;
+- in a function view, by its path's first variable; with none (a call's result
+  passed straight into another call through field selects, as a generated interface
+  function does), by the input it feeds: the callee's argument
+  (`mac_func.data_in_if`), the output, register or global wire; and where it feeds a
+  logic block, whose ports have no names, by the output it comes from.
+
+A wire's type is the driven port's; a type shows its readable `name`, cut to 48
+characters. Labels are off by default: the tooltip says the wire's name and type,
+or `N wires:` and one line per wire. The header's **wire labels** box shows every
+label, and right-clicking an edge (or its label) opens a menu that shows or hides
+just its label; a choice that matches the box is dropped, so the edge follows the
+box again. Those choices are stored per top file in the browser's storage, keyed
+`<view>\u0001<source>\u0001<driven>` with the view `design` or the function; the
+menu can return a view's labels to the box, and the filters panel resets them all.
+
+A shown label has a line per wire, `name: type (bits)` (the *wire label text*
+setting: name and type, the name, or the type), each cut to 80 characters, none
+left out. Labels are placed widest bus first, each at the first of five points along
+its curve (the middle, then 35, 65, 25 and 75 % of the way; the bottom of a back
+edge's loop) that overlaps no block and no placed label, else where it overlaps
+least; a label above its curve grows upward, one below a loop downward. The gap
+between layers widens to fit three quarters of the shown labels, up to 360 px.
 
 ### Layout
 
@@ -382,9 +414,19 @@ A small layered layout in the page (no library): cycles are broken by reversing
 `fb` edges, then the narrower edge of each two-way pair (a stream's `ready` against
 its data), then DFS back edges with wide edges explored first. Layers are longest
 paths, with inputs, register current values and wire reads forced first and outputs,
-register next values and wire writes last; six barycenter sweeps order each layer.
-Edges are Bézier curves; reversed edges loop underneath. Wheel zooms, dragging pans,
-**fit** resets.
+register next values and wire writes last. Eight barycenter sweeps order each
+layer, alternately by its blocks' neighbors in all earlier layers and in all later
+ones, a neighbor's position taken relative to its layer's size, so an edge that
+skips layers (an input feeding a late block) counts. The layers' widths fix the
+drawing's width; the gap between a layer's blocks then grows from 18 px until the
+tallest layer is 85 % of that width times the pane's height over its width, up to
+180 px, so a wide, flat view spreads out over the pane's height (fitting it is still
+bound by its width). Each layer starts as a centered column; eight sweeps, from the
+left and from the right in turn, then move each block level with the mean middle of
+its neighbors, as far as its layer's order and gap allow (`placeLayer`: least
+squares, by pool-adjacent-violators isotonic regression). A resized window lays the
+view out again. Edges are Bézier curves; reversed edges loop underneath. Wheel
+zooms, dragging pans, **fit** fits everything drawn (`getBBox`).
 
 ### Hardware scale
 
@@ -404,32 +446,46 @@ slowest member.
 - The header's **source** link opens the current function's definition as
   `vscode://file/<path>:<line>`; Ctrl- or Cmd-clicking a block sets it to the call
   site and opens it. Generated sources have no link.
-- **copy as Mermaid** writes the current view as `flowchart LR` text (a group as a
-  round node) to the clipboard, or into a text box where a `file://` page may not use
-  the clipboard.
+- **copy as Mermaid** writes the current view as `flowchart LR` text to the
+  clipboard, or into a text box where a `file://` page may not use the clipboard: the
+  blocks' lines (a group as a round node), the edges with the labels the view shows
+  (dashed through a `Feedback`, red between clocks by `linkStyle`), `"`, `<` and
+  `>` as Mermaid's `#quot;`, `#lt;` and `#gt;`. Mermaid's layout (dagre) ranks a
+  block next to what it connects to, which puts an input that feeds a late block, or
+  an output of an early one, in the middle; so the view's first-layer nodes (inputs,
+  register current values, wire reads) go in one subgraph and its last-layer nodes
+  in another, both untitled and unstyled: dagre keeps a subgraph's span of ranks
+  small, so each becomes one column, left of everything the inputs feed and right of
+  everything feeding the outputs (checked in VS Code's Mermaid renderer).
 
 ### Self-test
 
 `#selftest` resets the filters to their defaults and nothing hidden (it reads and
-writes no browser storage), then draws:
+writes no browser storage), checks that `layout` spreads a three-block layer
+further apart for a square pane than for none, then draws:
 
-- the design view, checking that no wiring MAIN is drawn and there is no file
-  banner, that the top file's link opens it, and every file view, checking each has
-  its banner;
+- the design view, checking that no wiring MAIN and no wire label is drawn and
+  there is no file banner, that the top file's link opens it, and every file view,
+  checking each has its banner;
 - each function with a graph three times: with the defaults, checking that no
-  operator, wiring call site, constant or clock enable is drawn, no drawn edge passes
-  a `Feedback` whose type is `fb`, every edge ends at drawn nodes, and two operators
-  joined by a remaining edge share a group; with everything shown, checking that every
-  graph node is drawn; and with everything hidden (pass where a kind has it, drop
-  otherwise), checking that only non-operator, non-wiring call sites and no
+  operator, wiring call site, constant, clock enable or wire label is drawn, no drawn
+  edge passes a `Feedback` whose type is `fb`, every edge ends at drawn nodes, and
+  two operators joined by a remaining edge share a group; with everything shown and
+  wire labels on, checking that every graph node is drawn, every wire has a name and
+  every edge's label is drawn; and with everything hidden (pass where a kind has it,
+  drop otherwise), checking that only non-operator, non-wiring call sites and no
   `Feedback` edges are drawn. The checks classify nodes from the data, not with the
   filters' own code;
 - the hardware-scale view of each function with `offsets`;
 - the design view with one MAIN hidden by hand through `setHidden`, as its menu
   does, pass and drop, checking it is not drawn and is drawn again once shown; a
-  filter changed through `filtersChanged`, as the panel does; and, each checked to
-  draw without an error, the hidden list, a node's menu, the filters panel, the
-  Mermaid text and a search.
+  filter changed through `filtersChanged`, as the panel does; one edge's label shown
+  through `setLabel`, as its menu does, checking it is the one label drawn and in
+  the Mermaid text, then hidden again, checking nothing stays set; an edge hovered,
+  checking it alone is lit, and a block hovered, checking its edges are; the Mermaid
+  text's inputs and outputs subgraphs, present exactly when the view has
+  first-layer and last-layer nodes; and, each checked to draw without an error, the
+  hidden list, a node's and an edge's menu, the filters panel and a search.
 
 It sets `data-ready="<views drawn>"` on `<body>`, or `data-error` with the failed
 check or exception.
@@ -448,6 +504,12 @@ where the same paths exist.
   wire split into several output pins inside an `@wires` MAIN reaches each of them.
 - Variable names come from `variable_names`; a generated interface function's names
   show as they are (`rev3_if0df2bd50`).
+- A function-view wire named by a variable that holds a whole struct is labeled with
+  the variable, though a field select on the way passes only one field
+  (`f`, not `f.to_pipe_if`); the type shown is the field's.
+- The Mermaid text's columns hold only for its first and last layers; dagre places
+  the blocks between them by its own ranking and cycle breaking, which can differ
+  from the page's.
 - Type names that stay alike after factory arguments (the same class with arguments
   of the same name) are told apart only by their widths and tooltips.
 - A function used at several instances has one graph; latencies are per instance,
@@ -463,12 +525,13 @@ where the same paths exist.
 
 | Test | Category | What |
 |---|---|---|
-| `inst/diagram_test.py` | elab_introspect | the data of four Pypeline designs and one C example, parsed in-process: files, clocks, links, graphs, edge names, `Feedback` edges and their types, type roles and names, wiring call sites, call-site kinds |
+| `inst/diagram_test.py` | elab_introspect | the data of four Pypeline designs and one C example, parsed in-process: files, clocks, links, graphs, edge names, `Feedback` edges and their types, type roles and names (module-level names, same-named classes told apart), wiring call sites, call-site kinds |
 | `inst/diagram_build_test.py` | build_report_device_models | a sky130 build's latencies against `built_hardware.json`, delays and offsets, the pipelined divider's operator latencies, a `--no_synth` build, a failed build removing the page |
 | `inst/diagram_render_test.py` | unit (needs `google-chrome`) | the [self-test](#self-test) of four designs' pages in headless Chrome |
 
-`inst/diagram_interfaces_design.py` is the fixture for interface roles, type names,
-`Feedback` edges of both roles and wiring call sites. See
+`inst/diagram_interfaces_design.py` is the fixture for interface roles, type names
+(named and unnamed stream types), `Feedback` edges of both roles and wiring call
+sites. See
 [`pypeline_TESTS.md`](pypeline_TESTS.md).
 
 ## History
@@ -488,3 +551,8 @@ functions that only route fields, such as the routing half of a feedforward loop
 an interface function (`diagram_interfaces_design.py`'s `route`), and with it the
 loop. A MAIN with no logic is top-level glue; a function with none is still part of
 the hierarchy its author wrote.
+
+**Wire labels are off by default.** A label on every edge crowded flat views, and a
+bundle's `N wires` said nothing a hover does not; a label shows where its reader
+asks for it, for every edge or for one, and then lists every wire. A wire with no
+variable used to be labeled with its type alone; it is named by the input it feeds.

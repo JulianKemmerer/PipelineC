@@ -1416,9 +1416,14 @@ offline, with nothing to install.
   between, each labeled with its latency (`L=n`) and, after synthesis, its measured
   delay. Click a block to go down a level, and a global wire read or write to jump to
   the other end of the wire. The breadcrumb and the browser's back button go back up.
-- **Wires:** each edge is labeled with its variable and its type, `x: frag_t (290b)`;
-  hover for every variable on the way and the full type name. An edge through a
-  `Feedback` or a register is dashed.
+- **Wires:** hover an edge to see its wire's name and type, `x: frag_t (290b)`, or
+  for an edge that bundles several wires, each of them; the edge lights up, and
+  hovering a block lights up all its edges. A wire is named by its variable, or,
+  with none, by the input it feeds (`mac_func.data_in_if`). Types show the names
+  your modules give them (`axis_intrf.fwd_t`). Labels are off until you tick **wire
+  labels**, or right-click an edge to show or hide just its label; *filters* picks
+  whether a label says the name, the type or both. An edge through a `Feedback` or a
+  register is dashed.
 - **Logic blocks:** operators (`+`, `==`, muxes, ...) are grouped: each connected
   cluster of them is one block, a cloud when it is combinational. Hover to see what
   it holds.
@@ -1443,7 +1448,9 @@ offline, with nothing to install.
   axis: each block starts at the time its inputs arrive.
 - **find instance** searches instance names. **source** opens the current function in
   VS Code; Ctrl- or Cmd-click a block to open its call site. **copy as Mermaid**
-  copies the current view as a Mermaid `flowchart`, for a README.
+  copies the current view as a Mermaid `flowchart`, for a README: the blocks, and
+  the edges with the labels the view shows, inputs in a column on the left and
+  outputs on the right.
 
 The page does not show AUTO_PIPELINE or AUTO_FSM internals. An AUTO_FSM call site is
 one block. C designs get the same page, with whole global wires rather than fields.
@@ -1451,7 +1458,8 @@ one block. C designs get the same page, with whole global wires rather than fiel
 To share the diagram, send `diagram.html` by itself: it needs no other file from the
 output directory and loads nothing from the network. It contains the build machine's
 file paths and the design's function, wire and type names, and its **source** links
-open only where those paths exist. How it is built:
+open only where those paths exist. GitHub shows a committed `.html` file as source
+text; a repository's GitHub Pages site serves it as a page. How it is built:
 [`DIAGRAM_DESIGN.md`](DIAGRAM_DESIGN.md).
 
 ### Using the output in an existing project

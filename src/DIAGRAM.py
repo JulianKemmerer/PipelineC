@@ -12,8 +12,10 @@ fields newer than the first C front end, are read with getattr as the rest of
 the shared back end reads them: a C build can reuse a parser state an older
 compiler pickled (C_TO_LOGIC.GET_PARSER_STATE_CACHE) that lacks them."""
 
+import inspect
 import json
 import os
+import sys
 
 import AUTO_PIPELINE
 import LOGIC
@@ -37,6 +39,8 @@ _SRC_DIR = os.path.dirname(os.path.abspath(__file__))
 _INCLUDE_DIR = os.path.join(os.path.dirname(_SRC_DIR), "include") + os.sep
 # Description kinds (pypeline.py's _NameInfo.kind) of an @interface's halves
 _HALF_ROLES = {"interface_fwd": "fwd", "interface_fb": "fb"}
+# The types an @interface class carries, each named <interface>.<attribute>
+_INTERFACE_TYPES = ("fwd_t", "fb_t", "stream_t", "wire_t")
 
 
 def FORGET_DIAGRAM(out_dir):
@@ -122,6 +126,8 @@ class _Types:
         # C type -> its Pypeline descriptions (pypeline.py's _NameInfo); the
         # same table holds function keys, and nothing for a C design
         self.descriptions = getattr(parser_state, "pypeline_name_descriptions", {})
+        # C type -> the name the design's own modules give it
+        self.module_names = _module_type_names(parser_state)
         self.used = set()  # C types ref() was given
         self._bits = {}  # C type -> width memo
         self._roles = {}  # C type -> role memo
@@ -235,7 +241,9 @@ class _Types:
 
     def _name_parts(self, c_type):
         """(Python name, its factory arguments' names, array dims) of a type
-        with a description, else None: its C name is what the source says."""
+        with a description, else None: its C name is what the source says.
+        The Python name is the one the design's modules give the type, else
+        its class name."""
         dims = ""
         if LOGIC.C_TYPE_IS_ARRAY(c_type):
             c_type, sizes = LOGIC.C_ARRAY_TYPE_TO_ELEM_TYPE_AND_DIMS(c_type)
@@ -250,7 +258,7 @@ class _Types:
             cls = info.symbol[: -len("_plain")]
             halves = [h for _r, h in self._halves_like(c_type) if h.startswith(cls)]
             if len(halves) == 1:
-                info, suffix = self._info(halves[0]), "_plain"
+                c_type, info, suffix = halves[0], self._info(halves[0]), "_plain"
         if info.user_name:
             return info.user_name, "", dims
 
@@ -261,7 +269,8 @@ class _Types:
         args = [short(v) for _k, v in info.params] or [
             short(v) for _k, v in info.fields
         ]
-        return info.symbol + suffix, "<" + ", ".join(args) + ">" if args else "", dims
+        name = self.module_names.get(c_type, info.symbol)
+        return name + suffix, "<" + ", ".join(args) + ">" if args else "", dims
 
     def _names(self, c_types):
         """{C type: readable name} of the types in c_types that have one: the
@@ -308,6 +317,43 @@ class _Types:
         resolved = walk(data)
         resolved["types"] = table
         return resolved
+
+
+def _module_type_names(ps):
+    """{C type: name} of the types the design's own modules (not libraries)
+    name at module level: a @struct or @enum class by its global's name, an
+    @interface's types as <global>.fwd_t, .fb_t, .stream_t and .wire_t. A type
+    with several such names takes the one the most modules use, then the
+    shortest. A C design has none."""
+    files = {
+        os.path.abspath(p)
+        for p in getattr(ps, "file_to_module_prefix", {})
+        if os.path.isfile(p) and not _is_library_file(p)
+    }
+    # The top file runs as a module of its own, outside sys.modules
+    spaces = [getattr(ps, "top_level_module_globals", None) or {}]
+    for module in list(sys.modules.values()):
+        path = getattr(module, "__file__", None)
+        if path and os.path.abspath(path) in files:
+            spaces.append(vars(module))
+    counts = {}
+    for space in spaces:
+        for name, value in sorted(space.items()):
+            if name.startswith("_") or not inspect.isclass(value):
+                continue
+            if getattr(value, "_pypeline_is_interface", False):
+                named = [(f"{name}.{a}", getattr(value, a, None)) for a in _INTERFACE_TYPES]
+            else:
+                named = [(name, value)]
+            for alias, cls in named:
+                c_type = getattr(cls, "_pypeline_ctype_name", None)
+                if isinstance(c_type, str):
+                    seen = counts.setdefault(c_type, {})
+                    seen[alias] = seen.get(alias, 0) + 1
+    return {
+        c_type: min(seen, key=lambda a: (-seen[a], len(a), a))
+        for c_type, seen in counts.items()
+    }
 
 
 def _clock_id(mhz, group):
