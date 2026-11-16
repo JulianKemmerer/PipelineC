@@ -462,10 +462,10 @@ def test_report():
 # backpressuring converged sink, measured by a PhaseRunner.
 # --------------------------------------------------------------------------
 N = 4
-axis_intrf = make_axis_interface(N)
+axis_if_t = make_axis_interface(N)
 FIFO_DEPTH = 4
 pfifo = probe.make_probed_stream_fifo(
-    axis_intrf.stream_t.typeof("data"), FIFO_DEPTH, "fifo"
+    axis_if_t.stream_t.typeof("data"), FIFO_DEPTH, "fifo"
 )
 
 
@@ -474,8 +474,8 @@ def test_probed_fifo_sim_call():
     probe.REGISTRY.enable(["all"])
     sim_reset()
     scoreboard = Scoreboard()
-    src = ConvergedAxisSimSource(axis_intrf, N)
-    snk = ConvergedAxisSimSink(axis_intrf, N, scoreboard=scoreboard)
+    src = ConvergedAxisSimSource(axis_if_t, N)
+    snk = ConvergedAxisSimSink(axis_if_t, N, scoreboard=scoreboard)
     phases = packet_size_phases([10, 16], 3)
     recorder = PerfRecorder("", {"test": True})
     runner = PhaseRunner(

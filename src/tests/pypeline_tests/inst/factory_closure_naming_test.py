@@ -616,14 +616,14 @@ def test_overflow_collapse_never_lands_mid_token():
     # Regression for real garbage found in a build's own output: a
     # fixed-character-offset truncation used to cut a name right after the
     # first digit of an unrelated trailing hash, or mid-word.
-    full_a = "cast_stream_intrf_data_t_chacha_shared_pipeline_out_t_8d070d63_fe_b1dab4d2"
-    collapsed_a = P._collapse_overflow_name(full_a, "cast_stream_intrf")
+    full_a = "cast_stream_if_t_data_t_chacha_shared_pipeline_out_t_8d070d63_fe_b1dab4d2"
+    collapsed_a = P._collapse_overflow_name(full_a, "cast_stream_if_t")
     assert "_8_" not in collapsed_a, collapsed_a
     assert not collapsed_a.split("_")[-2].isdigit() or len(collapsed_a.split("_")[-2]) != 1, (
         collapsed_a
     )
-    full_b = "cast_stream_intrf_data_t_ndarray_fragment_t_a0f67613_feedback_t_uint1_t_76c61b8e"
-    collapsed_b = P._collapse_overflow_name(full_b, "cast_stream_intrf")
+    full_b = "cast_stream_if_t_data_t_ndarray_fragment_t_a0f67613_feedback_t_uint1_t_76c61b8e"
+    collapsed_b = P._collapse_overflow_name(full_b, "cast_stream_if_t")
     assert "_fe_" not in collapsed_b, collapsed_b
     print("test_overflow_collapse_never_lands_mid_token PASS")
 

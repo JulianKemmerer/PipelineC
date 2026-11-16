@@ -3,7 +3,7 @@
 
 Each specialization must retain its own return type and the caller's interface
 objects. Reusing a function solely because its interface class is literally
-named `stream_intrf` incorrectly binds the eight-byte caller to the four-byte
+named `stream_if_t` incorrectly binds the eight-byte caller to the four-byte
 implementation. This design exercises VHDL emission and synthesis for both.
 """
 import os
@@ -32,41 +32,41 @@ from axi.axis import (
     make_axis_skid_buffer,
 )
 
-axis4_intrf = make_axis_interface(4)
-axis8_intrf = make_axis_interface(8)
-bcast4 = make_axis_broadcast_interlock(axis4_intrf, 2)
+axis4_if_t = make_axis_interface(4)
+axis8_if_t = make_axis_interface(8)
+bcast4 = make_axis_broadcast_interlock(axis4_if_t, 2)
 
-bcast8 = make_axis_broadcast_interlock(axis8_intrf, 2)
+bcast8 = make_axis_broadcast_interlock(axis8_if_t, 2)
 
 
 @MAIN
 def bcast4_top(
-    axis_in_if: axis4_intrf.fwd_t, axis_out_if: axis4_intrf.fb_t[2]
+    axis_in_if: axis4_if_t.fwd_t, axis_out_if: axis4_if_t.fb_t[2]
 ) -> bcast4.return_t:
     return bcast4(axis_in_if, axis_out_if)
 
 
 @MAIN
 def bcast8_top(
-    axis_in_if: axis8_intrf.fwd_t, axis_out_if: axis8_intrf.fb_t[2]
+    axis_in_if: axis8_if_t.fwd_t, axis_out_if: axis8_if_t.fb_t[2]
 ) -> bcast8.return_t:
     return bcast8(axis_in_if, axis_out_if)
 
 
-skid4 = make_axis_skid_buffer(axis4_intrf)
+skid4 = make_axis_skid_buffer(axis4_if_t)
 
-skid8 = make_axis_skid_buffer(axis8_intrf)
+skid8 = make_axis_skid_buffer(axis8_if_t)
 
 
 @MAIN
 def skid4_top(
-    stream_in_if: axis4_intrf.fwd_t, stream_out_if: axis4_intrf.fb_t
+    stream_in_if: axis4_if_t.fwd_t, stream_out_if: axis4_if_t.fb_t
 ) -> skid4.return_t:
     return skid4(stream_in_if, stream_out_if)
 
 
 @MAIN
 def skid8_top(
-    stream_in_if: axis8_intrf.fwd_t, stream_out_if: axis8_intrf.fb_t
+    stream_in_if: axis8_if_t.fwd_t, stream_out_if: axis8_if_t.fb_t
 ) -> skid8.return_t:
     return skid8(stream_in_if, stream_out_if)

@@ -9,7 +9,7 @@ from pypeline import (
     is_hw_func,
 )
 
-from stream.stream import make_stream_interface
+from stream import make_stream_interface
 
 
 def make_stream_auto_fsm(func, max_latency=None):
@@ -39,8 +39,8 @@ def make_stream_auto_fsm(func, max_latency=None):
         def blob(x: blob_in_t) -> int16_t: ...
 
     Returns func_auto_fsm, with its complete return type at func_auto_fsm.return_t:
-        func_auto_fsm(stream_in_if: in_intrf.fwd_t, stream_out_if: out_intrf.fb_t) -> func_auto_fsm_t
-        func_auto_fsm_t fields: .stream_in_if (in_intrf.fb_t), .stream_out_if (out_intrf.fwd_t)
+        func_auto_fsm(stream_in_if: in_if_t.fwd_t, stream_out_if: out_if_t.fb_t) -> func_auto_fsm_t
+        func_auto_fsm_t fields: .stream_in_if (in_if_t.fb_t), .stream_out_if (out_if_t.fwd_t)
 
     Latency (input accepted -> `stream_out_if.stream.valid` pulse) and
     initiation interval are both `FSM.latency + 1` -- one cycle more than the
@@ -63,17 +63,17 @@ def make_stream_auto_fsm(func, max_latency=None):
     # duplicate storage and add muxing; expose its final-state value directly.
     fsm = AUTO_FSM(func, max_latency=max_latency, register_output=False)
 
-    in_intrf = make_stream_interface(fsm.in_type)
-    out_intrf = make_stream_interface(fsm.out_type)
+    in_if_t = make_stream_interface(fsm.in_type)
+    out_if_t = make_stream_interface(fsm.out_type)
 
     @struct
     class func_auto_fsm_t(NamedTuple):
-        stream_in_if: in_intrf.fb_t  # input port's reverse half travels out
-        stream_out_if: out_intrf.fwd_t  # output port's feedforward half travels out
+        stream_in_if: in_if_t.fb_t  # input port's reverse half travels out
+        stream_out_if: out_if_t.fwd_t  # output port's feedforward half travels out
 
     @hw_func
     def func_auto_fsm(
-        stream_in_if: in_intrf.fwd_t, stream_out_if: out_intrf.fb_t
+        stream_in_if: in_if_t.fwd_t, stream_out_if: out_if_t.fb_t
     ) -> func_auto_fsm_t:
         o: func_auto_fsm_t
 
@@ -110,10 +110,10 @@ def make_stream_auto_fsm(func, max_latency=None):
 
     func_auto_fsm.fsm = fsm
     func_auto_fsm.latency = fsm.latency + 1
-    func_auto_fsm.in_intrf = in_intrf
-    func_auto_fsm.out_intrf = out_intrf
-    func_auto_fsm.in_fwd_t = in_intrf.fwd_t
-    func_auto_fsm.in_fb_t = in_intrf.fb_t
-    func_auto_fsm.out_fwd_t = out_intrf.fwd_t
-    func_auto_fsm.out_fb_t = out_intrf.fb_t
+    func_auto_fsm.in_if_t = in_if_t
+    func_auto_fsm.out_if_t = out_if_t
+    func_auto_fsm.in_fwd_t = in_if_t.fwd_t
+    func_auto_fsm.in_fb_t = in_if_t.fb_t
+    func_auto_fsm.out_fwd_t = out_if_t.fwd_t
+    func_auto_fsm.out_fb_t = out_if_t.fb_t
     return func_auto_fsm

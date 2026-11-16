@@ -684,12 +684,21 @@ def _describe(obj, kind, params=None, frame=None):
     )
 
 
+def _interface_half_symbol(symbol, role):
+    """The symbol of an @interface's `role` half ("fwd", "fb" or "wire"): the
+    interface's symbol without its own trailing `_t`, then `_<role>_t`, so
+    `bus_if_t`'s halves are `bus_if_fwd_t`, `bus_if_fb_t` and `bus_if_wire_t`."""
+    if symbol.endswith("_t") and len(symbol) > 2:
+        symbol = symbol[:-2]
+    return f"{symbol}_{role}_t"
+
+
 def _derived_type(iface, role, fields):
     info = iface._pypeline_name_info
     return _dataclasses.replace(
         info,
         kind="interface_" + role,
-        symbol=info.symbol + "_" + role + "_t",
+        symbol=_interface_half_symbol(info.symbol, role),
         fields=tuple((k, _value_description(v)) for k, v in fields),
         identity=_name_identity((info.identity, role, dict(fields))),
     )
@@ -1808,7 +1817,7 @@ def capture_factory_args(qualname: str, frame) -> dict:
     Skips any leading frames belonging to pypeline.py itself (its own
     decorator/registration plumbing -- @wires, @MAIN, _register_main -- sits
     between the caller and _sim_type_wrap at varying depth), the same way
-    include/pypeline/interface/interface_func.py's _factory_suffix skips its
+    include/pypeline/interface_func.py's _factory_suffix skips its
     own module's frames, so every decorator call shape lands on the same
     real factory frame regardless of how it got here.
 
@@ -6444,19 +6453,19 @@ def _global_inst_ports(fn, fail):
         t = ann.get(p)
         if t is None:
             fail(f"argument {p!r} has no type annotation")
-        intrf, role, is_array = _interface_half_of(t)
+        iface, role, is_array = _interface_half_of(t)
         if is_array:
             fail(
                 f"argument {p!r} is an array of interface port halves; arrays "
                 f"of interface ports are not supported yet"
             )
-        ports[p] = _InstPort(p, t, None, intrf, role != "fb", False)
+        ports[p] = _InstPort(p, t, None, iface, role != "fb", False)
     ret_t = ann.get("return")
     fields = getattr(ret_t, "_fields", ()) if ret_t is not None else ()
     ret_anns = getattr(ret_t, "__annotations__", {})
     halves = {f: _interface_half_of(ret_anns.get(f)) for f in fields}
-    if any(role is not None for _intrf, role, _is_array in halves.values()):
-        for f, (intrf, role, is_array) in halves.items():
+    if any(role is not None for _iface, role, _is_array in halves.values()):
+        for f, (iface, role, is_array) in halves.items():
             if is_array:
                 fail(
                     f"return field {f!r} is an array of interface port halves; "
@@ -6464,10 +6473,10 @@ def _global_inst_ports(fn, fail):
                 )
             prior = ports.get(f)
             if prior is None:
-                ports[f] = _InstPort(f, None, ret_anns[f], intrf, role == "fb", False)
+                ports[f] = _InstPort(f, None, ret_anns[f], iface, role == "fb", False)
             elif (
                 role is None
-                or prior.interface is not intrf
+                or prior.interface is not iface
                 or role != ("fb" if prior.is_input else "fwd")
             ):
                 fail(
@@ -6527,8 +6536,10 @@ class _GlobalInstType(_WireType):
         raise NotImplementedError
 
     def arg_alias(self, port):
-        """Base name of the MAIN's local holding `port`'s argument type."""
-        return f"{self.stem}_{port.name}_t"
+        """Base name of the MAIN's local holding `port`'s argument type. Not
+        `<port>_t`: interface port names end in `_if`, and `_if_t` names a
+        whole @interface, not one half."""
+        return f"{self.stem}_{port.name}_arg_t"
 
     def exec_main(self, func_name, src, ns, wire_name, module):
         """The MAIN's function, exec'd by _exec_generated_func from a frame
@@ -6629,7 +6640,7 @@ def _global_fifo_types(data_t):
     not depend on include/pypeline (see _make_auto_fsm_stream_t)."""
     types = _global_fifo_type_cache.get(data_t)
     if types is None:
-        from stream.stream import make_stream_t
+        from stream import make_stream_t
 
         stream_t = make_stream_t(data_t)
 
@@ -7610,7 +7621,7 @@ def _finalize_hw_name(name: str) -> str:
     A fixed-offset truncation (this function's previous implementation) can
     land mid-token -- e.g. right after the "8" in a trailing 8-hex-digit hash,
     or mid-word -- producing a valid-but-nonsense identifier like
-    "cast_stream_intrf_..._out_t_8_b1dab4d2" (half of an unrelated hash) or
+    "cast_stream_if_t_..._out_t_8_b1dab4d2" (half of an unrelated hash) or
     "..._frac_bits_..._1edf40d4" (right after "frac_bits_", which GHDL
     additionally rejects outright as two consecutive underscores). Both were
     found in real synthesis output; collapse_overflow_name's boundary-aware

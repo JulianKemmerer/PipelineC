@@ -56,7 +56,7 @@ from stream.serdes_common import (
     check_sizes,
     counter_t,
 )
-from stream.stream import make_stream_interface
+from stream import make_stream_interface
 
 
 def make_serializer(elem_t, in_n, out_n, align="beat", padding="pad"):
@@ -73,19 +73,19 @@ def make_serializer(elem_t, in_n, out_n, align="beat", padding="pad"):
               factory-call time.
 
     Returns serializer, with its complete return type at serializer.return_t:
-        serializer(stream_in_if: in_intrf.fwd_t, stream_out_if: out_intrf.fb_t)
+        serializer(stream_in_if: in_if_t.fwd_t, stream_out_if: out_if_t.fb_t)
             -> serializer_t
         serializer_t fields:
-          .stream_out_if (out_intrf.fwd_t) - the keep-tagged beat stream
-          .stream_in_if  (in_intrf.fb_t)   - reverse half of the input port
-        attrs: .in_intrf .out_intrf .in_fb_t .out_fb_t .elem_t .in_n .out_n
+          .stream_out_if (out_if_t.fwd_t) - the keep-tagged beat stream
+          .stream_in_if  (in_if_t.fb_t)   - reverse half of the input port
+        attrs: .in_if_t .out_if_t .in_fb_t .out_fb_t .elem_t .in_n .out_n
     """
     check_sizes("make_serializer", in_n, out_n)
     check_choice("make_serializer", "align", align, ALIGN_MODES)
     check_padding("make_serializer", padding, in_n, out_n, "in_n")
 
-    in_intrf = make_stream_interface(make_ndarray_fragment_t(elem_t[in_n], 1))
-    out_intrf = make_axis_interface(out_n, elem_t)
+    in_if_t = make_stream_interface(make_ndarray_fragment_t(elem_t[in_n], 1))
+    out_if_t = make_axis_interface(out_n, elem_t)
 
     buf_n = buffer_len(in_n, out_n)
     buf_t = elem_t[buf_n]
@@ -94,12 +94,12 @@ def make_serializer(elem_t, in_n, out_n, align="beat", padding="pad"):
 
     @struct
     class serializer_t(NamedTuple):
-        stream_out_if: out_intrf.fwd_t
-        stream_in_if: in_intrf.fb_t
+        stream_out_if: out_if_t.fwd_t
+        stream_in_if: in_if_t.fb_t
 
     @hw_func
     def serializer(
-        stream_in_if: in_intrf.fwd_t, stream_out_if: out_intrf.fb_t
+        stream_in_if: in_if_t.fwd_t, stream_out_if: out_if_t.fb_t
     ) -> serializer_t:
         o: serializer_t
         buf: Reg[buf_t]
@@ -107,7 +107,7 @@ def make_serializer(elem_t, in_n, out_n, align="beat", padding="pad"):
         flush: Reg[uint1_t]  # an eod is owed once the buffer drains
 
         cur_fill: count_t = fill
-        outw: out_intrf.stream_t
+        outw: out_if_t.stream_t
         for i in range(out_n):
             # Zero first, then overwrite the kept prefix: unkept lanes must
             # carry a defined value, not stale buffer contents (see docstring).
@@ -147,10 +147,10 @@ def make_serializer(elem_t, in_n, out_n, align="beat", padding="pad"):
         fill = nfill
         return o
 
-    serializer.in_intrf = in_intrf
-    serializer.out_intrf = out_intrf
-    serializer.in_fb_t = in_intrf.fb_t
-    serializer.out_fb_t = out_intrf.fb_t
+    serializer.in_if_t = in_if_t
+    serializer.out_if_t = out_if_t
+    serializer.in_fb_t = in_if_t.fb_t
+    serializer.out_fb_t = out_if_t.fb_t
     serializer.elem_t = elem_t
     serializer.in_n = in_n
     serializer.out_n = out_n

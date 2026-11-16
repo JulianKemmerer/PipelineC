@@ -121,11 +121,11 @@ documented in [`pypeline_guide.md`](https://github.com/JulianKemmerer/PipelineC/
 
 ```python
 scoreboard = Scoreboard()
-src = AxisSimSource(axis128_intrf, 16)
-snk = AxisSimSink(axis128_intrf, 16, scoreboard=scoreboard)
+src = AxisSimSource(axis128_if_t, 16)
+snk = AxisSimSink(axis128_if_t, 16, scoreboard=scoreboard)
 
 @sim_input
-def drive_in_word() -> axis128_intrf.fwd_t:
+def drive_in_word() -> axis128_if_t.fwd_t:
     if enc_state["in_packet_idx"] < common.NUM_RANDOM_PACKETS and src.idle():
         # Starting a new packet: pick a length, generate random plaintext,
         # and compute the expected ciphertext+tag right now, once, lazily.

@@ -40,7 +40,7 @@ fifo, fifo_t = probe.make_probed_stream_fifo(uint8_t, 4, "fifo")   # taps fifo.i
 COOLDOWN_NAMES = ("READY", "COOLDOWN")
 
 @hw_func
-def consumer(word: fifo.stream_intrf.stream_t) -> uint1_t:
+def consumer(word: fifo.stream_if_t.stream_t) -> uint1_t:
     cooldown: Reg[uint8_t]
     probe.state("consumer.fsm", cooldown != 0, COOLDOWN_NAMES)  # state probes: TOP of the body
     ready = cooldown == 0
@@ -79,7 +79,7 @@ attributes as the plain factory, plus `.capacity_beats` and `.tap_name`:
 
 - `make_probed_stream_fifo(data_t, depth, tap_name)`: capacity is the power-of-two memory
   plus the FWFT output register, `stream_perf.stream_fifo_capacity_beats(depth)`.
-- `make_probed_skid_buffer(data_t_or_intrf, tap_name, mode="full")`: capacity is its
+- `make_probed_skid_buffer(data_t_or_if_t, tap_name, mode="full")`: capacity is its
   slot count.
 
 Each one probes `<tap_name>.in`, `<tap_name>.out` and `<tap_name>.occupancy`.
@@ -228,17 +228,17 @@ from stream import stream_perf_probe as probe
 from stream.stream_perf import PerfRecorder, PhaseBarrier, PhaseRunner, packet_size_phases
 
 BUS = 4
-axis_intrf = make_axis_interface(BUS)
-fifo, fifo_t = probe.make_probed_stream_fifo(axis_intrf.stream_t.typeof("data"), 8, "fifo")
-out_slice, out_slice_t = probe.make_probed_skid_buffer(axis_intrf, "out_slice")
+axis_if_t = make_axis_interface(BUS)
+fifo, fifo_t = probe.make_probed_stream_fifo(axis_if_t.stream_t.typeof("data"), 8, "fifo")
+out_slice, out_slice_t = probe.make_probed_skid_buffer(axis_if_t, "out_slice")
 probe.MAIN_LABELS.update({"perf_tb": "dut"})
 probe.REGISTRY.enable(["all"])
 
 phases = packet_size_phases([32, 64], 4)
 recorder = PerfRecorder("perf_raw.json", {"bus_bytes": BUS})
 scoreboard = Scoreboard()
-src = ConvergedAxisSimSource(axis_intrf, BUS)
-snk = ConvergedAxisSimSink(axis_intrf, BUS, scoreboard=scoreboard)
+src = ConvergedAxisSimSource(axis_if_t, BUS)
+snk = ConvergedAxisSimSink(axis_if_t, BUS, scoreboard=scoreboard)
 
 def frame_builder(length, rng):           # -> (input frame, expected output, scoreboard meta)
     payload = bytes(rng.randrange(256) for _ in range(length))
@@ -250,7 +250,7 @@ runner = PhaseRunner("dut", phases, PhaseBarrier(["dut"]), recorder, src, snk, s
 
 # Stimulus reaches the design through module-level Input[T] wires: the same top then
 # also elaborates (they become ports), which a pipelined --sim run needs.
-tb_in_word: Input[axis_intrf.stream_t]
+tb_in_word: Input[axis_if_t.stream_t]
 tb_out_ready: Input[uint1_t]
 _cycle = [0]
 
@@ -258,7 +258,7 @@ def _nbytes(stream):
     return sum(1 for i in range(BUS) if stream.data.frag.keep[i]) if stream.valid else 0
 
 @sim_input
-def drive_in() -> axis_intrf.stream_t:
+def drive_in() -> axis_if_t.stream_t:
     runner.prepare_input()                 # queues the phase's packets once
     return src.drive().stream
 
@@ -273,7 +273,7 @@ def measure(in_stream, in_ready, out_stream, out_ready):
     src.commit(in_ready)
     moved = out_stream.valid and out_ready
     runner.note_out(moved, _nbytes(out_stream) if moved else 0, out_stream.data.eod[0])
-    snk.step(axis_intrf.fwd_t(out_stream), out_ready)
+    snk.step(axis_if_t.fwd_t(out_stream), out_ready)
     result = snk.check_nowait()
     if result is not None:
         runner.note_checked(result["passed"], "payload mismatch")
@@ -282,12 +282,12 @@ def measure(in_stream, in_ready, out_stream, out_ready):
         sim_finish()
 
 @MAIN
-def perf_tb() -> axis_intrf.fwd_t:
+def perf_tb() -> axis_if_t.fwd_t:
     slice_ready: Feedback[uint1_t]
     tb_in_word = drive_in()
     tb_out_ready = drive_out_ready()
-    f = fifo(axis_intrf.fwd_t(stream=tb_in_word), axis_intrf.fb_t(ready=slice_ready))
-    s = out_slice(f.out_stream_if, axis_intrf.fb_t(ready=tb_out_ready))
+    f = fifo(axis_if_t.fwd_t(stream=tb_in_word), axis_if_t.fb_t(ready=slice_ready))
+    s = out_slice(f.out_stream_if, axis_if_t.fb_t(ready=tb_out_ready))
     slice_ready = s.stream_in_if.ready
     measure(tb_in_word, f.in_stream_if.ready, s.stream_out_if.stream, tb_out_ready)
     return s.stream_out_if

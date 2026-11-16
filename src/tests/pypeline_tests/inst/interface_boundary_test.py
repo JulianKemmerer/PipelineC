@@ -56,12 +56,12 @@ from pypeline import (
     Input,
     make_reset,
 )
-from interface.interface import interface
-from interface.interface_func import make_hw_func_from_interface_func
+from interface import interface
+from interface_func import make_hw_func_from_interface_func
 
 
 @interface
-class chan_intrf(NamedTuple):
+class chan_if_t(NamedTuple):
     data: uint8_t
     valid: uint1_t
     ready: Feedback[uint1_t]
@@ -71,13 +71,13 @@ class chan_intrf(NamedTuple):
 #    be sugar. Note the plain `limit` input and the plain `passed` output ──
 @struct
 class gate_t(NamedTuple):
-    stream_in_if: chan_intrf.fb_t  # input port's reverse half travels out
-    stream_out_if: chan_intrf.fwd_t  # output port's feedforward half travels out
+    stream_in_if: chan_if_t.fb_t  # input port's reverse half travels out
+    stream_out_if: chan_if_t.fwd_t  # output port's feedforward half travels out
     passed: uint8_t  # plain status, no reverse companion
 
 
 @hw_func
-def gate(stream_in_if: chan_intrf.fwd_t, limit: uint8_t, stream_out_if: chan_intrf.fb_t) -> gate_t:
+def gate(stream_in_if: chan_if_t.fwd_t, limit: uint8_t, stream_out_if: chan_if_t.fb_t) -> gate_t:
     o: gate_t
     count: Reg[uint8_t]
     # closes once `limit` beats have gone through: backpressure from state
@@ -95,11 +95,11 @@ def gate(stream_in_if: chan_intrf.fwd_t, limit: uint8_t, stream_out_if: chan_int
 #    direction between them is generated, and `limit` fans out as a plain value ──
 @interface
 class gated_ports(NamedTuple):
-    stream_out_if: chan_intrf
+    stream_out_if: chan_if_t
     passed: uint8_t  # plain field riding along in a mixed bundle
 
 
-def gated_wiring(stream_in_if: chan_intrf, limit: uint8_t) -> gated_ports:
+def gated_wiring(stream_in_if: chan_if_t, limit: uint8_t) -> gated_ports:
     a = gate(stream_in_if, limit)
     b = gate(a.stream_out_if, limit)
     return gated_ports(stream_out_if=b.stream_out_if, passed=b.passed)
@@ -112,10 +112,10 @@ def test_generated_port_shape_is_the_documented_one():
     """args = params (interface ones as their feedforward half) then one
     feedback arg per output port; return = feedforward per output port, then
     plain bundle fields, then feedback per input port. All named by port."""
-    assert hw_arg_types(gated) == (chan_intrf.fwd_t, uint8_t, chan_intrf.fb_t)
+    assert hw_arg_types(gated) == (chan_if_t.fwd_t, uint8_t, chan_if_t.fb_t)
     assert list(gated.return_t._fields) == ["stream_out_if", "passed", "stream_in_if"]
-    assert gated.return_t.__annotations__["stream_out_if"] is chan_intrf.fwd_t
-    assert gated.return_t.__annotations__["stream_in_if"] is chan_intrf.fb_t
+    assert gated.return_t.__annotations__["stream_out_if"] is chan_if_t.fwd_t
+    assert gated.return_t.__annotations__["stream_in_if"] is chan_if_t.fb_t
     assert gated.return_t.__annotations__["passed"] is uint8_t
     assert hw_return_type(gated) is gated.return_t
 
@@ -140,9 +140,9 @@ def wrapper(
     # each half inline, directly in the call arguments, at the exact point it
     # crosses into a real port.
     r = gated(
-        chan_intrf.fwd_t(data=in_data, valid=in_valid),  # feedforward half in
+        chan_if_t.fwd_t(data=in_data, valid=in_valid),  # feedforward half in
         limit,  # plain value straight through
-        chan_intrf.fb_t(ready=downstream_ready),  # reverse half of the output port
+        chan_if_t.fb_t(ready=downstream_ready),  # reverse half of the output port
     )
     o.upstream_ready = r.stream_in_if.ready  # implied feedback -> explicit
     o.out_data = r.stream_out_if.data
@@ -158,8 +158,8 @@ def wrapper_twin(
 ) -> wrapper_t:
     o: wrapper_t
     b_ready: Feedback[uint1_t]  # b is called after a, so a's ready comes back
-    a = gate(chan_intrf.fwd_t(data=in_data, valid=in_valid), limit, chan_intrf.fb_t(ready=b_ready))
-    b = gate(a.stream_out_if, limit, chan_intrf.fb_t(ready=downstream_ready))
+    a = gate(chan_if_t.fwd_t(data=in_data, valid=in_valid), limit, chan_if_t.fb_t(ready=b_ready))
+    b = gate(a.stream_out_if, limit, chan_if_t.fb_t(ready=downstream_ready))
     b_ready = b.stream_in_if.ready
     o.upstream_ready = a.stream_in_if.ready
     o.out_data = b.stream_out_if.data

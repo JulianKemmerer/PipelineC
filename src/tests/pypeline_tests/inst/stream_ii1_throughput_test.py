@@ -61,7 +61,7 @@ N_WORDS = 40
 def _sap_cycle(sap, data, valid, ready):
     return sim_call(
         sap,
-        sap.in_fwd_t(stream=sap.in_intrf.stream_t(data=data, valid=valid)),
+        sap.in_fwd_t(stream=sap.in_if_t.stream_t(data=data, valid=valid)),
         sap.out_fb_t(ready=ready),
     )
 
@@ -164,7 +164,7 @@ def test_elastic_dsp_blocks_full_rate():
             r = sim_call(
                 block,
                 block.in_fwd_t(
-                    stream=block.in_intrf.stream_t(data=_sample(block, sent), valid=valid)
+                    stream=block.in_if_t.stream_t(data=_sample(block, sent), valid=valid)
                 ),
                 block.out_fb_t(ready=1),
             )

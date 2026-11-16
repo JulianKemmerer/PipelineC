@@ -22,9 +22,9 @@ sys.path.insert(0, {repo_root!r})
 sys.path.insert(0, {pypeline_dir!r})
 from typing import NamedTuple
 from pypeline import MAIN, NamedTuple, struct, hw_func, Feedback, uint1_t, uint8_t, uint16_t
-from stream.stream import make_stream_interface
+from stream import make_stream_interface
 
-chan_intrf = make_stream_interface(uint8_t)
+chan_if_t = make_stream_interface(uint8_t)
 
 
 @struct
@@ -35,12 +35,12 @@ class two_field_t(NamedTuple):
 
 @struct
 class consumer_t(NamedTuple):
-    stream_in_if: chan_intrf.fb_t
+    stream_in_if: chan_if_t.fb_t
 
 
 @hw_func
-def consumer(stream_in_if: chan_intrf.fwd_t) -> consumer_t:
-    # Real port crossing using chan_intrf.fwd_t/.fb_t in a signature --
+def consumer(stream_in_if: chan_if_t.fwd_t) -> consumer_t:
+    # Real port crossing using chan_if_t.fwd_t/.fb_t in a signature --
     # matching interface_type_error_test.py's shared header -- so
     # stream_t/fwd_t/fb_t are registered in struct_to_field_type_dict the
     # ordinary way (_elaborate_live_func's closure-struct-registration).
@@ -138,15 +138,15 @@ def m(x: uint8_t[4]) -> uint8_t[4]:
 
 
 def test_bare_local_fwd_t_still_banned_via_cast_call():
-    # x = chan_intrf.fwd_t(s) is 1-positional -- cast-shaped -- but the
+    # x = chan_if_t.fwd_t(s) is 1-positional -- cast-shaped -- but the
     # bare-local ban (a .fwd_t/.fb_t local may only be constructed inline at
     # a real port crossing) keys off the DECLARED type, not the call shape,
     # so it must still fire.
     src = """
 @MAIN
 def m(d: uint8_t, v: uint1_t) -> uint1_t:
-    s = chan_intrf.stream_t(data=d, valid=v)
-    bad = chan_intrf.fwd_t(s)
+    s = chan_if_t.stream_t(data=d, valid=v)
+    bad = chan_if_t.fwd_t(s)
     return bad.stream.valid
 """
     _expect_elaboration_error(
@@ -155,7 +155,7 @@ def m(d: uint8_t, v: uint1_t) -> uint1_t:
 
 
 def test_multi_field_interface_ctor_still_requires_keywords():
-    # chan_intrf.fwd_t has 2 fields ({data, valid} -- the flat, non-stream
+    # chan_if_t.fwd_t has 2 fields ({data, valid} -- the flat, non-stream
     # shape this factory doesn't use, so build one directly) -- a single
     # positional arg on it is cast-shaped, and no cast is registered from a
     # bare uint8_t into it, so it must raise rather than silently binding

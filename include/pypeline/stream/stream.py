@@ -11,7 +11,7 @@ from pypeline import (
     uint1_t,
 )
 
-from interface.interface import interface
+from interface import interface
 
 
 def make_stream_t(data_t):
@@ -50,7 +50,7 @@ def make_stream_interface(data_t, feedback_t=uint1_t):
     twins requiring a field-by-field conversion -- the with-ready side's data+
     valid IS a `make_stream_t(data_t)` value, accessed through `.stream`.
     `ready` is the reverse channel. This is the most common use of `@interface`,
-    not a special case of it -- see `include/pypeline/interface/interface.py`
+    not a special case of it -- see `include/pypeline/interface.py`
     for the general mechanism.
 
     `feedback_t` defaults to `uint1_t` (the usual ready bit); a stream whose
@@ -60,21 +60,21 @@ def make_stream_interface(data_t, feedback_t=uint1_t):
     to a shorter local name, so a reader can always tell a paired port half
     from a standalone stream type by the name alone:
 
-        stream_intrf = make_stream_interface(uint32_t)
-        stream_intrf.fwd_t    # {stream: {data, valid}}
-        stream_intrf.fb_t     # {ready}
-        stream_intrf.stream_t # {data, valid} -- the plain type nested at .fwd_t.stream
+        stream_if_t = make_stream_interface(uint32_t)
+        stream_if_t.fwd_t    # {stream: {data, valid}}
+        stream_if_t.fb_t     # {ready}
+        stream_if_t.stream_t # {data, valid} -- the plain type nested at .fwd_t.stream
 
-    An input port puts `stream_intrf.fwd_t` in an arg and `stream_intrf.fb_t`
+    An input port puts `stream_if_t.fwd_t` in an arg and `stream_if_t.fb_t`
     in a return field of the same name (ending in `_if`); an output port does
     the reverse. Field access on a real port is `port.stream.data` /
     `port.stream.valid` (not `port.data` -- that flat shape is reserved for a
     standalone `make_stream_t(data_t)` value).
 
     Both halves cast to/from their plain payload (see `pypeline_DESIGN.md`'s
-    Casting section) -- `stream_intrf.fwd_t(some_stream_t_value)` and
-    `stream_intrf.fb_t(some_feedback_t_value)` (and the reverse,
-    `stream_intrf.stream_t(some_fwd_t_value)` / `feedback_t(some_fb_t_value)`)
+    Casting section) -- `stream_if_t.fwd_t(some_stream_t_value)` and
+    `stream_if_t.fb_t(some_feedback_t_value)` (and the reverse,
+    `stream_if_t.stream_t(some_fwd_t_value)` / `feedback_t(some_fb_t_value)`)
     all work once this factory has run, without any extra call: registered
     lazily by `_register_stream_casts`, below, so the generated conversion
     functions (and the VHDL entity each produces) are only built the first
@@ -82,22 +82,22 @@ def make_stream_interface(data_t, feedback_t=uint1_t):
     """
 
     @interface
-    class stream_intrf(NamedTuple):
+    class stream_if_t(NamedTuple):
         stream: make_stream_t(data_t)
         ready: Feedback[feedback_t]
 
-    _register_stream_casts(stream_intrf, feedback_t)
-    return stream_intrf
+    _register_stream_casts(stream_if_t, feedback_t)
+    return stream_if_t
 
 
-def _register_stream_casts(intrf, feedback_t):
-    """Register `intrf`'s wrap/unwrap casts, both directions:
+def _register_stream_casts(stream_if_t, feedback_t):
+    """Register `stream_if_t`'s wrap/unwrap casts, both directions:
     `stream_t <-> .fwd_t` (field `stream`) and `feedback_t <-> .fb_t` (field
-    `ready`) -- so e.g. `intrf.fb_t(some_ready_value)` and
-    `intrf.fwd_t(some_stream_value)` work as casts, dropping the field name a
+    `ready`) -- so e.g. `stream_if_t.fb_t(some_ready_value)` and
+    `stream_if_t.fwd_t(some_stream_value)` work as casts, dropping the field name a
     keyword struct-init would otherwise require (both halves have exactly
     one field, so the name carries no information), symmetrically with the
-    unwrap direction (`intrf.stream_t(some_fwd_value)`,
+    unwrap direction (`stream_if_t.stream_t(some_fwd_value)`,
     `feedback_t(some_fb_value)`).
 
     Lazy (register_lazy_cast, not register_cast): the four generated @cast
@@ -107,9 +107,9 @@ def _register_stream_casts(intrf, feedback_t):
     a stream interface but never casts it (the overwhelming majority) pays
     nothing.
     """
-    stream_t = intrf.stream_t
-    fwd_t = intrf.fwd_t
-    fb_t = intrf.fb_t
+    stream_t = stream_if_t.stream_t
+    fwd_t = stream_if_t.fwd_t
+    fb_t = stream_if_t.fb_t
     built = {}
 
     def _build_all():

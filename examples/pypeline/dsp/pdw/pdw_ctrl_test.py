@@ -81,7 +81,7 @@ def _run(script, n_cycles, dut=None):
     """script: {cycle: bytes} frames to start. Returns one dict per cycle."""
     dut = dut or ctrl
     sim_reset()
-    src = AxisSimSource(dut.axis_intrf, N)
+    src = AxisSimSource(dut.axis_if_t, N)
     log = []
     for c in range(n_cycles):
         if c in script:

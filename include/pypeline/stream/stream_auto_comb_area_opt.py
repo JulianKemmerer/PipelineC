@@ -3,7 +3,7 @@ from pypeline import (
     AUTO_COMB_AREA_OPT, NamedTuple, Reg, hw_arg_types, hw_return_type, hw_func,
     struct, uint1_t,
 )
-from stream.stream import make_stream_interface
+from stream import make_stream_interface
 
 
 def make_stream_auto_comb_area_opt(func):
@@ -21,17 +21,17 @@ def _make_stream_auto_comb(tag):
     """Shared elastic shell; the passed tag determines the optimization."""
     (in_type,) = hw_arg_types(tag)
     out_type = hw_return_type(tag)
-    in_intrf = make_stream_interface(in_type)
-    out_intrf = make_stream_interface(out_type)
+    in_if_t = make_stream_interface(in_type)
+    out_if_t = make_stream_interface(out_type)
 
     @struct
     class stream_auto_comb_opt_t(NamedTuple):
-        stream_in_if: in_intrf.fb_t
-        stream_out_if: out_intrf.fwd_t
+        stream_in_if: in_if_t.fb_t
+        stream_out_if: out_if_t.fwd_t
 
     @hw_func
     def stream_auto_comb_opt(
-        stream_in_if: in_intrf.fwd_t, stream_out_if: out_intrf.fb_t
+        stream_in_if: in_if_t.fwd_t, stream_out_if: out_if_t.fb_t
     ) -> stream_auto_comb_opt_t:
         o: stream_auto_comb_opt_t
         input_data: Reg[in_type]
@@ -56,10 +56,10 @@ def _make_stream_auto_comb(tag):
 
     stream_auto_comb_opt.comb_opt = tag
     stream_auto_comb_opt.latency = 2
-    stream_auto_comb_opt.in_intrf = in_intrf
-    stream_auto_comb_opt.out_intrf = out_intrf
-    stream_auto_comb_opt.in_fwd_t = in_intrf.fwd_t
-    stream_auto_comb_opt.in_fb_t = in_intrf.fb_t
-    stream_auto_comb_opt.out_fwd_t = out_intrf.fwd_t
-    stream_auto_comb_opt.out_fb_t = out_intrf.fb_t
+    stream_auto_comb_opt.in_if_t = in_if_t
+    stream_auto_comb_opt.out_if_t = out_if_t
+    stream_auto_comb_opt.in_fwd_t = in_if_t.fwd_t
+    stream_auto_comb_opt.in_fb_t = in_if_t.fb_t
+    stream_auto_comb_opt.out_fwd_t = out_if_t.fwd_t
+    stream_auto_comb_opt.out_fb_t = out_if_t.fb_t
     return stream_auto_comb_opt

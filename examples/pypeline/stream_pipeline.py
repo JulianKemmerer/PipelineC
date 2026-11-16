@@ -33,8 +33,8 @@ def mult(i: mult_in_t) -> uint32_t:
 # One instance of mult(), auto-pipelined, behind stream handshakes
 mult_pipeline = make_stream_auto_pipeline(mult)
 
-in_intrf = mult_pipeline.in_intrf
-out_intrf = mult_pipeline.out_intrf
+in_if_t = mult_pipeline.in_if_t
+out_if_t = mult_pipeline.out_if_t
 
 # Globally visible wires to interface with the pipeline
 # Synchronous reset input, active high: while it is 1 the three @MAINs below
@@ -43,16 +43,16 @@ out_intrf = mult_pipeline.out_intrf
 rst: Input[uint1_t] = make_reset()
 clk = make_clock(100.0, reset=rst)
 
-mult_in: Wire[in_intrf.stream_t]  # input to pipeline, data+valid
+mult_in: Wire[in_if_t.stream_t]  # input to pipeline, data+valid
 mult_in_ready: Wire[uint1_t]  # output from pipeline, ready
-mult_out: Wire[out_intrf.stream_t]  # output from pipeline, data+valid
+mult_out: Wire[out_if_t.stream_t]  # output from pipeline, data+valid
 mult_out_ready: Wire[uint1_t]  # input to pipeline, ready
 
 
 @MAIN(clk, reset_registers="all")
 def mult_pipeline_main():
     result = mult_pipeline(
-        in_intrf.fwd_t(stream=mult_in), out_intrf.fb_t(ready=mult_out_ready)
+        in_if_t.fwd_t(stream=mult_in), out_if_t.fb_t(ready=mult_out_ready)
     )
     mult_out = result.stream_out_if.stream
     mult_in_ready = result.stream_in_if.ready

@@ -41,12 +41,12 @@ from pypeline import (
     uint8_t,
     InterfacePortError,
 )
-from interface.interface import interface
-from stream.stream import make_stream_t
+from interface import interface
+from stream import make_stream_t
 
 
 @interface
-class chan_intrf(NamedTuple):
+class chan_if_t(NamedTuple):
     data: uint8_t
     valid: uint1_t
     ready: Feedback[uint1_t]
@@ -54,12 +54,12 @@ class chan_intrf(NamedTuple):
 
 # a one-directional (feedforward-only) interface: a single half IS complete
 @interface
-class oneway_intrf(NamedTuple):
+class oneway_if_t(NamedTuple):
     data: uint8_t
     valid: uint1_t
 
 
-assert oneway_intrf.fb_t is None  # no reverse half exists
+assert oneway_if_t.fb_t is None  # no reverse half exists
 
 
 def _expect_error(build):
@@ -77,7 +77,7 @@ def test_lone_feedforward_half_errors():
 
     def build():
         @hw_func
-        def m(stream_in: chan_intrf.fwd_t) -> uint8_t:  # no `stream_in` fb returned
+        def m(stream_in: chan_if_t.fwd_t) -> uint8_t:  # no `stream_in` fb returned
             return stream_in.data
 
     msg = _expect_error(build)
@@ -94,7 +94,7 @@ def test_lone_reverse_half_errors():
     def build():
         @struct
         class lone_rev_t(NamedTuple):
-            stream_out: chan_intrf.fb_t  # reverse half, but no forward half anywhere
+            stream_out: chan_if_t.fb_t  # reverse half, but no forward half anywhere
 
         @hw_func
         def m(x: uint8_t) -> lone_rev_t:
@@ -115,10 +115,10 @@ def test_first_lone_half_errors():
     def build():
         @struct
         class two_lone_t(NamedTuple):
-            stream_out: chan_intrf.fwd_t  # output port fwd half, no fb arg -> lone
+            stream_out: chan_if_t.fwd_t  # output port fwd half, no fb arg -> lone
 
         @hw_func
-        def m(stream_in: chan_intrf.fwd_t) -> two_lone_t:  # input fwd half, no fb ret -> lone
+        def m(stream_in: chan_if_t.fwd_t) -> two_lone_t:  # input fwd half, no fb ret -> lone
             o: two_lone_t
             o.stream_out = stream_in
             return o
@@ -132,11 +132,11 @@ def test_complete_port_is_silent():
 
     @struct
     class ok_t(NamedTuple):
-        stream_in: chan_intrf.fb_t
-        stream_out: chan_intrf.fwd_t
+        stream_in: chan_if_t.fb_t
+        stream_out: chan_if_t.fwd_t
 
     @hw_func
-    def m(stream_in: chan_intrf.fwd_t, stream_out: chan_intrf.fb_t) -> ok_t:
+    def m(stream_in: chan_if_t.fwd_t, stream_out: chan_if_t.fb_t) -> ok_t:
         o: ok_t
         o.stream_out = stream_in
         o.stream_in.ready = stream_out.ready
@@ -148,7 +148,7 @@ def test_one_directional_interface_is_silent():
     forward half is complete and must not error."""
 
     @hw_func
-    def m(x: oneway_intrf.fwd_t) -> oneway_intrf.fwd_t:
+    def m(x: oneway_if_t.fwd_t) -> oneway_if_t.fwd_t:
         return x
 
 

@@ -8,7 +8,7 @@ from pypeline import (
     Input,
     make_reset,
 )
-from stream.stream import make_stream_interface
+from stream import make_stream_interface
 from stream.stream_multi_cycle import make_stream_auto_multi_cycle, make_stream_multi_cycle
 
 PART("xc7a200tffg1156-2")

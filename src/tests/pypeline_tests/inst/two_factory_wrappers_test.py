@@ -18,7 +18,7 @@ sys.path.insert(
 )
 from pypeline import MAIN, hw_func, int16_t, int32_t, sim_call, sim_reset, uint1_t, uint32_t, Input, make_reset
 
-from stream.stream import make_stream_interface
+from stream import make_stream_interface
 from stream.stream_multi_cycle import make_stream_multi_cycle
 
 # Regression tests for two variants of the same closure-callable naming
@@ -64,7 +64,7 @@ def round_b(x: uint32_t) -> uint32_t:
     return (x * 2) + 3
 
 
-uint32_stream_intrf = make_stream_interface(uint32_t)
+uint32_stream_if_t = make_stream_interface(uint32_t)
 a_mcp = make_stream_multi_cycle(round_a, 2)
 
 b_mcp = make_stream_multi_cycle(round_b, 2)
@@ -78,14 +78,14 @@ rst: Input[uint1_t] = make_reset()  # the bare MAINs' default clock
 
 @MAIN(50.0, reset=rst_50, reset_registers="all")
 def a_main(
-    stream_in_if: uint32_stream_intrf.fwd_t, stream_out_if: a_mcp.out_fb_t
+    stream_in_if: uint32_stream_if_t.fwd_t, stream_out_if: a_mcp.out_fb_t
 ) -> a_mcp.return_t:
     return a_mcp(stream_in_if, stream_out_if)
 
 
 @MAIN(50.0, reset=rst_50, reset_registers="all")
 def b_main(
-    stream_in_if: uint32_stream_intrf.fwd_t, stream_out_if: b_mcp.out_fb_t
+    stream_in_if: uint32_stream_if_t.fwd_t, stream_out_if: b_mcp.out_fb_t
 ) -> b_mcp.return_t:
     return b_mcp(stream_in_if, stream_out_if)
 

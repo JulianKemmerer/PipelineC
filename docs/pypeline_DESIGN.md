@@ -407,6 +407,11 @@ identifiers.
       generated function by the factory or user function that caused it.
   - **Shared helpers:** `_derived_type` describes an interface's `fwd`/`fb`/`wire`
     halves, and `_replace_name_info` (`dataclasses.replace`) adjusts a description.
+    A half's symbol is `_interface_half_symbol(symbol, role)`: the interface's symbol
+    without its own trailing `_t`, then `_<role>_t`, so `bus_if_t` has the halves
+    `bus_if_fwd_t`, `bus_if_fb_t` and `bus_if_wire_t`. `@interface` names the half
+    classes the same way (plus its factory parameters), so a half's logical C type and
+    its VHDL record start with the same name.
 - **Limits:** `_NAME_BASE_LIMIT` (192) applies to bases and `_NAME_IDENTIFIER_LIMIT`
   (240) to composed identifiers. `_shorten_name` truncates on whole `_` tokens, keeps
   timing and role suffixes, and appends a hash of what it omitted. `_safe_name`
@@ -511,7 +516,7 @@ conflicting layouts or structural identities under one logical key.
 Factory arguments distinguish types with equal bit layouts but different settings:
 `make_fixed_t(4, 8)` and `make_fixed_t(8, 4)` remain distinct even if both contain
 `val: int12_t`. An interface argument carries its complete structural identity,
-including payload width, rather than the bare Python class name `stream_intrf`.
+including payload width, rather than the bare Python class name `stream_if_t`.
 
 VHDL presentation uses a 192-character base budget and a 240-character composed
 identifier budget, retaining useful scalar settings and explicit hashes where
@@ -1130,7 +1135,9 @@ FIFO"), `main_suffix` (`_INST` / `_FIFO`), `stem` (the generated MAIN's local na
   `ann.exec_main` whose arguments become its name info (folder
   `pypeline_generated_insts`, so `dump_generated_sources` writes it). Its body makes one
   keyword call of the module: a plain input port gets its whole path, an interface port
-  its argument half built field by field (`<alias>(f=W.p.f, ...)`). Then the returned
+  its argument half built field by field (`<alias>(f=W.p.f, ...)`; `arg_alias` names it
+  `<stem>_<port>_arg_t`, never `<port>_t`, which would read as an `_if_t` interface
+  type). Then the returned
   halves drive the wire: an interface port's field by field, a bundle's plain field and
   the whole return value as wholes. With no output port the call is a bare statement. It
   is exec'd in a copy of the declaring module's globals, so the body names the wire by
@@ -2276,7 +2283,7 @@ undriven (the same class of bug `struct_ctor_positional_test.py` guards against 
 
 At elaboration, casts are recognized in `PY_TO_LOGIC._elab_call` (`_is_cast_call`/
 `_is_pypeline_type`, checked immediately after the `AUTO_PIPELINE`/`AUTO_FSM` special
-forms and before ordinary callee resolution, so both `uint8_t(x)` and `intrf.fb_t(x)`
+forms and before ordinary callee resolution, so both `uint8_t(x)` and `some_if_t.fb_t(x)`
 are caught) and de-classified out of every pre-existing struct-constructor interception
 site (`_elab_assign`, `_elab_ann_assign`, `_elab_compound_init`'s own recursive branch,
 `_elab_return`, and `_elab_call`'s inline-constructor-as-argument path) so a cast-shaped
@@ -2303,7 +2310,7 @@ equivalently, a callee whose `_pypeline_interface_role` resolves it directly):
 (3) resolves the callee via `_try_eval_const` and checks `_pypeline_interface_role`/
 `_pypeline_is_cast` on the **value**, which is alias-proof by construction — it does not
 key off literal AST attribute names, so a factory-stamped alias of the sanctioned
-`intrf.fwd_t(...)`/`intrf.fb_t(...)` idiom (`fir.out_fb_t(...)`, `stream_fifo.fb_t(...)`,
+`some_if_t.fwd_t(...)`/`some_if_t.fb_t(...)` idiom (`fir.out_fb_t(...)`, `stream_fifo.fb_t(...)`,
 a closure alias with a different name) is recognized correctly rather than wrongly
 raising whenever such a call happens to const-fold. See
 [`PY_TO_LOGIC_DESIGN.md`](PY_TO_LOGIC_DESIGN.md#interface-half-bans-three-exemptions)
@@ -2329,8 +2336,8 @@ distinction.
 | `fb_t → feedback_t` (unwrap) | `ready` |
 
 ```python
-axis_out_if = axis128_intrf.fb_t(early_out_ready)        # was fb_t(ready=early_out_ready)
-in_stream_if = axis128_intrf.fwd_t(verify_fifo_in_s)      # was fwd_t(stream=verify_fifo_in_s)
+axis_out_if = axis128_if_t.fb_t(early_out_ready)        # was fb_t(ready=early_out_ready)
+in_stream_if = axis128_if_t.fwd_t(verify_fifo_in_s)      # was fwd_t(stream=verify_fifo_in_s)
 ```
 
 Only the **wrap** direction is worth writing as a cast in practice: `fb_t`/`fwd_t` each
@@ -2815,10 +2822,11 @@ documented separately in [VHDL_DESIGN.md](VHDL_DESIGN.md); built-in leaf split
 semantics live in [RAW_VHDL_DESIGN.md](RAW_VHDL_DESIGN.md).
 
 The bidirectional-port mechanism `@interface`
-(`include/pypeline/interface/interface.py`) reuses this module's compound-type introspection
+(`include/pypeline/interface.py`) reuses this module's compound-type introspection
 (`_array_elem_ctype`/`_array_len`, `@struct` `_fields`/`__annotations__`) to split an interface
-into its two one-directional structs, and `_enclosing_factory_param_suffix` to name generated
-modules deterministically. It exposes no new pypeline.py API — the generated function is an
+into its two one-directional structs, and its naming helpers (`capture_factory_args`,
+`encode_param_value`, `_describe`, `_derived_type`, `_interface_half_symbol`) to name the halves
+and generated modules deterministically. It exposes no new pypeline.py API — the generated function is an
 ordinary `@hw_func` + `@struct` pair, and `make_stream_t(data_t, feedback_t=uint1_t)` is now just
 the feedforward half of `make_stream_interface(...)`. Library modules that carry backpressure
 declare interface ports: `stream/stream_auto_pipeline.py`, `stream/stream_fifo.py`, `stream/stream_ram.py`,
@@ -2928,7 +2936,7 @@ The alternatives below lost, for these reasons:
   once, with both handshake directions in its arguments and results.
 - **One stream wire read as `rx.stream` by both sides**: nothing at a use says which side
   a function is on or which half it drives. `.wr` and `.rd` say it.
-- **`Fifo[some_intrf]`**: a FIFO supplies valid and ready itself, so `T` is the data type,
+- **`Fifo[some_if_t]`**: a FIFO supplies valid and ready itself, so `T` is the data type,
   as for `Wire[T]`.
 - **`stream_fifo`, `stream_sync_fifo`, `stream_async_fifo`** as initializer names:
   `stream_fifo` is already the usual name of a `make_stream_fifo(...)` result and of the

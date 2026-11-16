@@ -45,9 +45,9 @@ DIV_FSM = make_stream_auto_fsm(radix2_div)
 CLK_RATE_MHZ = 25.0
 PART("sky130")
 clk: Input[uint1_t] = make_clock(CLK_RATE_MHZ)
-input: Input[DIV_FSM.in_intrf.stream_t]
+input: Input[DIV_FSM.in_if_t.stream_t]
 input_ready: Output[uint1_t]
-output: Output[DIV_FSM.out_intrf.stream_t]
+output: Output[DIV_FSM.out_if_t.stream_t]
 output_ready: Input[uint1_t]
 
 @MAIN(CLK_RATE_MHZ)

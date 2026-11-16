@@ -74,7 +74,7 @@ from stream.serdes_common import (
     check_sizes,
     counter_t,
 )
-from stream.stream import make_stream_interface
+from stream import make_stream_interface
 
 
 def make_deserializer(
@@ -117,22 +117,22 @@ def make_deserializer(
               rests on that invariant). Costs nothing in synthesis.
 
     Returns deserializer, with its complete return type at deserializer.return_t:
-        deserializer(stream_in_if: in_intrf.fwd_t, stream_out_if: out_intrf.fb_t)
+        deserializer(stream_in_if: in_if_t.fwd_t, stream_out_if: out_if_t.fb_t)
             -> deserializer_t
         deserializer_t fields:
-          .stream_out_if (out_intrf.fwd_t) - gathered values, eod[0] marking the
+          .stream_out_if (out_if_t.fwd_t) - gathered values, eod[0] marking the
              value that ended a packet
-          .stream_in_if  (in_intrf.fb_t)   - reverse half of the input port
+          .stream_in_if  (in_if_t.fb_t)   - reverse half of the input port
           .runt (uint1_t) - pulses when eod[0] arrived mid-value
-        attrs: .in_intrf .out_intrf .in_fb_t .out_fb_t .elem_t .in_n .out_n
+        attrs: .in_if_t .out_if_t .in_fb_t .out_fb_t .elem_t .in_n .out_n
     """
     check_sizes("make_deserializer", in_n, out_n)
     check_choice("make_deserializer", "align", align, ALIGN_MODES)
     check_choice("make_deserializer", "on_eod", on_eod, ON_EOD_MODES)
     check_padding("make_deserializer", padding, in_n, out_n, "out_n")
 
-    in_intrf = make_axis_interface(in_n, elem_t)
-    out_intrf = make_stream_interface(make_ndarray_fragment_t(elem_t[out_n], 1))
+    in_if_t = make_axis_interface(in_n, elem_t)
+    out_if_t = make_stream_interface(make_ndarray_fragment_t(elem_t[out_n], 1))
 
     buf_n = buffer_len(in_n, out_n)
     buf_t = elem_t[buf_n]
@@ -143,13 +143,13 @@ def make_deserializer(
 
     @struct
     class deserializer_t(NamedTuple):
-        stream_out_if: out_intrf.fwd_t
-        stream_in_if: in_intrf.fb_t
+        stream_out_if: out_if_t.fwd_t
+        stream_in_if: in_if_t.fb_t
         runt: uint1_t
 
     @hw_func
     def deserializer(
-        stream_in_if: in_intrf.fwd_t, stream_out_if: out_intrf.fb_t
+        stream_in_if: in_if_t.fwd_t, stream_out_if: out_if_t.fb_t
     ) -> deserializer_t:
         o: deserializer_t
         buf: Reg[buf_t]
@@ -160,7 +160,7 @@ def make_deserializer(
         # next-state write below -- that is what lets a drain and an accept
         # share a cycle.
         cur_fill: count_t = fill
-        outw: out_intrf.stream_t
+        outw: out_if_t.stream_t
         for i in range(out_n):
             outw.data.frag[i] = buf[i]
         outw.data.eod[0] = eod_held
@@ -229,10 +229,10 @@ def make_deserializer(
         fill = nbase
         return o
 
-    deserializer.in_intrf = in_intrf
-    deserializer.out_intrf = out_intrf
-    deserializer.in_fb_t = in_intrf.fb_t
-    deserializer.out_fb_t = out_intrf.fb_t
+    deserializer.in_if_t = in_if_t
+    deserializer.out_if_t = out_if_t
+    deserializer.in_fb_t = in_if_t.fb_t
+    deserializer.out_fb_t = out_if_t.fb_t
     deserializer.elem_t = elem_t
     deserializer.in_n = in_n
     deserializer.out_n = out_n

@@ -42,7 +42,7 @@ from stream import stream_perf_probe as probe
 FIFO_DEPTH = 4
 fifo = probe.make_probed_stream_fifo(uint8_t, FIFO_DEPTH, "fifo")
 
-intrf = fifo.stream_intrf
+stream_if_t = fifo.stream_if_t
 
 CONSUMER_STATE_NAMES = ("READY", "COOLDOWN")
 
@@ -59,10 +59,10 @@ PERIODS = {"left": 3, "right": 2}
 
 
 @hw_func
-def producer(in_ready: uint1_t) -> intrf.stream_t:
+def producer(in_ready: uint1_t) -> stream_if_t.stream_t:
     """Always offers the next word."""
     sent: Reg[uint8_t]
-    o: intrf.stream_t
+    o: stream_if_t.stream_t
     o.data = sent
     o.valid = 1
     if in_ready:
@@ -78,7 +78,7 @@ class consumer_t(NamedTuple):
 
 
 @hw_func
-def consumer(word: intrf.stream_t, period: uint8_t) -> consumer_t:
+def consumer(word: stream_if_t.stream_t, period: uint8_t) -> consumer_t:
     """Ready one cycle in `period`: after each accepted word, counts down
     period-1 cycles before it is ready again."""
     cooldown: Reg[uint8_t]
@@ -102,7 +102,7 @@ def _chain(period):
         in_ready: Feedback[uint1_t]
         out_ready: Feedback[uint1_t]
         word = producer(in_ready)
-        f = fifo(intrf.fwd_t(stream=word), intrf.fb_t(ready=out_ready))
+        f = fifo(stream_if_t.fwd_t(stream=word), stream_if_t.fb_t(ready=out_ready))
         c = consumer(f.out_stream_if.stream, period)
         in_ready = f.in_stream_if.ready
         out_ready = c.ready

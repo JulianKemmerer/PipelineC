@@ -73,7 +73,7 @@ def self_check_stream_auto_pipeline_ii1() -> uint8_t:
     finish: uint1_t = (received0 == NUM) & (received3 == NUM)
 
     # Core latency 0
-    in0: sap0.in_intrf.stream_t
+    in0: sap0.in_if_t.stream_t
     in0.data = sent0
     in0.valid = sent0 < NUM
     o0: sap0.return_t = sap0(sap0.in_fwd_t(stream=in0), sap0.out_fb_t(ready=1))
@@ -94,7 +94,7 @@ def self_check_stream_auto_pipeline_ii1() -> uint8_t:
         received0 += 1
 
     # Core latency 3
-    in3: sap3.in_intrf.stream_t
+    in3: sap3.in_if_t.stream_t
     in3.data = sent3
     in3.valid = sent3 < NUM
     o3: sap3.return_t = sap3(sap3.in_fwd_t(stream=in3), sap3.out_fb_t(ready=1))

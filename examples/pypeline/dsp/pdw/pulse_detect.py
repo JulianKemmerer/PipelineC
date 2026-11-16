@@ -91,7 +91,7 @@ from pypeline import (
 )
 
 from fixed_point import make_fixed_t
-from stream.stream import make_stream_interface, make_stream_t
+from stream import make_stream_interface, make_stream_t
 from fifo import make_fifo
 from dsp.magnitude import make_magnitude
 from dsp.dc_block import make_dc_block
@@ -105,15 +105,15 @@ def make_pulse_detect_fsm(data_t, width_t=uint32_t, handshake="elastic"):
                format is make_fixed_t(32, 0, signed=False) == uint32_t).
     width_t:   integer type for pulse_width / max_width (default uint32_t,
                matching the README's Configuration Parameters table).
-    handshake: "elastic"    -> pulse_detect_fsm(stream_in_if: in_intrf.fwd_t,
-                                             pdw_out_if: out_intrf.fb_t,
+    handshake: "elastic"    -> pulse_detect_fsm(stream_in_if: in_if_t.fwd_t,
+                                             pdw_out_if: out_if_t.fb_t,
                                              threshold_high, threshold_low,
                                              max_width) -> pulse_detect_fsm_t
                                (candidate stream is always valid/ready;
                                only the INPUT power stream's handshake mode
                                varies)
                "valid_only" -> pulse_detect_fsm(in_stream: make_stream_t(data_t),
-                                             pdw_out_if: out_intrf.fb_t,
+                                             pdw_out_if: out_if_t.fb_t,
                                              threshold_high, threshold_low,
                                              max_width) -> pulse_detect_fsm_t
 
@@ -144,7 +144,7 @@ def make_pulse_detect_fsm(data_t, width_t=uint32_t, handshake="elastic"):
     The returned `pulse_detect_fsm` carries metadata attributes:
     .data_t .width_t .candidate_pdw_t .state_t .handshake .gate_latency
     .in_fwd_t/.out_fwd_t (elastic) .in_stream_t/.out_stream_t (valid_only)
-    .in_fb_t/.out_fb_t .in_intrf/.out_intrf
+    .in_fb_t/.out_fb_t .in_if_t/.out_if_t
     """
     data_val_t = data_t.typeof("val")
 
@@ -166,15 +166,15 @@ def make_pulse_detect_fsm(data_t, width_t=uint32_t, handshake="elastic"):
         pulse_width: width_t
         peak_power: data_t
 
-    out_intrf = make_stream_interface(candidate_pdw_t)
+    out_if_t = make_stream_interface(candidate_pdw_t)
 
     if handshake == "elastic":
-        in_intrf = make_stream_interface(data_t)
+        in_if_t = make_stream_interface(data_t)
 
         @struct
         class pulse_detect_fsm_t(NamedTuple):
-            stream_in_if: in_intrf.fb_t  # input port's reverse half travels out
-            pdw_out_if: out_intrf.fwd_t  # output port's feedforward half travels out
+            stream_in_if: in_if_t.fb_t  # input port's reverse half travels out
+            pdw_out_if: out_if_t.fwd_t  # output port's feedforward half travels out
             gate_valid: uint1_t
             gate_last: uint1_t
             gate_advance: uint1_t
@@ -183,8 +183,8 @@ def make_pulse_detect_fsm(data_t, width_t=uint32_t, handshake="elastic"):
 
         @hw_func
         def pulse_detect_fsm(
-            stream_in_if: in_intrf.fwd_t,
-            pdw_out_if: out_intrf.fb_t,
+            stream_in_if: in_if_t.fwd_t,
+            pdw_out_if: out_if_t.fb_t,
             threshold_high: data_t,
             threshold_low: data_t,
             max_width: width_t,
@@ -193,7 +193,7 @@ def make_pulse_detect_fsm(data_t, width_t=uint32_t, handshake="elastic"):
             state: Reg[state_t]
             width: Reg[width_t]
             peak: Reg[data_val_t]
-            pdw_reg: Reg[out_intrf.stream_t]  # 1-deep output slot (never .fwd_t)
+            pdw_reg: Reg[out_if_t.stream_t]  # 1-deep output slot (never .fwd_t)
             overflow: Reg[uint1_t]
             held_in_pulse: Reg[uint1_t]  # previous accepted sample's gate status
             gate_valid_r: Reg[uint1_t]
@@ -325,7 +325,7 @@ def make_pulse_detect_fsm(data_t, width_t=uint32_t, handshake="elastic"):
 
         @struct
         class pulse_detect_fsm_t(NamedTuple):
-            pdw_out_if: out_intrf.fwd_t  # output port's feedforward half travels out
+            pdw_out_if: out_if_t.fwd_t  # output port's feedforward half travels out
             gate_valid: uint1_t
             gate_last: uint1_t
             gate_advance: uint1_t
@@ -335,7 +335,7 @@ def make_pulse_detect_fsm(data_t, width_t=uint32_t, handshake="elastic"):
         @hw_func
         def pulse_detect_fsm(
             in_stream: in_stream_t,
-            pdw_out_if: out_intrf.fb_t,
+            pdw_out_if: out_if_t.fb_t,
             threshold_high: data_t,
             threshold_low: data_t,
             max_width: width_t,
@@ -344,7 +344,7 @@ def make_pulse_detect_fsm(data_t, width_t=uint32_t, handshake="elastic"):
             state: Reg[state_t]
             width: Reg[width_t]
             peak: Reg[data_val_t]
-            pdw_reg: Reg[out_intrf.stream_t]  # 1-deep output slot (never .fwd_t)
+            pdw_reg: Reg[out_if_t.stream_t]  # 1-deep output slot (never .fwd_t)
             overflow: Reg[uint1_t]
             held_in_pulse: Reg[uint1_t]
             gate_valid_r: Reg[uint1_t]
@@ -468,14 +468,14 @@ def make_pulse_detect_fsm(data_t, width_t=uint32_t, handshake="elastic"):
     # Accepted-sample stages between the pulse-terminating sample and the
     # candidate appearing on pdw_out_if (pdw_reg, presented pre-update).
     pulse_detect_fsm.pdw_latency = 1
-    pulse_detect_fsm.in_fwd_t = in_intrf.fwd_t if handshake == "elastic" else None
+    pulse_detect_fsm.in_fwd_t = in_if_t.fwd_t if handshake == "elastic" else None
     pulse_detect_fsm.in_stream_t = in_stream_t if handshake == "valid_only" else None
-    pulse_detect_fsm.out_fwd_t = out_intrf.fwd_t
+    pulse_detect_fsm.out_fwd_t = out_if_t.fwd_t
     pulse_detect_fsm.out_stream_t = None
-    pulse_detect_fsm.in_fb_t = in_intrf.fb_t if handshake == "elastic" else None
-    pulse_detect_fsm.out_fb_t = out_intrf.fb_t
-    pulse_detect_fsm.in_intrf = in_intrf if handshake == "elastic" else None
-    pulse_detect_fsm.out_intrf = out_intrf
+    pulse_detect_fsm.in_fb_t = in_if_t.fb_t if handshake == "elastic" else None
+    pulse_detect_fsm.out_fb_t = out_if_t.fb_t
+    pulse_detect_fsm.in_if_t = in_if_t if handshake == "elastic" else None
+    pulse_detect_fsm.out_if_t = out_if_t
     return pulse_detect_fsm
 
 

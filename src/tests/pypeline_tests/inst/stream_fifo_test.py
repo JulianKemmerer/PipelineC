@@ -23,7 +23,7 @@ from stream.stream_fifo import make_stream_fifo
 # depth=5 rounds up to the real hardware's capacity of 8, same as fifo_test.py.
 stream_fifo = make_stream_fifo(uint32_t, 5)
 
-uint32_plain_t = stream_fifo.stream_intrf.stream_t
+uint32_plain_t = stream_fifo.stream_if_t.stream_t
 CAPACITY = 8
 
 

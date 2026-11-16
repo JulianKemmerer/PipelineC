@@ -56,7 +56,7 @@ from dsp.lut_atan2 import make_lut_atan2
 from dsp.magnitude import make_magnitude
 from dsp.moving_avg import make_moving_avg
 from dsp.nco import make_lut_nco
-from stream.stream import make_stream_t
+from stream import make_stream_t
 
 RESET_AT = 21
 N_CYCLES = 70
@@ -142,7 +142,7 @@ def source_and_chain() -> dsp_out_t:
         n += 1
     f8: int8_t = (m * 29 + 3) & 0xFF
     f = fir(
-        fir.in_fwd_t(stream=fir.in_intrf.stream_t(data=d8_t(val=f8), valid=v)),
+        fir.in_fwd_t(stream=fir.in_if_t.stream_t(data=d8_t(val=f8), valid=v)),
         fir.out_fb_t(ready=sink_ready),
     )
     o.fir = f.stream_out_if.stream

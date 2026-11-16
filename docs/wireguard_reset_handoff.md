@@ -11,7 +11,9 @@ repository itself was not touched.
 
 **Patch:** `/media/1TB/tmp/pypeline_handoffs/wireguard_reset.patch`.
 - It is made against wireguard-fpga `215c2eb9`, with paths relative to
-  `3.build/pypeline_build`, and applies cleanly there (`git apply --check`).
+  `3.build/pypeline_build`, but its interface types already follow the `_if_t`
+  naming convention, which wireguard-fpga adopts in a separate change. It no
+  longer applies cleanly to `215c2eb9` or to later commits: rebase it first.
 - From the repository root, apply it with
   `git apply -p1 --directory=3.build/pypeline_build wireguard_reset.patch`.
 - It touches 19 files.

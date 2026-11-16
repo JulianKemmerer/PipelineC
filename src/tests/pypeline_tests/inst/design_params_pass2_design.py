@@ -9,7 +9,7 @@ same in every pass. CORE_LATENCY is a direct design read of the bottom-up
 value, for the pass report (the factory also reads it, to size its FIFO)."""
 from pypeline import MAIN, hw_func, param, uint8_t, Input, make_reset, uint1_t
 
-from stream.stream import make_stream_interface
+from stream import make_stream_interface
 from stream.stream_auto_pipeline import make_stream_auto_pipeline
 
 START = param("START", 1)
@@ -23,7 +23,7 @@ def pass2_core(x: uint8_t) -> uint8_t:
     return b / (a + 1)
 
 
-uint8_stream_intrf = make_stream_interface(uint8_t)
+uint8_stream_if_t = make_stream_interface(uint8_t)
 pass2_sap = make_stream_auto_pipeline(pass2_core, start_latency=START)
 
 CORE_LATENCY = pass2_sap.auto_pipeline.latency  # DIRECT_LATENCY_READ
@@ -36,6 +36,6 @@ rst: Input[uint1_t] = make_reset()
 
 @MAIN(100.0, reset=rst, reset_registers="all")
 def design_params_pass2_main(
-    stream_in_if: uint8_stream_intrf.fwd_t, stream_out_if: uint8_stream_intrf.fb_t
+    stream_in_if: uint8_stream_if_t.fwd_t, stream_out_if: uint8_stream_if_t.fb_t
 ) -> pass2_sap.return_t:
     return pass2_sap(stream_in_if, stream_out_if)

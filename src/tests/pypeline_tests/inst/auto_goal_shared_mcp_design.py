@@ -3,7 +3,7 @@ object used under a 50 MHz and a 100 MHz MAIN. One tag has one count, which
 must meet both clocks."""
 from pypeline import MAIN, PART, Reg, hw_func, uint32_t, Input, make_reset, uint1_t
 
-from stream.stream import make_stream_interface
+from stream import make_stream_interface
 from stream.stream_multi_cycle import make_stream_auto_multi_cycle
 
 PART("xc7a35ticsg324-1l")
@@ -17,17 +17,17 @@ def mix(x: uint32_t) -> uint32_t:
     return acc
 
 
-word_intrf = make_stream_interface(uint32_t)
+word_if_t = make_stream_interface(uint32_t)
 mix_mcp = make_stream_auto_multi_cycle(mix)
 
 
 @hw_func
 def lane() -> uint32_t:
     x: Reg[uint32_t] = 1
-    in_stream_if: word_intrf.stream_t
+    in_stream_if: word_if_t.stream_t
     in_stream_if.data = x
     in_stream_if.valid = 1
-    f = mix_mcp(word_intrf.fwd_t(stream=in_stream_if), mix_mcp.out_fb_t(ready=1))
+    f = mix_mcp(word_if_t.fwd_t(stream=in_stream_if), mix_mcp.out_fb_t(ready=1))
     if f.stream_in_if.ready:
         x = x + 1
     return f.stream_out_if.stream.data

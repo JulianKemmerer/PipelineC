@@ -55,27 +55,27 @@ rst: Input[uint1_t] = make_reset()
 
 @MAIN(reset=rst, reset_registers="all")
 def stream_ram_test_bram(
-    p0_req_if: bram.p0_req_intrf.fwd_t, p0_resp_if: bram.p0_resp_intrf.fb_t
+    p0_req_if: bram.p0_req_if_t.fwd_t, p0_resp_if: bram.p0_resp_if_t.fb_t
 ) -> bram.return_t:
     return bram(p0_req_if, p0_resp_if)
 
 
 @MAIN(reset=rst, reset_registers="all")
 def stream_ram_test_comb(
-    p0_req_if: comb.p0_req_intrf.fwd_t,
-    p0_resp_if: comb.p0_resp_intrf.fb_t,
-    p1_req_if: comb.p1_req_intrf.fwd_t,
-    p1_resp_if: comb.p1_resp_intrf.fb_t,
+    p0_req_if: comb.p0_req_if_t.fwd_t,
+    p0_resp_if: comb.p0_resp_if_t.fb_t,
+    p1_req_if: comb.p1_req_if_t.fwd_t,
+    p1_resp_if: comb.p1_resp_if_t.fb_t,
 ) -> comb.return_t:
     return comb(p0_req_if, p0_resp_if, p1_req_if, p1_resp_if)
 
 
 @MAIN(reset=rst, reset_registers="all")
 def stream_ram_test_sdp(
-    p0_req_if: sdp.p0_req_intrf.fwd_t,
-    p0_resp_if: sdp.p0_resp_intrf.fb_t,
-    p1_req_if: sdp.p1_req_intrf.fwd_t,
-    p1_resp_if: sdp.p1_resp_intrf.fb_t,
+    p0_req_if: sdp.p0_req_if_t.fwd_t,
+    p0_resp_if: sdp.p0_resp_if_t.fb_t,
+    p1_req_if: sdp.p1_req_if_t.fwd_t,
+    p1_resp_if: sdp.p1_resp_if_t.fb_t,
 ) -> sdp.return_t:
     return sdp(p0_req_if, p0_resp_if, p1_req_if, p1_resp_if)
 
@@ -84,13 +84,13 @@ def stream_ram_test_sdp(
 
 
 def request(sram, i, valid, **payload):
-    intrf = getattr(sram, f"p{i}_req_intrf")
+    req_if_t = getattr(sram, f"p{i}_req_if_t")
     data = getattr(sram, f"p{i}_req_t")(**payload)
-    return intrf.fwd_t(stream=intrf.stream_t(data=data, valid=valid))
+    return req_if_t.fwd_t(stream=req_if_t.stream_t(data=data, valid=valid))
 
 
 def ready(sram, i, value):
-    return getattr(sram, f"p{i}_resp_intrf").fb_t(ready=value)
+    return getattr(sram, f"p{i}_resp_if_t").fb_t(ready=value)
 
 
 def fields(v):

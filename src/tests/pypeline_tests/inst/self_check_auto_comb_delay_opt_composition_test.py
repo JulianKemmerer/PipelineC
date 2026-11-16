@@ -81,7 +81,7 @@ def make_checker(stream, t, name):
         x.c = sent
         x.d = 5
         x.sel = sent[0]
-        request: stream.in_intrf.stream_t
+        request: stream.in_if_t.stream_t
         request.data = x
         request.valid = sent < 8
         ready: uint1_t = cycle[1:0] != 0

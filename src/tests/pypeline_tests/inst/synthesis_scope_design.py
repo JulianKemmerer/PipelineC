@@ -19,7 +19,7 @@ from pypeline import (
     make_reset,
 )
 from fifo import make_fifo
-from stream.stream import make_stream_interface
+from stream import make_stream_interface
 from stream.stream_multi_cycle import (
     make_stream_auto_multi_cycle,
     make_stream_multi_cycle,

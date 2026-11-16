@@ -70,9 +70,9 @@ fb: Wire[uint16_t]
 
 @MAIN
 def fifos():
-    ra = F8(F8.fwd_t(stream=F8.stream_intrf.stream_t(data=7, valid=1)), F8.fb_t(ready=1))
+    ra = F8(F8.fwd_t(stream=F8.stream_if_t.stream_t(data=7, valid=1)), F8.fb_t(ready=1))
     rb = F16(
-        F16.fwd_t(stream=F16.stream_intrf.stream_t(data=900, valid=1)), F16.fb_t(ready=1)
+        F16.fwd_t(stream=F16.stream_if_t.stream_t(data=900, valid=1)), F16.fb_t(ready=1)
     )
     fa = ra.out_stream_if.stream.data
     fb = rb.out_stream_if.stream.data

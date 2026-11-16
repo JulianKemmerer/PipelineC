@@ -109,56 +109,56 @@ rx_arr = make_byte_stream_to_type(uint16_t[4], N)
 
 @MAIN
 def tx_hdr_main(
-    stream_in_if: tx_hdr.in_intrf.fwd_t, stream_out_if: tx_hdr.out_fb_t
+    stream_in_if: tx_hdr.in_if_t.fwd_t, stream_out_if: tx_hdr.out_fb_t
 ) -> tx_hdr.return_t:
     return tx_hdr(stream_in_if, stream_out_if)
 
 
 @MAIN
 def rx_hdr_main(
-    stream_in_if: rx_hdr.in_intrf.fwd_t, stream_out_if: rx_hdr.out_fb_t
+    stream_in_if: rx_hdr.in_if_t.fwd_t, stream_out_if: rx_hdr.out_fb_t
 ) -> rx_hdr.return_t:
     return rx_hdr(stream_in_if, stream_out_if)
 
 
 @MAIN
 def tx_al_main(
-    stream_in_if: tx_al.in_intrf.fwd_t, stream_out_if: tx_al.out_fb_t
+    stream_in_if: tx_al.in_if_t.fwd_t, stream_out_if: tx_al.out_fb_t
 ) -> tx_al.return_t:
     return tx_al(stream_in_if, stream_out_if)
 
 
 @MAIN
 def rx_al_main(
-    stream_in_if: rx_al.in_intrf.fwd_t, stream_out_if: rx_al.out_fb_t
+    stream_in_if: rx_al.in_if_t.fwd_t, stream_out_if: rx_al.out_fb_t
 ) -> rx_al.return_t:
     return rx_al(stream_in_if, stream_out_if)
 
 
 @MAIN
 def tx_nest_main(
-    stream_in_if: tx_nest.in_intrf.fwd_t, stream_out_if: tx_nest.out_fb_t
+    stream_in_if: tx_nest.in_if_t.fwd_t, stream_out_if: tx_nest.out_fb_t
 ) -> tx_nest.return_t:
     return tx_nest(stream_in_if, stream_out_if)
 
 
 @MAIN
 def rx_nest_main(
-    stream_in_if: rx_nest.in_intrf.fwd_t, stream_out_if: rx_nest.out_fb_t
+    stream_in_if: rx_nest.in_if_t.fwd_t, stream_out_if: rx_nest.out_fb_t
 ) -> rx_nest.return_t:
     return rx_nest(stream_in_if, stream_out_if)
 
 
 @MAIN
 def tx_arr_main(
-    stream_in_if: tx_arr.in_intrf.fwd_t, stream_out_if: tx_arr.out_fb_t
+    stream_in_if: tx_arr.in_if_t.fwd_t, stream_out_if: tx_arr.out_fb_t
 ) -> tx_arr.return_t:
     return tx_arr(stream_in_if, stream_out_if)
 
 
 @MAIN
 def rx_arr_main(
-    stream_in_if: rx_arr.in_intrf.fwd_t, stream_out_if: rx_arr.out_fb_t
+    stream_in_if: rx_arr.in_if_t.fwd_t, stream_out_if: rx_arr.out_fb_t
 ) -> rx_arr.return_t:
     return rx_arr(stream_in_if, stream_out_if)
 
@@ -168,11 +168,11 @@ def rx_arr_main(
 
 def _send(top, mod, value, cycles=30):
     """Push one value through a type_to_byte_stream; return its beats."""
-    frag_t = mod.in_intrf.stream_t.typeof("data")
+    frag_t = mod.in_if_t.stream_t.typeof("data")
 
     def word(valid):
-        return mod.in_intrf.fwd_t(
-            mod.in_intrf.stream_t(
+        return mod.in_if_t.fwd_t(
+            mod.in_if_t.stream_t(
                 data=frag_t(frag=value, eod=[1]), valid=valid
             )
         )
@@ -199,12 +199,12 @@ def _send(top, mod, value, cycles=30):
 def _recv(top, mod, beats, cycles=30):
     """Push beats through a byte_stream_to_type; return the recovered values
     as bytes (re-packed, so comparison needs no per-type field walk)."""
-    st = mod.in_intrf.stream_t
+    st = mod.in_if_t.stream_t
     frag_t = st.typeof("data")
     bus_t = frag_t.typeof("frag")
 
     def word(data, keep, eod, valid=1):
-        return mod.in_intrf.fwd_t(
+        return mod.in_if_t.fwd_t(
             st(
                 data=frag_t(frag=bus_t(data=list(data), keep=list(keep)), eod=[eod]),
                 valid=valid,

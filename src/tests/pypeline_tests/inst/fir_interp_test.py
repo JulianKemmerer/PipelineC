@@ -70,7 +70,7 @@ def _drive_elastic(
         rdy = 1 if out_ready_fn(cycle) else 0
         r = sim_call(
             fir,
-            fir.in_fwd_t(stream=fir.in_intrf.stream_t(data=fir.data_t(val=d), valid=v)),
+            fir.in_fwd_t(stream=fir.in_if_t.stream_t(data=fir.data_t(val=d), valid=v)),
             fir.out_fb_t(ready=rdy),
         )
         if v and int(r.stream_in_if.ready):
@@ -102,8 +102,8 @@ def test_zero_stuffer_beats():
         rdy = 1 if stall_rng.random() < 0.6 else 0
         r = sim_call(
             stuffer2,
-            stuffer2.stream_intrf.fwd_t(
-                stream=stuffer2.stream_intrf.stream_t(data=data_t(val=d), valid=v)
+            stuffer2.stream_if_t.fwd_t(
+                stream=stuffer2.stream_if_t.stream_t(data=data_t(val=d), valid=v)
             ),
             stuffer2.in_fb_t(ready=rdy),
         )

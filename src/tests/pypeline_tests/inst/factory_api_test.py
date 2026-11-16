@@ -18,10 +18,10 @@ import pypeline as py
 from axi.axis import make_dwidth_narrow, make_dwidth_widen, make_keep_count
 from fixed_point import make_fixed_t, register_fixed_ops
 from floating_point import float16_t, register_float_ops
-from interface.interface_func import make_hw_func_from_interface_func
+from interface_func import make_hw_func_from_interface_func
 from ram import make_ram
 from stream.skid_buffer import make_skid_buffer
-from stream.stream import make_stream_interface
+from stream import make_stream_interface
 from stream.stream_auto_pipeline import make_stream_auto_pipeline
 from stream.stream_ram import make_stream_ram
 
@@ -101,23 +101,23 @@ def test_stream_result_contains_both_port_directions():
     assert block.return_t.typeof("stream_in_if") is block.in_fb_t
     assert block.return_t.typeof("stream_out_if") is block.out_fwd_t
     assert py.hw_arg_types(block) == (block.in_fwd_t, block.out_fb_t)
-    assert block.in_intrf.stream_t.typeof("data") is py.uint8_t
-    assert block.out_intrf.stream_t.typeof("data") is py.uint16_t
+    assert block.in_if_t.stream_t.typeof("data") is py.uint8_t
+    assert block.out_if_t.stream_t.typeof("data") is py.uint16_t
 
 
 def test_width_converters_expose_directional_port_types():
     widen = make_dwidth_widen(py.uint8_t, 2, 3)
     narrow = make_dwidth_narrow(py.uint8_t, 2, 3)
     assert py.hw_arg_types(widen) == (
-        widen.narrow_in_intrf.fwd_t,
-        widen.wide_out_intrf.fb_t,
+        widen.narrow_in_if_t.fwd_t,
+        widen.wide_out_if_t.fb_t,
     )
     assert py.hw_arg_types(narrow) == (
-        narrow.wide_in_intrf.fwd_t,
-        narrow.narrow_out_intrf.fb_t,
+        narrow.wide_in_if_t.fwd_t,
+        narrow.narrow_out_if_t.fb_t,
     )
-    assert widen.return_t.typeof("wide_out_if") is widen.wide_out_intrf.fwd_t
-    assert narrow.return_t.typeof("narrow_out_if") is narrow.narrow_out_intrf.fwd_t
+    assert widen.return_t.typeof("wide_out_if") is widen.wide_out_if_t.fwd_t
+    assert narrow.return_t.typeof("narrow_out_if") is narrow.narrow_out_if_t.fwd_t
 
 
 def test_ram_cache_returns_the_complete_callable():
@@ -133,10 +133,10 @@ def test_ram_cache_returns_the_complete_callable():
 
 
 def test_generated_interface_cache_returns_the_complete_callable():
-    intrf = make_stream_interface(py.uint8_t)
-    skid = make_skid_buffer(intrf)
+    stream_if_t = make_stream_interface(py.uint8_t)
+    skid = make_skid_buffer(stream_if_t)
 
-    def wiring(stream_in_if: intrf) -> intrf:
+    def wiring(stream_in_if: stream_if_t) -> stream_if_t:
         stage = skid(stream_in_if)
         return stage.stream_out_if
 
@@ -144,8 +144,8 @@ def test_generated_interface_cache_returns_the_complete_callable():
     assert make_hw_func_from_interface_func(wiring) is first
     assert callable(first)
     assert first.return_t is py.hw_return_type(first)
-    assert first.return_t.typeof("stream_in_if") is intrf.fb_t
-    assert first.return_t.typeof("out_port_if") is intrf.fwd_t
+    assert first.return_t.typeof("stream_in_if") is stream_if_t.fb_t
+    assert first.return_t.typeof("out_port_if") is stream_if_t.fwd_t
 
 
 def test_fixed_operations_distinguish_operands_from_widened_results():

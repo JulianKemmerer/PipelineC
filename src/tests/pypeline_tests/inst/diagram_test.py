@@ -220,12 +220,12 @@ def test_feedback_edges_are_marked():
 def test_types_carry_interface_roles():
     data = _page(INTERFACES)[0]
     roles = {t.get("name", t["c"]): t.get("role") for t in data["types"]}
-    assert roles["chan_intrf.fwd_t"] == "fwd", roles
-    assert roles["chan_intrf.fb_t"] == "fb", roles
+    assert roles["chan_if_t.fwd_t"] == "fwd", roles
+    assert roles["chan_if_t.fb_t"] == "fb", roles
     # A generated interface function types its Feedbacks with plain copies
     # of the halves, which keep the fields but not the role
-    assert roles["chan_intrf.fwd_t_plain"] == "fwd", roles
-    assert roles["chan_intrf.fb_t_plain"] == "fb", roles
+    assert roles["chan_if_t.fwd_t_plain"] == "fwd", roles
+    assert roles["chan_if_t.fb_t_plain"] == "fb", roles
     assert roles["byte_stream_t"] == "fwd", roles  # a plain {data, valid} stream
     assert roles["route_t"] == "fwd", roles  # holds a forward half
     assert roles["uint8_t"] is None, roles
@@ -236,8 +236,8 @@ def test_type_names_read_like_the_source():
     named = {t["c"]: t.get("name") for t in data["types"]}
     # The names the module gives the types, an interface's with its attribute
     names = set(named.values())
-    assert {"byte_stream_t", "flag_stream_t", "chan_intrf.fb_t"} <= names, named
-    assert named["chan_intrf_t_data_uint16_t_valid_uint1_t"] == "chan_intrf.fwd_t", named
+    assert {"byte_stream_t", "flag_stream_t", "chan_if_t.fb_t"} <= names, named
+    assert named["chan_if_fwd_t_data_uint16_t_valid_uint1_t"] == "chan_if_t.fwd_t", named
     # Two stream types no module-level name gives are classes named stream_t:
     # their factory arguments tell them apart
     streams = sorted(n for n in names if n and n.startswith("stream_t"))
@@ -253,15 +253,15 @@ def test_struct_types_list_their_fields():
     assert fields == [("first", "uint8_t"), ("second", "uint8_t")], fields
     # A struct of interface halves is a bundle of ports, a half one port
     assert "interface" not in rows["route_t"], rows["route_t"]
-    assert rows["chan_intrf.fwd_t"]["interface"], rows["chan_intrf.fwd_t"]
+    assert rows["chan_if_t.fwd_t"]["interface"], rows["chan_if_t.fwd_t"]
     assert rows["byte_stream_t"]["interface"], rows["byte_stream_t"]
 
 
 def test_interface_wire_type_names_its_feedback_fields():
     rows = {t.get("name", t["c"]): t for t in _page(INTERFACES)[0]["types"]}
-    wire = rows["chan_intrf.wire_t"]
+    wire = rows["chan_if_t.wire_t"]
     assert wire["feedback"] == ["ready"] and wire["interface"], wire
-    assert "feedback" not in rows["chan_intrf.fwd_t"], rows["chan_intrf.fwd_t"]
+    assert "feedback" not in rows["chan_if_t.fwd_t"], rows["chan_if_t.fwd_t"]
 
 
 def test_field_selects_and_assemblies_record_their_paths():
@@ -296,7 +296,7 @@ def test_generated_function_shows_its_source_function():
     (merge,) = [f for n, f in funcs.items() if n.startswith("merge_if")]
     with open(INTERFACES) as f:
         lines = f.read().split("\n")
-    line = lines.index("def merge(axis_in_if: chan_intrf) -> chan_intrf:") + 1
+    line = lines.index("def merge(axis_in_if: chan_if_t) -> chan_if_t:") + 1
     assert (merge["def"], merge["file"], merge["line"]) == ("merge", INTERFACES, line)
 
 

@@ -42,7 +42,7 @@ clock-crossing headers. pypeline uses ordinary Python imports.
 |---|---|
 | `#include "uintN_t.h"` | not needed — integer types are built-in |
 | `#include "axi/axis.h"` | `from stream.axis import make_axis_t` |
-| `#include "stream/stream.h"` | `from stream.stream import make_stream_t` |
+| `#include "stream/stream.h"` | `from stream import make_stream_t` |
 | `#include "global_func_inst.h"` | not needed — use Python directly (see §8) |
 | `#include "dsp/fir.h"` (macro-config FIR) | `from dsp.fir import make_fir` (see guide §25 "DSP: FIR Filters") |
 | `#include "dsp/fir_decim.h"` / `"dsp/fir_interp.h"` | `from dsp.fir_decim import make_fir_decim` / `from dsp.fir_interp import make_fir_interp` |
@@ -605,7 +605,7 @@ The other three modes have no C equivalent. `"forward"` and `"reverse"` each cut
 one direction for one register instead of two, and `"bypass"` is pure wires — see
 [pypeline_guide.md: Skid Buffers: `make_skid_buffer`](pypeline_guide.md#skid-buffers-make_skid_buffer) for the
 trade-offs. On an AXI-Stream port use
-`axi.axis.make_axis_skid_buffer(axis_intrf, mode=...)`, which is the same module
+`axi.axis.make_axis_skid_buffer(axis_if_t, mode=...)`, which is the same module
 behind a one-line face.
 
 The `GLOBAL_STREAM_FIFO_SKID_BUFF` / `_SKID_IN_BUFF` / `_SKID_OUT_BUFF` variants

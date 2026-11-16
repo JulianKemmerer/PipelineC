@@ -165,14 +165,14 @@ CTRL_DEFAULTS = pdw_ctrl_t(
 def make_pdw_ctrl(n=4, registered_ready=False):
     """Build the control register file. Returns pdw_ctrl, with its complete return type at pdw_ctrl.return_t.
 
-        pdw_ctrl(axis_in_if: pdw_ctrl.axis_intrf.fwd_t) -> pdw_ctrl_out_t
+        pdw_ctrl(axis_in_if: pdw_ctrl.axis_if_t.fwd_t) -> pdw_ctrl_out_t
 
     Call it under a `reset_registers="all"` @MAIN reset from `tx0_s_axis_rst`
     alone, not from the combined global reset -- see this module's docstring.
 
     Result fields:
         .regs        (pdw_ctrl_t) the live register values
-        .axis_in_if  (axis_intrf.fb_t) reverse half of the AXIS slave port
+        .axis_in_if  (axis_if_t.fb_t) reverse half of the AXIS slave port
         .updated     (uint1_t) pulses the cycle a frame's last beat is accepted
         .runt        (uint1_t) pulses when a short frame was discarded
 
@@ -193,13 +193,13 @@ def make_pdw_ctrl(n=4, registered_ready=False):
 
     @struct
     class pdw_ctrl_out_t(NamedTuple):
-        axis_in_if: rx.axis_intrf.fb_t
+        axis_in_if: rx.axis_if_t.fb_t
         regs: pdw_ctrl_t
         updated: uint1_t
         runt: uint1_t
 
     @hw_func
-    def pdw_ctrl(axis_in_if: rx.axis_intrf.fwd_t) -> pdw_ctrl_out_t:
+    def pdw_ctrl(axis_in_if: rx.axis_if_t.fwd_t) -> pdw_ctrl_out_t:
         o: pdw_ctrl_out_t
         # Resets to CTRL_DEFAULTS. The limiter's and deserializer's byte
         # counters reset with it, so a host torn down mid-frame leaves no byte
@@ -231,7 +231,7 @@ def make_pdw_ctrl(n=4, registered_ready=False):
 
     pdw_ctrl.ctrl_t = pdw_ctrl_t
     pdw_ctrl.defaults = CTRL_DEFAULTS
-    pdw_ctrl.axis_intrf = rx.axis_intrf
+    pdw_ctrl.axis_if_t = rx.axis_if_t
     pdw_ctrl.n = n
     pdw_ctrl.n_bytes = CTRL_N_BYTES
     pdw_ctrl.n_beats = (CTRL_N_BYTES + n - 1) // n

@@ -30,7 +30,7 @@ from pypeline import (
 )
 
 from fixed_point import make_fixed_t, make_fixed_resize
-from stream.stream import make_stream_interface, make_stream_t
+from stream import make_stream_interface, make_stream_t
 from stream.stream_auto_pipeline import make_stream_auto_pipeline
 
 from dsp.fir_common import data_range, signed_bits_for
@@ -59,8 +59,8 @@ def make_dc_block(
                rounding/overflow are then unused).
     rounding:  "truncate" | "round_half_up" | "round_half_even" | "round_half_away"
     overflow:  "wrap" | "saturate"
-    handshake: "elastic"    -> dc_block(stream_in_if: in_intrf.fwd_t,
-                                         stream_out_if: out_intrf.fb_t) -> dc_block_t
+    handshake: "elastic"    -> dc_block(stream_in_if: in_if_t.fwd_t,
+                                         stream_out_if: out_if_t.fb_t) -> dc_block_t
                "valid_only" -> dc_block(in_stream: make_stream_t(data_t))
                                    -> make_stream_t(out_t)
     latency / start_latency / max_latency (keyword-only, default None):
@@ -71,7 +71,7 @@ def make_dc_block(
     The returned `dc_block` carries metadata attributes:
     .data_t .out_t .k .mean_t .diff_t .full_precision .rounding .overflow
     .handshake .in_fwd_t/.out_fwd_t (elastic) .in_stream_t/.out_stream_t
-    (valid_only) .in_fb_t/.out_fb_t .in_intrf/.out_intrf
+    (valid_only) .in_fb_t/.out_fb_t .in_if_t/.out_if_t
     """
     if not (isinstance(k, int) and k >= 1):
         raise ValueError(f"make_dc_block: k must be an int >= 1, got {k!r}")
@@ -113,17 +113,17 @@ def make_dc_block(
             max_latency=max_latency,
         )
 
-        in_intrf = make_stream_interface(data_t)
-        out_intrf = sp_func.out_intrf
+        in_if_t = make_stream_interface(data_t)
+        out_if_t = sp_func.out_if_t
 
         @struct
         class dc_block_t(NamedTuple):
-            stream_in_if: in_intrf.fb_t
-            stream_out_if: out_intrf.fwd_t
+            stream_in_if: in_if_t.fb_t
+            stream_out_if: out_if_t.fwd_t
 
         @hw_func
         def dc_block(
-            stream_in_if: in_intrf.fwd_t, stream_out_if: out_intrf.fb_t
+            stream_in_if: in_if_t.fwd_t, stream_out_if: out_if_t.fb_t
         ) -> dc_block_t:
             mean: Reg[mean_t]
             x_wide: mean_val_t = stream_in_if.stream.data.val
@@ -131,10 +131,10 @@ def make_dc_block(
             diff_val: diff_val_t = x_ext - mean.val
             diff: diff_t = diff_t(val=diff_val)
 
-            sp_in: sp_func.in_intrf.stream_t
+            sp_in: sp_func.in_if_t.stream_t
             sp_in.data = diff
             sp_in.valid = stream_in_if.stream.valid
-            sp_o = sp_func(sp_func.in_intrf.fwd_t(sp_in), stream_out_if)
+            sp_o = sp_func(sp_func.in_if_t.fwd_t(sp_in), stream_out_if)
 
             accepted: uint1_t = stream_in_if.stream.valid & sp_o.stream_in_if.ready
             if accepted:
@@ -200,14 +200,14 @@ def make_dc_block(
     dc_block.rounding = rounding
     dc_block.overflow = overflow
     dc_block.handshake = handshake
-    dc_block.in_fwd_t = in_intrf.fwd_t if handshake == "elastic" else None
+    dc_block.in_fwd_t = in_if_t.fwd_t if handshake == "elastic" else None
     dc_block.in_stream_t = in_stream_t if handshake == "valid_only" else None
-    dc_block.out_fwd_t = out_intrf.fwd_t if handshake == "elastic" else None
+    dc_block.out_fwd_t = out_if_t.fwd_t if handshake == "elastic" else None
     dc_block.out_stream_t = out_stream_t if handshake == "valid_only" else None
-    dc_block.in_fb_t = in_intrf.fb_t if handshake == "elastic" else None
-    dc_block.out_fb_t = out_intrf.fb_t if handshake == "elastic" else None
-    dc_block.in_intrf = in_intrf if handshake == "elastic" else None
-    dc_block.out_intrf = out_intrf if handshake == "elastic" else None
+    dc_block.in_fb_t = in_if_t.fb_t if handshake == "elastic" else None
+    dc_block.out_fb_t = out_if_t.fb_t if handshake == "elastic" else None
+    dc_block.in_if_t = in_if_t if handshake == "elastic" else None
+    dc_block.out_if_t = out_if_t if handshake == "elastic" else None
 
     # Latency metadata (valid_only mode only -- see magnitude.py's identical
     # comment for why this is a lazy accessor rather than an eager attribute).

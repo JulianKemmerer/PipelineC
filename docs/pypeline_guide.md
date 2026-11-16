@@ -1376,8 +1376,8 @@ between a stream interface's two halves and their plain payload types, so the co
 "give one field a name nobody needs to read" pattern collapses:
 
 ```python
-axis_out_if = axis128_intrf.fb_t(some_ready_value)     # was fb_t(ready=some_ready_value)
-in_stream_if = axis128_intrf.fwd_t(some_stream_value)   # was fwd_t(stream=some_stream_value)
+axis_out_if = axis128_if_t.fb_t(some_ready_value)     # was fb_t(ready=some_ready_value)
+in_stream_if = axis128_if_t.fwd_t(some_stream_value)   # was fwd_t(stream=some_stream_value)
 ```
 
 The keyword form (`fb_t(ready=x)`, `fwd_t(stream=x)`) still works everywhere — casting is
@@ -1955,8 +1955,8 @@ attributes name the port's role at the returned function:
 | Attribute, when supported | Meaning |
 |---|---|
 | `.return_t` | Complete function result; `None` for an unannotated or void return |
-| `.in_intrf`, `.in_fwd_t`, `.in_fb_t` | Input interface, data received as an argument, and feedback returned to the producer |
-| `.out_intrf`, `.out_fwd_t`, `.out_fb_t` | Output interface, data returned to the consumer, and feedback received as an argument |
+| `.in_if_t`, `.in_fwd_t`, `.in_fb_t` | Input interface, data received as an argument, and feedback returned to the producer |
+| `.out_if_t`, `.out_fwd_t`, `.out_fb_t` | Output interface, data returned to the consumer, and feedback received as an argument |
 | `.out_t` | Library-specific output type: a DSP payload type, or the complete result on RAM functions; see that factory's reference |
 
 Every `@hw_func` callable exposes `.return_t`, including functions produced by
@@ -1965,10 +1965,10 @@ factories. Struct and enum factories return the type itself; they do not need a
 
 | Library factories | Other attributes on the returned object |
 |---|---|
-| Stream AUTO_PIPELINE, MCP, AUTO_FSM, and combinational-optimization wrappers | `.in_intrf`, `.out_intrf` and all four directional halves; AUTO_PIPELINE adds `.auto_pipeline`, `.max_in_flight`; automatic MCP adds `.mcp`; AUTO_FSM adds `.fsm` |
-| Stream FIFO and skid buffers, including probed variants | `.stream_intrf`, `.fwd_t`, `.fb_t`; FIFO sizing uses `.depth`, `.capacity_beats`; skid sizing uses `.n_slots`, `.mode`, `.latency`; probed variants add `.tap_name`, `.capacity_beats` |
-| AXIS width converters | Widening: `.narrow_in_intrf`, `.wide_out_intrf`; narrowing: `.wide_in_intrf`, `.narrow_out_intrf`; each interface exposes `.fwd_t` and `.fb_t` |
-| Raw and stream RAM | Element/address/port metadata and timing; raw `.p{i}_in_t`/`.p{i}_out_t`, stream `.p{i}_req_intrf`/`.p{i}_resp_intrf`; `.return_t` is the whole multi-port result |
+| Stream AUTO_PIPELINE, MCP, AUTO_FSM, and combinational-optimization wrappers | `.in_if_t`, `.out_if_t` and all four directional halves; AUTO_PIPELINE adds `.auto_pipeline`, `.max_in_flight`; automatic MCP adds `.mcp`; AUTO_FSM adds `.fsm` |
+| Stream FIFO and skid buffers, including probed variants | `.stream_if_t`, `.fwd_t`, `.fb_t`; FIFO sizing uses `.depth`, `.capacity_beats`; skid sizing uses `.n_slots`, `.mode`, `.latency`; probed variants add `.tap_name`, `.capacity_beats` |
+| AXIS width converters | Widening: `.narrow_in_if_t`, `.wide_out_if_t`; narrowing: `.wide_in_if_t`, `.narrow_out_if_t`; each interface exposes `.fwd_t` and `.fb_t` |
+| Raw and stream RAM | Element/address/port metadata and timing; raw `.p{i}_in_t`/`.p{i}_out_t`, stream `.p{i}_req_if_t`/`.p{i}_resp_if_t`; `.return_t` is the whole multi-port result |
 | DSP blocks | Payload, arithmetic, and timing metadata described in the DSP guide; `.out_t` is distinct from `.return_t`; FIR core additionally exposes `.accum_t` |
 | `make_fixed_t`, `make_float_t` | The numeric type, including `.as_const`; fixed-point types also expose `.int_bits`, `.frac_bits`, `.signed` |
 | `register_fixed_ops`, `register_float_ops` | One operations object with `.operand_t`, `.add`, `.subtract`, `.multiply`, plus fixed `.negate` or float `.divide`; each operation has its own `.return_t` |
@@ -2954,11 +2954,11 @@ An end's halves are the ones a stream module's ports carry: `.stream` is a
 to the write end therefore takes one assignment in each direction:
 
 ```python
-cmd_intrf = make_stream_interface(cmd_t)
+cmd_if_t = make_stream_interface(cmd_t)
 
 @MAIN
 def cmd_source():                         # the producer, written with a stream module
-    r = parse(..., cmd_out_if=cmd_intrf.fb_t(ready=cmds.wr.ready))
+    r = parse(..., cmd_out_if=cmd_if_t.fb_t(ready=cmds.wr.ready))
     cmds.wr.stream = r.cmd_out_if.stream
 ```
 
@@ -2998,7 +2998,7 @@ Rules:
   several writers (the producer, the consumer and the FIFO), and a variable-index write
   is not supported on a wire with more than one writer function
   ([Splitting a compound wire](#splitting-a-compound-wire-across-multiple-writer-functions)).
-- `T` is a data type, never an interface: `Fifo[some_intrf]` is an error, since the FIFO
+- `T` is a data type, never an interface: `Fifo[some_if_t]` is an error, since the FIFO
   supplies valid and ready itself.
 - `n` is the minimum number of words. It is rounded up to a power of two, at least 2. The
   output register holds one word more, as in `make_stream_fifo`.
@@ -3715,14 +3715,14 @@ port. A request transfers on `request.stream.valid & result.*_req_if.ready`; a r
 transfers on `result.*_resp_if.stream.valid & response_ready`:
 
 ```python
-write_req_if_t = stream_ram.p0_req_intrf.fwd_t
-write_resp_fb_t = stream_ram.p0_resp_intrf.fb_t
-read_req_if_t = stream_ram.p1_req_intrf.fwd_t
-read_resp_fb_t = stream_ram.p1_resp_intrf.fb_t
+write_req_fwd_t = stream_ram.p0_req_if_t.fwd_t
+write_resp_fb_t = stream_ram.p0_resp_if_t.fb_t
+read_req_fwd_t = stream_ram.p1_req_if_t.fwd_t
+read_resp_fb_t = stream_ram.p1_resp_if_t.fb_t
 
 @hw_func
-def access_stream_ram(write_req: write_req_if_t, write_response_ready: uint1_t,
-                      read_req: read_req_if_t, read_response_ready: uint1_t
+def access_stream_ram(write_req: write_req_fwd_t, write_response_ready: uint1_t,
+                      read_req: read_req_fwd_t, read_response_ready: uint1_t
                       ) -> stream_ram.return_t:
     return stream_ram(
         write_req,
@@ -4213,7 +4213,8 @@ transfer, the AXI-Stream case — see [AXI-Stream: `axis_t`](#axi-stream-axis_t)
 A stream carries a payload forward, one beat per clock, tagged with a **valid** bit that says
 whether this cycle's payload is really there. `stream_t`, from
 `include/pypeline/stream/stream.py`, is exactly that pair — data flowing **forward only**, with
-nothing travelling back:
+nothing travelling back. The `stream` package exports it and `make_stream_interface`
+(`from stream import ...`); the stream blocks are its modules (`stream.stream_fifo`, ...):
 
 ```text
    upstream                                   downstream
@@ -4225,7 +4226,7 @@ nothing travelling back:
 ```
 
 ```python
-from stream.stream import make_stream_t
+from stream import make_stream_t
 
 uint32_stream_t = make_stream_t(uint32_t)
 
@@ -4275,10 +4276,10 @@ port), and fields wrapped in `Feedback[T]` are **reverse** (back along it). Noth
 mechanism is stream-specific — the reverse channel can be any number of fields of any type:
 
 ```python
-from interface.interface import interface
+from interface import interface
 
 @interface
-class bus_intrf(NamedTuple):
+class bus_if_t(NamedTuple):
     payload: uint32_t
     go:      uint1_t
     credit:  Feedback[uint4_t]   # reverse — any width, not just a ready bit
@@ -4293,32 +4294,37 @@ class bus_intrf(NamedTuple):
 
 ### The two halves
 
-An interface is not itself a hardware type — a hardware function never takes a whole `bus_intrf` as
+An interface is not itself a hardware type — a hardware function never takes a whole `bus_if_t` as
 a port. Instead, `@interface` attaches two (or three) ordinary `@struct`s directly onto the class:
 
 ```python
-bus_intrf.fwd_t     # feedforward half: {payload, go}
-bus_intrf.fb_t      # reverse half:     {credit, halt}
-bus_intrf.stream_t  # the plain {data, valid} half nested at .fwd_t.stream,
-                     # only for stream-shaped interfaces (None otherwise -- see below)
+bus_if_t.fwd_t     # feedforward half: {payload, go}
+bus_if_t.fb_t      # reverse half:     {credit, halt}
+bus_if_t.stream_t  # the plain {data, valid} half nested at .fwd_t.stream,
+                   # only for stream-shaped interfaces (None otherwise -- see below)
 ```
 
 - `.fwd_t` gathers the plain fields into the **feedforward** struct.
 - `.fb_t` gathers the `Feedback[T]` fields — *unwrapped* to their inner type (`Feedback[uint4_t]`
   → `uint4_t`) — into the **reverse** struct.
 
+Each half is named after its interface without the interface's own `_t`: `bus_if_t.fwd_t` is
+the struct `bus_if_fwd_t` and `bus_if_t.fb_t` is `bus_if_fb_t`. Compiler messages and the
+generated VHDL record names start with these names (`bus_if_fwd_t_...`).
+
 There is no separate `make_interface_type`/`make_interface_feedback_type` to call, and no local
-alias to invent either: always write `bus_intrf.fwd_t` (etc.) directly at each use site rather than
-binding it to a shorter name first. A bound alias (`bus_t = bus_intrf.fwd_t`) throws away exactly
+alias to invent either: always write `bus_if_t.fwd_t` (etc.) directly at each use site rather than
+binding it to a shorter name first. A bound alias (`bus_t = bus_if_t.fwd_t`) throws away exactly
 the information `.fwd_t`/`.fb_t` exist to preserve — both a reader and elaboration of a
 factory closure can no longer distinguish a paired port half from a standalone struct.
 This is also why the interface-holding variable
 itself gets a distinct suffix, so the two kinds of name are never visually interchangeable:
 
-- **`_intrf`**: a variable holding the `@interface` class itself (`bus_intrf`) — always accessed
-  directly (`bus_intrf.fwd_t`), never re-aliased.
+- **`_if_t`**: the `@interface` class itself (`bus_if_t`), a type like any other `_t` name —
+  always accessed directly (`bus_if_t.fwd_t`), never re-aliased.
 - **`_if`**: an argument/field name holding an *instance* of one port half (see the naming
-  convention below) — unrelated to `_intrf`, and never confused with it since the suffixes differ.
+  convention below). The two differ the way a type and a value do: `bus_if_t` is the
+  interface, `x_if` is one port of it.
 
 ### Port types vs ordinary signal types
 
@@ -4361,18 +4367,18 @@ different types depending on which side you're reading (an argument of the feedf
 return field of the reverse type — or vice versa for an output port), a bare port name like
 `axis_in` or `poly_key_out` reads as if it were two different same-named signals instead of one
 bidirectional port. Suffixing the *variable* with `_if` (`axis_in_if`, `key_if`, `to_pipeline_if`)
-marks it as one port, and — since it's a different suffix from the `_intrf` on the `@interface`
-*type* itself — the two never collide. When a module has two same-shaped ports going opposite
+marks it as one port, while the `@interface` *type* itself ends in `_if_t`, so a port and its
+interface read like a value and its type. When a module has two same-shaped ports going opposite
 ways, name them accordingly: `data_in_if`/`data_out_if`, `axis_in_if`/`axis_out_if`.
 
 ```python
 @struct
 class x_to_y_t(NamedTuple):
-    x_if: bus_fb_t   # input port x_if: its reverse half (credit/halt) travels out
-    y_if: bus_t      # output port y_if: its feedforward half (payload/go) travels out
+    x_if: bus_if_t.fb_t   # input port x_if: its reverse half (credit/halt) travels out
+    y_if: bus_if_t.fwd_t  # output port y_if: its feedforward half (payload/go) travels out
 
 @hw_func
-def x_to_y(x_if: bus_t, y_if: bus_fb_t) -> x_to_y_t:
+def x_to_y(x_if: bus_if_t.fwd_t, y_if: bus_if_t.fb_t) -> x_to_y_t:
     o: x_to_y_t
     o.y_if = x_if    # feedforward: pass x_if's payload/go out on y_if
     o.x_if = y_if    # feedback:    pass y_if's credit/halt back on x_if
@@ -4388,35 +4394,35 @@ stream are never two independently-shaped twins requiring a field-by-field conve
 with-ready side's data+valid *is* a `make_stream_t(data_t)` value, reached through `.stream`:
 
 ```python
-from stream.stream import make_stream_interface, make_stream_t
+from stream import make_stream_interface, make_stream_t
 
 # make_stream_interface(uint32_t) is literally this interface:
 @interface
-class uint32_stream_intrf(NamedTuple):
+class uint32_stream_if_t(NamedTuple):
     stream: make_stream_t(uint32_t)   # nested plain {data, valid} struct
     ready:  Feedback[uint1_t]         # the one reverse field
 ```
 
-so its halves are, always accessed directly off `uint32_stream_intrf` (never re-aliased):
+so its halves are, always accessed directly off `uint32_stream_if_t` (never re-aliased):
 
 ```python
-uint32_stream_intrf = make_stream_interface(uint32_t)
-uint32_stream_intrf.fwd_t     # {stream: {data, valid}}
-uint32_stream_intrf.fb_t      # {ready}
-uint32_stream_intrf.stream_t  # the plain {data, valid} nested at .fwd_t.stream
+uint32_stream_if_t = make_stream_interface(uint32_t)
+uint32_stream_if_t.fwd_t     # {stream: {data, valid}}
+uint32_stream_if_t.fb_t      # {ready}
+uint32_stream_if_t.stream_t  # the plain {data, valid} nested at .fwd_t.stream
 ```
 
 A standalone `make_stream_t(uint32_t)` ([Streams: `stream_t`](#streams-stream_t)) is a plain `{data, valid}` struct with no `@interface`
-involved at all — it never needed one to define itself. `uint32_stream_intrf.stream_t` is exactly
+involved at all — it never needed one to define itself. `uint32_stream_if_t.stream_t` is exactly
 that type (replacing the older `<fwd_t>.typeof("stream")` idiom — the shortcut belongs on the
 interface, not on a forward-half value), so crossing between "a valid-only value" and "the
 data+valid half of a real backpressured port" is a single `.stream` field access/assignment, never
 a per-field copy:
 
 ```python
-plain: make_stream_t(uint32_t) = uint32_stream_intrf.stream_t(data=5, valid=1)
-port_val: uint32_stream_intrf.fwd_t = uint32_stream_intrf.fwd_t(stream=plain)  # wrap into a port value
-plain_again = port_val.stream                                                  # unwrap back out
+plain: make_stream_t(uint32_t) = uint32_stream_if_t.stream_t(data=5, valid=1)
+port_val: uint32_stream_if_t.fwd_t = uint32_stream_if_t.fwd_t(stream=plain)  # wrap into a port value
+plain_again = port_val.stream                                                # unwrap back out
 ```
 
 A module gives a stream port the same two-halves-one-name treatment as any interface — an
@@ -4426,12 +4432,12 @@ goes through `.stream`; `.ready` is unaffected (the reverse half was never neste
 ```python
 @struct
 class relay_t(NamedTuple):
-    stream_in_if:  uint32_stream_intrf.fb_t   # input port: ready travels back out
-    stream_out_if: uint32_stream_intrf.fwd_t  # output port: data+valid travel out
+    stream_in_if:  uint32_stream_if_t.fb_t   # input port: ready travels back out
+    stream_out_if: uint32_stream_if_t.fwd_t  # output port: data+valid travel out
 
 @hw_func
 def relay(
-    stream_in_if: uint32_stream_intrf.fwd_t, stream_out_if: uint32_stream_intrf.fb_t
+    stream_in_if: uint32_stream_if_t.fwd_t, stream_out_if: uint32_stream_if_t.fb_t
 ) -> relay_t:
     o: relay_t
     o.stream_out_if = stream_in_if               # forward the data+valid downstream
@@ -4439,7 +4445,7 @@ def relay(
     return o
 
 @hw_func
-def show_fields(stream_in_if: uint32_stream_intrf.fwd_t) -> uint1_t:
+def show_fields(stream_in_if: uint32_stream_if_t.fwd_t) -> uint1_t:
     return stream_in_if.stream.valid   # .stream. reaches the nested data+valid
 ```
 
@@ -4447,10 +4453,10 @@ def show_fields(stream_in_if: uint32_stream_intrf.fwd_t) -> uint1_t:
 
 | Suffix | Is | Accessed as | Example |
 |---|---|---|---|
-| `_intrf` | the whole interface, both directions | `some_intrf.fwd_t`/`.fb_t`/`.stream_t`, always direct | `uint32_stream_intrf` |
-| `_if` | an argument/field holding *one instance* of a port half | the value itself, typed `some_intrf.fwd_t`/`.fb_t` | `stream_in_if`, `stream_out_if` |
+| `_if_t` | the whole interface, both directions | `some_if_t.fwd_t`/`.fb_t`/`.stream_t`, always direct | `uint32_stream_if_t` |
+| `_if` | an argument/field holding *one instance* of a port half | the value itself, typed `some_if_t.fwd_t`/`.fb_t` | `stream_in_if`, `stream_out_if` |
 
-`.fwd_t`, `.fb_t`, and `.stream_t` are attributes on the `_intrf` — there is no third kind of
+`.fwd_t`, `.fb_t`, and `.stream_t` are attributes on the `_if_t` — there is no third kind of
 bound-alias name (`uint32_stream_t`, `uint32_stream_fb_t`, ...) to introduce; write the attribute
 access out at each use site instead, even where it repeats.
 
@@ -4460,7 +4466,7 @@ with-ready interface and ignoring its `.fb_t`; the latter still declares a real 
 the def-site check (`InterfacePortError`) will demand a caller pair.
 
 The reverse channel is not limited to a one-bit `ready`: `make_stream_interface(data_t,
-feedback_t=...)` widens it to a credit count or a struct of flags, just as `bus_intrf` above
+feedback_t=...)` widens it to a credit count or a struct of flags, just as `bus_if_t` above
 carries `credit`/`halt`. Every streaming building block that follows —
 [AXI-Stream](#axi-stream-axis_t), [FIFOs](#fifos-make_stream_fifo),
 [pipelined wrappers](#pipelined-stream-wrappers-make_stream_auto_pipeline), and the
@@ -4475,7 +4481,7 @@ and the reverse direction is generated. No decorator is needed — a whole inter
 valid hardware type, so annotating with one is unambiguous.
 
 ```python
-from interface.interface_func import make_hw_func_from_interface_func
+from interface_func import make_hw_func_from_interface_func
 
 def two_in_series(stream_in: chan) -> chan:
     a = inc2(stream_in)
@@ -4556,9 +4562,9 @@ the exact point they cross into the real port (see
 @MAIN(80.0)
 def encrypt_dataflow():
     r = encrypt_dataflow_core(
-        axis_in_if=axis128_intrf.fwd_t(stream=ports.axis_in),  # forward half, inline
+        axis_in_if=axis128_if_t.fwd_t(stream=ports.axis_in),  # forward half, inline
         key=ports.key, nonce=ports.nonce, aad=ports.aad, aad_len=ports.aad_len,
-        axis_out_if=axis128_intrf.fb_t(ready=ports.axis_out_ready),  # reverse half, inline
+        axis_out_if=axis128_if_t.fb_t(ready=ports.axis_out_ready),  # reverse half, inline
     )
     ports.axis_in_ready = r.axis_in_if.ready      # implied feedback -> explicit
     ports.axis_out = r.axis_out_if.stream         # ports.axis_out is a plain Wire[.stream_t]
@@ -4581,13 +4587,13 @@ its `.fb_t`:
 ```python
 @struct
 class gate_t(NamedTuple):
-    stream_in_if: chan_intrf.fb_t      # input port's reverse half travels out
-    stream_out_if: chan_intrf.fwd_t    # output port's feedforward half travels out
-    passed: uint8_t                    # plain status, no reverse companion
+    stream_in_if: chan_if_t.fb_t      # input port's reverse half travels out
+    stream_out_if: chan_if_t.fwd_t    # output port's feedforward half travels out
+    passed: uint8_t                   # plain status, no reverse companion
 
 @hw_func
 def gate(
-    stream_in_if: chan_intrf.fwd_t, limit: uint8_t, stream_out_if: chan_intrf.fb_t
+    stream_in_if: chan_if_t.fwd_t, limit: uint8_t, stream_out_if: chan_if_t.fb_t
 ) -> gate_t:
     o: gate_t
     count: Reg[uint8_t]
@@ -4607,7 +4613,7 @@ exercises both crossings against a hand-written twin, plain signals included.
 > port, may ever hold an `@interface`'s `.fwd_t`/`.fb_t` type.
 
 That means not a plain local variable (even one built up over several statements, or
-assigned via a bare `x = intrf.fwd_t(...)` with no type annotation at all), not
+assigned via a bare `x = some_if_t.fwd_t(...)` with no type annotation at all), not
 `Feedback[T]`, not `Reg[T]`, and not a
 global `Wire[T]`/`Input[T]`/`Output[T]`. None of these are themselves a port — a local
 is scratch space, `Feedback[T]` is a same-cycle forward reference to a value that meets
@@ -4619,25 +4625,25 @@ value, and construct `.fwd_t`/`.fb_t` inline only at the point it meets a real p
 
 ```python
 # Wrong -- ElaborationError: a local variable cannot be declared with .fwd_t/.fb_t
-dwidth_conv_data_in: axis128_intrf.fwd_t = axis128_null()
+dwidth_conv_data_in: axis128_if_t.fwd_t = axis128_null()
 ...
 in_to_block = axis128_to_axis512(narrow_in_if=dwidth_conv_data_in, wide_out_if=...)
 
 # Also wrong -- same error, just without the type annotation
-dwidth_conv_data_in = axis128_intrf.fwd_t(stream=axis128_stream_null())
+dwidth_conv_data_in = axis128_if_t.fwd_t(stream=axis128_stream_null())
 
 # Also wrong -- Feedback[T] and global Wire[T] are restricted the same way
-block_in_ready: Feedback[axis512_intrf.fb_t]
-encrypt_pipeline_in: Wire[chacha20_loop_body_stream_intrf.fwd_t]
+block_in_ready: Feedback[axis512_if_t.fb_t]
+encrypt_pipeline_in: Wire[chacha20_loop_body_stream_if_t.fwd_t]
 
 # Right -- build up the plain .stream_t/uint1_t locally, wrap only at the call site
-dwidth_conv_data_in: axis128_intrf.stream_t = axis128_stream_null()
+dwidth_conv_data_in: axis128_if_t.stream_t = axis128_stream_null()
 block_in_ready: Feedback[uint1_t]
-encrypt_pipeline_in: Wire[chacha20_loop_body_stream_intrf.stream_t]
+encrypt_pipeline_in: Wire[chacha20_loop_body_stream_if_t.stream_t]
 ...
 in_to_block = axis128_to_axis512(
-    narrow_in_if=axis128_intrf.fwd_t(stream=dwidth_conv_data_in),
-    wide_out_if=axis512_intrf.fb_t(ready=block_in_ready),
+    narrow_in_if=axis128_if_t.fwd_t(stream=dwidth_conv_data_in),
+    wide_out_if=axis512_if_t.fb_t(ready=block_in_ready),
 )
 ```
 
@@ -4650,7 +4656,7 @@ multi-writer struct Wire:
 ```python
 # Also fine, and usually clearer than two separate Wires -- one compound Wire
 # instead of an independently-named stream Wire + ready Wire for the same port
-encrypt_pipeline_in_if: Wire[chacha20_loop_body_stream_intrf]
+encrypt_pipeline_in_if: Wire[chacha20_loop_body_stream_if_t]
 
 @hw_func
 def drive_in():
@@ -4667,12 +4673,12 @@ x = encrypt_pipeline_in_if.stream.data    # read by a third
 `Wire[SomeInterface.fwd_t]`/`Wire[SomeInterface.fb_t]` remain banned exactly as above —
 only the bare interface class gets this sugar.
 
-An `intrf.fwd_t(...)`/`intrf.fb_t(...)` constructor call is also valid directly as a call
+An `some_if_t.fwd_t(...)`/`some_if_t.fb_t(...)` constructor call is also valid directly as a call
 argument (not just as a whole assignment's right-hand side) — no local variable is
 needed at all when there's nothing to build up over multiple statements:
 
 ```python
-r = gated(chan_intrf.fwd_t(data=in_data, valid=in_valid), limit, chan_intrf.fb_t(ready=downstream_ready))
+r = gated(chan_if_t.fwd_t(data=in_data, valid=in_valid), limit, chan_if_t.fb_t(ready=downstream_ready))
 ```
 
 **A plain (non-hw_func) Python function may not return a `.fwd_t`/`.fb_t` value either**
@@ -4683,11 +4689,11 @@ the result:
 ```python
 # Wrong -- ElaborationError: a plain function cannot return .fwd_t/.fb_t
 def axis128_null():
-    return axis128_intrf.fwd_t(stream=axis128_stream_null())
+    return axis128_if_t.fwd_t(stream=axis128_stream_null())
 
 # Right -- return the plain stream_t; wrap inline at each call site that needs it
 def axis128_stream_null():
-    return axis128_intrf.stream_t(data=axis128_frag_null(), valid=0)
+    return axis128_if_t.stream_t(data=axis128_frag_null(), valid=0)
 ...
 o.axis_out_if.stream = axis128_stream_null()  # port field already fwd_t-typed
 ```
@@ -4695,13 +4701,13 @@ o.axis_out_if.stream = axis128_stream_null()  # port field already fwd_t-typed
 ### Array ports: fan-out
 
 An interface is point-to-point, so forking a stream needs a module that owns the fork. Its output
-is an **array port**: `axis_out_if: axis_intrf.fwd_t[n]` on the return side paired with `axis_out_if: axis_intrf.fb_t[n]`
+is an **array port**: `axis_out_if: axis_if_t.fwd_t[n]` on the return side paired with `axis_out_if: axis_if_t.fb_t[n]`
 on the argument side. Each element is an independent interface with its own backpressure, so
 handing `bcast.axis_out_if[i]` to each sink is the whole wiring — the reverse array is assembled and
 fed back for you. `make_axis_broadcast_interlock` ([AXI-Stream: `axis_t`](#axi-stream-axis_t)) is the ready-made one:
 
 ```python
-def fork_wiring(axis_in_if: axis_intrf) -> fork_ports:
+def fork_wiring(axis_in_if: axis_if_t) -> fork_ports:
     d = bcast(axis_in_if)                    # no sink_ready array to build by hand
     f = hold_fast(d.axis_out_if[0])
     s = hold_slow(d.axis_out_if[1])
@@ -4717,7 +4723,7 @@ application of the rules above, collected here as a quick reference:
 
 **Store a stream value in a register.** Use `.stream_t`, never `.fwd_t`:
 ```python
-buf: Reg[chan_intrf.stream_t]
+buf: Reg[chan_if_t.stream_t]
 ```
 
 **Delay a ready (reverse) signal by a cycle.** A bare `uint1_t` register — `.fb_t`'s
@@ -4730,9 +4736,9 @@ ready_d1 = downstream_if.ready
 **Route an interface through a local variable.** Build up the plain `.stream_t`/`uint1_t`
 locally, and wrap into `.fwd_t`/`.fb_t` only at the call site that needs it:
 ```python
-data_in: chan_intrf.stream_t = chan_stream_null()
+data_in: chan_if_t.stream_t = chan_stream_null()
 ...
-r = gated(chan_intrf.fwd_t(stream=data_in), limit)
+r = gated(chan_if_t.fwd_t(stream=data_in), limit)
 ```
 
 **Fan out one interface to several sinks.** Use an array port (see
@@ -4787,17 +4793,17 @@ layers, stopping at the interface:
 ```python
 from axi.axis import make_axis_interface
 
-axis32_intrf = make_axis_interface(4)
-axis32_intrf.fwd_t     # {stream: {data, valid}} -- real port, needs .stream.
-axis32_intrf.fb_t      # {ready}
-axis32_intrf.stream_t  # the plain {data, valid} nested at .fwd_t.stream
+axis32_if_t = make_axis_interface(4)
+axis32_if_t.fwd_t     # {stream: {data, valid}} -- real port, needs .stream.
+axis32_if_t.fb_t      # {ready}
+axis32_if_t.stream_t  # the plain {data, valid} nested at .fwd_t.stream
 ```
 
-`axis32_intrf.fwd_t` here is *not* the same type as the standalone `make_axis_t(4)` above: one is a
-real with-ready port (`.stream.data`/`.stream.valid`, must pair with `axis32_intrf.fb_t`), the other
+`axis32_if_t.fwd_t` here is *not* the same type as the standalone `make_axis_t(4)` above: one is a
+real with-ready port (`.stream.data`/`.stream.valid`, must pair with `axis32_if_t.fb_t`), the other
 is a plain valid-only value (`.data`/`.valid` directly, never paired) — see the naming table in [Bidirectional Ports: `@interface`](#bidirectional-ports-interface).
 
-`make_axis_broadcast_interlock(axis_intrf, n)`, `make_dwidth_widen` and `make_dwidth_narrow` all
+`make_axis_broadcast_interlock(axis_if_t, n)`, `make_dwidth_widen` and `make_dwidth_narrow` all
 declare their ports this way — see [Crossing between the two
 styles](#crossing-between-the-two-styles).
 
@@ -4865,9 +4871,9 @@ that out into reusable, synthesizable `@hw_func`s:
 ```python
 from axi.axis import make_axis_interface, make_axis_byte_source, make_axis_byte_sink
 
-axis128_intrf = make_axis_interface(16)
-byte_source = make_axis_byte_source(axis128_intrf, 16, MAX_FRAME_BYTES)
-byte_sink = make_axis_byte_sink(axis128_intrf, 16, MAX_FRAME_BYTES)
+axis128_if_t = make_axis_interface(16)
+byte_source = make_axis_byte_source(axis128_if_t, 16, MAX_FRAME_BYTES)
+byte_sink = make_axis_byte_sink(axis128_if_t, 16, MAX_FRAME_BYTES)
 
 # byte_source(load, load_data, load_len, stream_out_if) -> byte_source_t
 #   .stream_out_if (fwd_t) - the generated stream; .idle - safe to `load` a new frame
@@ -4910,8 +4916,8 @@ with cocotbext-axi's `async def`/cocotb-scheduler-based classes.
 ```python
 from axi.axis_sim import AxisSimSource, AxisSimSink
 
-src = AxisSimSource(axis128_intrf, 16)
-snk = AxisSimSink(axis128_intrf, 16)
+src = AxisSimSource(axis128_if_t, 16)
+snk = AxisSimSink(axis128_if_t, 16)
 src.send(b"...")                       # queue a frame
 
 @sim_input
@@ -4932,15 +4938,15 @@ incremented index" bookkeeping around its own checker. `expect(value, **meta)` q
 expected value plus arbitrary caller metadata (packet index, a tamper flag, whatever);
 `check(got)` pops the oldest expectation and compares, returning
 `{"passed": bool, "expected": ..., "got": ..., **meta}`. `AxisSimSink` takes one directly
-(`AxisSimSink(axis_intrf, n, scoreboard=sb)`), so `check_nowait()` combines "pop a
+(`AxisSimSink(axis_if_t, n, scoreboard=sb)`), so `check_nowait()` combines "pop a
 completed frame" and "check it" in one call:
 
 ```python
 from axi.axis_sim import AxisSimSource, AxisSimSink, Scoreboard
 
 sb = Scoreboard()
-src = AxisSimSource(axis128_intrf, 16)
-snk = AxisSimSink(axis128_intrf, 16, scoreboard=sb)
+src = AxisSimSource(axis128_if_t, 16)
+snk = AxisSimSink(axis128_if_t, 16, scoreboard=sb)
 
 @sim_input
 def drive_in_word():
@@ -4987,7 +4993,7 @@ Both take the usual paired ports and return a callable with its complete result 
 
 ```python
 @MAIN
-def top(stream_in_if: ser.in_intrf.fwd_t, stream_out_if: ser.out_fb_t) -> ser.return_t:
+def top(stream_in_if: ser.in_if_t.fwd_t, stream_out_if: ser.out_fb_t) -> ser.return_t:
     return ser(stream_in_if, stream_out_if)
 ```
 
@@ -5038,7 +5044,7 @@ rx = make_axis_to_type(hdr_t, 4)   # AXIS frames -> hdr_t values
 tx = make_type_to_axis(hdr_t, 4)   # hdr_t values -> AXIS frames
 
 @MAIN
-def rx_top(axis_in_if: rx.axis_intrf.fwd_t, stream_out_if: rx.out_fb_t) -> rx.return_t:
+def rx_top(axis_in_if: rx.axis_if_t.fwd_t, stream_out_if: rx.out_fb_t) -> rx.return_t:
     return rx(axis_in_if, stream_out_if)
 ```
 
@@ -5155,7 +5161,7 @@ halves of the same [interface](#bidirectional-ports-interface):
 | `stream_fifo.return_t.out_stream_if` | `fwd_t` | the FIFO's output: `.stream.data`/`.stream.valid` |
 | `stream_fifo.return_t.in_stream_if` | `fb_t` | backpressure for `in_stream_if` — `.ready` high while the FIFO has room |
 
-The interface and both halves hang off the returned function as `.stream_intrf` / `.fwd_t` /
+The interface and both halves hang off the returned function as `.stream_if_t` / `.fwd_t` /
 `.fb_t`, with `.depth` and `.capacity_beats` for sizing, so callers don't rebuild them. Because the ports are interfaces, an
 [interface function](#interface-functions-write-feedforward-get-the-reverse-wired) can drop a
 FIFO into a chain with `f = stream_fifo(upstream.out_stream)` and no ready wiring at all.
@@ -5331,8 +5337,8 @@ from stream.stream_ram import make_stream_ram
 sram = make_stream_ram(uint32_t, 1024, ports=("w", "r"), read_latency=1)
 
 @MAIN
-def memory(p0_req_if: sram.p0_req_intrf.fwd_t, p0_resp_if: sram.p0_resp_intrf.fb_t,
-           p1_req_if: sram.p1_req_intrf.fwd_t, p1_resp_if: sram.p1_resp_intrf.fb_t) -> sram.return_t:
+def memory(p0_req_if: sram.p0_req_if_t.fwd_t, p0_resp_if: sram.p0_resp_if_t.fb_t,
+           p1_req_if: sram.p1_req_if_t.fwd_t, p1_resp_if: sram.p1_resp_if_t.fb_t) -> sram.return_t:
     return sram(p0_req_if, p0_resp_if, p1_req_if, p1_resp_if)
 ```
 
@@ -5412,7 +5418,7 @@ def buffered(
     return skid(stream_in_if, stream_out_if)
 ```
 
-`make_skid_buffer(data_t_or_intrf, mode="full")` returns `skid_buffer`, with its complete return type at `skid_buffer.return_t`, with
+`make_skid_buffer(data_t_or_if_t, mode="full")` returns `skid_buffer`, with its complete return type at `skid_buffer.return_t`, with
 one input port `stream_in_if` and one output port `stream_out_if` declared as the two halves
 of the same [interface](#bidirectional-ports-interface). The first argument is either a plain
 payload type (the interface is built for you) **or** an already-built `@interface` — pass the
@@ -5441,7 +5447,7 @@ buffer refuses input while draining, which costs the recovery bubble.
 `mode`, or a slice that a particular instantiation doesn't need) without an `if` at every
 call site.
 
-`n_slots` and `latency` hang off the returned function, alongside `.stream_intrf` / `.fwd_t` /
+`n_slots` and `latency` hang off the returned function, alongside `.stream_if_t` / `.fwd_t` /
 `.fb_t` / `.data_t` / `.mode`, so a caller sizing a surrounding pipeline never re-derives them.
 
 **`"full"` is also what makes a downstream `ready` safe to override.** Logic that drains
@@ -5461,8 +5467,8 @@ one-line face over this module that takes the interface you already built:
 ```python
 from axi.axis import make_axis_interface, make_axis_skid_buffer
 
-axis_intrf = make_axis_interface(4)
-axis_skid = make_axis_skid_buffer(axis_intrf, mode="reverse")
+axis_if_t = make_axis_interface(4)
+axis_skid = make_axis_skid_buffer(axis_if_t, mode="reverse")
 ```
 
 `tdata`/`tkeep`/`tlast` are carried through opaquely: whole beats are stored and replayed, never
@@ -5536,7 +5542,7 @@ returns `stream_auto_pipeline_func`, with its complete return type at `stream_au
 | `stream_auto_pipeline.return_t.stream_out_if.stream` | `stream_t(out_type)` | `func`'s result, after AUTO_PIPELINE retiming and the output FIFO |
 | `stream_auto_pipeline.return_t.stream_in_if.ready` | `uint1_t` | high while the pipeline can accept a new `stream_in_if` word (registered; high while fewer than L+5 words are in flight) |
 
-The returned function also carries `.in_intrf`/`.out_intrf` and their halves
+The returned function also carries `.in_if_t`/`.out_if_t` and their halves
 `.in_fwd_t`, `.in_fb_t`, `.out_fwd_t`, `.out_fb_t` for declaring matching ports.
 
 **Throughput: one word per cycle.** With core latency L, the wrapper admits up to
@@ -5714,7 +5720,7 @@ def top(stream_in_if: opt.in_fwd_t, stream_out_if: opt.out_fb_t) -> opt.return_t
 `my_comb_func` must be a pure `@hw_func` with one annotated input and an annotated
 return type. The factory returns `stream_function`, with its complete return type at `stream_function.return_t`. Results have
 `stream_in_if.ready` and `stream_out_if.stream.{data,valid}` fields. The function
-exposes `.in_intrf`, `.out_intrf`, their `.in_fwd_t`/`.in_fb_t`/`.out_fwd_t`/
+exposes `.in_if_t`, `.out_if_t`, their `.in_fwd_t`/`.in_fb_t`/`.out_fwd_t`/
 `.out_fb_t` halves, and the underlying tag as `.comb_opt`.
 
 Both the input and output data/valid are elastic registers. Unstalled latency
@@ -5773,9 +5779,9 @@ halves of a stream `@interface`, exactly like `make_stream_auto_pipeline`'s and
 
 | | Type | Meaning |
 |---|---|---|
-| `func_auto_fsm(stream_in_if, stream_out_if)` | `(in_intrf.fwd_t, out_intrf.fb_t) -> func_auto_fsm.return_t` | one AUTO_FSM-backed instance of `func` |
-| `func_auto_fsm.return_t.stream_out_if` | `out_intrf.fwd_t` | `func`'s result, held valid until the consumer takes it |
-| `func_auto_fsm.return_t.stream_in_if` | `in_intrf.fb_t` | `.ready` high while the FSM is idle **and** the output slot is free |
+| `func_auto_fsm(stream_in_if, stream_out_if)` | `(in_if_t.fwd_t, out_if_t.fb_t) -> func_auto_fsm.return_t` | one AUTO_FSM-backed instance of `func` |
+| `func_auto_fsm.return_t.stream_out_if` | `out_if_t.fwd_t` | `func`'s result, held valid until the consumer takes it |
+| `func_auto_fsm.return_t.stream_in_if` | `in_if_t.fb_t` | `.ready` high while the FSM is idle **and** the output slot is free |
 | `func_auto_fsm.fsm` | `AUTO_FSM` | the underlying tag object — `func_auto_fsm.fsm.latency` reads the raw FSM's cycle count |
 | `func_auto_fsm.latency` | `int` | the wrapper's own latency, `fsm.latency + 1` |
 

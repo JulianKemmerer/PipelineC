@@ -37,7 +37,7 @@ from pypeline import (
     make_reset,
 )
 
-from stream.stream import make_stream_interface
+from stream import make_stream_interface
 from stream.stream_multi_cycle import make_stream_auto_multi_cycle
 
 PART("xc7a35ticsg324-1l")
@@ -59,7 +59,7 @@ def divider(i: my_struct_t) -> uint32_t:
     return i.x / safe_y
 
 
-my_struct_intrf = make_stream_interface(my_struct_t)
+my_struct_if_t = make_stream_interface(my_struct_t)
 
 START_LATENCY = 3
 FIXED_LATENCY = 2
@@ -84,16 +84,16 @@ def auto_multi_cycle_divider_test_fsm() -> uint1_t:
     x: Reg[uint32_t] = 2
     y: Reg[uint32_t] = 1
 
-    in_stream_if: my_struct_intrf.stream_t
+    in_stream_if: my_struct_if_t.stream_t
     in_stream_if.data = my_struct_t(x=x, y=y)
     in_stream_if.valid = 1
 
     f = divider_auto_multi_cycle(
-        my_struct_intrf.fwd_t(stream=in_stream_if),
+        my_struct_if_t.fwd_t(stream=in_stream_if),
         divider_auto_multi_cycle.out_fb_t(ready=1),
     )
     g = divider_fixed_auto_multi_cycle(
-        my_struct_intrf.fwd_t(stream=in_stream_if),
+        my_struct_if_t.fwd_t(stream=in_stream_if),
         divider_fixed_auto_multi_cycle.out_fb_t(ready=1),
     )
 
@@ -116,8 +116,8 @@ def _check_handshake(func_mcp, expected_latency):
     accepted_cycle = None
     result = None
     for cycle in range(expected_latency + 6):
-        stream_in_if = my_struct_intrf.fwd_t(
-            stream=my_struct_intrf.stream_t(
+        stream_in_if = my_struct_if_t.fwd_t(
+            stream=my_struct_if_t.stream_t(
                 data=my_struct_t(x=x, y=y), valid=0 if launched else 1
             )
         )

@@ -244,7 +244,7 @@ def make_fir_tb(
     elastic = fir.handshake == "elastic"
     # The plain input stream in both modes (never the elastic port's .fwd_t
     # half: an Input[T] wire can't hold a port-pairing type).
-    in_t = fir.in_intrf.stream_t if elastic else fir.in_stream_t
+    in_t = fir.in_if_t.stream_t if elastic else fir.in_stream_t
     data_t = fir.data_t
 
     rng = random.Random(seed)

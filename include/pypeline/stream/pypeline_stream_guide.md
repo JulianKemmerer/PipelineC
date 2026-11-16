@@ -48,11 +48,11 @@ rx = make_axis_to_type(hdr_t, 4)    # AXIS frames -> hdr_t values
 tx = make_type_to_axis(hdr_t, 4)    # hdr_t values -> AXIS frames
 
 @MAIN
-def rx_top(axis_in_if: rx.axis_intrf.fwd_t, stream_out_if: rx.out_fb_t) -> rx.return_t:
+def rx_top(axis_in_if: rx.axis_if_t.fwd_t, stream_out_if: rx.out_fb_t) -> rx.return_t:
     return rx(axis_in_if, stream_out_if)
 
 @MAIN
-def tx_top(stream_in_if: tx.in_intrf.fwd_t, axis_out_if: tx.axis_fb_t) -> tx.return_t:
+def tx_top(stream_in_if: tx.in_if_t.fwd_t, axis_out_if: tx.axis_fb_t) -> tx.return_t:
     return tx(stream_in_if, axis_out_if)
 ```
 
@@ -120,7 +120,7 @@ by name (`stream_in_if`/`stream_out_if`, or `axis_in_if`/`axis_out_if`), `.fwd_t
 argument side for an input and `.fb_t` as its return-struct field; an output
 reverses those roles. Every HDL factory returns the function itself, with its
 complete result type at `.return_t`. Each returned function carries its interfaces as attributes
-(`.in_intrf`, `.out_intrf`, `.axis_intrf`, `.in_fb_t`, `.out_fb_t`, `.axis_fb_t`, plus
+(`.in_if_t`, `.out_if_t`, `.axis_if_t`, `.in_fb_t`, `.out_fb_t`, `.axis_fb_t`, plus
 `.t`, `.n_bytes` and the sizes), so a caller never has to rebuild a type to declare a
 port.
 

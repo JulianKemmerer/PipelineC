@@ -99,7 +99,7 @@ def self_check_type_axis():
     # non-zero, so the byte-lane muxing is exercised just as well.
     v.flags = 0x7EADBEE0 + sent
 
-    in_stream: tx.in_intrf.stream_t
+    in_stream: tx.in_if_t.stream_t
     in_stream.data.frag = v
     in_stream.data.eod[0] = 1
     in_stream.valid = sent < NUM_VALUES
@@ -108,8 +108,8 @@ def self_check_type_axis():
     # circular reference between two call results, broken with a Feedback on
     # the bare ready bit (an interface half may not be a plain local).
     axis_ready: Feedback[uint1_t]
-    tx_o = tx(tx.in_intrf.fwd_t(in_stream), tx.axis_fb_t(axis_ready))
-    rx_o = rx(rx.axis_intrf.fwd_t(tx_o.axis_out_if.stream), rx.out_fb_t(1))
+    tx_o = tx(tx.in_if_t.fwd_t(in_stream), tx.axis_fb_t(axis_ready))
+    rx_o = rx(rx.axis_if_t.fwd_t(tx_o.axis_out_if.stream), rx.out_fb_t(1))
     axis_ready = rx_o.axis_in_if.ready
 
     if in_stream.valid & tx_o.stream_in_if.ready:

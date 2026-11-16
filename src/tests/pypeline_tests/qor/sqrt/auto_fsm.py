@@ -70,9 +70,9 @@ SQRT_FSM = make_stream_auto_fsm(isqrt_u32)
 # pipelined design's fmax.
 CLK_RATE_MHZ = 30.0
 clk: Input[uint1_t] = make_clock(CLK_RATE_MHZ)
-input: Input[SQRT_FSM.in_intrf.stream_t]
+input: Input[SQRT_FSM.in_if_t.stream_t]
 input_ready: Output[uint1_t]
-output: Output[SQRT_FSM.out_intrf.stream_t]
+output: Output[SQRT_FSM.out_if_t.stream_t]
 output_ready: Input[uint1_t]
 
 @MAIN(CLK_RATE_MHZ)

@@ -36,8 +36,8 @@ byp_skid = make_skid_buffer(uint32_t, mode="bypass")
 
 
 N = 4
-axis_intrf = make_axis_interface(N)
-axis_skid = make_axis_skid_buffer(axis_intrf)
+axis_if_t = make_axis_interface(N)
+axis_skid = make_axis_skid_buffer(axis_if_t)
 
 
 # Synchronous reset pin (pulsed in cycle 0 by the simulators): every @MAIN
@@ -92,7 +92,7 @@ MODES = [
 
 def _beat(skid, data, valid, ready):
     """The (fwd_t, fb_t) argument pair for one sim_call on a uint32_t skid."""
-    plain_t = skid.stream_intrf.stream_t
+    plain_t = skid.stream_if_t.stream_t
     return (
         skid.fwd_t(stream=plain_t(data=data, valid=valid)),
         skid.fb_t(ready=ready),
@@ -289,18 +289,18 @@ def test_modes_cut_the_paths_they_claim():
 def test_axis_frame_passes_through_byte_identical():
     """data/keep/eod are carried opaquely: a partial-keep eod beat comes out
     exactly as it went in."""
-    frag_t = axis_intrf.stream_t.typeof("data")
+    frag_t = axis_if_t.stream_t.typeof("data")
     bus_t = frag_t.typeof("frag")
 
     def axis_args(data, keep, eod, valid, ready):
         return (
-            axis_intrf.fwd_t(
-                axis_intrf.stream_t(
+            axis_if_t.fwd_t(
+                axis_if_t.stream_t(
                     data=frag_t(frag=bus_t(data=data, keep=keep), eod=[eod]),
                     valid=valid,
                 )
             ),
-            axis_intrf.fb_t(ready=ready),
+            axis_if_t.fb_t(ready=ready),
         )
 
     frame = [
@@ -353,8 +353,8 @@ def test_advertised_slots_and_latency():
     assert (byp_skid.n_slots, byp_skid.latency) == (0, 0)
     # The AXIS face must reuse the caller's interface object identically --
     # interface ports are matched by Python identity, not just canonical name.
-    assert axis_skid.stream_intrf is axis_intrf
-    assert axis_skid.axis_intrf is axis_intrf
+    assert axis_skid.stream_if_t is axis_if_t
+    assert axis_skid.axis_if_t is axis_if_t
 
 
 if __name__ == "__main__":

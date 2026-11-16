@@ -14,7 +14,7 @@ from pypeline import (
     is_hw_func,
 )
 
-from stream.stream import make_stream_interface
+from stream import make_stream_interface
 
 # Both factories' handshake count cycles_since_launch in a uint8_t that must
 # reach latency + 1.
@@ -22,7 +22,7 @@ _MAX_MCP_LATENCY = 254
 
 
 def _mcp_stream_types(func, factory_name):
-    """(in_type, out_type, in_intrf, out_intrf) for a single-argument
+    """(in_type, out_type, in_if_t, out_if_t) for a single-argument
     @hw_func wrapped in a multi-cycle-path FSM."""
     if not is_hw_func(func):
         raise TypeError(
@@ -34,8 +34,8 @@ def _mcp_stream_types(func, factory_name):
     return SimpleNamespace(
         in_type=in_type,
         out_type=out_type,
-        in_intrf=make_stream_interface(in_type),
-        out_intrf=make_stream_interface(out_type),
+        in_if_t=make_stream_interface(in_type),
+        out_if_t=make_stream_interface(out_type),
     )
 
 
@@ -47,13 +47,13 @@ def _check_mcp_latency(factory_name, latency):
         )
 
 
-def _attach_stream_attrs(func_mcp, in_intrf, out_intrf):
-    func_mcp.in_intrf = in_intrf
-    func_mcp.out_intrf = out_intrf
-    func_mcp.in_fwd_t = in_intrf.fwd_t
-    func_mcp.in_fb_t = in_intrf.fb_t
-    func_mcp.out_fwd_t = out_intrf.fwd_t
-    func_mcp.out_fb_t = out_intrf.fb_t
+def _attach_stream_attrs(func_mcp, in_if_t, out_if_t):
+    func_mcp.in_if_t = in_if_t
+    func_mcp.out_if_t = out_if_t
+    func_mcp.in_fwd_t = in_if_t.fwd_t
+    func_mcp.in_fb_t = in_if_t.fb_t
+    func_mcp.out_fwd_t = out_if_t.fwd_t
+    func_mcp.out_fb_t = out_if_t.fb_t
 
 
 def make_stream_multi_cycle(func, latency: int):
@@ -69,8 +69,8 @@ def make_stream_multi_cycle(func, latency: int):
         def divider(i: my_struct_t) -> uint32_t: ...
 
     Returns func_mcp, with its complete return type at func_mcp.return_t:
-        func_mcp(stream_in_if: in_intrf.fwd_t, stream_out_if: out_intrf.fb_t) -> func_mcp_t
-        func_mcp_t fields: .stream_in_if (in_intrf.fb_t), .stream_out_if (out_intrf.fwd_t)
+        func_mcp(stream_in_if: in_if_t.fwd_t, stream_out_if: out_if_t.fb_t) -> func_mcp_t
+        func_mcp_t fields: .stream_in_if (in_if_t.fb_t), .stream_out_if (out_if_t.fwd_t)
     A result is valid latency + 1 cycles after its input is accepted.
     """
     if not isinstance(latency, int) or isinstance(latency, bool) or latency < 1:
@@ -82,16 +82,16 @@ def make_stream_multi_cycle(func, latency: int):
     stream_types = _mcp_stream_types(func, "make_stream_multi_cycle")
     in_type = stream_types.in_type
     out_type = stream_types.out_type
-    in_intrf = stream_types.in_intrf
-    out_intrf = stream_types.out_intrf
+    in_if_t = stream_types.in_if_t
+    out_if_t = stream_types.out_if_t
 
     @struct
     class func_mcp_t(NamedTuple):
-        stream_in_if: in_intrf.fb_t  # input port's reverse half travels out
-        stream_out_if: out_intrf.fwd_t  # output port's feedforward half travels out
+        stream_in_if: in_if_t.fb_t  # input port's reverse half travels out
+        stream_out_if: out_if_t.fwd_t  # output port's feedforward half travels out
 
     @hw_func
-    def func_mcp(stream_in_if: in_intrf.fwd_t, stream_out_if: out_intrf.fb_t) -> func_mcp_t:
+    def func_mcp(stream_in_if: in_if_t.fwd_t, stream_out_if: out_if_t.fb_t) -> func_mcp_t:
         # Start/capture regs spanning the multi-cycle path
         MC = MULTI_CYCLE[latency]
         launch: Reg[in_type, MC.start]
@@ -120,7 +120,7 @@ def make_stream_multi_cycle(func, latency: int):
         capture = capture_next
         return o
 
-    _attach_stream_attrs(func_mcp, in_intrf, out_intrf)
+    _attach_stream_attrs(func_mcp, in_if_t, out_if_t)
     return func_mcp
 
 
@@ -156,16 +156,16 @@ def make_stream_auto_multi_cycle(
     _check_mcp_latency("make_stream_auto_multi_cycle", MC._ncycles_for_compiler())
     in_type = stream_types.in_type
     out_type = stream_types.out_type
-    in_intrf = stream_types.in_intrf
-    out_intrf = stream_types.out_intrf
+    in_if_t = stream_types.in_if_t
+    out_if_t = stream_types.out_if_t
 
     @struct
     class func_mcp_t(NamedTuple):
-        stream_in_if: in_intrf.fb_t  # input port's reverse half travels out
-        stream_out_if: out_intrf.fwd_t  # output port's feedforward half travels out
+        stream_in_if: in_if_t.fb_t  # input port's reverse half travels out
+        stream_out_if: out_if_t.fwd_t  # output port's feedforward half travels out
 
     @hw_func
-    def func_mcp(stream_in_if: in_intrf.fwd_t, stream_out_if: out_intrf.fb_t) -> func_mcp_t:
+    def func_mcp(stream_in_if: in_if_t.fwd_t, stream_out_if: out_if_t.fb_t) -> func_mcp_t:
         # Start/capture regs spanning the multi-cycle path
         launch: Reg[in_type, MC.start]
         capture: Reg[out_type, MC.end]
@@ -193,6 +193,6 @@ def make_stream_auto_multi_cycle(
         capture = capture_next
         return o
 
-    _attach_stream_attrs(func_mcp, in_intrf, out_intrf)
+    _attach_stream_attrs(func_mcp, in_if_t, out_if_t)
     func_mcp.mcp = MC
     return func_mcp

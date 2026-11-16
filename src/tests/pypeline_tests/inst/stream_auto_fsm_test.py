@@ -82,7 +82,7 @@ def _drive(inputs, ready_pattern, ncycles):
 
         out = sim_call(
             ADD_FSM,
-            ADD_FSM.in_fwd_t(stream=ADD_FSM.in_intrf.stream_t(data=data, valid=in_valid)),
+            ADD_FSM.in_fwd_t(stream=ADD_FSM.in_if_t.stream_t(data=data, valid=in_valid)),
             ADD_FSM.out_fb_t(ready=out_ready),
         )
 
@@ -165,7 +165,7 @@ def test_ready_deasserts_while_busy():
         data = in_t(*inputs[next_idx]) if in_valid else in_t(a=0, b=0)
         out = sim_call(
             ADD_FSM,
-            ADD_FSM.in_fwd_t(stream=ADD_FSM.in_intrf.stream_t(data=data, valid=in_valid)),
+            ADD_FSM.in_fwd_t(stream=ADD_FSM.in_if_t.stream_t(data=data, valid=in_valid)),
             ADD_FSM.out_fb_t(ready=1),
         )
         if busy and not out.stream_out_if.stream.valid:

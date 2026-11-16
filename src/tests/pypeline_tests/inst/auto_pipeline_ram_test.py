@@ -575,12 +575,12 @@ def streaming(latency, stalled):
             ready = int(not stalled or (cycle > 150 and rng.random() > 0.4))
             ready_values.append(ready)
             args += [
-                ram.req_intrfs[i].fwd_t(
-                    stream=ram.req_intrfs[i].stream_t(
+                ram.req_if_ts[i].fwd_t(
+                    stream=ram.req_if_ts[i].stream_t(
                         data=ram.req_ts[i](**fields), valid=valid
                     )
                 ),
-                ram.resp_intrfs[i].fb_t(ready=ready),
+                ram.resp_if_ts[i].fb_t(ready=ready),
             ]
         out = py.sim_call(ram, *args)
         for i in range(2):

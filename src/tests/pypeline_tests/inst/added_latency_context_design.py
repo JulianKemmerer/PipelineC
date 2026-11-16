@@ -1,7 +1,7 @@
 # pyright: reportInvalidTypeForm=none
 """One shared helper in two MAINs, tagged bodies, MCPs, and untagged gaps."""
 from pypeline import AUTO_PIPELINE, MAIN, PART, Reg, hw_func, uint16_t, uint32_t, Input, make_reset, uint1_t
-from stream.stream import make_stream_interface
+from stream import make_stream_interface
 from stream.stream_multi_cycle import make_stream_auto_multi_cycle, make_stream_multi_cycle
 
 PART("xc7a35ticsg324-1l")

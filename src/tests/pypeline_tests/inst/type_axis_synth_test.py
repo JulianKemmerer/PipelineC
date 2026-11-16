@@ -80,27 +80,27 @@ tx_many = make_type_to_axis(record_t, N, frame="many_per_packet", structs_per_pa
 
 @MAIN
 def axis_to_record(
-    axis_in_if: rx.axis_intrf.fwd_t, stream_out_if: rx.out_fb_t
+    axis_in_if: rx.axis_if_t.fwd_t, stream_out_if: rx.out_fb_t
 ) -> rx.return_t:
     return rx(axis_in_if, stream_out_if)
 
 
 @MAIN
 def record_to_axis(
-    stream_in_if: tx.in_intrf.fwd_t, axis_out_if: tx.axis_fb_t
+    stream_in_if: tx.in_if_t.fwd_t, axis_out_if: tx.axis_fb_t
 ) -> tx.return_t:
     return tx(stream_in_if, axis_out_if)
 
 
 @MAIN
 def axis_to_record_many(
-    axis_in_if: rx_many.axis_intrf.fwd_t, stream_out_if: rx_many.out_fb_t
+    axis_in_if: rx_many.axis_if_t.fwd_t, stream_out_if: rx_many.out_fb_t
 ) -> rx_many.return_t:
     return rx_many(axis_in_if, stream_out_if)
 
 
 @MAIN
 def record_to_axis_many(
-    stream_in_if: tx_many.in_intrf.fwd_t, axis_out_if: tx_many.axis_fb_t
+    stream_in_if: tx_many.in_if_t.fwd_t, axis_out_if: tx_many.axis_fb_t
 ) -> tx_many.return_t:
     return tx_many(stream_in_if, axis_out_if)

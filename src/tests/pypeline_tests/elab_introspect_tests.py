@@ -266,7 +266,8 @@ def get_tests() -> list:
     # Calls PY_TO_LOGIC.PARSE_FILE twice in one process (what the
     # AUTO_PIPELINE pin-and-confirm driver loop does) and compares the
     # resulting parser_states -- guards the sys.modules eviction and
-    # trim-memo clearing that only repeated in-process parses exercise.
+    # trim-memo clearing that only repeated in-process parses exercise, and
+    # that function and struct type names (interface halves included) match.
     tests.append(
         Test(
             name="double_parse_file_test",

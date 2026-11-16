@@ -2,8 +2,8 @@
 """Array interface ports -- how fan-out works.
 
 An interface is point-to-point, so forking a stream needs a module that owns the
-fork. That module's output is an *array* port: `axis_out: axis_intrf.fwd_t[n]` on the
-return side paired with `axis_out: axis_intrf.fb_t[n]` on the argument side. Each element
+fork. That module's output is an *array* port: `axis_out: axis_if_t.fwd_t[n]` on the
+return side paired with `axis_out: axis_if_t.fb_t[n]` on the argument side. Each element
 is an independent interface, wired and back-pressured separately, so an interface
 function hands `bcast.axis_out[i]` to each sink and the whole reverse array --
 one ready per sink, assembled and fed back in -- is generated.
@@ -42,39 +42,39 @@ from pypeline import (
     Input,
     make_reset,
 )
-from interface.interface import interface
-from interface.interface_func import make_hw_func_from_interface_func
+from interface import interface
+from interface_func import make_hw_func_from_interface_func
 from axi.axis import make_axis_interface, make_axis_broadcast_interlock
 
 N_LANES = 2
-axis_intrf = make_axis_interface(2)  # 2 byte lanes, keep+eod
-bcast = make_axis_broadcast_interlock(axis_intrf, N_LANES)
+axis_if_t = make_axis_interface(2)  # 2 byte lanes, keep+eod
+bcast = make_axis_broadcast_interlock(axis_if_t, N_LANES)
 
 
 def test_array_port_is_introspected_as_one_port_of_n_elements():
-    from interface.interface_func import callee_ports
+    from interface_func import callee_ports
 
     ports, params, ret_fields = callee_ports(bcast)
     assert set(ports) == {"axis_in_if", "axis_out_if"}
     assert ports["axis_in_if"].n is None and ports["axis_in_if"].direction == "in"
     assert ports["axis_out_if"].n == N_LANES and ports["axis_out_if"].direction == "out"
     # the array port declares arrays; its per-element halves stay scalar
-    assert ports["axis_out_if"].elem_fwd_t is axis_intrf.fwd_t
-    assert ports["axis_out_if"].elem_fb_t is axis_intrf.fb_t
+    assert ports["axis_out_if"].elem_fwd_t is axis_if_t.fwd_t
+    assert ports["axis_out_if"].elem_fb_t is axis_if_t.fb_t
 
 
 # ── two sinks that back-pressure differently, so the lanes are distinguishable ──
 @struct
 class hold_t(NamedTuple):
-    axis_in_if: axis_intrf.fb_t
-    axis_out_if: axis_intrf.fwd_t
+    axis_in_if: axis_if_t.fb_t
+    axis_out_if: axis_if_t.fwd_t
 
 
 def make_hold(every):
     """Accepts a beat only every `every` cycles -- a lane-specific stall pattern."""
 
     @hw_func
-    def hold(axis_in_if: axis_intrf.fwd_t, axis_out_if: axis_intrf.fb_t) -> hold_t:
+    def hold(axis_in_if: axis_if_t.fwd_t, axis_out_if: axis_if_t.fb_t) -> hold_t:
         o: hold_t
         phase: Reg[uint8_t]
         can: uint1_t = phase == 0
@@ -96,11 +96,11 @@ hold_slow = make_hold(3)
 
 @interface
 class fork_ports(NamedTuple):
-    fast_if: axis_intrf
-    slow_if: axis_intrf
+    fast_if: axis_if_t
+    slow_if: axis_if_t
 
 
-def fork_wiring(axis_in_if: axis_intrf) -> fork_ports:
+def fork_wiring(axis_in_if: axis_if_t) -> fork_ports:
     d = bcast(axis_in_if)  # reverse array assembled and fed back in for us
     f = hold_fast(d.axis_out_if[0])
     s = hold_slow(d.axis_out_if[1])
@@ -112,12 +112,12 @@ fork = make_hw_func_from_interface_func(fork_wiring)
 
 @hw_func
 def fork_twin(
-    axis_in_if: axis_intrf.fwd_t, fast_if: axis_intrf.fb_t, slow_if: axis_intrf.fb_t
+    axis_in_if: axis_if_t.fwd_t, fast_if: axis_if_t.fb_t, slow_if: axis_if_t.fb_t
 ) -> fork.return_t:
     o: fork.return_t
     f_ready: Feedback[uint1_t]
     s_ready: Feedback[uint1_t]
-    d = bcast(axis_in_if, [axis_intrf.fb_t(ready=f_ready), axis_intrf.fb_t(ready=s_ready)])
+    d = bcast(axis_in_if, [axis_if_t.fb_t(ready=f_ready), axis_if_t.fb_t(ready=s_ready)])
     f = hold_fast(d.axis_out_if[0], fast_if)
     s = hold_slow(d.axis_out_if[1], slow_if)
     f_ready = f.axis_in_if.ready
@@ -135,23 +135,23 @@ rst: Input[uint1_t] = make_reset()
 
 @MAIN(reset=rst, reset_registers="all")
 def top_fork(
-    axis_in_if: axis_intrf.fwd_t, fast_if: axis_intrf.fb_t, slow_if: axis_intrf.fb_t
+    axis_in_if: axis_if_t.fwd_t, fast_if: axis_if_t.fb_t, slow_if: axis_if_t.fb_t
 ) -> fork.return_t:
     return fork(axis_in_if, fast_if, slow_if)
 
 
 @MAIN(reset=rst, reset_registers="all")
 def top_fork_twin(
-    axis_in_if: axis_intrf.fwd_t, fast_if: axis_intrf.fb_t, slow_if: axis_intrf.fb_t
+    axis_in_if: axis_if_t.fwd_t, fast_if: axis_if_t.fb_t, slow_if: axis_if_t.fb_t
 ) -> fork.return_t:
     return fork_twin(axis_in_if, fast_if, slow_if)
 
 
 def mk(d0, d1, valid, eod=0):
-    frag_t = axis_intrf.stream_t.typeof("data")
+    frag_t = axis_if_t.stream_t.typeof("data")
     bus_t = frag_t.__annotations__["frag"]
-    return axis_intrf.fwd_t(
-        stream=axis_intrf.stream_t(
+    return axis_if_t.fwd_t(
+        stream=axis_if_t.stream_t(
             data=frag_t(frag=bus_t(data=[d0, d1], keep=[1, 1]), eod=[eod]), valid=valid
         )
     )
@@ -171,7 +171,7 @@ def _run(top):
     sim_reset()
     out = []
     for data, fast_rdy, slow_rdy in STIMULUS:
-        r = sim_call(top, data, axis_intrf.fb_t(ready=fast_rdy), axis_intrf.fb_t(ready=slow_rdy))
+        r = sim_call(top, data, axis_if_t.fb_t(ready=fast_rdy), axis_if_t.fb_t(ready=slow_rdy))
         out.append(
             (
                 int(r.axis_in_if.ready),
@@ -193,13 +193,13 @@ def test_each_lane_backpressures_independently():
     reaches it through its own array element -- not a shared one."""
     sim_reset()
     # both lanes' consumers ready, but the slow hold only accepts 1-in-3
-    r = sim_call(top_fork, mk(1, 2, 1), axis_intrf.fb_t(ready=1), axis_intrf.fb_t(ready=1))
+    r = sim_call(top_fork, mk(1, 2, 1), axis_if_t.fb_t(ready=1), axis_if_t.fb_t(ready=1))
     assert int(r.axis_in_if.ready) == 1, "both lanes accepting on phase 0"
-    r = sim_call(top_fork, mk(3, 4, 1), axis_intrf.fb_t(ready=1), axis_intrf.fb_t(ready=1))
+    r = sim_call(top_fork, mk(3, 4, 1), axis_if_t.fb_t(ready=1), axis_if_t.fb_t(ready=1))
     assert int(r.axis_in_if.ready) == 0, "slow lane stalled -> source stalls"
     sim_reset()
     # stalling only the fast lane's consumer must also stall the source
-    r = sim_call(top_fork, mk(1, 2, 1), axis_intrf.fb_t(ready=0), axis_intrf.fb_t(ready=1))
+    r = sim_call(top_fork, mk(1, 2, 1), axis_if_t.fb_t(ready=0), axis_if_t.fb_t(ready=1))
     assert int(r.axis_in_if.ready) == 0, "fast lane's own array element carried it"
 
 

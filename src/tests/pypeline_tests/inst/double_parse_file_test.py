@@ -12,6 +12,9 @@
 #     done-memo made the second parse skip trimming its freshly rebuilt Logic,
 #     leaking normally-pruned dead logic (built-in ops' unused clock-enable
 #     branch muxes, whose generated wire names GHDL rejects) into VHDL.
+#
+# Also asserts that function names and struct type names (C type keys, an
+# @interface's halves included) are identical across the two parses.
 import os
 import sys
 
@@ -48,6 +51,15 @@ def parse_twice_and_compare(design_path):
         f"{os.path.basename(design_path)}: @MAIN set changed on re-parse "
         f"(sys.modules staleness): {mains1} vs {mains2}"
     )
+    # Struct type names (an @interface's .fwd_t/.fb_t/.wire_t included) are
+    # a pure function of the source: VHDL record names, and the
+    # names of functions specialized on a type, come from them.
+    types1, types2 = set(ps1.struct_to_field_type_dict), set(ps2.struct_to_field_type_dict)
+    assert types1 == types2, (
+        f"{os.path.basename(design_path)}: struct type-name set changed on "
+        f"re-parse:\n  only in parse1: {sorted(types1 - types2)}"
+        f"\n  only in parse2: {sorted(types2 - types1)}"
+    )
     # Canonical func names must be a pure function of the design source --
     # identical across re-executions (no repr-address-derived hashes). The
     # pin-and-confirm loop matches funcs across passes by these names.
@@ -83,6 +95,13 @@ def test_multi_file_design_reparses():
 def test_stream_auto_pipeline_design_reparses():
     # Exercises AUTO_PIPELINE tagging + built-in C ops (the trim-memo repro)
     parse_twice_and_compare(os.path.join(INST_DIR, "stream_auto_pipeline_test.py"))
+
+
+def test_module_interface_design_reparses():
+    # An @interface declared in the design module, with its .wire_t (a Wire
+    # of the interface), interface functions and their plain copies of the
+    # halves: more interface-derived type names than the stream design above
+    parse_twice_and_compare(os.path.join(INST_DIR, "diagram_interfaces_design.py"))
 
 
 def test_fir_design_reparses():
@@ -262,6 +281,7 @@ print("FROZEN OK")
 if __name__ == "__main__":
     test_multi_file_design_reparses()
     test_stream_auto_pipeline_design_reparses()
+    test_module_interface_design_reparses()
     test_fir_design_reparses()
     test_auto_fsm_design_reparses()
     test_auto_goal_split_design_reparses()

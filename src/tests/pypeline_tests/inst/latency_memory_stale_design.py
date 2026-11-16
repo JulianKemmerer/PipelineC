@@ -12,7 +12,7 @@ sys.path.insert(
 )
 from pypeline import MAIN, hw_func, param, uint8_t, Input, make_reset, uint1_t  # noqa: E402
 
-from stream.stream import make_stream_interface  # noqa: E402
+from stream import make_stream_interface  # noqa: E402
 from stream.stream_auto_pipeline import make_stream_auto_pipeline  # noqa: E402
 
 HEAVY = param("LATENCY_MEMORY_HEAVY", 1, choices=(0, 1), help="the heavy core, else the light one")
@@ -29,7 +29,7 @@ def light_core(x: uint8_t) -> uint8_t:
     return x + 1
 
 
-uint8_stream_intrf = make_stream_interface(uint8_t)
+uint8_stream_if_t = make_stream_interface(uint8_t)
 core_pipeline = make_stream_auto_pipeline(
     heavy_core if HEAVY else light_core, name="core"
 )
@@ -43,6 +43,6 @@ rst: Input[uint1_t] = make_reset()
 
 @MAIN(param("LATENCY_MEMORY_GOAL", 100.0, type=float), reset=rst, reset_registers="all")
 def latency_memory_stale_top(
-    stream_in_if: uint8_stream_intrf.fwd_t, stream_out_if: uint8_stream_intrf.fb_t
+    stream_in_if: uint8_stream_if_t.fwd_t, stream_out_if: uint8_stream_if_t.fb_t
 ) -> core_pipeline.return_t:
     return core_pipeline(stream_in_if, stream_out_if)

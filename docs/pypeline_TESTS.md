@@ -1561,7 +1561,9 @@ exercise generated helpers and specialization reuse in real hardware builds.
   every form of `name=`, parses to the same keys twice; `auto_goal_split_design.py`,
   whose objects from one comprehension are used at two clock goals, and
   `auto_multi_cycle_repeated_design.py`, whose repeated stream AUTO_MULTI_CYCLE
-  wrappers share keys, too.
+  wrappers share keys, too. Every case also requires the same struct type names
+  from both parses, an `@interface`'s halves included; `diagram_interfaces_design.py`
+  adds a design-module `@interface` with its `.wire_t` and interface functions.
 
 **AUTO objects at several clock goals.**
 - **`auto_construction_site_unit_test.py` (unit, no parse):** construction sites tell

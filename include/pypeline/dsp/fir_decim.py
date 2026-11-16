@@ -19,7 +19,7 @@ from pypeline import (
     uint1_t,
 )
 
-from stream.stream import make_stream_interface, make_stream_t
+from stream import make_stream_interface, make_stream_t
 from stream.stream_auto_pipeline import make_stream_auto_pipeline
 
 from dsp.fir import _quantize_arg_coeffs
@@ -71,7 +71,7 @@ def make_fir_decim(
     accum_t = fir_core.accum_t
 
     win_t = data_t[n_taps]
-    in_intrf = make_stream_interface(data_t)
+    in_if_t = make_stream_interface(data_t)
     phase_t = make_uint_t(max(1, (decim - 1).bit_length()))
     LAST_PHASE = decim - 1
 
@@ -85,12 +85,12 @@ def make_fir_decim(
 
         @struct
         class fir_decim_t(NamedTuple):
-            stream_in_if: in_intrf.fb_t  # input port's reverse half travels out
-            stream_out_if: sp_func.out_intrf.fwd_t  # output port's feedforward half travels out
+            stream_in_if: in_if_t.fb_t  # input port's reverse half travels out
+            stream_out_if: sp_func.out_if_t.fwd_t  # output port's feedforward half travels out
 
         @hw_func
         def fir_decim(
-            stream_in_if: in_intrf.fwd_t, stream_out_if: sp_func.out_intrf.fb_t
+            stream_in_if: in_if_t.fwd_t, stream_out_if: sp_func.out_if_t.fb_t
         ) -> fir_decim_t:
             window: Reg[win_t]
             phase: Reg[phase_t]
@@ -100,10 +100,10 @@ def make_fir_decim(
                 shifted[i] = window[i - 1]
 
             # Only the last phase of each decim group enters the pipeline.
-            sp_in: sp_func.in_intrf.stream_t
+            sp_in: sp_func.in_if_t.stream_t
             sp_in.data = shifted
             sp_in.valid = stream_in_if.stream.valid & (phase == LAST_PHASE)
-            sp_o = sp_func(sp_func.in_intrf.fwd_t(sp_in), stream_out_if)
+            sp_o = sp_func(sp_func.in_if_t.fwd_t(sp_in), stream_out_if)
 
             accepted: uint1_t = stream_in_if.stream.valid & sp_o.stream_in_if.ready
             if accepted:
@@ -180,13 +180,13 @@ def make_fir_decim(
     fir_decim.interp = 1
     fir_decim.n_taps = n_taps
     fir_decim.handshake = handshake
-    fir_decim.in_fwd_t = in_intrf.fwd_t if handshake == "elastic" else None
+    fir_decim.in_fwd_t = in_if_t.fwd_t if handshake == "elastic" else None
     fir_decim.in_stream_t = in_stream_t if handshake == "valid_only" else None
-    fir_decim.out_fwd_t = sp_func.out_intrf.fwd_t if handshake == "elastic" else None
+    fir_decim.out_fwd_t = sp_func.out_if_t.fwd_t if handshake == "elastic" else None
     fir_decim.out_stream_t = out_stream_t if handshake == "valid_only" else None
     # Reverse halves of the two ports (elastic only -- valid_only is one-way).
-    fir_decim.in_fb_t = in_intrf.fb_t if handshake == "elastic" else None
-    fir_decim.out_fb_t = sp_func.out_intrf.fb_t if handshake == "elastic" else None
-    fir_decim.stream_intrf = in_intrf
-    fir_decim.in_intrf = in_intrf
+    fir_decim.in_fb_t = in_if_t.fb_t if handshake == "elastic" else None
+    fir_decim.out_fb_t = sp_func.out_if_t.fb_t if handshake == "elastic" else None
+    fir_decim.stream_if_t = in_if_t
+    fir_decim.in_if_t = in_if_t
     return fir_decim

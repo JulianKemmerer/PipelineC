@@ -33,7 +33,7 @@ def test_interface_specializations_have_distinct_keys_and_keep_pairing():
 
         for fn, result_t in ((broadcast, broadcast.return_t), (skid, skid.return_t)):
             assert inspect.unwrap(fn).__annotations__["return"] is result_t
-            assert fn.axis_intrf is iface
+            assert fn.axis_if_t is iface
             key = P.CANONICAL_CALLABLE_KEY(fn)
             slot = (fn.__name__, width)
             assert keys.setdefault(slot, key) == key
@@ -54,7 +54,7 @@ def test_record_names_describe_factory_and_interface_role():
     iface = make_axis_interface(4)
     for role, t in (("fwd", iface.fwd_t), ("fb", iface.fb_t), ("wire", iface.wire_t)):
         name = t._pypeline_name_info.render(PL._NAME_BASE_LIMIT)
-        assert name.startswith("stream_intrf_" + role + "_t_from_stream_stream"), name
+        assert name.startswith("stream_if_" + role + "_t_from_stream_stream"), name
         assert "_n_4" in name and "uint8_t" in name, name
         assert t._pypeline_name_info.source.endswith("stream.py")
 
@@ -114,7 +114,7 @@ def test_returned_factory_preserves_outer_closure_identity():
 
 
 def _make_late_interface_factory(iface):
-    from interface.interface_func import make_hw_func_from_interface_func
+    from interface_func import make_hw_func_from_interface_func
 
     def build():
         skid = make_axis_skid_buffer(iface)

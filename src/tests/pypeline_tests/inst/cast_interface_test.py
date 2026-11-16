@@ -29,19 +29,19 @@ from typing import NamedTuple
 
 from pypeline import MAIN, hw_func, sim_call, sim_reset, struct, uint1_t, uint4_t, uint8_t
 
-from stream.stream import make_stream_interface
+from stream import make_stream_interface
 from stream.stream_fifo import make_stream_fifo
 
-axis8_intrf = make_stream_interface(uint8_t)
-stream_t = axis8_intrf.stream_t
-fwd_t = axis8_intrf.fwd_t
-fb_t = axis8_intrf.fb_t
+axis8_if_t = make_stream_interface(uint8_t)
+stream_t = axis8_if_t.stream_t
+fwd_t = axis8_if_t.fwd_t
+fb_t = axis8_if_t.fb_t
 
 # feedback_t != uint1_t: a wide (credit-style) backpressure signal.
-wide_intrf = make_stream_interface(uint8_t, feedback_t=uint4_t)
-wide_stream_t = wide_intrf.stream_t
-wide_fwd_t = wide_intrf.fwd_t
-wide_fb_t = wide_intrf.fb_t
+wide_if_t = make_stream_interface(uint8_t, feedback_t=uint4_t)
+wide_stream_t = wide_if_t.stream_t
+wide_fwd_t = wide_if_t.fwd_t
+wide_fb_t = wide_if_t.fb_t
 
 
 @MAIN
@@ -172,7 +172,7 @@ def test_wide_feedback_wrap_unwrap():
 
 # ── aliased call form: stream_fifo.fb_t(...) / .fwd_t(...) via an attribute
 # stamped on the returned hw_func, not a direct .fwd_t/.fb_t AST attribute
-# on an _intrf variable -- exercises _try_eval_const resolving an arbitrary
+# on an _if_t variable -- exercises _try_eval_const resolving an arbitrary
 # attribute chain, per _elab_cast_call/_is_pypeline_type. ──
 
 stream_fifo = make_stream_fifo(uint8_t, 4)
@@ -180,7 +180,7 @@ stream_fifo = make_stream_fifo(uint8_t, 4)
 
 @MAIN
 def aliased_wrap_fwd(d: uint8_t, v: uint1_t) -> stream_fifo.fwd_t:
-    return stream_fifo.fwd_t(stream_fifo.stream_intrf.stream_t(data=d, valid=v))
+    return stream_fifo.fwd_t(stream_fifo.stream_if_t.stream_t(data=d, valid=v))
 
 
 @MAIN

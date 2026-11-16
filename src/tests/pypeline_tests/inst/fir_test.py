@@ -141,7 +141,7 @@ def _drive_elastic(
         rdy = 1 if out_ready_fn(cycle) else 0
         r = sim_call(
             fir,
-            fir.in_fwd_t(stream=fir.in_intrf.stream_t(data=fir.data_t(val=d), valid=v)),
+            fir.in_fwd_t(stream=fir.in_if_t.stream_t(data=fir.data_t(val=d), valid=v)),
             fir.out_fb_t(ready=rdy),
         )
         if v and int(r.stream_in_if.ready):

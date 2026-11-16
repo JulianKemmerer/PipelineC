@@ -203,7 +203,7 @@ def make_block_tb(
 
     # The plain input stream in both modes (never the elastic port's .fwd_t
     # half: an Input[T] wire can't hold a port-pairing type).
-    in_t = block.in_intrf.stream_t if elastic else block.in_stream_t
+    in_t = block.in_if_t.stream_t if elastic else block.in_stream_t
 
     @sim_input
     def drive_in() -> in_t:

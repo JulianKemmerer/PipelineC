@@ -1344,7 +1344,7 @@ fail or find some unrelated global that happens to be named `src`. `_elaborate_l
 therefore passes the function's own `__annotations__` to `FuncElaborator`
 (`port_annotations`), and `_setup_inputs`/`_setup_outputs` convert those resolved objects
 (`_resolved_annotation_to_ctype`, which also registers the struct/enum they name). This
-covers every annotation form — `T`, `elem_t[n]`, `some_intrf.fwd_t`, `src.pair_t`,
+covers every annotation form — `T`, `elem_t[n]`, `some_if_t.fwd_t`, `src.pair_t`,
 `hw_return_type(src)` — and uses the same objects `@hw_func`'s simulation casts arguments
 to. The AST is re-evaluated only when there is no resolved value: top-level `def`s
 elaborated by `PARSE_FILE` (their annotations name module globals), and string annotations
@@ -1428,7 +1428,7 @@ Before reuse, `_elaborate_live_func` checks both defining source ownership and t
 specialization identity. A compact-key collision raises `ElaborationError` instead of
 silently reusing incompatible `Logic`. The two-width interface regression specifically
 covers the former failure: both widths previously had the function key
-`axis_broadcast_interlock_axis_intrf_stream_intrf_n_2`, so the second call reused the
+`axis_broadcast_interlock_axis_if_t_stream_if_t_n_2`, so the second call reused the
 first width's function despite having a different return record.
 
 VHDL names are built from the separately captured source description. They show the
@@ -1672,7 +1672,7 @@ shared LOGIC/VHDL backend — no changes to VHDL generation are needed.
 
 ## `@interface` — Generated Reverse Wiring
 
-`@interface` (`include/pypeline/interface/interface.py`) declares a bundle of signals with
+`@interface` (`include/pypeline/interface.py`) declares a bundle of signals with
 per-field direction: plain fields are feedforward, `Feedback[T]` fields are reverse. It is a
 pure library construct — it derives ordinary `@struct`s attached directly onto the class as
 `.fwd_t` / `.fb_t` (there is no public `make_interface_type` / `make_interface_feedback_type`),
@@ -1683,19 +1683,19 @@ as its forward field rather than re-declaring `data`/`valid` itself, so `.fwd_t`
 — this makes a standalone valid-only stream and the forward half of a with-ready one the same
 underlying type, crossable with a single `.stream` field access instead of a per-field copy.
 A third attribute, `.stream_t`, gives that nested plain type directly off the interface
-(`some_intrf.stream_t`, `None` for non-stream-shaped interfaces) — it replaces the older
+(`some_if_t.stream_t`, `None` for non-stream-shaped interfaces) — it replaces the older
 `<fwd_t value>.typeof("stream")` idiom, since the shortcut conceptually belongs on the interface,
 not on one of its derived structs.
 
 Every use site accesses `.fwd_t`/`.fb_t`/`.stream_t` directly off the `@interface`-holding
-variable — never through a bound local alias (`chan_t = chan_intrf.fwd_t`). Convention: a
-variable holding the interface class itself is suffixed `_intrf`; a variable holding one
+variable — never through a bound local alias (`chan_t = chan_if_t.fwd_t`). Convention: a
+variable holding the interface class itself is suffixed `_if_t`; a variable holding one
 *instance* of a port half is suffixed `_if` — the two suffixes never collide, so a reader (and
 the elaborator, see below) can always tell which kind of name they're looking at.
 
 **A dotted-attribute port annotation inside a factory closure** (`stream_in_if:
-in_intrf.fwd_t`, with `in_intrf` a factory-local variable used *only* in annotations) is the
-usual case of an annotation-only name: `in_intrf` never becomes a closure cell. The port
+in_if_t.fwd_t`, with `in_if_t` a factory-local variable used *only* in annotations) is the
+usual case of an annotation-only name: `in_if_t` never becomes a closure cell. The port
 type is the resolved `.fwd_t` in `func.__annotations__`, not a re-evaluation of the
 annotation (see **Port types** under
 [Specialised Functions](#specialised-functions)), so no interface-specific recovery is
@@ -1715,10 +1715,10 @@ When elaboration of one factory closure is reached *from inside* another's (e.g.
 `make_stream_auto_pipeline`'s returned function, called while elaborating `make_fir`'s),
 `self` at that point is the *caller's* `FuncElaborator`, and `self.module_globals` already
 contains the caller's closure variables. Both of those factories name their own interface
-variable `in_intrf` — a likely coincidence given the `_intrf` naming convention above
+variable `in_if_t` — a likely coincidence given the `_if_t` naming convention above
 (`fir.py`'s scalar per-sample data vs. `stream_auto_pipeline.py`'s windowed, array-shaped
 data that `fir_core` operates on). Merging the caller's namespace would let the caller's
-`in_intrf` resolve a name in the callee — for an interface type, a scalar-typed
+`in_if_t` resolve a name in the callee — for an interface type, a scalar-typed
 `CONST_REF_RD` wire feeding an array-typed field, which `TYPE_RESOLVE_ASSIGNMENT_RHS`
 (`VHDL.py`) rejects only at VHDL writing, with "Cant support this assignment in vhdl?".
 `func_own_globals` (`func_for_source.__globals__`, the closure's *own* defining module)
@@ -1742,14 +1742,14 @@ branch is detected, before `_inner_ctype_to_str` is even called. A register is i
 state, never a port, so it never needs (or should imply) `.fwd_t`/`.fb_t`'s port-pairing
 signal; `.stream_t` (or a bare `make_stream_t(...)`) is always the correct type for register
 state that happens to look like stream data. The check unwraps one array dimension first
-(`_array_elem_ctype`, so `Reg[some_intrf.fwd_t[n]]` is caught too), then looks for
+(`_array_elem_ctype`, so `Reg[some_if_t.fwd_t[n]]` is caught too), then looks for
 `_pypeline_interface_role` on the (possibly-unwrapped) type — set only by `@interface`'s
 `_derive` on `.fwd_t`/`.fb_t`, deliberately *not* on `.stream_t` even though `.stream_t` also
 carries a `_pypeline_interface` back-reference (so `interface_of()` answers for it) —
 `_pypeline_interface_role` is what distinguishes "a real paired half" from "the plain type
 that happens to know which interface it came from."
 
-**`Feedback[T]` is banned the same way, not exempt.** `Feedback[some_intrf.fwd_t]` might look
+**`Feedback[T]` is banned the same way, not exempt.** `Feedback[some_if_t.fwd_t]` might look
 legitimate — a `Feedback` wire stands in for a real, forward-referenced port value rather than
 internal state — but exempting it would just relocate the same problem: a `Feedback` wire is
 not itself a port either (nothing else ever binds to it as a port), so allowing the paired
@@ -1758,11 +1758,11 @@ exactly what the rest of this restriction exists to prevent. `_elab_ann_assign`'
 `_FeedbackType` branch runs the identical `_pypeline_interface_role` check (right after
 computing `inner_ctype`'s array-unwrapped element) and raises the same shape of
 `ElaborationError` naming `Feedback[uint1_t]` (for a bare ready/valid signal) or
-`Feedback[some_intrf.stream_t]` (for a stream) as the replacement. A design that would
-otherwise declare `foo_ready: Feedback[some_intrf.fb_t]` instead declares
-`foo_ready: Feedback[uint1_t]` and constructs `some_intrf.fb_t(ready=foo_ready)` inline at the
+`Feedback[some_if_t.stream_t]` (for a stream) as the replacement. A design that would
+otherwise declare `foo_ready: Feedback[some_if_t.fb_t]` instead declares
+`foo_ready: Feedback[uint1_t]` and constructs `some_if_t.fb_t(ready=foo_ready)` inline at the
 one real call site that needs the paired type (mirroring the existing
-`f(port=intrf.fwd_t(stream=x))` idiom below) — the same mechanical transform applies to a
+`f(port=some_if_t.fwd_t(stream=x))` idiom below) — the same mechanical transform applies to a
 `.fwd_t`-typed Feedback feeding back a whole stream.
 
 **Generalized beyond `Reg[T]`**: the same `_pypeline_interface_role` check also fires for
@@ -1771,31 +1771,31 @@ after the `Feedback[T]`/`Wire`/`Input`/`Output[T]` branches and before the "norm
 variable" fallthrough. A plain local is not a port either, so the same reasoning applies
 uniformly; the only exemptions are hw_func signature args and return-struct fields (parsed by
 entirely different code, never reaching `_elab_ann_assign` at all) and an inline
-`intrf.fwd_t(...)`/`intrf.fb_t(...)` constructor-call *expression* used directly as a call
+`some_if_t.fwd_t(...)`/`some_if_t.fb_t(...)` constructor-call *expression* used directly as a call
 argument or return value — never stored in any local, `Reg[T]`, `Feedback[T]`, or global
 `Wire[T]` first. This generalization depends on a struct-constructor call being elaborable as
 a call *argument*, not just as a whole assignment's right-hand side (`_elab_ann_assign`/
 `_elab_assign` special-case that via `_elab_compound_init` before general expression
-elaboration ever sees it): without it, `f(port=intrf.fwd_t(stream=x))` would have nowhere to
+elaboration ever sees it): without it, `f(port=some_if_t.fwd_t(stream=x))` would have nowhere to
 go — as a call argument, the constructor call would fall through to `_elab_call`'s
 plain-Name-call/module-qualified-call resolution, which has no struct-constructor awareness
-of its own, and raise `NotImplementedError` (`'intrf' is not a module in call 'intrf.fwd_t'`).
+of its own, and raise `NotImplementedError` (`'some_if_t' is not a module in call 'some_if_t.fwd_t'`).
 `_elab_call`'s argument-binding loop (`for port_name, arg_expr in bound_args`) instead detects
 whether `arg_expr` is an `ast.Call` whose callee resolves (via `_try_eval_const`) to something
 with `_fields` (i.e. a NamedTuple/struct type) — if so, a synthetic call-site-unique wire name
 is declared (`_declare_var`, zero-init, same as any local) and populated via the same
 `_elab_compound_init` walk used for variable initializers, then used as the argument's wire.
-This is what makes `f(port=intrf.fwd_t(stream=x))` elaborate with no local variable ever
+This is what makes `f(port=some_if_t.fwd_t(stream=x))` elaborate with no local variable ever
 declared, which is what makes banning local `.fwd_t`/`.fb_t` declarations practical rather
 than just moving the boilerplate around.
 
 **Closing the bare-assignment loophole.** `_elab_ann_assign` only ever sees an *annotated*
-declaration (`x: T = ...` or `x: T`); a bare `x = intrf.fwd_t(...)` (no annotation at all) is a
+declaration (`x: T = ...` or `x: T`); a bare `x = some_if_t.fwd_t(...)` (no annotation at all) is a
 plain `ast.Assign`, handled by `_elab_assign`'s own struct-constructor-call path (the one that
 also backs `x = MyStruct(field=val)` compound-init and infers `x`'s ctype from the callee's
 name) — a different code path, so it must independently consult `_pypeline_interface_role`:
-without that, `x = intrf.fwd_t(...)` followed by ordinary reuse of `x` across several
-statements would bypass the entire restriction above, even though `x: intrf.fwd_t = ...`
+without that, `x = some_if_t.fwd_t(...)` followed by ordinary reuse of `x` across several
+statements would bypass the entire restriction above, even though `x: some_if_t.fwd_t = ...`
 right next to it hard-errors. `_elab_assign` runs the identical
 `_pypeline_interface_role` check in two places: once early, when the RHS folds to a plain
 Python constant via `_try_eval_const` and gets cached into `const_env` (the common case for a
@@ -1806,13 +1806,13 @@ over a live wire). Both raise the same `ElaborationError` as the annotated form.
 
 **A plain (non-hw_func) Python function may not return a `.fwd_t`/`.fb_t` value either**,
 even though nothing stores it in a local *inside that function*. A helper like
-`def foo_null(): return intrf.fwd_t(stream=...)`, called as `x = foo_null()` or
+`def foo_null(): return some_if_t.fwd_t(stream=...)`, called as `x = foo_null()` or
 `o.field = foo_null()`, hides the exact same paired-type construction behind a call boundary
 instead of at a real port crossing — indistinguishable, from the caller's side, from any other
 banned pattern above. Checked in `_try_eval_const` itself (`_check_no_indirect_interface_pairing_return`,
 run on every successfully-evaluated `ast.Call`), so it fires no matter which caller invoked
 `_try_eval_const` for whatever reason. The one exemption: a call whose `func` is literally a
-`.fwd_t`/`.fb_t` attribute access (`intrf.fwd_t(...)`/`intrf.fb_t(...)` itself) — the sanctioned
+`.fwd_t`/`.fb_t` attribute access (`some_if_t.fwd_t(...)`/`some_if_t.fb_t(...)` itself) — the sanctioned
 inline-construction idiom, which must keep working as a call argument or return expression.
 Everything else — any named function, however many layers of indirection — must return
 `.stream_t` (or `uint1_t` for a bare ready/valid signal) instead, with the paired type
@@ -1824,21 +1824,21 @@ declarations, never inside a function body). None of the three are themselves a 
 construct: a `Wire` is plain internal wiring between two `@MAIN`s, and `Input`/`Output` are
 single flattened top-level chip signals — so allowing any of them to carry `.fwd_t`/`.fb_t`
 would just relocate the same "paired value living somewhere other than a real port crossing"
-problem to module scope. Split into a plain `Wire[intrf.stream_t]` (or `Input`/`Output`) plus
+problem to module scope. Split into a plain `Wire[some_if_t.stream_t]` (or `Input`/`Output`) plus
 a separate `Wire[uint1_t]` for the ready/valid half, and construct `.fwd_t`/`.fb_t` inline only
 where a real hw_func port actually needs it — or, better, use the compound-Wire sugar below,
 which keeps the two halves as one Wire instead of two independently-named globals.
 
 **`Wire[SomeInterface]` — the bare `@interface` class itself, not `.fwd_t`/`.fb_t`/`.stream_t` —
 is sugar for a single compound Wire holding both halves.** A global stream+ready pair used to
-require two separate globals (`foo: Wire[intrf.stream_t]` plus `foo_ready: Wire[uint1_t]`),
+require two separate globals (`foo: Wire[some_if_t.stream_t]` plus `foo_ready: Wire[uint1_t]`),
 disconnected in name even though they're one logical port. `@interface` derives a fourth
 attribute alongside `.fwd_t`/`.fb_t`/`.stream_t` — `.wire_t` — a flat, non-directional struct
 with one field per interface field (`Feedback[T]` fields unwrapped to plain `T`, exactly like
 `.fb_t` unwraps them; direction only matters at a real port crossing, and a Wire is not one).
 `_discover_global_wires` recognizes a bare interface class in `Wire[...]`'s inner ctype
 (`is_interface(t)` true, i.e. `_pypeline_is_interface` set but no `_pypeline_interface_role`)
-and substitutes `.wire_t` transparently — `Wire[intrf.fwd_t]`/`Wire[intrf.fb_t]` stay banned
+and substitutes `.wire_t` transparently — `Wire[some_if_t.fwd_t]`/`Wire[some_if_t.fb_t]` stay banned
 exactly as above; only the bare class gets the sugar. Because `.wire_t` is built via the same
 `struct(NamedTuple(...))` call `.fwd_t`/`.fb_t` already use, it is an ordinary `@struct` once
 derived and gets full flattened multi-writer support for free — `foo_if.stream` written by one
@@ -1851,7 +1851,7 @@ and every native-sim path agree on what a `Wire[SomeInterface]` annotation actua
 
 A function annotated with a whole `@interface` is an **interface function**: its body wires
 only the feedforward direction. `make_hw_func_from_interface_func(f)`
-(`include/pypeline/interface/interface_func.py`) runs at import time, analyzes `f`'s AST, and
+(`include/pypeline/interface_func.py`) runs at import time, analyzes `f`'s AST, and
 **generates real source** for an ordinary reverse-threaded `@hw_func` (plus its port struct),
 which it `exec`s into a synthetic module registered in `sys.modules` + `linecache`. Both
 native simulation and elaboration consume that one artifact, so they cannot disagree. Python
@@ -1972,7 +1972,7 @@ call site — not a downstream `KeyError`.
   body. Only a callee's feedforward parameters (`fwd_params`) are caller-suppliable; the reverse
   halves of its output ports (`fb_params`) are synthesized by the pass, so naming one by keyword
   is rejected. This is a source-parsing change only — the *generated* call
-  ([interface_func.py:~750](../include/pypeline/interface/interface_func.py)) is still emitted
+  ([interface_func.py:~750](../include/pypeline/interface_func.py)) is still emitted
   positionally in callee-declaration order regardless of how the caller wrote it, so native sim
   and VHDL elaboration consume an unchanged artifact either way.
 - In `PY_TO_LOGIC.py`'s generic submodule-call elaborator (`_elab_call`, around line 4171),
@@ -3669,7 +3669,7 @@ cast-shaped call is 100% of the fix; nothing else about these sites changes.
 
 - **Hook B — `_elab_call`**, immediately after `tag_probe = self._try_eval_const(expr.
   func)` and *before* the `ast.Attribute` resolution branch (so both a bare `uint8_t(x)`
-  and an attribute-form `intrf.fb_t(x)` are caught before either reaches ordinary callee
+  and an attribute-form `some_if_t.fb_t(x)` are caught before either reaches ordinary callee
   resolution): `elif self._is_cast_call(expr) and self._is_pypeline_type(tag_probe):
   return self._elab_cast_call(expr, tag_probe)`.
 
@@ -3774,7 +3774,7 @@ ports objecting. `pypeline.py`'s `_check_partial_interface_ports` and PY_TO_LOGI
 why the marker must be stamped *before* `@wires`/`@hw_func`-wrapping runs.
 
 `_check_no_indirect_interface_pairing_return` recognizes the sanctioned
-`intrf.fwd_t(...)`/`intrf.fb_t(...)` inline-constructor idiom by evaluating the callee via
+`some_if_t.fwd_t(...)`/`some_if_t.fb_t(...)` inline-constructor idiom by evaluating the callee via
 `_try_eval_const` and checking `_pypeline_interface_role`/`_pypeline_is_cast` on the
 resulting **value** — not by literal AST attribute name
 (`call_node.func.attr in ("fwd_t", "fb_t")`), which would miss every factory-stamped alias
@@ -3789,13 +3789,13 @@ at a real port crossing, never stashed in a bare local — key off the *declared
 each of their own sites (`_elab_assign`'s brand-new-local branch, `_elab_ann_assign`,
 `Reg[T]`/`Feedback[T]` annotations, global `Wire`/`Input`/`Output`), not the call shape,
 so in principle they need no cast-awareness. `_elab_assign`'s bare-local ban
-(`bad = intrf.fwd_t(x)`, no annotation) runs unconditionally once `callee` is known to be
+(`bad = some_if_t.fwd_t(x)`, no annotation) runs unconditionally once `callee` is known to be
 an interface half, ahead of the `_is_cast_call` branch — deliberately hoisted there,
 since living *inside* the same `if hasattr(callee, "_fields") and not
 self._is_cast_call(...)` block as the struct-ctor routing would let de-classifying a
 cast-shaped call skip the ban check along with the routing it was meant to skip, silently
-letting `bad = chan_intrf.fwd_t(some_stream)` bypass a ban that already correctly blocks
-the keyword form `bad = chan_intrf.fwd_t(stream=some_stream)`.
+letting `bad = chan_if_t.fwd_t(some_stream)` bypass a ban that already correctly blocks
+the keyword form `bad = chan_if_t.fwd_t(stream=some_stream)`.
 `cast_error_test.py`'s `test_bare_local_fwd_t_still_banned_via_cast_call` is the
 regression test for this ordering — not a hypothetical guard: it failed against the
 first version of this fix, which put the ban inside the cast-aware branch instead of
@@ -6157,13 +6157,15 @@ These are actual examples from the two-width regression:
 | Object | Previous name | Generated name |
 |---|---|---|
 | Four-byte kept-data record | `kept_data_bus_t_data_uint8_t_4_keep_uint1_t_4_data_t_uint8_t_n_4` | `kept_data_bus_t_from_kept_data_bus_n_4_data_t_uint8_t` |
-| Broadcast function, four-byte interface | `axis_broadcast_interlock_axis_intrf_stream_intrf_n_2` | `axis_broadcast_interlock_from_axi_axis_n_2_axis_intrf_stream_intrf_feedback_t_uint1_t_data_t_ndarray_fragment_t_ndims_1_frag_t_kept_data_bus_t_n_4_data_t_uint8_t` |
-| Broadcast function, eight-byte interface | Same key as the four-byte function (the bug) | `axis_broadcast_interlock_from_axi_axis_n_2_axis_intrf_stream_intrf_feedback_t_uint1_t_data_t_ndarray_fragment_t_ndims_1_frag_t_kept_data_bus_t_n_8_data_t_uint8_t` |
+| Broadcast function, four-byte interface | `axis_broadcast_interlock_axis_if_t_stream_if_t_n_2` | `axis_broadcast_interlock_from_axi_axis_n_2_axis_if_t_stream_if_t_feedback_t_uint1_t_data_t_ndarray_fragment_t_ndims_1_frag_t_kept_data_bus_t_n_4_data_t_uint8_t` |
+| Broadcast function, eight-byte interface | Same key as the four-byte function (the bug) | `axis_broadcast_interlock_from_axi_axis_n_2_axis_if_t_stream_if_t_feedback_t_uint1_t_data_t_ndarray_fragment_t_ndims_1_frag_t_kept_data_bus_t_n_8_data_t_uint8_t` |
 
 The resulting entity adds `_<latency>CLK_<timing-hash>`. The result record begins
 `axis_broadcast_interlock_t_from_axi_axis_...`. Interface halves begin
-`stream_intrf_fwd_t_from_stream_stream_...`, `stream_intrf_fb_t_from_stream_stream_...`
-and `stream_intrf_wire_t_from_stream_stream_...`; their remaining parameters identify
+`stream_if_fwd_t_from_stream_stream_...`, `stream_if_fb_t_from_stream_stream_...`
+and `stream_if_wire_t_from_stream_stream_...`: the interface's name without its own `_t`
+(`stream_if_t`), then the role ([naming metadata](pypeline_DESIGN.md#naming-metadata)).
+Their remaining parameters identify
 the payload even when the reverse half only contains a ready bit. Thus `n_2` describes
 the broadcast fan-out and the nested `n_4`/`n_8` describes the byte-lane count.
 

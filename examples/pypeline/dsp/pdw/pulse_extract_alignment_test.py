@@ -109,8 +109,8 @@ def test_variable_frequency_completion():
                 valid=int(c in responses),
             ),
             noise_est=dp.noise_t(val=noise),
-            pkt_out_if=engine.pkt_out_intrf.fb_t(1),
-            pdw_out_if=engine.pdw_out_intrf.fb_t(1),
+            pkt_out_if=engine.pkt_out_if_t.fb_t(1),
+            pdw_out_if=engine.pdw_out_if_t.fb_t(1),
         )
         assert not (o.fifo_full or o.desc_drop or o.meas_drop)
         if o.pdw_out_if.stream.valid:

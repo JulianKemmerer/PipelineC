@@ -36,9 +36,9 @@ directions -- see the comment in its body.
 """
 from pypeline import NamedTuple, Reg, hw_func, struct, uint1_t
 
-from interface.interface import is_interface
+from interface import is_interface
 from stream.serdes_common import check_choice
-from stream.stream import make_stream_interface
+from stream import make_stream_interface
 
 # Which combinational paths through the stream port the slice cuts.
 SKID_MODES = ("full", "forward", "reverse", "bypass")
@@ -49,15 +49,15 @@ _MODE_SLOTS = {"full": 2, "forward": 1, "reverse": 1, "bypass": 0}
 _MODE_LATENCY = {"full": 1, "forward": 1, "reverse": 0, "bypass": 0}
 
 
-def make_skid_buffer(data_t_or_intrf, mode: str = "full"):
+def make_skid_buffer(data_t_or_if_t, mode: str = "full"):
     """A skid buffer / register slice over one valid-ready stream.
 
-    `data_t_or_intrf` is either a plain payload type -- in which case the stream
+    `data_t_or_if_t` is either a plain payload type -- in which case the stream
     interface is built here, the `stream/` house style (cf. `make_stream_fifo`)
     -- or an already-built `@interface`, the `axi/` house style (cf.
     `make_axis_broadcast_interlock`). Accepting an interface is not just
     convenience: `interface_func.callee_ports` compares interfaces by Python
-    identity, so a caller who already built an `axis_intrf` must be able to hand
+    identity, so a caller who already built an `axis_if_t` must be able to hand
     in *that object* rather than a canonically-equal twin.
 
     Multiple payload widths can coexist in one design. Pass the original
@@ -72,24 +72,24 @@ def make_skid_buffer(data_t_or_intrf, mode: str = "full"):
     problem gets the thing that actually fixes it.
 
     Returns skid_buffer, with its complete return type at skid_buffer.return_t:
-        skid_buffer(stream_in_if: stream_intrf.fwd_t, stream_out_if: stream_intrf.fb_t)
+        skid_buffer(stream_in_if: stream_if_t.fwd_t, stream_out_if: stream_if_t.fb_t)
             -> skid_buffer_t
-        skid_buffer_t fields: .stream_out_if (stream_intrf.fwd_t),
-                              .stream_in_if  (stream_intrf.fb_t)
-    attrs: .stream_intrf .fwd_t .fb_t .data_t .mode .n_slots .latency
+        skid_buffer_t fields: .stream_out_if (stream_if_t.fwd_t),
+                              .stream_in_if  (stream_if_t.fb_t)
+    attrs: .stream_if_t .fwd_t .fb_t .data_t .mode .n_slots .latency
     """
     check_choice("make_skid_buffer", "mode", mode, SKID_MODES)
 
-    if is_interface(data_t_or_intrf):
-        stream_intrf = data_t_or_intrf
+    if is_interface(data_t_or_if_t):
+        stream_if_t = data_t_or_if_t
     else:
-        stream_intrf = make_stream_interface(data_t_or_intrf)
-    data_t = stream_intrf.stream_t.typeof("data")
+        stream_if_t = make_stream_interface(data_t_or_if_t)
+    data_t = stream_if_t.stream_t.typeof("data")
 
     @struct
     class skid_buffer_t(NamedTuple):
-        stream_out_if: stream_intrf.fwd_t
-        stream_in_if: stream_intrf.fb_t
+        stream_out_if: stream_if_t.fwd_t
+        stream_in_if: stream_if_t.fb_t
 
     # One whole @hw_func body per mode, under a factory-time `if` -- not one
     # body with internal branching. Required, not stylistic: Reg[T]
@@ -100,11 +100,11 @@ def make_skid_buffer(data_t_or_intrf, mode: str = "full"):
 
         @hw_func
         def skid_buffer(
-            stream_in_if: stream_intrf.fwd_t, stream_out_if: stream_intrf.fb_t
+            stream_in_if: stream_if_t.fwd_t, stream_out_if: stream_if_t.fb_t
         ) -> skid_buffer_t:
             o: skid_buffer_t
-            buf: Reg[stream_intrf.stream_t]
-            skid: Reg[stream_intrf.stream_t]
+            buf: Reg[stream_if_t.stream_t]
+            skid: Reg[stream_if_t.stream_t]
             out_is_skid: Reg[uint1_t]
 
             # Both outputs are derived from REGISTERS ONLY, before any clear or
@@ -112,7 +112,7 @@ def make_skid_buffer(data_t_or_intrf, mode: str = "full"):
             # what keeps stream_out_if.ready out of o.stream_in_if.ready, and
             # stream_in_if out of o.stream_out_if. (dwidth_widen/dwidth_narrow
             # deliberately do the opposite and are not register slices.)
-            outw: stream_intrf.stream_t = buf
+            outw: stream_if_t.stream_t = buf
             ready_in: uint1_t = ~skid.valid
             if out_is_skid:
                 outw = skid
@@ -143,10 +143,10 @@ def make_skid_buffer(data_t_or_intrf, mode: str = "full"):
 
         @hw_func
         def skid_buffer(
-            stream_in_if: stream_intrf.fwd_t, stream_out_if: stream_intrf.fb_t
+            stream_in_if: stream_if_t.fwd_t, stream_out_if: stream_if_t.fb_t
         ) -> skid_buffer_t:
             o: skid_buffer_t
-            buf: Reg[stream_intrf.stream_t]
+            buf: Reg[stream_if_t.stream_t]
 
             o.stream_out_if.stream = buf
             # Combinational from the downstream ready: this mode cuts the
@@ -162,10 +162,10 @@ def make_skid_buffer(data_t_or_intrf, mode: str = "full"):
 
         @hw_func
         def skid_buffer(
-            stream_in_if: stream_intrf.fwd_t, stream_out_if: stream_intrf.fb_t
+            stream_in_if: stream_if_t.fwd_t, stream_out_if: stream_if_t.fb_t
         ) -> skid_buffer_t:
             o: skid_buffer_t
-            skid: Reg[stream_intrf.stream_t]
+            skid: Reg[stream_if_t.stream_t]
 
             # A pure function of the register -- the cut this mode makes. It is
             # also why one bubble is needed to recover from a stall: while skid
@@ -173,7 +173,7 @@ def make_skid_buffer(data_t_or_intrf, mode: str = "full"):
             o.stream_in_if.ready = ~skid.valid
 
             # Data/valid bypass combinationally whenever the slot is empty.
-            outw: stream_intrf.stream_t = stream_in_if.stream
+            outw: stream_if_t.stream_t = stream_in_if.stream
             if skid.valid:
                 outw = skid
             o.stream_out_if.stream = outw
@@ -191,16 +191,16 @@ def make_skid_buffer(data_t_or_intrf, mode: str = "full"):
 
         @hw_func
         def skid_buffer(
-            stream_in_if: stream_intrf.fwd_t, stream_out_if: stream_intrf.fb_t
+            stream_in_if: stream_if_t.fwd_t, stream_out_if: stream_if_t.fb_t
         ) -> skid_buffer_t:
             o: skid_buffer_t
             o.stream_out_if.stream = stream_in_if.stream
             o.stream_in_if.ready = stream_out_if.ready
             return o
 
-    skid_buffer.stream_intrf = stream_intrf
-    skid_buffer.fwd_t = stream_intrf.fwd_t
-    skid_buffer.fb_t = stream_intrf.fb_t
+    skid_buffer.stream_if_t = stream_if_t
+    skid_buffer.fwd_t = stream_if_t.fwd_t
+    skid_buffer.fb_t = stream_if_t.fb_t
     skid_buffer.data_t = data_t
     skid_buffer.mode = mode
     skid_buffer.n_slots = _MODE_SLOTS[mode]

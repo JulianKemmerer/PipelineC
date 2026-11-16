@@ -81,7 +81,7 @@ def pulse_detect_elastic_tb():
     elif phase >= TEST_WIDTH:
         x = LOW_POWER
 
-    in_stream: pulse_detect_e.in_intrf.stream_t
+    in_stream: pulse_detect_e.in_if_t.stream_t
     in_stream.valid = 1
     in_stream.data = data_t(val=x)
 
@@ -90,8 +90,8 @@ def pulse_detect_elastic_tb():
     stutter = stutter + 1
 
     o = pulse_detect_e(
-        stream_in_if=pulse_detect_e.in_intrf.fwd_t(in_stream),
-        pdw_out_if=pulse_detect_e.out_intrf.fb_t(pdw_ready),
+        stream_in_if=pulse_detect_e.in_if_t.fwd_t(in_stream),
+        pdw_out_if=pulse_detect_e.out_if_t.fb_t(pdw_ready),
         threshold_high=data_t(val=THRESHOLD_HIGH),
         threshold_low=data_t(val=THRESHOLD_LOW),
         max_width=MAX_WIDTH_NORMAL,
@@ -188,7 +188,7 @@ def pulse_detect_valid_only_tb():
 
     o = pulse_detect_vo(
         in_stream=in_stream,
-        pdw_out_if=pulse_detect_vo.out_intrf.fb_t(1),
+        pdw_out_if=pulse_detect_vo.out_if_t.fb_t(1),
         threshold_high=data_t(val=THRESHOLD_HIGH),
         threshold_low=data_t(val=THRESHOLD_LOW),
         max_width=MAX_WIDTH_NORMAL,
@@ -267,13 +267,13 @@ pulse_detect_cw = make_pulse_detect_fsm(data_t)
 
 @MAIN(125.0, reset=rst, reset_registers="all")
 def pulse_detect_cw_tb():
-    in_stream: pulse_detect_cw.in_intrf.stream_t
+    in_stream: pulse_detect_cw.in_if_t.stream_t
     in_stream.valid = 1
     in_stream.data = data_t(val=HIGH_POWER)  # permanently above threshold_high
 
     o = pulse_detect_cw(
-        stream_in_if=pulse_detect_cw.in_intrf.fwd_t(in_stream),
-        pdw_out_if=pulse_detect_cw.out_intrf.fb_t(1),
+        stream_in_if=pulse_detect_cw.in_if_t.fwd_t(in_stream),
+        pdw_out_if=pulse_detect_cw.out_if_t.fb_t(1),
         threshold_high=data_t(val=THRESHOLD_HIGH),
         threshold_low=data_t(val=THRESHOLD_LOW),
         max_width=CW_MAX_WIDTH,

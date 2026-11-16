@@ -13,7 +13,7 @@ from pypeline import (
 )
 
 from fifo import make_fifo
-from stream.stream import make_stream_interface, make_stream_t
+from stream import make_stream_interface, make_stream_t
 
 
 def make_stream_auto_pipeline(
@@ -60,8 +60,8 @@ def make_stream_auto_pipeline(
 
     Ports are declared as the two halves of a stream `@interface`, so this
     composes inside an interface function with no adapter:
-        stream_auto_pipeline_func(stream_in_if: in_intrf.fwd_t, stream_out_if: out_intrf.fb_t) -> stream_auto_pipeline_t
-        stream_auto_pipeline_t fields: .stream_out_if (out_intrf.fwd_t), .stream_in_if (in_intrf.fb_t)
+        stream_auto_pipeline_func(stream_in_if: in_if_t.fwd_t, stream_out_if: out_if_t.fb_t) -> stream_auto_pipeline_t
+        stream_auto_pipeline_t fields: .stream_out_if (out_if_t.fwd_t), .stream_in_if (in_if_t.fb_t)
     i.e. input port `stream_in_if` takes its feedforward half as an arg and returns
     its reverse half; output port `stream_out_if` does the reverse.
 
@@ -80,13 +80,13 @@ def make_stream_auto_pipeline(
     (in_type,) = hw_arg_types(func)
     out_type = hw_return_type(func)
 
-    in_intrf = make_stream_interface(in_type)
-    out_intrf = make_stream_interface(out_type)
+    in_if_t = make_stream_interface(in_type)
+    out_if_t = make_stream_interface(out_type)
 
     # Plain valid-only twins for func_stream/auto_pipelined_func below -- they
     # are purely combinational data-threading (no ready anywhere), not stream
     # ports, so they use genuinely one-directional types rather than a lone
-    # half of the with-ready in_intrf.fwd_t/out_intrf.fwd_t (those are reserved
+    # half of the with-ready in_if_t.fwd_t/out_if_t.fwd_t (those are reserved
     # for stream_auto_pipeline's own real ports further down).
     in_plain_t = make_stream_t(in_type)
     out_plain_t = make_stream_t(out_type)
@@ -125,12 +125,12 @@ def make_stream_auto_pipeline(
 
     @struct
     class stream_auto_pipeline_t(NamedTuple):
-        stream_in_if: in_intrf.fb_t  # input port's reverse half travels out
-        stream_out_if: out_intrf.fwd_t  # output port's feedforward half travels out
+        stream_in_if: in_if_t.fb_t  # input port's reverse half travels out
+        stream_out_if: out_if_t.fwd_t  # output port's feedforward half travels out
 
     @hw_func
     def stream_auto_pipeline(
-        stream_in_if: in_intrf.fwd_t, stream_out_if: out_intrf.fb_t
+        stream_in_if: in_if_t.fwd_t, stream_out_if: out_if_t.fb_t
     ) -> stream_auto_pipeline_t:
         o: stream_auto_pipeline_t
 
@@ -170,12 +170,12 @@ def make_stream_auto_pipeline(
 
     # The port interfaces (and their two halves), so callers can declare
     # matching ports / write interface functions over this module.
-    stream_auto_pipeline.in_intrf = in_intrf
-    stream_auto_pipeline.out_intrf = out_intrf
-    stream_auto_pipeline.in_fwd_t = in_intrf.fwd_t
-    stream_auto_pipeline.in_fb_t = in_intrf.fb_t
-    stream_auto_pipeline.out_fwd_t = out_intrf.fwd_t
-    stream_auto_pipeline.out_fb_t = out_intrf.fb_t
+    stream_auto_pipeline.in_if_t = in_if_t
+    stream_auto_pipeline.out_if_t = out_if_t
+    stream_auto_pipeline.in_fwd_t = in_if_t.fwd_t
+    stream_auto_pipeline.in_fb_t = in_if_t.fb_t
+    stream_auto_pipeline.out_fwd_t = out_if_t.fwd_t
+    stream_auto_pipeline.out_fb_t = out_if_t.fb_t
     # Sizing metadata (see docstring)
     stream_auto_pipeline.auto_pipeline = auto_pipeline_call
     stream_auto_pipeline.max_in_flight = max_in_flight

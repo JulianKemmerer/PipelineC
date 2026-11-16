@@ -1489,6 +1489,7 @@ Python entry registered; custom entrypoint/manual calls. Registration(s): `elab_
 |---|---|
 | [test_multi_file_design_reparses](../../../src/tests/pypeline_tests/inst/double_parse_file_test.py#L76) | Multi file design reparses. |
 | [test_stream_auto_pipeline_design_reparses](../../../src/tests/pypeline_tests/inst/double_parse_file_test.py#L82) | Stream auto pipeline design reparses. |
+| [test_module_interface_design_reparses](../../../src/tests/pypeline_tests/inst/double_parse_file_test.py#L100) | A design-module @interface, its .wire_t and interface functions parse to the same struct type names twice (every case checks type names). |
 | [test_fir_design_reparses](../../../src/tests/pypeline_tests/inst/double_parse_file_test.py#L87) | Fir design reparses. |
 | [test_auto_fsm_design_reparses](../../../src/tests/pypeline_tests/inst/double_parse_file_test.py#L94) | Auto fsm design reparses. |
 | [test_scheduled_auto_fsm_cache_reparses](../../../src/tests/pypeline_tests/inst/double_parse_file_test.py#L103) | Scheduled auto fsm cache reparses. |
@@ -1594,7 +1595,7 @@ Python entry registered; custom entrypoint/manual calls. Registration(s): `unit:
 | [test_struct_factory_param_suffix_overflow_collapses_safely](../../../src/tests/pypeline_tests/inst/factory_closure_naming_test.py#L564) | Struct factory param suffix overflow collapses safely. |
 | [test_hw_func_name_elides_redundant_module_prefix](../../../src/tests/pypeline_tests/inst/factory_closure_naming_test.py#L580) | Hw func name elides redundant module prefix. |
 | [test_enum_sequential_values_elided_sparse_kept](../../../src/tests/pypeline_tests/inst/factory_closure_naming_test.py#L591) | Enum sequential values elided sparse kept. |
-| [test_overflow_collapse_never_lands_mid_token](../../../src/tests/pypeline_tests/inst/factory_closure_naming_test.py#L615) | Overflow collapse never lands mid token. |
+| [test_overflow_collapse_never_lands_mid_token](../../../src/tests/pypeline_tests/inst/factory_closure_naming_test.py#L615) | Overflow collapse never lands mid token. Passes without collapsing anything (tree after commit `5b816e9d`): both inputs are 74 and 80 characters, under `PY_TO_LOGIC._MAX_MANGLE_NAME_LEN` (128), so `_collapse_overflow_name` returns them unchanged. Inputs longer than the limit, cut where the old fixed-offset truncation would land mid-token, would test the claim. |
 | [test_generic_call_site_alias_labels_instance_with_callee_name](../../../src/tests/pypeline_tests/inst/factory_closure_naming_test.py#L631) | Generic call site alias labels instance with callee name. |
 | [test_loc_str_omits_el_for_single_line_keeps_for_multiline](../../../src/tests/pypeline_tests/inst/factory_closure_naming_test.py#L662) | Loc str omits el for single line keeps for multiline. |
 | [test_bin_func_name_sanitizes_array_brackets](../../../src/tests/pypeline_tests/inst/factory_closure_naming_test.py#L700) | Bin func name sanitizes array brackets. |

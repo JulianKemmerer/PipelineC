@@ -48,7 +48,7 @@ N_CYCLES = 40
 fifo = make_stream_fifo(uint8_t, 4)
 skid = make_skid_buffer(uint8_t)
 skid_fwd = make_skid_buffer(uint8_t, "forward")
-word_t = fifo.stream_intrf.stream_t
+word_t = fifo.stream_if_t.stream_t
 
 
 @struct

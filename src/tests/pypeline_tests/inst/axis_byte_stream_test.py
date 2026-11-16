@@ -24,10 +24,10 @@ from axi.axis_sim import AxisSimSource, AxisSimSink, Scoreboard
 N = 4  # lanes per beat
 MAX_BYTES = 32
 
-axis_intrf = make_axis_interface(N)
-byte_source = make_axis_byte_source(axis_intrf, N, MAX_BYTES)
+axis_if_t = make_axis_interface(N)
+byte_source = make_axis_byte_source(axis_if_t, N, MAX_BYTES)
 
-byte_sink = make_axis_byte_sink(axis_intrf, N, MAX_BYTES)
+byte_sink = make_axis_byte_sink(axis_if_t, N, MAX_BYTES)
 
 
 buf_t = uint8_t[MAX_BYTES]
@@ -37,13 +37,13 @@ buf_t = uint8_t[MAX_BYTES]
 # hardware functions exercised below, mirroring dwidth_converter_test.py.
 @MAIN
 def byte_source_main(
-    load: uint1_t, load_data: buf_t, load_len: uint32_t, stream_out_if: axis_intrf.fb_t
+    load: uint1_t, load_data: buf_t, load_len: uint32_t, stream_out_if: axis_if_t.fb_t
 ) -> byte_source.return_t:
     return byte_source(load, load_data, load_len, stream_out_if)
 
 
 @MAIN
-def byte_sink_main(stream_in_if: axis_intrf.fwd_t) -> byte_sink.return_t:
+def byte_sink_main(stream_in_if: axis_if_t.fwd_t) -> byte_sink.return_t:
     return byte_sink(stream_in_if)
 
 
@@ -53,7 +53,7 @@ def _round_trip_hw(frame_bytes):
     sim_reset()
     frame_len = len(frame_bytes)
     load_data = list(frame_bytes) + [0] * (MAX_BYTES - frame_len)
-    sink_ready = axis_intrf.fb_t(ready=1)
+    sink_ready = axis_if_t.fb_t(ready=1)
     got = None
     for cycle in range(50):
         load = 1 if cycle == 0 else 0
@@ -81,13 +81,13 @@ def test_hw_round_trip_partial_final_beat():
 
 
 def _make_stream(data, keep, eod, valid=1):
-    """Hand-craft an axis_intrf.fwd_t word with arbitrary data/keep/eod --
+    """Hand-craft an axis_if_t.fwd_t word with arbitrary data/keep/eod --
     bypassing byte_source, whose own derivation can't produce a non-compliant
     beat -- so the compliance-check tests below can drive one directly."""
-    frag_t = axis_intrf.stream_t.typeof("data")
+    frag_t = axis_if_t.stream_t.typeof("data")
     bus_t = frag_t.typeof("frag")
-    return axis_intrf.fwd_t(
-        axis_intrf.stream_t(
+    return axis_if_t.fwd_t(
+        axis_if_t.stream_t(
             data=frag_t(frag=bus_t(data=data, keep=keep), eod=[eod]),
             valid=valid,
         )
@@ -123,8 +123,8 @@ def test_hw_sink_rejects_non_prefix_keep():
 
 def test_sim_source_sink_round_trip():
     """Plain-Python AxisSimSource/AxisSimSink, no hardware involved."""
-    src = AxisSimSource(axis_intrf, N)
-    snk = AxisSimSink(axis_intrf, N)
+    src = AxisSimSource(axis_if_t, N)
+    snk = AxisSimSink(axis_if_t, N)
     frame = bytes(range(1, N * 2 + 3))  # not a multiple of N
     src.send(frame)
 
@@ -143,7 +143,7 @@ def test_sim_source_sink_round_trip():
 def test_sim_sink_rejects_mid_packet_hole():
     """AxisSimSink's Xilinx-style compliance check -- the plain-Python mirror
     of test_hw_sink_rejects_mid_packet_hole."""
-    snk = AxisSimSink(axis_intrf, N)
+    snk = AxisSimSink(axis_if_t, N)
     word = _make_stream(data=[1, 2, 0, 0], keep=[1, 1, 0, 0], eod=0)
     try:
         snk.step(word)
@@ -156,8 +156,8 @@ def test_sim_sink_rejects_mid_packet_hole():
 def test_sim_source_pause_generator():
     """set_pause_generator holds the emitted word at valid=0 for the
     generator's truthy entries, without losing/corrupting the frame."""
-    src = AxisSimSource(axis_intrf, N)
-    snk = AxisSimSink(axis_intrf, N)
+    src = AxisSimSource(axis_if_t, N)
+    snk = AxisSimSink(axis_if_t, N)
     frame = bytes(range(1, N + 1))
     src.send(frame)
     src.set_pause_generator([1, 1, 0, 0, 0, 0, 0, 0])
@@ -198,8 +198,8 @@ def test_scoreboard_pass_and_fail():
 def test_axis_sim_sink_check_nowait():
     """AxisSimSink(scoreboard=...) -- check_nowait() combines recv + check."""
     sb = Scoreboard()
-    src = AxisSimSource(axis_intrf, N)
-    snk = AxisSimSink(axis_intrf, N, scoreboard=sb)
+    src = AxisSimSource(axis_if_t, N)
+    snk = AxisSimSink(axis_if_t, N, scoreboard=sb)
 
     good = bytes(range(1, N + 3))
     bad = bytes(range(1, N + 2))  # one byte short of what's expected

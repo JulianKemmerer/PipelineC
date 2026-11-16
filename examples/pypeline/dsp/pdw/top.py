@@ -14,7 +14,7 @@ characteristics.
 EVERY top-level port is a flattened 32-bit AXI-Stream. Nothing here is a wide
 parallel register bus any more: control arrives as a framed struct, PDW records
 and candidate records leave as framed structs, and the released pulse packet is
-broadcast to two masters. Interface types (`axis32_intrf`, the serializers'
+broadcast to two masters. Interface types (`axis32_if_t`, the serializers'
 own) live inside; the boundary is plain `uintN_t`, per the project's convention
 that AXI-Stream is only the top-level interface shape.
 
@@ -102,7 +102,7 @@ PART("xc7a200tffg1156-2")  # AIR7310: XC7A200T-2FFG1156C, 125 MHz
 AXIS_N = 4
 tkeep_t = make_uint_t(AXIS_N)
 KEEP_ALL = (1 << AXIS_N) - 1
-axis32_intrf = make_axis_interface(AXIS_N)
+axis32_if_t = make_axis_interface(AXIS_N)
 
 pulse_gen = make_pulse_gen()
 out_stream_t = pulse_gen.return_t
@@ -223,7 +223,7 @@ def ctrl_main():
     # -- the same reason pdw_main reads `rx0_tdata: uint32_t` before slicing.
     ctrl_tdata: uint32_t = tx0_s_axis_tdata
     ctrl_tkeep: tkeep_t = tx0_s_axis_tkeep
-    ci: pdw_ctrl.axis_intrf.stream_t
+    ci: pdw_ctrl.axis_if_t.stream_t
     ci.data.frag.data = uint_to_array_le(ctrl_tdata, 8)
     ci.data.frag.keep = uint_to_array_le(ctrl_tkeep, 1)
     ci.data.eod[0] = tx0_s_axis_tlast
@@ -232,7 +232,7 @@ def ctrl_main():
     # Reset by ctrl_rst (the @MAIN above), NOT global_rst -- this block comes
     # out of reset first so it can be configured while the datapath is still
     # held. See pdw_ctrl.py.
-    c = pdw_ctrl(axis_in_if=pdw_ctrl.axis_intrf.fwd_t(ci))
+    c = pdw_ctrl(axis_in_if=pdw_ctrl.axis_if_t.fwd_t(ci))
     tx0_s_axis_tready = c.axis_in_if.ready
     ctrl_regs = c.regs
 
@@ -382,14 +382,14 @@ host_export(
 # rx*_m_axis_tready pin included -- reaches the serializer's own ready, whose
 # path into its `nfill` index is already deep. Two slots, +1 cycle, 100%
 # throughput.
-pdw_skid = make_axis_skid_buffer(pdw_tx.axis_intrf)
+pdw_skid = make_axis_skid_buffer(pdw_tx.axis_if_t)
 
-cand_skid = make_axis_skid_buffer(cand_tx.axis_intrf)
+cand_skid = make_axis_skid_buffer(cand_tx.axis_if_t)
 
 # Two sinks for the released packet: the host capture port and the TX replay
 # port. Combinational valid/ready interlocking, no buffering -- see
 # make_axis_broadcast_interlock.
-pkt_bcast = make_axis_broadcast_interlock(axis32_intrf, 2)
+pkt_bcast = make_axis_broadcast_interlock(axis32_if_t, 2)
 
 
 # Raw RX0 ADC input.
@@ -559,8 +559,8 @@ def pdw_main():
         max_width=ctrl_regs.max_width,
         freq_acc=o.freq_acc,
         noise_est=o.noise_est,
-        pkt_out_if=pulse_extract.pkt_out_intrf.fb_t(pkt_ready),
-        pdw_out_if=pulse_extract.pdw_out_intrf.fb_t(pdw_ready),
+        pkt_out_if=pulse_extract.pkt_out_if_t.fb_t(pkt_ready),
+        pdw_out_if=pulse_extract.pdw_out_if_t.fb_t(pdw_ready),
     )
 
     # -- internal-error alarm, trigger --------------------------------------
@@ -588,16 +588,16 @@ def pdw_main():
     gated_q_bits: uint16_t = e.pkt_out_if.stream.data.sample.q.val[15:0]
     keep_all: tkeep_t = KEEP_ALL
     pkt_tdata: uint32_t = concat(gated_q_bits, gated_i_bits)
-    pk: axis32_intrf.stream_t
+    pk: axis32_if_t.stream_t
     pk.data.frag.data = uint_to_array_le(pkt_tdata, 8)
     pk.data.frag.keep = uint_to_array_le(keep_all, 1)
     pk.data.eod[0] = e.pkt_out_if.stream.data.last
     pk.valid = e.pkt_out_if.stream.valid
     b = pkt_bcast(
-        axis_in_if=axis32_intrf.fwd_t(pk),
+        axis_in_if=axis32_if_t.fwd_t(pk),
         axis_out_if=[
-            axis32_intrf.fb_t(rx0_m_axis_tready),
-            axis32_intrf.fb_t(tx1_m_axis_tready),
+            axis32_if_t.fb_t(rx0_m_axis_tready),
+            axis32_if_t.fb_t(tx1_m_axis_tready),
         ],
     )
     pkt_ready = b.axis_in_if.ready
@@ -621,12 +621,12 @@ def pdw_main():
     tx1_m_axis_tvalid = pkt1_valid
 
     # -- valid_pdw_t -> rx1_m ------------------------------------------------
-    vs: pdw_tx.in_intrf.stream_t
+    vs: pdw_tx.in_if_t.stream_t
     vs.data.frag = e.pdw_out_if.stream.data
     vs.data.eod[0] = 1  # one record per frame
     vs.valid = e.pdw_out_if.stream.valid
     vt = pdw_tx(
-        stream_in_if=pdw_tx.in_intrf.fwd_t(vs),
+        stream_in_if=pdw_tx.in_if_t.fwd_t(vs),
         axis_out_if=pdw_tx.axis_fb_t(pdw_skid_rdy),
     )
     pdw_ready = vt.stream_in_if.ready
@@ -648,12 +648,12 @@ def pdw_main():
         pulse_width=o.pdw_out_if.stream.data.pulse_width,
         peak_power=o.pdw_out_if.stream.data.peak_power.val,
     )
-    cs: cand_tx.in_intrf.stream_t
+    cs: cand_tx.in_if_t.stream_t
     cs.data.frag = cand
     cs.data.eod[0] = 1
     cs.valid = o.pdw_out_if.stream.valid
     ct = cand_tx(
-        stream_in_if=cand_tx.in_intrf.fwd_t(cs),
+        stream_in_if=cand_tx.in_if_t.fwd_t(cs),
         axis_out_if=cand_tx.axis_fb_t(cand_skid_rdy),
     )
     ck = cand_skid(

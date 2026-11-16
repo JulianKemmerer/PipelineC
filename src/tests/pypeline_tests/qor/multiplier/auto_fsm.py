@@ -58,9 +58,9 @@ MULT_FSM = make_stream_auto_fsm(mult)
 CLK_RATE_MHZ = 50
 PART("sky130")
 clk: Input[uint1_t] = make_clock(CLK_RATE_MHZ)
-input: Input[MULT_FSM.in_intrf.stream_t]
+input: Input[MULT_FSM.in_if_t.stream_t]
 input_ready: Output[uint1_t]
-output: Output[MULT_FSM.out_intrf.stream_t]
+output: Output[MULT_FSM.out_if_t.stream_t]
 output_ready: Input[uint1_t]
 
 @MAIN(CLK_RATE_MHZ)

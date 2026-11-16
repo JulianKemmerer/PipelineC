@@ -15,7 +15,7 @@ from pypeline import (
 from kept_data_bus import make_kept_data_bus_t
 from ndarray import make_ndarray_fragment_t
 from stream.skid_buffer import make_skid_buffer
-from stream.stream import make_stream_interface, make_stream_t
+from stream import make_stream_interface, make_stream_t
 
 
 def make_axis_interface(n, elem_t=uint8_t, ndims=1):
@@ -26,9 +26,9 @@ def make_axis_interface(n, elem_t=uint8_t, ndims=1):
     keep-per-lane shape generalized to a per-lane struct stream.
 
     Usage:
-        axis32_intrf = make_axis_interface(4)
-        axis32_intrf.fwd_t   # {stream: {data, valid}}
-        axis32_intrf.fb_t    # {ready}
+        axis32_if_t = make_axis_interface(4)
+        axis32_if_t.fwd_t   # {stream: {data, valid}}
+        axis32_if_t.fb_t    # {ready}
     """
     bus_t = make_kept_data_bus_t(elem_t, n)
     fragment_t = make_ndarray_fragment_t(bus_t, ndims)
@@ -48,7 +48,7 @@ def make_axis_t(n, elem_t=uint8_t, ndims=1):
     return make_stream_t(fragment_t)
 
 
-def make_axis_broadcast_interlock(axis_intrf, n):
+def make_axis_broadcast_interlock(axis_if_t, n):
     """Combinatorially broadcasts one axis stream to n sink streams.
 
     Named 'interlock' rather than 'fork' because it is pure combinational
@@ -63,41 +63,41 @@ def make_axis_broadcast_interlock(axis_intrf, n):
     the entire wiring.
 
     Returns axis_broadcast_interlock, with its complete return type at axis_broadcast_interlock.return_t:
-        axis_broadcast_interlock(axis_in_if: axis_intrf.fwd_t, axis_out_if: axis_intrf.fb_t[n])
+        axis_broadcast_interlock(axis_in_if: axis_if_t.fwd_t, axis_out_if: axis_if_t.fb_t[n])
             -> axis_broadcast_interlock_t
         axis_broadcast_interlock_t fields:
-          .axis_out_if (axis_intrf.fwd_t[n]) - one forked copy of axis_in_if per sink
-          .axis_in_if  (axis_intrf.fb_t)   - reverse half of the source port
+          .axis_out_if (axis_if_t.fwd_t[n]) - one forked copy of axis_in_if per sink
+          .axis_in_if  (axis_if_t.fb_t)   - reverse half of the source port
     """
     @struct
     class axis_broadcast_interlock_t(NamedTuple):
-        axis_out_if: axis_intrf.fwd_t[n]
-        axis_in_if: axis_intrf.fb_t
+        axis_out_if: axis_if_t.fwd_t[n]
+        axis_in_if: axis_if_t.fb_t
 
     @hw_func
     def axis_broadcast_interlock(
-        axis_in_if: axis_intrf.fwd_t, axis_out_if: axis_intrf.fb_t[n]
+        axis_in_if: axis_if_t.fwd_t, axis_out_if: axis_if_t.fb_t[n]
     ) -> axis_broadcast_interlock_t:
         o: axis_broadcast_interlock_t
         all_sinks_ready: uint1_t = 1
         for i in range(n):
             all_sinks_ready = all_sinks_ready & axis_out_if[i].ready
         for i in range(n):
-            out_i: axis_intrf.stream_t = axis_in_if.stream
+            out_i: axis_if_t.stream_t = axis_in_if.stream
             out_i.valid = 0
             if all_sinks_ready | ~axis_out_if[i].ready:
                 out_i.valid = axis_in_if.stream.valid
-            o.axis_out_if[i] = axis_intrf.fwd_t(out_i)
+            o.axis_out_if[i] = axis_if_t.fwd_t(out_i)
         o.axis_in_if.ready = all_sinks_ready
         return o
 
-    axis_broadcast_interlock.axis_intrf = axis_intrf
-    axis_broadcast_interlock.fwd_t = axis_intrf.fwd_t
-    axis_broadcast_interlock.fb_t = axis_intrf.fb_t
+    axis_broadcast_interlock.axis_if_t = axis_if_t
+    axis_broadcast_interlock.fwd_t = axis_if_t.fwd_t
+    axis_broadcast_interlock.fb_t = axis_if_t.fb_t
     return axis_broadcast_interlock
 
 
-def make_axis_skid_buffer(axis_intrf, mode="full"):
+def make_axis_skid_buffer(axis_if_t, mode="full"):
     """A skid buffer / register slice on an axis stream, for cutting a
     combinational path (usually `ready`) without dropping in a whole FIFO.
 
@@ -113,7 +113,7 @@ def make_axis_skid_buffer(axis_intrf, mode="full"):
     is byte-identically the same compliant stream out, one or more cycles later.
     Nothing here needs the tkeep compliance check `make_axis_byte_sink` does.
 
-    Takes an already-built `axis_intrf` (like `make_axis_broadcast_interlock`
+    Takes an already-built `axis_if_t` (like `make_axis_broadcast_interlock`
     and the byte source/sink) so the ports match whatever the caller already
     has; `make_axis_interface(n)` builds one in a line.
 
@@ -123,14 +123,14 @@ def make_axis_skid_buffer(axis_intrf, mode="full"):
     `src/tests/pypeline_tests/inst/interface_factory_two_widths_test.py`.
 
     Returns axis_skid_buffer, with its complete return type at axis_skid_buffer.return_t:
-        axis_skid_buffer(stream_in_if: axis_intrf.fwd_t, stream_out_if: axis_intrf.fb_t)
+        axis_skid_buffer(stream_in_if: axis_if_t.fwd_t, stream_out_if: axis_if_t.fb_t)
             -> axis_skid_buffer_t
-        axis_skid_buffer_t fields: .stream_out_if (axis_intrf.fwd_t),
-                                   .stream_in_if  (axis_intrf.fb_t)
+        axis_skid_buffer_t fields: .stream_out_if (axis_if_t.fwd_t),
+                                   .stream_in_if  (axis_if_t.fb_t)
     """
-    axis_skid_buffer = make_skid_buffer(axis_intrf, mode=mode)
+    axis_skid_buffer = make_skid_buffer(axis_if_t, mode=mode)
 
-    axis_skid_buffer.axis_intrf = axis_intrf
+    axis_skid_buffer.axis_if_t = axis_if_t
     return axis_skid_buffer
 
 
@@ -171,15 +171,15 @@ def _make_dwidth_types(elem_t, narrow_n, ratio):
     wide_bus_t = make_kept_data_bus_t(elem_t, wide_n)
     narrow_frag_t = make_ndarray_fragment_t(narrow_bus_t, 1)
     wide_frag_t = make_ndarray_fragment_t(wide_bus_t, 1)
-    narrow_axis_intrf = make_stream_interface(narrow_frag_t)
-    wide_axis_intrf = make_stream_interface(wide_frag_t)
+    narrow_axis_if_t = make_stream_interface(narrow_frag_t)
+    wide_axis_if_t = make_stream_interface(wide_frag_t)
     return SimpleNamespace(
         narrow_bus_t=narrow_bus_t,
         wide_bus_t=wide_bus_t,
         narrow_frag_t=narrow_frag_t,
         wide_frag_t=wide_frag_t,
-        narrow_axis_intrf=narrow_axis_intrf,
-        wide_axis_intrf=wide_axis_intrf,
+        narrow_axis_if_t=narrow_axis_if_t,
+        wide_axis_if_t=wide_axis_if_t,
     )
 
 
@@ -262,18 +262,18 @@ def _make_null_chunk(narrow_n, narrow_bus_t, narrow_frag_t, narrow_chunk_t):
 def make_dwidth_widen(elem_t, narrow_n, ratio):
     """Combines `ratio` narrow beats into one wide beat.
     Generalizes axis128_to_axis512. Returns dwidth_widen, whose .return_t is
-    the complete result. Input and output ports use .narrow_in_intrf.fwd_t
-    and .wide_out_intrf.fb_t; the interfaces and reverse halves are available
-    as .narrow_in_intrf / .wide_out_intrf / .narrow_in_fb_t / .wide_out_fb_t.
+    the complete result. Input and output ports use .narrow_in_if_t.fwd_t
+    and .wide_out_if_t.fb_t; the interfaces and reverse halves are available
+    as .narrow_in_if_t / .wide_out_if_t / .narrow_in_fb_t / .wide_out_fb_t.
     """
     dwidth_types = _make_dwidth_types(elem_t, narrow_n, ratio)
     narrow_bus_t = dwidth_types.narrow_bus_t
     wide_bus_t = dwidth_types.wide_bus_t
     narrow_frag_t = dwidth_types.narrow_frag_t
     wide_frag_t = dwidth_types.wide_frag_t
-    narrow_axis_intrf = dwidth_types.narrow_axis_intrf
-    wide_axis_intrf = dwidth_types.wide_axis_intrf
-    # narrow_axis_intrf.stream_t is exactly make_stream_t(narrow_frag_t) --
+    narrow_axis_if_t = dwidth_types.narrow_axis_if_t
+    wide_axis_if_t = dwidth_types.wide_axis_if_t
+    # narrow_axis_if_t.stream_t is exactly make_stream_t(narrow_frag_t) --
     # split_to_chunks/assemble_chunks/shift_into_top are purely combinational,
     # not stream ports, so they work on that plain valid-only chunk type
     # directly (a real port's `.stream` field IS one, no conversion needed).
@@ -287,16 +287,16 @@ def make_dwidth_widen(elem_t, narrow_n, ratio):
 
     @struct
     class dwidth_widen_result_t(NamedTuple):
-        wide_out_if: wide_axis_intrf.fwd_t
-        narrow_in_if: narrow_axis_intrf.fb_t
+        wide_out_if: wide_axis_if_t.fwd_t
+        narrow_in_if: narrow_axis_if_t.fb_t
 
     @hw_func
     def dwidth_widen(
-        narrow_in_if: narrow_axis_intrf.fwd_t, wide_out_if: wide_axis_intrf.fb_t
+        narrow_in_if: narrow_axis_if_t.fwd_t, wide_out_if: wide_axis_if_t.fb_t
     ) -> dwidth_widen_result_t:
         o: dwidth_widen_result_t
-        narrow_in_reg: Reg[narrow_axis_intrf.stream_t]
-        wide_out_reg: Reg[wide_axis_intrf.stream_t]
+        narrow_in_reg: Reg[narrow_axis_if_t.stream_t]
+        wide_out_reg: Reg[wide_axis_if_t.stream_t]
 
         o.wide_out_if.stream = wide_out_reg
         if o.wide_out_if.stream.valid & wide_out_if.ready:
@@ -330,27 +330,27 @@ def make_dwidth_widen(elem_t, narrow_n, ratio):
 
         return o
 
-    dwidth_widen.narrow_in_intrf = narrow_axis_intrf
-    dwidth_widen.wide_out_intrf = wide_axis_intrf
-    dwidth_widen.narrow_in_fb_t = narrow_axis_intrf.fb_t
-    dwidth_widen.wide_out_fb_t = wide_axis_intrf.fb_t
+    dwidth_widen.narrow_in_if_t = narrow_axis_if_t
+    dwidth_widen.wide_out_if_t = wide_axis_if_t
+    dwidth_widen.narrow_in_fb_t = narrow_axis_if_t.fb_t
+    dwidth_widen.wide_out_fb_t = wide_axis_if_t.fb_t
     return dwidth_widen
 
 
 def make_dwidth_narrow(elem_t, narrow_n, ratio):
     """Splits one wide beat into `ratio` narrow beats, one per cycle.
     Generalizes axis512_to_axis128. Returns dwidth_narrow, whose .return_t is
-    the complete result. Input and output ports use .wide_in_intrf.fwd_t
-    and .narrow_out_intrf.fb_t; the interfaces and reverse halves are available
-    as .wide_in_intrf / .narrow_out_intrf / .wide_in_fb_t / .narrow_out_fb_t.
+    the complete result. Input and output ports use .wide_in_if_t.fwd_t
+    and .narrow_out_if_t.fb_t; the interfaces and reverse halves are available
+    as .wide_in_if_t / .narrow_out_if_t / .wide_in_fb_t / .narrow_out_fb_t.
     """
     dwidth_types = _make_dwidth_types(elem_t, narrow_n, ratio)
     narrow_bus_t = dwidth_types.narrow_bus_t
     wide_bus_t = dwidth_types.wide_bus_t
     narrow_frag_t = dwidth_types.narrow_frag_t
     wide_frag_t = dwidth_types.wide_frag_t
-    narrow_axis_intrf = dwidth_types.narrow_axis_intrf
-    wide_axis_intrf = dwidth_types.wide_axis_intrf
+    narrow_axis_if_t = dwidth_types.narrow_axis_if_t
+    wide_axis_if_t = dwidth_types.wide_axis_if_t
     # See make_dwidth_widen.
     narrow_chunk_t = make_stream_t(narrow_frag_t)
     wide_n = narrow_n * ratio
@@ -362,16 +362,16 @@ def make_dwidth_narrow(elem_t, narrow_n, ratio):
 
     @struct
     class dwidth_narrow_result_t(NamedTuple):
-        narrow_out_if: narrow_axis_intrf.fwd_t
-        wide_in_if: wide_axis_intrf.fb_t
+        narrow_out_if: narrow_axis_if_t.fwd_t
+        wide_in_if: wide_axis_if_t.fb_t
 
     @hw_func
     def dwidth_narrow(
-        wide_in_if: wide_axis_intrf.fwd_t, narrow_out_if: narrow_axis_intrf.fb_t
+        wide_in_if: wide_axis_if_t.fwd_t, narrow_out_if: narrow_axis_if_t.fb_t
     ) -> dwidth_narrow_result_t:
         o: dwidth_narrow_result_t
-        wide_in_reg: Reg[wide_axis_intrf.stream_t]
-        narrow_out_reg: Reg[narrow_axis_intrf.stream_t]
+        wide_in_reg: Reg[wide_axis_if_t.stream_t]
+        narrow_out_reg: Reg[narrow_axis_if_t.stream_t]
 
         o.narrow_out_if.stream = narrow_out_reg
         if o.narrow_out_if.stream.valid & narrow_out_if.ready:
@@ -401,10 +401,10 @@ def make_dwidth_narrow(elem_t, narrow_n, ratio):
 
         return o
 
-    dwidth_narrow.wide_in_intrf = wide_axis_intrf
-    dwidth_narrow.narrow_out_intrf = narrow_axis_intrf
-    dwidth_narrow.wide_in_fb_t = wide_axis_intrf.fb_t
-    dwidth_narrow.narrow_out_fb_t = narrow_axis_intrf.fb_t
+    dwidth_narrow.wide_in_if_t = wide_axis_if_t
+    dwidth_narrow.narrow_out_if_t = narrow_axis_if_t
+    dwidth_narrow.wide_in_fb_t = wide_axis_if_t.fb_t
+    dwidth_narrow.narrow_out_fb_t = narrow_axis_if_t.fb_t
     return dwidth_narrow
 
 
@@ -418,7 +418,7 @@ def make_dwidth_narrow(elem_t, narrow_n, ratio):
 # width (source side) or appending the kept lanes into an accumulating buffer
 # (sink side). `make_axis_byte_source`/`make_axis_byte_sink` below factor that
 # out; `n` is the interface's lane count (the same `n` passed to
-# `make_axis_interface(n, ...)` that built `axis_intrf`), `max_bytes` the
+# `make_axis_interface(n, ...)` that built `axis_if_t`), `max_bytes` the
 # largest frame either side needs to hold.
 #
 # Neither factory generates or checks backpressure patterns -- both drive
@@ -428,9 +428,9 @@ def make_dwidth_narrow(elem_t, narrow_n, ratio):
 # reverse half itself, same as with any other consumer.
 
 
-def make_axis_byte_source(axis_intrf, n, max_bytes):
+def make_axis_byte_source(axis_if_t, n, max_bytes):
     """Synthesizable byte-stream generator. Load a byte array + length once
-    (while idle), then emits one `axis_intrf.stream_t` word per cycle with
+    (while idle), then emits one `axis_if_t.stream_t` word per cycle with
     `keep[i] = remaining > i`, `eod[0]` set on the last beat, shifting the
     internal buffer down by `n` bytes each cycle the emitted word is actually
     accepted (`stream.valid & stream_out_if.ready`). Generalizes the input-side
@@ -448,10 +448,10 @@ def make_axis_byte_source(axis_intrf, n, max_bytes):
 
     Returns axis_byte_source, with its complete return type at axis_byte_source.return_t:
         axis_byte_source(load: uint1_t, load_data: uint8_t[max_bytes],
-                          load_len: uint32_t, stream_out_if: axis_intrf.fb_t)
+                          load_len: uint32_t, stream_out_if: axis_if_t.fb_t)
             -> axis_byte_source_t
         axis_byte_source_t fields:
-          .stream_out_if (axis_intrf.fwd_t) - the generated stream (paired
+          .stream_out_if (axis_if_t.fwd_t) - the generated stream (paired
             with the `stream_out_if` arg above, per the usual port-pairing
             naming convention: same name, opposite half, arg vs. return field)
           .idle (uint1_t) - no frame in flight; safe to `load` a new one
@@ -460,7 +460,7 @@ def make_axis_byte_source(axis_intrf, n, max_bytes):
 
     @struct
     class axis_byte_source_t(NamedTuple):
-        stream_out_if: axis_intrf.fwd_t
+        stream_out_if: axis_if_t.fwd_t
         idle: uint1_t
 
     @hw_func
@@ -468,7 +468,7 @@ def make_axis_byte_source(axis_intrf, n, max_bytes):
         load: uint1_t,
         load_data: buf_t,
         load_len: uint32_t,
-        stream_out_if: axis_intrf.fb_t,
+        stream_out_if: axis_if_t.fb_t,
     ) -> axis_byte_source_t:
         o: axis_byte_source_t
         buf: Reg[buf_t]
@@ -478,7 +478,7 @@ def make_axis_byte_source(axis_intrf, n, max_bytes):
             buf = load_data
             remaining = load_len
 
-        outw: axis_intrf.stream_t
+        outw: axis_if_t.stream_t
         outw.valid = remaining > 0
         outw.data.eod[0] = remaining <= n
         for i in range(n):
@@ -499,11 +499,11 @@ def make_axis_byte_source(axis_intrf, n, max_bytes):
         o.idle = remaining == 0
         return o
 
-    axis_byte_source.axis_intrf = axis_intrf
+    axis_byte_source.axis_if_t = axis_if_t
     return axis_byte_source
 
 
-def make_axis_byte_sink(axis_intrf, n, max_bytes):
+def make_axis_byte_sink(axis_if_t, n, max_bytes):
     """Synthesizable byte-stream checker/collector. Drives its own `ready`
     statically high (see this section's docstring), appending kept lanes into
     an internal buffer each accepted beat. On `eod`, `frame_valid` pulses for
@@ -522,9 +522,9 @@ def make_axis_byte_sink(axis_intrf, n, max_bytes):
     whatever the caller separately checks about `frame_data`/`frame_len`.
 
     Returns axis_byte_sink, with its complete return type at axis_byte_sink.return_t:
-        axis_byte_sink(stream_in_if: axis_intrf.fwd_t) -> axis_byte_sink_t
+        axis_byte_sink(stream_in_if: axis_if_t.fwd_t) -> axis_byte_sink_t
         axis_byte_sink_t fields:
-          .stream_in_if (axis_intrf.fb_t) - reverse half of the sunk port
+          .stream_in_if (axis_if_t.fb_t) - reverse half of the sunk port
           .frame_valid (uint1_t) - pulses for one cycle when a frame completes
           .frame_data (uint8_t[max_bytes]), .frame_len (uint32_t)
     """
@@ -532,13 +532,13 @@ def make_axis_byte_sink(axis_intrf, n, max_bytes):
 
     @struct
     class axis_byte_sink_t(NamedTuple):
-        stream_in_if: axis_intrf.fb_t
+        stream_in_if: axis_if_t.fb_t
         frame_valid: uint1_t
         frame_data: buf_t
         frame_len: uint32_t
 
     @hw_func
-    def axis_byte_sink(stream_in_if: axis_intrf.fwd_t) -> axis_byte_sink_t:
+    def axis_byte_sink(stream_in_if: axis_if_t.fwd_t) -> axis_byte_sink_t:
         o: axis_byte_sink_t
         buf: Reg[buf_t]
         count: Reg[uint32_t]
@@ -586,5 +586,5 @@ def make_axis_byte_sink(axis_intrf, n, max_bytes):
 
         return o
 
-    axis_byte_sink.axis_intrf = axis_intrf
+    axis_byte_sink.axis_if_t = axis_if_t
     return axis_byte_sink

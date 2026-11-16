@@ -44,9 +44,9 @@ stream_t = stream.return_t
 addr_t = raw.addr_t
 wr_t, rd_t = raw.p0_in_t, raw.p1_in_t
 wreq_t, rreq_t = stream.p0_req_t, stream.p1_req_t
-wif_t, rif_t = stream.p0_req_intrf.fwd_t, stream.p1_req_intrf.fwd_t
-wfb_t, rfb_t = stream.p0_resp_intrf.fb_t, stream.p1_resp_intrf.fb_t
-wstream_t, rstream_t = stream.p0_req_intrf.stream_t, stream.p1_req_intrf.stream_t
+wif_t, rif_t = stream.p0_req_if_t.fwd_t, stream.p1_req_if_t.fwd_t
+wfb_t, rfb_t = stream.p0_resp_if_t.fb_t, stream.p1_resp_if_t.fb_t
+wstream_t, rstream_t = stream.p0_req_if_t.stream_t, stream.p1_req_if_t.stream_t
 
 
 @struct

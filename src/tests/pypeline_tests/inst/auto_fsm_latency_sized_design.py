@@ -42,7 +42,7 @@ from pypeline import (
     make_reset,
 )
 
-from stream.stream import make_stream_interface
+from stream import make_stream_interface
 from stream.stream_auto_pipeline import make_stream_auto_pipeline
 
 
@@ -51,7 +51,7 @@ def div_inv(x: uint8_t) -> uint8_t:
     return x / ~x
 
 
-uint8_stream_intrf = make_stream_interface(uint8_t)
+uint8_stream_if_t = make_stream_interface(uint8_t)
 div_core = make_stream_auto_pipeline(div_inv)
 # Read during elaboration: 2 on the bootstrap parse, more once the sweep
 # pipelines the divider.
@@ -84,7 +84,7 @@ rst: Input[uint1_t] = make_reset()
 
 @MAIN(100.0, reset=rst, reset_registers="all")
 def latency_sized_core_top(
-    stream_in_if: uint8_stream_intrf.fwd_t, stream_out_if: uint8_stream_intrf.fb_t
+    stream_in_if: uint8_stream_if_t.fwd_t, stream_out_if: uint8_stream_if_t.fb_t
 ) -> div_core.return_t:
     return div_core(stream_in_if, stream_out_if)
 

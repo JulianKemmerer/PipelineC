@@ -6,7 +6,7 @@ from the investigation input.  Run this only through
 recorded together.
 """
 from pypeline import *
-from stream.stream import make_stream_t
+from stream import make_stream_t
 
 @struct
 class input_payload_t(NamedTuple):

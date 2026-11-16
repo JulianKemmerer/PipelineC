@@ -126,7 +126,7 @@ def self_check_auto_fsm_pipelined_unit() -> uint32_t:
         raw_checked += 1
     raw_index += 1
 
-    request: SERVICE.in_intrf.stream_t
+    request: SERVICE.in_if_t.stream_t
     request.data = inputs[index]
     request.valid = ~sent
     ready_now: uint1_t = ready

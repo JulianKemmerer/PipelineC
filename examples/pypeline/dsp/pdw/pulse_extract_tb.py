@@ -171,8 +171,8 @@ def pulse_extract_accept_tb():
             gate_last=gated.last, re_in=TB_PHASOR, im_in=TB_PHASOR
         ),
         noise_est=_DP.noise_t(val=TB_NOISE),
-        pkt_out_if=engine_acc.pkt_out_intrf.fb_t(1),
-        pdw_out_if=engine_acc.pdw_out_intrf.fb_t(1),
+        pkt_out_if=engine_acc.pkt_out_if_t.fb_t(1),
+        pdw_out_if=engine_acc.pdw_out_if_t.fb_t(1),
     )
 
     cyc = cyc + 1
@@ -286,8 +286,8 @@ def pulse_extract_glitch_tb():
             gate_last=gated.last, re_in=TB_PHASOR, im_in=TB_PHASOR
         ),
         noise_est=_DP.noise_t(val=TB_NOISE),
-        pkt_out_if=engine_glitch.pkt_out_intrf.fb_t(1),
-        pdw_out_if=engine_glitch.pdw_out_intrf.fb_t(1),
+        pkt_out_if=engine_glitch.pkt_out_if_t.fb_t(1),
+        pdw_out_if=engine_glitch.pdw_out_if_t.fb_t(1),
     )
 
     cyc = cyc + 1
@@ -351,8 +351,8 @@ def pulse_extract_cw_tb():
             gate_last=gated.last, re_in=TB_PHASOR, im_in=TB_PHASOR
         ),
         noise_est=_DP.noise_t(val=TB_NOISE),
-        pkt_out_if=engine_cw.pkt_out_intrf.fb_t(1),
-        pdw_out_if=engine_cw.pdw_out_intrf.fb_t(1),
+        pkt_out_if=engine_cw.pkt_out_if_t.fb_t(1),
+        pdw_out_if=engine_cw.pdw_out_if_t.fb_t(1),
     )
 
     cyc = cyc + 1
@@ -423,8 +423,8 @@ def pulse_extract_status_tb():
             gate_last=gated.last, re_in=TB_PHASOR, im_in=TB_PHASOR
         ),
         noise_est=_DP.noise_t(val=TB_NOISE),
-        pkt_out_if=engine_st.pkt_out_intrf.fb_t(1),
-        pdw_out_if=engine_st.pdw_out_intrf.fb_t(1),
+        pkt_out_if=engine_st.pkt_out_if_t.fb_t(1),
+        pdw_out_if=engine_st.pdw_out_if_t.fb_t(1),
     )
 
     cyc = cyc + 1
@@ -515,8 +515,8 @@ def pulse_extract_backpressure_tb():
             gate_last=gated.last, re_in=TB_PHASOR, im_in=TB_PHASOR
         ),
         noise_est=_DP.noise_t(val=TB_NOISE),
-        pkt_out_if=engine_bp.pkt_out_intrf.fb_t(pkt_ready),
-        pdw_out_if=engine_bp.pdw_out_intrf.fb_t(pdw_ready),
+        pkt_out_if=engine_bp.pkt_out_if_t.fb_t(pkt_ready),
+        pdw_out_if=engine_bp.pdw_out_if_t.fb_t(pdw_ready),
     )
 
     cyc = cyc + 1

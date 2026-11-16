@@ -66,7 +66,7 @@ def self_check_poly1305_auto_fsm() -> uint128_t:
     last: Reg[uint128_t]
     inputs: tagged_input_t[len(requests)] = requests
     answers: tagged_output_t[len(expected)] = expected
-    request: service.in_intrf.stream_t
+    request: service.in_if_t.stream_t
     request.data = inputs[index]
     request.valid = ~sent
     ready_now: uint1_t = ready

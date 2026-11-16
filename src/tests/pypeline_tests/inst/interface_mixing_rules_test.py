@@ -42,8 +42,8 @@ from pypeline import (
     sim_call,
     sim_reset,
 )
-from interface.interface import interface
-from interface.interface_func import (
+from interface import interface
+from interface_func import (
     InterfaceFuncError,
     make_hw_func_from_interface_func,
     callee_ports,
@@ -51,7 +51,7 @@ from interface.interface_func import (
 
 
 @interface
-class chan_intrf(NamedTuple):
+class chan_if_t(NamedTuple):
     data: uint8_t
     valid: uint1_t
     ready: Feedback[uint1_t]
@@ -73,10 +73,10 @@ def _expect(fn, needle):
 @struct
 class legacy_t(NamedTuple):
     stream_in_ready: uint1_t
-    stream_out: chan_intrf.fwd_t
+    stream_out: chan_if_t.fwd_t
 
 
-def legacy(stream_in: chan_intrf.fwd_t, stream_out_ready: uint1_t) -> legacy_t:
+def legacy(stream_in: chan_if_t.fwd_t, stream_out_ready: uint1_t) -> legacy_t:
     """Deliberately not `@hw_func`-decorated: this fixture is only ever
     introspected structurally (via `callee_ports`/`make_hw_func_from_interface_func`
     below), never simulated or elaborated as a real submodule, so it must not
@@ -97,7 +97,7 @@ def test_legacy_scalar_ready_ports_are_rejected_by_name():
 
 
 def test_half_migrated_module_cannot_be_instantiated():
-    def wiring(stream_in_if: chan_intrf) -> chan_intrf:
+    def wiring(stream_in_if: chan_if_t) -> chan_if_t:
         a = legacy(stream_in_if)
         return a.stream_out
 
@@ -107,12 +107,12 @@ def test_half_migrated_module_cannot_be_instantiated():
 # ── array ports are an output-side (fan-out) feature ──
 @struct
 class arr_in_t(NamedTuple):
-    sinks_if: chan_intrf.fb_t[2]
-    stream_out_if: chan_intrf.fwd_t
+    sinks_if: chan_if_t.fb_t[2]
+    stream_out_if: chan_if_t.fwd_t
 
 
 @hw_func
-def arr_in(sinks_if: chan_intrf.fwd_t[2], stream_out_if: chan_intrf.fb_t) -> arr_in_t:
+def arr_in(sinks_if: chan_if_t.fwd_t[2], stream_out_if: chan_if_t.fb_t) -> arr_in_t:
     o: arr_in_t
     o.stream_out_if = sinks_if[0]
     o.sinks_if[0].ready = stream_out_if.ready
@@ -127,13 +127,13 @@ def test_array_input_port_is_rejected_clearly():
 # ── a plain field in a mixed return bundle must actually be driven ──
 @struct
 class pass_t(NamedTuple):
-    stream_in_if: chan_intrf.fb_t
-    stream_out_if: chan_intrf.fwd_t
+    stream_in_if: chan_if_t.fb_t
+    stream_out_if: chan_if_t.fwd_t
     tag: uint8_t
 
 
 @hw_func
-def passthru(stream_in_if: chan_intrf.fwd_t, stream_out_if: chan_intrf.fb_t) -> pass_t:
+def passthru(stream_in_if: chan_if_t.fwd_t, stream_out_if: chan_if_t.fb_t) -> pass_t:
     o: pass_t
     o.stream_out_if = stream_in_if
     o.stream_in_if = stream_out_if
@@ -143,12 +143,12 @@ def passthru(stream_in_if: chan_intrf.fwd_t, stream_out_if: chan_intrf.fb_t) -> 
 
 @interface
 class tagged_ports(NamedTuple):
-    stream_out_if: chan_intrf
+    stream_out_if: chan_if_t
     tag: uint8_t
 
 
 def test_unassigned_plain_bundle_field_is_rejected():
-    def wiring(stream_in_if: chan_intrf) -> tagged_ports:
+    def wiring(stream_in_if: chan_if_t) -> tagged_ports:
         a = passthru(stream_in_if)
         return tagged_ports(stream_out_if=a.stream_out_if)
 
@@ -157,7 +157,7 @@ def test_unassigned_plain_bundle_field_is_rejected():
 
 # ── plain statements: non-interface fields of a call result are readable,
 #    the interface ports themselves are not ──
-def plain_reads_wiring(stream_in_if: chan_intrf) -> tagged_ports:
+def plain_reads_wiring(stream_in_if: chan_if_t) -> tagged_ports:
     a = passthru(stream_in_if)
     doubled: uint8_t = a.tag + a.tag  # plain field of a call result: fine
     return tagged_ports(stream_out_if=a.stream_out_if, tag=doubled)
@@ -168,20 +168,20 @@ plain_reads = make_hw_func_from_interface_func(plain_reads_wiring)
 
 @MAIN
 def top_plain_reads(
-    stream_in_if: chan_intrf.fwd_t, stream_out_if: chan_intrf.fb_t
+    stream_in_if: chan_if_t.fwd_t, stream_out_if: chan_if_t.fb_t
 ) -> plain_reads.return_t:
     return plain_reads(stream_in_if, stream_out_if)
 
 
 def test_plain_statement_may_read_non_interface_fields():
     sim_reset()
-    r = sim_call(top_plain_reads, chan_intrf.fwd_t(data=7, valid=1), chan_intrf.fb_t(ready=1))
+    r = sim_call(top_plain_reads, chan_if_t.fwd_t(data=7, valid=1), chan_if_t.fb_t(ready=1))
     assert int(r.tag) == 14
     assert int(r.stream_out_if.data) == 7 and int(r.stream_in_if.ready) == 1
 
 
 def test_plain_statement_may_not_touch_an_interface():
-    def wiring(stream_in_if: chan_intrf) -> chan_intrf:
+    def wiring(stream_in_if: chan_if_t) -> chan_if_t:
         a = passthru(stream_in_if)
         alias = a.stream_out_if  # an interface, outside of a call
         return alias
@@ -197,18 +197,18 @@ def test_plain_statement_may_not_touch_an_interface():
 def make_bump(step):
     @struct
     class bump_t(NamedTuple):
-        stream_in_if: chan_intrf.fb_t
-        stream_out_if: chan_intrf.fwd_t
+        stream_in_if: chan_if_t.fb_t
+        stream_out_if: chan_if_t.fwd_t
 
     @hw_func
-    def bump(stream_in_if: chan_intrf.fwd_t, stream_out_if: chan_intrf.fb_t) -> bump_t:
+    def bump(stream_in_if: chan_if_t.fwd_t, stream_out_if: chan_if_t.fb_t) -> bump_t:
         o: bump_t
         o.stream_out_if.data = stream_in_if.data + step
         o.stream_out_if.valid = stream_in_if.valid
         o.stream_in_if.ready = stream_out_if.ready
         return o
 
-    def wiring(stream_in_if: chan_intrf) -> chan_intrf:
+    def wiring(stream_in_if: chan_if_t) -> chan_if_t:
         a = bump(stream_in_if)
         return a.stream_out_if
 
@@ -222,14 +222,14 @@ bump9 = make_bump(9)
 
 @MAIN
 def top_bump3(
-    stream_in_if: chan_intrf.fwd_t, out_port_if: chan_intrf.fb_t
+    stream_in_if: chan_if_t.fwd_t, out_port_if: chan_if_t.fb_t
 ) -> bump3.return_t:
     return bump3(stream_in_if, out_port_if)
 
 
 @MAIN
 def top_bump9(
-    stream_in_if: chan_intrf.fwd_t, out_port_if: chan_intrf.fb_t
+    stream_in_if: chan_if_t.fwd_t, out_port_if: chan_if_t.fb_t
 ) -> bump9.return_t:
     return bump9(stream_in_if, out_port_if)
 
@@ -239,8 +239,8 @@ def test_factory_instances_are_named_apart():
     assert "step_3" in bump3.__name__ and "step_9" in bump9.__name__
     assert bump3.return_t.__name__ != bump9.return_t.__name__
     sim_reset()
-    r3 = sim_call(top_bump3, chan_intrf.fwd_t(data=10, valid=1), chan_intrf.fb_t(ready=1))
-    r9 = sim_call(top_bump9, chan_intrf.fwd_t(data=10, valid=1), chan_intrf.fb_t(ready=1))
+    r3 = sim_call(top_bump3, chan_if_t.fwd_t(data=10, valid=1), chan_if_t.fb_t(ready=1))
+    r9 = sim_call(top_bump9, chan_if_t.fwd_t(data=10, valid=1), chan_if_t.fb_t(ready=1))
     assert int(r3.out_port_if.data) == 13 and int(r9.out_port_if.data) == 19
 
 

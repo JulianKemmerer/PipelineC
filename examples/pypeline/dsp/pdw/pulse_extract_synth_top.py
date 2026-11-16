@@ -60,8 +60,8 @@ def pulse_extract_top(
     # reverse half of each is a real port here -- paired by name with the
     # feedforward half `pulse_extract_t` returns, which is what keeps the
     # release path's timing real rather than tied off.
-    pkt_out_if: pulse_extract.pkt_out_intrf.fb_t,
-    pdw_out_if: pulse_extract.pdw_out_intrf.fb_t,
+    pkt_out_if: pulse_extract.pkt_out_if_t.fb_t,
+    pdw_out_if: pulse_extract.pdw_out_if_t.fb_t,
 ) -> pulse_extract.return_t:
     return pulse_extract(
         gated_in=gated_in,

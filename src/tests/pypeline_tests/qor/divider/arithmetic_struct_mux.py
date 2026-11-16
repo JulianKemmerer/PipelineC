@@ -5,7 +5,7 @@ the divide-by-zero selection and loop-carried remainder selection are wrapped
 so the corresponding 32-bit MUX leaves exercise generic packed-type splitting.
 """
 from pypeline import *
-from stream.stream import make_stream_t
+from stream import make_stream_t
 
 
 @struct

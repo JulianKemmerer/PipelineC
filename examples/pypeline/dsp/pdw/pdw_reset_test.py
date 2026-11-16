@@ -161,8 +161,8 @@ ALARM_POST_AT = 40  # in each copy's own count after the reset
 assert POISON_AT + N_BEATS + ctrl.latency < PARTIAL_AT
 assert ALARM_PRE_AT + DROPS > RESET_AT
 
-pdw_stream_t = _ENG.pdw_out_intrf.stream_t
-pkt_stream_t = _ENG.pkt_out_intrf.stream_t
+pdw_stream_t = _ENG.pdw_out_if_t.stream_t
+pkt_stream_t = _ENG.pkt_out_if_t.stream_t
 
 
 @struct
@@ -226,8 +226,8 @@ def pdw_blocks(rst: uint1_t, t: uint16_t) -> tb_out_t:
         max_width=max_w,
         freq_acc=d.freq_acc,
         noise_est=d.noise_est,
-        pkt_out_if=_ENG.pkt_out_intrf.fb_t(1),
-        pdw_out_if=_ENG.pdw_out_intrf.fb_t(1),
+        pkt_out_if=_ENG.pkt_out_if_t.fb_t(1),
+        pdw_out_if=_ENG.pdw_out_if_t.fb_t(1),
     )
     o.pdw = e.pdw_out_if.stream
     o.pkt = e.pkt_out_if.stream
@@ -255,12 +255,12 @@ def pdw_blocks(rst: uint1_t, t: uint16_t) -> tb_out_t:
             beat = 1
             last = j == N_BEATS - 1
     keep_all: uint4_t = 15
-    ci: ctrl.axis_intrf.stream_t
+    ci: ctrl.axis_if_t.stream_t
     ci.data.frag.data = uint_to_array_le(word, 8)
     ci.data.frag.keep = uint_to_array_le(keep_all, 1)
     ci.data.eod[0] = last
     ci.valid = beat
-    c = ctrl(axis_in_if=ctrl.axis_intrf.fwd_t(ci))
+    c = ctrl(axis_in_if=ctrl.axis_if_t.fwd_t(ci))
     o.regs = c.regs
     o.ctrl_ready = c.axis_in_if.ready
 

@@ -15,7 +15,7 @@ sys.path.insert(0, os.path.join(THIS_DIR, "../../../../include/pypeline"))
 import pypeline
 from pypeline import MAIN, hw_func, uint8_t, Input, make_reset, uint1_t
 
-from stream.stream import make_stream_interface
+from stream import make_stream_interface
 from stream.stream_auto_pipeline import make_stream_auto_pipeline
 
 
@@ -25,7 +25,7 @@ def seeded_core(x: uint8_t) -> uint8_t:
     return a / (x + 2)
 
 
-uint8_stream_intrf = make_stream_interface(uint8_t)
+uint8_stream_if_t = make_stream_interface(uint8_t)
 seeded_sap = make_stream_auto_pipeline(seeded_core, start_latency=1)
 
 served = sorted(
@@ -41,6 +41,6 @@ rst: Input[uint1_t] = make_reset()
 
 @MAIN(10.0, reset=rst, reset_registers="all")
 def stream_auto_pipeline_seeded_main(
-    stream_in_if: uint8_stream_intrf.fwd_t, stream_out_if: uint8_stream_intrf.fb_t
+    stream_in_if: uint8_stream_if_t.fwd_t, stream_out_if: uint8_stream_if_t.fb_t
 ) -> seeded_sap.return_t:
     return seeded_sap(stream_in_if, stream_out_if)

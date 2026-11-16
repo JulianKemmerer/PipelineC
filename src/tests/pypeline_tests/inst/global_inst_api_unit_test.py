@@ -34,9 +34,9 @@ from pypeline import (
     uint8_t,
     uint16_t,
 )
-from interface.interface import interface
+from interface import interface
 from stream.skid_buffer import make_skid_buffer
-from stream.stream import make_stream_interface
+from stream import make_stream_interface
 
 
 def _raises(exc_type, fn, *must_contain):
@@ -65,17 +65,17 @@ def split(x: uint16_t) -> pair_t:
     return pair_t(lo=x, hi=x >> 8)
 
 
-intrf = make_stream_interface(uint8_t)
+stream_if_t = make_stream_interface(uint8_t)
 
 
 @struct
 class source_t(NamedTuple):
-    out_if: intrf.fwd_t
+    out_if: stream_if_t.fwd_t
     idle: uint1_t
 
 
 @hw_func
-def source(go: uint1_t, out_if: intrf.fb_t) -> source_t:
+def source(go: uint1_t, out_if: stream_if_t.fb_t) -> source_t:
     o: source_t
     return o
 
@@ -175,11 +175,11 @@ def test_errors():
 
     @struct
     class mixed_t(NamedTuple):
-        out_if: intrf.fwd_t
+        out_if: stream_if_t.fwd_t
         go: uint1_t
 
     @hw_func
-    def same_name(go: uint1_t, out_if: intrf.fb_t) -> mixed_t:
+    def same_name(go: uint1_t, out_if: stream_if_t.fb_t) -> mixed_t:
         o: mixed_t
         return o
 
@@ -202,7 +202,7 @@ def test_main_generator():
     for line in (
         "    inst_ports = inst_hardware_2(",
         "        go=src.go,",
-        "        out_if=inst_out_if_t(ready=src.out_if.ready),",
+        "        out_if=inst_out_if_arg_t(ready=src.out_if.ready),",
         "    src.out_if.stream = inst_ports.out_if.stream",
         "    src.idle = inst_ports.idle",
     ):

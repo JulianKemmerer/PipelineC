@@ -85,7 +85,7 @@ def make_fifo_lane(i, word):
     @hw_func
     def fifo_lane():
         r = F(
-            F.fwd_t(stream=F.stream_intrf.stream_t(data=word, valid=1)),
+            F.fwd_t(stream=F.stream_if_t.stream_t(data=word, valid=1)),
             F.fb_t(ready=1),
         )
         outs[i] = r.out_stream_if.stream.data

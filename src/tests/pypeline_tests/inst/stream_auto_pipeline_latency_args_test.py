@@ -25,7 +25,7 @@ import pypeline
 from pypeline import MAIN, hw_func, sim_call, sim_reset, uint8_t, Input, make_reset, uint1_t
 
 from fixed_point import make_fixed_t
-from stream.stream import make_stream_interface
+from stream import make_stream_interface
 from stream.stream_auto_pipeline import make_stream_auto_pipeline
 from dsp.dc_block import make_dc_block
 from dsp.fir import make_fir
@@ -40,7 +40,7 @@ def div_inv(x: uint8_t) -> uint8_t:
     return x / ~x
 
 
-uint8_stream_intrf = make_stream_interface(uint8_t)
+uint8_stream_if_t = make_stream_interface(uint8_t)
 # Constructed at import, outside any pypelinec build (build mode None)
 plain_sap = make_stream_auto_pipeline(div_inv)
 
@@ -56,21 +56,21 @@ rst: Input[uint1_t] = make_reset()
 
 @MAIN(50.0, reset=rst, reset_registers="all")
 def plain_sap_main(
-    stream_in_if: uint8_stream_intrf.fwd_t, stream_out_if: uint8_stream_intrf.fb_t
+    stream_in_if: uint8_stream_if_t.fwd_t, stream_out_if: uint8_stream_if_t.fb_t
 ) -> plain_sap.return_t:
     return plain_sap(stream_in_if, stream_out_if)
 
 
 @MAIN(50.0, reset=rst, reset_registers="all")
 def hinted_sap_main(
-    stream_in_if: uint8_stream_intrf.fwd_t, stream_out_if: uint8_stream_intrf.fb_t
+    stream_in_if: uint8_stream_if_t.fwd_t, stream_out_if: uint8_stream_if_t.fb_t
 ) -> hinted_sap.return_t:
     return hinted_sap(stream_in_if, stream_out_if)
 
 
 @MAIN(50.0, reset=rst, reset_registers="all")
 def fixed_sap_main(
-    stream_in_if: uint8_stream_intrf.fwd_t, stream_out_if: uint8_stream_intrf.fb_t
+    stream_in_if: uint8_stream_if_t.fwd_t, stream_out_if: uint8_stream_if_t.fb_t
 ) -> fixed_sap.return_t:
     return fixed_sap(stream_in_if, stream_out_if)
 
@@ -197,8 +197,8 @@ def _trace(main, inputs, cycles=40):
         data = inputs[idx] if valid else 0
         r = sim_call(
             main,
-            uint8_stream_intrf.fwd_t(stream=uint8_stream_intrf.stream_t(data=data, valid=valid)),
-            uint8_stream_intrf.fb_t(ready=1),
+            uint8_stream_if_t.fwd_t(stream=uint8_stream_if_t.stream_t(data=data, valid=valid)),
+            uint8_stream_if_t.fb_t(ready=1),
         )
         ready = int(r.stream_in_if.ready)
         if valid and ready:

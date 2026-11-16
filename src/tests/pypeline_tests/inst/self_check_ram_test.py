@@ -222,10 +222,10 @@ def self_check_ram_lookup():
 sram = make_stream_ram(uint16_t, 16, ports=("rw",), read_latency=1, out_regs=1)
 
 sram_req_payload_t = sram.p0_req_t
-sram_req_stream_t = sram.p0_req_intrf.stream_t
-sram_req_fwd_t = sram.p0_req_intrf.fwd_t
-sram_resp_fb_t = sram.p0_resp_intrf.fb_t
-sram_resp_stream_t = sram.p0_resp_intrf.stream_t
+sram_req_stream_t = sram.p0_req_if_t.stream_t
+sram_req_fwd_t = sram.p0_req_if_t.fwd_t
+sram_resp_fb_t = sram.p0_resp_if_t.fb_t
+sram_resp_stream_t = sram.p0_resp_if_t.stream_t
 
 
 @MAIN(reset=rst, reset_registers="all")

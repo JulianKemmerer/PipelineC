@@ -31,48 +31,48 @@ from axi.axis import make_axis_interface
 from axi.type_axis import make_axis_max_len_limiter
 
 N = 4
-axis_intrf = make_axis_interface(N)
+axis_if_t = make_axis_interface(N)
 
 # max_bytes < one bus word: the case axis.h:527's `max_byte_len - (axis_bits/8)`
 # underflowed on, silently disabling the limiter entirely.
-lim_3 = make_axis_max_len_limiter(axis_intrf, N, 3)
+lim_3 = make_axis_max_len_limiter(axis_if_t, N, 3)
 
 # max_bytes not a multiple of the bus width: axis.h tested `counter ==
 # last_word_limit`, which such a value steps straight over.
-lim_6 = make_axis_max_len_limiter(axis_intrf, N, 6)
+lim_6 = make_axis_max_len_limiter(axis_if_t, N, 6)
 
 # exact multiple, the only case the old code actually handled
-lim_8 = make_axis_max_len_limiter(axis_intrf, N, 8)
+lim_8 = make_axis_max_len_limiter(axis_if_t, N, 8)
 
 
 @MAIN
 def lim_3_main(
-    axis_in_if: axis_intrf.fwd_t, axis_out_if: axis_intrf.fb_t
+    axis_in_if: axis_if_t.fwd_t, axis_out_if: axis_if_t.fb_t
 ) -> lim_3.return_t:
     return lim_3(axis_in_if, axis_out_if)
 
 
 @MAIN
 def lim_6_main(
-    axis_in_if: axis_intrf.fwd_t, axis_out_if: axis_intrf.fb_t
+    axis_in_if: axis_if_t.fwd_t, axis_out_if: axis_if_t.fb_t
 ) -> lim_6.return_t:
     return lim_6(axis_in_if, axis_out_if)
 
 
 @MAIN
 def lim_8_main(
-    axis_in_if: axis_intrf.fwd_t, axis_out_if: axis_intrf.fb_t
+    axis_in_if: axis_if_t.fwd_t, axis_out_if: axis_if_t.fb_t
 ) -> lim_8.return_t:
     return lim_8(axis_in_if, axis_out_if)
 
 
 def _beat(data, keep, eod, valid=1):
-    st = axis_intrf.stream_t
+    st = axis_if_t.stream_t
     frag_t = st.typeof("data")
     bus_t = frag_t.typeof("frag")
     data = list(data) + [0] * (N - len(data))
     keep = list(keep) + [0] * (N - len(keep))
-    return axis_intrf.fwd_t(
+    return axis_if_t.fwd_t(
         st(data=frag_t(frag=bus_t(data=data, keep=keep), eod=[eod]), valid=valid)
     )
 
@@ -104,7 +104,7 @@ def _run(top, beats, cycles=40):
     bi = 0
     for _ in range(cycles):
         r = sim_call(top, _beat(*beats[bi]) if bi < len(beats) else _idle(),
-                     axis_intrf.fb_t(ready=1))
+                     axis_if_t.fb_t(ready=1))
         s = r.axis_out_if.stream
         if int(s.valid):
             out.append(
@@ -169,7 +169,7 @@ def test_eod_never_forced_on_invalid_beat():
     validity, so tlast could sit high on an invalid beat."""
     sim_reset()
     for _ in range(6):
-        r = sim_call(lim_3_main, _idle(), axis_intrf.fb_t(ready=1))
+        r = sim_call(lim_3_main, _idle(), axis_if_t.fb_t(ready=1))
         s = r.axis_out_if.stream
         assert int(s.valid) == 0
         assert int(s.data.eod[0]) == 0, "eod asserted while invalid"
@@ -200,7 +200,7 @@ def test_short_frame_passes_through_untouched():
 def test_bad_max_bytes_rejected():
     for bad in (0, -1, "8", None):
         try:
-            make_axis_max_len_limiter(axis_intrf, N, bad)
+            make_axis_max_len_limiter(axis_if_t, N, bad)
             raise AssertionError(f"expected ValueError for max_bytes={bad!r}")
         except ValueError:
             pass

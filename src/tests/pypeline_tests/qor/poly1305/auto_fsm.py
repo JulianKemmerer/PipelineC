@@ -40,9 +40,9 @@ class boundary_t(NamedTuple):
 
 @MAIN(MHZ)
 def poly1305_auto_fsm(
-    request: service.in_intrf.stream_t, response_ready: uint1_t
+    request: service.in_if_t.stream_t, response_ready: uint1_t
 ) -> boundary_t:
-    input_reg: Reg[service.in_intrf.stream_t]
+    input_reg: Reg[service.in_if_t.stream_t]
     feedback_reg: Reg[uint1_t]
     output_reg: Reg[boundary_t]
     previous: boundary_t = output_reg

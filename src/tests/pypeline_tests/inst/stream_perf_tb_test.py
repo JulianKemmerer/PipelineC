@@ -40,13 +40,13 @@ from stream import stream_perf_probe as probe
 from stream.stream_perf import PerfRecorder, PhaseBarrier, PhaseRunner, packet_size_phases
 
 BUS = 4
-axis_intrf = make_axis_interface(BUS)
-frag_t = axis_intrf.stream_t.typeof("data")
+axis_if_t = make_axis_interface(BUS)
+frag_t = axis_if_t.stream_t.typeof("data")
 
 # The DUT: a probed FIFO feeding a probed register slice.
 fifo = probe.make_probed_stream_fifo(frag_t, 8, "fifo")
 
-out_slice = probe.make_probed_skid_buffer(axis_intrf, "out_slice")
+out_slice = probe.make_probed_skid_buffer(axis_if_t, "out_slice")
 
 
 BLOCKS = {
@@ -61,8 +61,8 @@ PACKETS = 4
 phases = packet_size_phases([32, 64], PACKETS, peak_bytes=10, peak_packets=2)
 recorder = PerfRecorder("", {"bus_bytes": BUS})  # a path writes JSON per phase
 scoreboard = Scoreboard()
-src = ConvergedAxisSimSource(axis_intrf, BUS)
-snk = ConvergedAxisSimSink(axis_intrf, BUS, scoreboard=scoreboard)
+src = ConvergedAxisSimSource(axis_if_t, BUS)
+snk = ConvergedAxisSimSink(axis_if_t, BUS, scoreboard=scoreboard)
 
 
 def frame_builder(length, rng):
@@ -86,12 +86,12 @@ def _nbytes(stream):
 # @sim_input values reach the design through module-level Input[T] wires, so
 # the same top also elaborates to HDL (where they become top-level ports) --
 # needed for a pipelined (non---comb) run, which synthesizes it first.
-tb_in_word: Input[axis_intrf.stream_t]
+tb_in_word: Input[axis_if_t.stream_t]
 tb_out_ready: Input[uint1_t]
 
 
 @sim_input
-def drive_in() -> axis_intrf.stream_t:
+def drive_in() -> axis_if_t.stream_t:
     runner.prepare_input()
     return src.drive().stream
 
@@ -108,7 +108,7 @@ def measure(in_stream, in_ready, out_stream, out_ready):
     src.commit(in_ready)
     moved = out_stream.valid and out_ready
     runner.note_out(moved, _nbytes(out_stream) if moved else 0, out_stream.data.eod[0])
-    snk.step(axis_intrf.fwd_t(out_stream), out_ready)
+    snk.step(axis_if_t.fwd_t(out_stream), out_ready)
     result = snk.check_nowait()
     if result is not None:
         runner.note_checked(result["passed"], f"packet {result.get('idx')} mismatch")
@@ -120,12 +120,12 @@ def measure(in_stream, in_ready, out_stream, out_ready):
 
 
 @MAIN
-def perf_tb() -> axis_intrf.fwd_t:
+def perf_tb() -> axis_if_t.fwd_t:
     slice_ready: Feedback[uint1_t]
     tb_in_word = drive_in()
     tb_out_ready = drive_out_ready()
-    f = fifo(axis_intrf.fwd_t(stream=tb_in_word), axis_intrf.fb_t(ready=slice_ready))
-    s = out_slice(f.out_stream_if, axis_intrf.fb_t(ready=tb_out_ready))
+    f = fifo(axis_if_t.fwd_t(stream=tb_in_word), axis_if_t.fb_t(ready=slice_ready))
+    s = out_slice(f.out_stream_if, axis_if_t.fb_t(ready=tb_out_ready))
     slice_ready = s.stream_in_if.ready
     measure(tb_in_word, f.in_stream_if.ready, s.stream_out_if.stream, tb_out_ready)
     return s.stream_out_if

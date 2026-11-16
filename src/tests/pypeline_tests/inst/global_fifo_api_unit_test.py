@@ -32,7 +32,7 @@ from pypeline import (
     uint16_t,
 )
 from stream.skid_buffer import make_skid_buffer
-from stream.stream import make_stream_interface, make_stream_t
+from stream import make_stream_interface, make_stream_t
 from stream.stream_fifo import make_stream_fifo
 
 
@@ -73,8 +73,8 @@ def test_fifo_type():
 def test_fifo_type_errors():
     _raises(TypeError, lambda: Fifo[uint8_t, VOLATILE], "Fifo[T]", "one data type")
     _raises(TypeError, lambda: Fifo[uint8_t, uint8_t], "one data type")
-    intrf = make_stream_interface(uint8_t)
-    for t in (intrf, intrf.fwd_t, intrf.fb_t):
+    stream_if_t = make_stream_interface(uint8_t)
+    for t in (stream_if_t, stream_if_t.fwd_t, stream_if_t.fb_t):
         _raises(TypeError, lambda: Fifo[t], "not the interface or port half", "valid and ready")
     _raises(TypeError, lambda: Fifo[int], "hardware type")
     print("Fifo[T] errors PASS")
@@ -133,16 +133,16 @@ def test_port_helper():
 
     _raises(err, lambda: ports(wide_ready, uint8_t, what), "no uint1_t ready")
 
-    intrf = make_stream_interface(uint8_t)
+    stream_if_t = make_stream_interface(uint8_t)
 
     @struct
     class three_ret_t(NamedTuple):
-        out_if: intrf.fwd_t
-        in_if: intrf.fb_t
-        aux_if: intrf.fwd_t
+        out_if: stream_if_t.fwd_t
+        in_if: stream_if_t.fb_t
+        aux_if: stream_if_t.fwd_t
 
     @hw_func
-    def three_ports(in_if: intrf.fwd_t, out_if: intrf.fb_t, aux_if: intrf.fb_t) -> three_ret_t:
+    def three_ports(in_if: stream_if_t.fwd_t, out_if: stream_if_t.fb_t, aux_if: stream_if_t.fb_t) -> three_ret_t:
         o: three_ret_t
         return o
 

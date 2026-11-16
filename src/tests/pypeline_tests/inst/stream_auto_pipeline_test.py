@@ -18,7 +18,7 @@ sys.path.insert(
 )
 from pypeline import MAIN, hw_func, param, uint1_t, uint8_t, sim_call, sim_reset, Input, make_reset
 
-from stream.stream import make_stream_interface
+from stream import make_stream_interface
 from stream.stream_auto_pipeline import make_stream_auto_pipeline
 
 
@@ -27,7 +27,7 @@ def div_inv(x: uint8_t) -> uint8_t:
     return x / ~x
 
 
-uint8_stream_intrf = make_stream_interface(uint8_t)
+uint8_stream_if_t = make_stream_interface(uint8_t)
 stream_auto_pipeline = make_stream_auto_pipeline(div_inv)
 
 
@@ -38,7 +38,7 @@ rst: Input[uint1_t] = make_reset()
 
 @MAIN(param("STREAM_AUTO_PIPELINE_TEST_MHZ", 50.0, type=float), reset=rst, reset_registers="all")
 def stream_auto_pipeline_test_top(
-    stream_in_if: uint8_stream_intrf.fwd_t, stream_out_if: uint8_stream_intrf.fb_t
+    stream_in_if: uint8_stream_if_t.fwd_t, stream_out_if: uint8_stream_if_t.fb_t
 ) -> stream_auto_pipeline.return_t:
     return stream_auto_pipeline(stream_in_if, stream_out_if)
 
@@ -64,12 +64,12 @@ def _drive(input_values, out_ready_fn):
         out_ready = 1 if out_ready_fn(cycle) else 0
         r = sim_call(
             stream_auto_pipeline_test_top,
-            uint8_stream_intrf.fwd_t(
-                stream=uint8_stream_intrf.stream_t(
+            uint8_stream_if_t.fwd_t(
+                stream=uint8_stream_if_t.stream_t(
                     data=present_data, valid=present_valid
                 )
             ),
-            uint8_stream_intrf.fb_t(ready=out_ready),
+            uint8_stream_if_t.fb_t(ready=out_ready),
         )
         if present_valid and int(r.stream_in_if.ready):
             idx += 1

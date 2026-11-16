@@ -1433,7 +1433,7 @@ the details below one click away.
   of one variable on one line (`result: valid, data`); untick **wire labels** to hide
   the labels, or right-click an edge to hide or show just its label; *filters* picks
   whether a label says the name, the type or both. Types show the names your modules
-  give them (`axis_intrf.fwd_t`). An edge through a `Feedback` or a register is
+  give them (`axis_if_t.fwd_t`). An edge through a `Feedback` or a register is
   dashed.
 - **Logic blocks:** operators (`+`, `==`, muxes, ...) and registers are grouped:
   each connected cluster of them is one block, a cloud when it is combinational. An

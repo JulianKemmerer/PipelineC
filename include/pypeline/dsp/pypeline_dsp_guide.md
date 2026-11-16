@@ -28,7 +28,7 @@ simulation.
 
 DSP factories return one callable. Its `.return_t` is the complete call result;
 `.out_t` describes the output sample or arithmetic payload, which can be only
-one field within that result. Elastic filters expose `.in_intrf`, `.out_intrf`
+one field within that result. Elastic filters expose `.in_if_t`, `.out_if_t`
 and their `.in_fwd_t`/`.in_fb_t`/`.out_fwd_t`/`.out_fb_t` halves. In valid-only
 mode, use `.in_stream_t` and `.out_stream_t` instead. Other metadata and timing
 attributes are listed with each block below.

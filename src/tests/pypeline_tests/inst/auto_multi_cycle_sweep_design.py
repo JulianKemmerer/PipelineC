@@ -23,7 +23,7 @@ from pypeline import (
     make_reset,
 )
 
-from stream.stream import make_stream_interface
+from stream import make_stream_interface
 from stream.stream_multi_cycle import make_stream_auto_multi_cycle
 
 PART("xc7a35ticsg324-1l")
@@ -40,7 +40,7 @@ def mix(x: uint32_t) -> uint32_t:
     return acc
 
 
-word_intrf = make_stream_interface(uint32_t)
+word_if_t = make_stream_interface(uint32_t)
 mix_mcp = make_stream_auto_multi_cycle(
     mix,
     start_latency=param("AUTO_MULTI_CYCLE_SWEEP_START", type=int),
@@ -61,10 +61,10 @@ def auto_multi_cycle_sweep_main() -> uint32_t:
     accepted_at: Reg[uint16_t]
     launched: Reg[uint1_t]
 
-    in_stream_if: word_intrf.stream_t
+    in_stream_if: word_if_t.stream_t
     in_stream_if.data = x
     in_stream_if.valid = 1
-    f = mix_mcp(word_intrf.fwd_t(stream=in_stream_if), mix_mcp.out_fb_t(ready=1))
+    f = mix_mcp(word_if_t.fwd_t(stream=in_stream_if), mix_mcp.out_fb_t(ready=1))
 
     if f.stream_out_if.stream.valid:
         elapsed: uint16_t = cycle - accepted_at

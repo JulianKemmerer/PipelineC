@@ -232,16 +232,16 @@ def _axis_flat(word_if, n=AXIS_N):
     return tdata, tkeep, int(word_if.stream.data.eod[0]), int(word_if.stream.valid)
 
 
-def _axis_word_if(intrf, tdata, tkeep, tlast, transferred, n=AXIS_N):
+def _axis_word_if(axis_if_t, tdata, tkeep, tlast, transferred, n=AXIS_N):
     """An interface word (a .fwd_t half) for AxisSimSink, from flat output ports.
 
     `transferred` (tvalid AND tready), not tvalid: AxisSimSink assumes its own
     ready is always 1 and records every valid beat it is shown, so a held beat
     handed to it would be counted twice."""
-    frag_t = intrf.stream_t.typeof("data")
+    frag_t = axis_if_t.stream_t.typeof("data")
     bus_t = frag_t.typeof("frag")
-    return intrf.fwd_t(
-        intrf.stream_t(
+    return axis_if_t.fwd_t(
+        axis_if_t.stream_t(
             data=frag_t(
                 frag=bus_t(
                     data=[(tdata >> (8 * i)) & 0xFF for i in range(n)],
@@ -1110,11 +1110,11 @@ def _populate_scoreboards():
 # ports as well as the serializers' real fill counts.
 _CAND_T = top.candidate_rec_t
 _VPDW_T = top.pulse_extract.valid_pdw_t
-_ctrl_src = AxisSimSource(_CTRL.axis_intrf, AXIS_N)
-_pkt_snk = AxisSimSink(top.axis32_intrf, AXIS_N)  # rx0_m -- released packets
-_rep_snk = AxisSimSink(top.axis32_intrf, AXIS_N)  # tx1_m -- the replay leg
-_vpdw_snk = AxisSimSink(top.pdw_tx.axis_intrf, AXIS_N)  # rx1_m -- PDW records
-_cand_snk = AxisSimSink(top.cand_tx.axis_intrf, AXIS_N)  # rx2_m -- candidates
+_ctrl_src = AxisSimSource(_CTRL.axis_if_t, AXIS_N)
+_pkt_snk = AxisSimSink(top.axis32_if_t, AXIS_N)  # rx0_m -- released packets
+_rep_snk = AxisSimSink(top.axis32_if_t, AXIS_N)  # tx1_m -- the replay leg
+_vpdw_snk = AxisSimSink(top.pdw_tx.axis_if_t, AXIS_N)  # rx1_m -- PDW records
+_cand_snk = AxisSimSink(top.cand_tx.axis_if_t, AXIS_N)  # rx2_m -- candidates
 
 # gr_pdw_record.py parses the rx1_m_axis_* bytes directly on the host side, so
 # its layout has to agree with the hardware's, not merely with itself.
@@ -1421,7 +1421,7 @@ def check_pdw():
     if transferred:
         _cand_snk.step(
             _axis_word_if(
-                top.cand_tx.axis_intrf,
+                top.cand_tx.axis_if_t,
                 int(top.rx2_m_axis_tdata),
                 int(top.rx2_m_axis_tkeep),
                 int(top.rx2_m_axis_tlast),
@@ -1476,7 +1476,7 @@ def check_valid_pdw():
     if transferred:  # see the note in check_pdw on why this is gated
         _vpdw_snk.step(
             _axis_word_if(
-                top.pdw_tx.axis_intrf,
+                top.pdw_tx.axis_if_t,
                 int(top.rx1_m_axis_tdata),
                 int(top.rx1_m_axis_tkeep),
                 int(top.rx1_m_axis_tlast),
@@ -1575,7 +1575,7 @@ def check_packet():
     if transferred:  # see the note in check_pdw on why this is gated
         _pkt_snk.step(
             _axis_word_if(
-                top.axis32_intrf,
+                top.axis32_if_t,
                 int(top.rx0_m_axis_tdata),
                 int(top.rx0_m_axis_tkeep),
                 int(top.rx0_m_axis_tlast),
@@ -1589,7 +1589,7 @@ def check_packet():
     if int(top.tx1_m_axis_tvalid) and int(top.tx1_m_axis_tready):
         _rep_snk.step(
             _axis_word_if(
-                top.axis32_intrf,
+                top.axis32_if_t,
                 int(top.tx1_m_axis_tdata),
                 int(top.tx1_m_axis_tkeep),
                 int(top.tx1_m_axis_tlast),

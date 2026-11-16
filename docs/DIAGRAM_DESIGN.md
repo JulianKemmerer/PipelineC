@@ -189,7 +189,7 @@ temporary. `op` lists the op names dispatched to the callee
   such names takes the one the most modules use, then the shortest), else the
   description's class name. The modules are the top file's (`top_level_module_globals`)
   and the non-library files of `file_to_module_prefix` found in `sys.modules`. A plain
-  copy (`<half class>_plain`) is named after its half, `chan_intrf.fb_t_plain`; it is
+  copy (`<half class>_plain`) is named after its half, `chan_if_t.fb_t_plain`; it is
   matched to the half whose C name starts with the copy's class name, since every
   stream interface's `.fb_t` has the same fields. Where several types in the page
   share a name, each adds its factory arguments (`stream_t<uint8_t>`), or its field

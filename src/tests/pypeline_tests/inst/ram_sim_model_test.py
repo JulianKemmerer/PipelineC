@@ -47,9 +47,9 @@ acc_ram = make_ram(uint32_t, 4, ports=("rw",), read_latency=0)
 acc_in_t = acc_ram.p0_in_t
 sacc_ram = make_stream_ram(uint32_t, 4, ports=("rw",), read_latency=0)
 
-sacc_req_stream_t = sacc_ram.p0_req_intrf.stream_t
-sacc_req_fwd_t = sacc_ram.p0_req_intrf.fwd_t
-sacc_resp_fb_t = sacc_ram.p0_resp_intrf.fb_t
+sacc_req_stream_t = sacc_ram.p0_req_if_t.stream_t
+sacc_req_fwd_t = sacc_ram.p0_req_if_t.fwd_t
+sacc_resp_fb_t = sacc_ram.p0_resp_if_t.fb_t
 
 inc: Wire[uint32_t]
 acc_now: Wire[uint32_t]

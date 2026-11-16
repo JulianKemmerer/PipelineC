@@ -5,8 +5,8 @@ stream and one response stream per port.
     sram = make_stream_ram(uint32_t, 1024, ports=("w", "r"), read_latency=1)
 
     @MAIN
-    def top(p0_req_if: sram.p0_req_intrf.fwd_t, p0_resp_if: sram.p0_resp_intrf.fb_t,
-            p1_req_if: sram.p1_req_intrf.fwd_t, p1_resp_if: sram.p1_resp_intrf.fb_t) -> sram.return_t:
+    def top(p0_req_if: sram.p0_req_if_t.fwd_t, p0_resp_if: sram.p0_resp_if_t.fb_t,
+            p1_req_if: sram.p1_req_if_t.fwd_t, p1_resp_if: sram.p1_resp_if_t.fb_t) -> sram.return_t:
         return sram(p0_req_if, p0_resp_if, p1_req_if, p1_resp_if)
 
 This is the pypeline answer to old PipelineC's `DECL_STREAM_RAM_DP_W_R_1`, for
@@ -58,7 +58,7 @@ from ram import (
     ram_port_payload_fields,
     ram_vhdl_text,
 )
-from stream.stream import make_stream_interface
+from stream import make_stream_interface
 
 _STREAM_RAM_CACHE = {}
 
@@ -78,10 +78,10 @@ def make_stream_ram(
     from Python values, byte write enables).
 
     Returns stream_ram, with its complete return type at stream_ram.return_t:
-        stream_ram(p0_req_if: .p0_req_intrf.fwd_t, p0_resp_if: .p0_resp_intrf.fb_t,
+        stream_ram(p0_req_if: .p0_req_if_t.fwd_t, p0_resp_if: .p0_resp_if_t.fb_t,
                    p1_req_if: ..., p1_resp_if: ..., ...) -> stream_ram_t
-        stream_ram_t fields: .p{i}_resp_if (.p{i}_resp_intrf.fwd_t),
-                             .p{i}_req_if  (.p{i}_req_intrf.fb_t)
+        stream_ram_t fields: .p{i}_resp_if (.p{i}_resp_if_t.fwd_t),
+                             .p{i}_req_if  (.p{i}_req_if_t.fb_t)
 
     Per port i:
         request payload  .p{i}_req_t   addr [, wr_data, wr_en]
@@ -96,8 +96,8 @@ def make_stream_ram(
 
     attrs: .elem_t .size .addr_t .ports .read_latency .in_regs .out_regs
            .latency .byte_write_enables .we_t .core .out_t
-           .req_intrfs .resp_intrfs .req_ts .resp_ts
-           .p{i}_req_intrf .p{i}_resp_intrf .p{i}_req_t .p{i}_resp_t
+           .req_if_ts .resp_if_ts .req_ts .resp_ts
+           .p{i}_req_if_t .p{i}_resp_if_t .p{i}_req_t .p{i}_resp_t
     """
     cfg = RamConfig(
         "make_stream_ram",
@@ -131,10 +131,10 @@ def make_stream_ram(
             )
     req_ts = [by_kind[k][0] for k in cfg.ports]
     resp_ts = [by_kind[k][1] for k in cfg.ports]
-    req_intrfs = [by_kind[k][2] for k in cfg.ports]
-    resp_intrfs = [by_kind[k][3] for k in cfg.ports]
-    req_stream_ts = [intrf.stream_t for intrf in req_intrfs]
-    resp_stream_ts = [intrf.stream_t for intrf in resp_intrfs]
+    req_if_ts = [by_kind[k][2] for k in cfg.ports]
+    resp_if_ts = [by_kind[k][3] for k in cfg.ports]
+    req_stream_ts = [req_if_t.stream_t for req_if_t in req_if_ts]
+    resp_stream_ts = [resp_if_t.stream_t for resp_if_t in resp_if_ts]
 
     # The raw handshake core: plain stream structs and ready bits.
     core_fields = []
@@ -170,8 +170,8 @@ def make_stream_ram(
     out_fields = []
     for i in range(n):
         out_fields += [
-            (f"p{i}_resp_if", resp_intrfs[i].fwd_t),
-            (f"p{i}_req_if", req_intrfs[i].fb_t),
+            (f"p{i}_resp_if", resp_if_ts[i].fwd_t),
+            (f"p{i}_req_if", req_if_ts[i].fb_t),
         ]
     stream_ram_t = ram_make_struct("stream_ram_t", out_fields)
     wrap_name = _finalize_hw_name(f"stream_ram_{cfg.name_fragment}_h{cfg.digest}")
@@ -196,8 +196,8 @@ def make_stream_ram(
         "STREAM_RAM_T": stream_ram_t,
     }
     for i in range(n):
-        wrap_ns[f"P{i}_REQ_FWD_T"] = req_intrfs[i].fwd_t
-        wrap_ns[f"P{i}_RESP_FB_T"] = resp_intrfs[i].fb_t
+        wrap_ns[f"P{i}_REQ_FWD_T"] = req_if_ts[i].fwd_t
+        wrap_ns[f"P{i}_RESP_FB_T"] = resp_if_ts[i].fb_t
     ram_exec_globals(wrap_ns, stream_ram_t, core_out_t)
     stream_ram = _exec_generated_func(
         wrap_name, "\n".join(lines) + "\n", wrap_ns, folder=RAM_GENERATED_FOLDER
@@ -215,13 +215,13 @@ def make_stream_ram(
     stream_ram.we_t = cfg.we_t
     stream_ram.core = core
     stream_ram.out_t = stream_ram_t
-    stream_ram.req_intrfs = tuple(req_intrfs)
-    stream_ram.resp_intrfs = tuple(resp_intrfs)
+    stream_ram.req_if_ts = tuple(req_if_ts)
+    stream_ram.resp_if_ts = tuple(resp_if_ts)
     stream_ram.req_ts = tuple(req_ts)
     stream_ram.resp_ts = tuple(resp_ts)
     for i in range(n):
-        setattr(stream_ram, f"p{i}_req_intrf", req_intrfs[i])
-        setattr(stream_ram, f"p{i}_resp_intrf", resp_intrfs[i])
+        setattr(stream_ram, f"p{i}_req_if_t", req_if_ts[i])
+        setattr(stream_ram, f"p{i}_resp_if_t", resp_if_ts[i])
         setattr(stream_ram, f"p{i}_req_t", req_ts[i])
         setattr(stream_ram, f"p{i}_resp_t", resp_ts[i])
     _STREAM_RAM_CACHE[cfg.key] = stream_ram
@@ -260,21 +260,21 @@ def make_stream_auto_pipeline_ram(
 
     depth = 1 << (core.latency + 2).bit_length()  # ceil_pow2(L + 3)
     counter_t = py.make_uint_t(depth.bit_length())
-    req_ts, resp_ts, req_intrfs, resp_intrfs, fifos = [], [], [], [], []
+    req_ts, resp_ts, req_if_ts, resp_if_ts, fifos = [], [], [], [], []
     for kind in core.ports:
         req, resp = ram_port_payload_fields(core, kind)
         req_t = ram_make_struct(f"ram_{kind}_req_t", req)
         resp_t = ram_make_struct(f"ram_{kind}_resp_t", resp)
         req_ts.append(req_t)
         resp_ts.append(resp_t)
-        req_intrfs.append(make_stream_interface(req_t))
-        resp_intrfs.append(make_stream_interface(resp_t))
+        req_if_ts.append(make_stream_interface(req_t))
+        resp_if_ts.append(make_stream_interface(resp_t))
         fifos.append(make_fifo(resp_t, depth))
     fields = []
     for i in range(len(core.ports)):
         fields += [
-            (f"p{i}_resp_if", resp_intrfs[i].fwd_t),
-            (f"p{i}_req_if", req_intrfs[i].fb_t),
+            (f"p{i}_resp_if", resp_if_ts[i].fwd_t),
+            (f"p{i}_req_if", req_if_ts[i].fb_t),
         ]
     out_t = ram_make_struct("stream_auto_pipeline_ram_t", fields)
     name = f"stream_auto_pipeline_ram_h{core._auto_pipeline_ram['key'][:12]}_p{core.plan.fingerprint}"
@@ -296,8 +296,8 @@ def make_stream_auto_pipeline_ram(
     for i, kind in enumerate(core.ports):
         ns.update(
             {
-                f"P{i}_REQ_FWD_T": req_intrfs[i].fwd_t,
-                f"P{i}_RESP_FB_T": resp_intrfs[i].fb_t,
+                f"P{i}_REQ_FWD_T": req_if_ts[i].fwd_t,
+                f"P{i}_RESP_FB_T": resp_if_ts[i].fb_t,
                 f"P{i}_IN_T": core.in_ts[i],
                 f"P{i}_RESP_T": resp_ts[i],
                 f"FIFO{i}": fifos[i],
@@ -366,13 +366,13 @@ def make_stream_auto_pipeline_ram(
     wrapped.min_response_latency = core.latency + 2
     wrapped.fifo_depth = depth
     wrapped.req_ts, wrapped.resp_ts = tuple(req_ts), tuple(resp_ts)
-    wrapped.req_intrfs, wrapped.resp_intrfs = tuple(req_intrfs), tuple(resp_intrfs)
+    wrapped.req_if_ts, wrapped.resp_if_ts = tuple(req_if_ts), tuple(resp_if_ts)
     for i in range(len(core.ports)):
         for attr, values in (
             ("req_t", req_ts),
             ("resp_t", resp_ts),
-            ("req_intrf", req_intrfs),
-            ("resp_intrf", resp_intrfs),
+            ("req_if_t", req_if_ts),
+            ("resp_if_t", resp_if_ts),
         ):
             setattr(wrapped, f"p{i}_{attr}", values[i])
     return wrapped

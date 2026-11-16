@@ -46,7 +46,7 @@ from pypeline import (
     make_reset,
 )
 
-from stream.stream import make_stream_interface
+from stream import make_stream_interface
 from stream.stream_auto_pipeline import make_stream_auto_pipeline
 
 
@@ -55,7 +55,7 @@ def div_inv(x: uint8_t) -> uint8_t:
     return x / ~x
 
 
-uint8_stream_intrf = make_stream_interface(uint8_t)
+uint8_stream_if_t = make_stream_interface(uint8_t)
 stream_auto_pipeline = make_stream_auto_pipeline(div_inv)
 
 
@@ -109,12 +109,12 @@ def self_check_stream_auto_pipeline() -> stream_auto_pipeline.out_fwd_t:
     elif in_sel == 3:
         x = IN3
 
-    stream_in_if: uint8_stream_intrf.stream_t
+    stream_in_if: uint8_stream_if_t.stream_t
     stream_in_if.valid = in_count < NUM_OUTPUTS
     stream_in_if.data = x
     o: stream_auto_pipeline.return_t = stream_auto_pipeline(
-        uint8_stream_intrf.fwd_t(stream=stream_in_if),
-        uint8_stream_intrf.fb_t(ready=1),
+        uint8_stream_if_t.fwd_t(stream=stream_in_if),
+        uint8_stream_if_t.fb_t(ready=1),
     )
 
     # One word per cycle (II=1): once the first word is in, ready stays high

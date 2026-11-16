@@ -17,10 +17,10 @@ memory = make_stream_auto_pipeline_ram(
     max_latency=9,
 )
 
-write_req_t = memory.p0_req_intrf.fwd_t
-write_resp_t = memory.p0_resp_intrf.fb_t
-read_req_t = memory.p1_req_intrf.fwd_t
-read_resp_t = memory.p1_resp_intrf.fb_t
+write_req_t = memory.p0_req_if_t.fwd_t
+write_resp_t = memory.p0_resp_if_t.fb_t
+read_req_t = memory.p1_req_if_t.fwd_t
+read_resp_t = memory.p1_resp_if_t.fb_t
 
 
 # Synchronous reset input, active high: cancels the requests in flight and

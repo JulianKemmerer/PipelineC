@@ -63,7 +63,7 @@ from pypeline import (
     _value_description,
 )
 
-from interface.interface import (
+from interface import (
     FB,
     FWD,
     InterfaceError,

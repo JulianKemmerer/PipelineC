@@ -77,7 +77,7 @@ from pypeline import (
 )
 
 from fifo import make_fifo
-from stream.stream import make_stream_interface
+from stream import make_stream_interface
 from stream.valid_join import make_valid_join
 from pulse_measure import make_pulse_measure
 from dsp.fir_common import data_range
@@ -264,13 +264,13 @@ def make_packet_store(
     # starts -- so they are declared as interfaces rather than as a plain
     # {data, valid} struct with a loose sibling `*_ready` argument, which is
     # what they used to be and which made the boundary invisible in the types.
-    pkt_out_intrf = make_stream_interface(released_sample_t)
-    pdw_out_intrf = make_stream_interface(valid_pdw_t)
+    pkt_out_if_t = make_stream_interface(released_sample_t)
+    pdw_out_if_t = make_stream_interface(valid_pdw_t)
 
     @struct
     class packet_store_t(NamedTuple):
-        pkt_out_if: pkt_out_intrf.fwd_t
-        pdw_out_if: pdw_out_intrf.fwd_t
+        pkt_out_if: pkt_out_if_t.fwd_t
+        pdw_out_if: pdw_out_if_t.fwd_t
         fifo_full: uint1_t  # sticky: some packet lost beats to a full FIFO
         # The two conditions the sim_asserts below catch in simulation and
         # nothing catches in a bitstream. Both are silent AND permanent, which
@@ -306,8 +306,8 @@ def make_packet_store(
         beat_status: uint32_t,
         meas_in: meas_t,
         meas_in_valid: uint1_t,
-        pkt_out_if: pkt_out_intrf.fb_t,
-        pdw_out_if: pdw_out_intrf.fb_t,
+        pkt_out_if: pkt_out_if_t.fb_t,
+        pdw_out_if: pdw_out_if_t.fb_t,
     ) -> packet_store_t:
         o: packet_store_t
 
@@ -496,8 +496,8 @@ def make_packet_store(
     packet_store.valid_pdw_t = valid_pdw_t
     packet_store.desc_t = desc_t
     packet_store.released_sample_t = released_sample_t
-    packet_store.pkt_out_intrf = pkt_out_intrf
-    packet_store.pdw_out_intrf = pdw_out_intrf
+    packet_store.pkt_out_if_t = pkt_out_if_t
+    packet_store.pdw_out_if_t = pdw_out_if_t
     packet_store.store_state_t = store_state_t
     packet_store.depth = depth
     packet_store.n_pkts = n_pkts
@@ -522,9 +522,9 @@ def make_pulse_extract(pulse_detect, depth=16384, n_pkts=16, *, join_depth=32):
             candidate into the descriptor FIFO on the cycle it arrives, so it
             can never stall Path A (which cannot be stalled anyway -- see
             make_pulse_detect_fsm's notes on `overflow`).
-          .pkt_out_if (pkt_out_intrf.fwd_t) -- the qualified pulse packet,
+          .pkt_out_if (pkt_out_if_t.fwd_t) -- the qualified pulse packet,
             payload released_sample_t {data, last}; a real valid/ready port.
-          .pdw_out_if (pdw_out_intrf.fwd_t) -- the host-DMA metadata, one
+          .pdw_out_if (pdw_out_if_t.fwd_t) -- the host-DMA metadata, one
             valid_pdw_t per accepted pulse; likewise a real valid/ready port.
           .verdict (verdict_t) -- this cycle's qualification of the candidate
             on pdw_in_if, exposed for observability/testbenches.
@@ -580,8 +580,8 @@ def make_pulse_extract(pulse_detect, depth=16384, n_pkts=16, *, join_depth=32):
     @struct
     class pulse_extract_t(NamedTuple):
         pdw_in_if: pulse_detect.out_fb_t
-        pkt_out_if: packet_store.pkt_out_intrf.fwd_t
-        pdw_out_if: packet_store.pdw_out_intrf.fwd_t
+        pkt_out_if: packet_store.pkt_out_if_t.fwd_t
+        pdw_out_if: packet_store.pdw_out_if_t.fwd_t
         verdict: pdw_qualify.return_t
         fifo_full: uint1_t
         desc_drop: uint1_t  # sticky, see packet_store_t
@@ -597,8 +597,8 @@ def make_pulse_extract(pulse_detect, depth=16384, n_pkts=16, *, join_depth=32):
         max_width: pulse_detect.width_t,
         freq_acc: pulse_detect.freq_accum_t,
         noise_est: pulse_detect.noise_t,
-        pkt_out_if: packet_store.pkt_out_intrf.fb_t,
-        pdw_out_if: packet_store.pdw_out_intrf.fb_t,
+        pkt_out_if: packet_store.pkt_out_if_t.fb_t,
+        pdw_out_if: packet_store.pdw_out_if_t.fb_t,
     ) -> pulse_extract_t:
         candidate = pdw_in_if.stream.data
         v = pdw_qualify(
@@ -683,8 +683,8 @@ def make_pulse_extract(pulse_detect, depth=16384, n_pkts=16, *, join_depth=32):
     pulse_extract.verdict_t = pdw_qualify.return_t
     pulse_extract.valid_pdw_t = packet_store.valid_pdw_t
     pulse_extract.released_sample_t = packet_store.released_sample_t
-    pulse_extract.pkt_out_intrf = packet_store.pkt_out_intrf
-    pulse_extract.pdw_out_intrf = packet_store.pdw_out_intrf
+    pulse_extract.pkt_out_if_t = packet_store.pkt_out_if_t
+    pulse_extract.pdw_out_if_t = packet_store.pdw_out_if_t
     pulse_extract.width_t = pulse_detect.width_t
     pulse_extract.depth = depth
     pulse_extract.n_pkts = n_pkts

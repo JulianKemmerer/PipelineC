@@ -43,15 +43,15 @@ from pypeline import (
     wires,
 )
 
-from interface.interface import interface
-from interface.interface_func import make_hw_func_from_interface_func
-from stream.stream import make_stream_t
+from interface import interface
+from interface_func import make_hw_func_from_interface_func
+from stream import make_stream_t
 
 
 # Its .fwd_t's fields are not a byte_stream_t's: no role here comes from
 # looking like the other kind
 @interface
-class chan_intrf(NamedTuple):
+class chan_if_t(NamedTuple):
     data: uint16_t
     valid: uint1_t
     ready: Feedback[uint1_t]
@@ -59,18 +59,18 @@ class chan_intrf(NamedTuple):
 
 @struct
 class route_t(NamedTuple):
-    axis_in_if: chan_intrf.fb_t
-    from_pipe_if: chan_intrf.fb_t
-    axis_out_if: chan_intrf.fwd_t
-    to_pipe_if: chan_intrf.fwd_t
+    axis_in_if: chan_if_t.fb_t
+    from_pipe_if: chan_if_t.fb_t
+    axis_out_if: chan_if_t.fwd_t
+    to_pipe_if: chan_if_t.fwd_t
 
 
 @hw_func
 def route(
-    axis_in_if: chan_intrf.fwd_t,
-    from_pipe_if: chan_intrf.fwd_t,
-    axis_out_if: chan_intrf.fb_t,
-    to_pipe_if: chan_intrf.fb_t,
+    axis_in_if: chan_if_t.fwd_t,
+    from_pipe_if: chan_if_t.fwd_t,
+    axis_out_if: chan_if_t.fb_t,
+    to_pipe_if: chan_if_t.fb_t,
 ) -> route_t:
     """Only routes fields: a block of the user's hierarchy all the same."""
     o: route_t
@@ -85,12 +85,12 @@ def route(
 
 @struct
 class pipe_t(NamedTuple):
-    stream_in_if: chan_intrf.fb_t
-    stream_out_if: chan_intrf.fwd_t
+    stream_in_if: chan_if_t.fb_t
+    stream_out_if: chan_if_t.fwd_t
 
 
 @hw_func
-def pipe(stream_in_if: chan_intrf.fwd_t, stream_out_if: chan_intrf.fb_t) -> pipe_t:
+def pipe(stream_in_if: chan_if_t.fwd_t, stream_out_if: chan_if_t.fb_t) -> pipe_t:
     o: pipe_t
     o.stream_out_if.data = stream_in_if.data + 1
     o.stream_out_if.valid = stream_in_if.valid
@@ -99,7 +99,7 @@ def pipe(stream_in_if: chan_intrf.fwd_t, stream_out_if: chan_intrf.fb_t) -> pipe
 
 
 # `p` is used before it is assigned: a feedforward loop through a Feedback
-def merge(axis_in_if: chan_intrf) -> chan_intrf:
+def merge(axis_in_if: chan_if_t) -> chan_if_t:
     f = route(axis_in_if, p.stream_out_if)
     p = pipe(f.to_pipe_if)
     return f.axis_out_if
@@ -110,7 +110,7 @@ merge_inst = make_hw_func_from_interface_func(merge)
 
 @MAIN
 def loop_main(
-    axis_in_if: chan_intrf.fwd_t, out_port_if: chan_intrf.fb_t
+    axis_in_if: chan_if_t.fwd_t, out_port_if: chan_if_t.fb_t
 ) -> merge_inst.return_t:
     return merge_inst(axis_in_if, out_port_if)
 
@@ -221,7 +221,7 @@ def ctor_main(x: uint8_t) -> uint8_t:
     return first_of(pair_t(x, x + 1))
 
 
-link: Wire[chan_intrf]  # link_tx_main -> link_rx_main, ready back
+link: Wire[chan_if_t]  # link_tx_main -> link_rx_main, ready back
 
 
 @MAIN

@@ -30,7 +30,7 @@ from pypeline import (
 from ndarray import make_ndarray_fragment_t
 from stream.deserializer import make_deserializer
 from stream.serializer import make_serializer
-from stream.stream import make_stream_interface
+from stream import make_stream_interface
 
 
 def make_type_to_byte_stream(
@@ -43,47 +43,47 @@ def make_type_to_byte_stream(
     driving eod[0] on the last value. See `stream/serializer.py`.
 
     Returns type_to_byte_stream, with its complete return type at type_to_byte_stream.return_t:
-        type_to_byte_stream(stream_in_if: in_intrf.fwd_t,
-                            stream_out_if: out_intrf.fb_t) -> ..._t
-        in_intrf  = make_stream_interface(make_ndarray_fragment_t(t, 1))
+        type_to_byte_stream(stream_in_if: in_if_t.fwd_t,
+                            stream_out_if: out_if_t.fb_t) -> ..._t
+        in_if_t  = make_stream_interface(make_ndarray_fragment_t(t, 1))
                     -- .stream.data.frag is the value, .stream.data.eod[0]
                        marks the last value of a packet (align="packed")
-        out_intrf = the serializer's byte-stream interface (an AXIS interface
+        out_if_t = the serializer's byte-stream interface (an AXIS interface
                     when the element type is uint8_t, which it is here)
-        attrs: .in_intrf .out_intrf .in_fb_t .out_fb_t .t .n_bytes .out_n
+        attrs: .in_if_t .out_if_t .in_fb_t .out_fb_t .t .n_bytes .out_n
     """
     n_bytes = byte_length(t)
     t_to_bytes = make_type_to_bytes(t, endian)
     ser = make_serializer(uint8_t, n_bytes, out_n, align=align, padding=padding)
 
-    in_intrf = make_stream_interface(make_ndarray_fragment_t(t, 1))
-    out_intrf = ser.out_intrf
+    in_if_t = make_stream_interface(make_ndarray_fragment_t(t, 1))
+    out_if_t = ser.out_if_t
 
     @struct
     class type_to_byte_stream_t(NamedTuple):
-        stream_out_if: out_intrf.fwd_t
-        stream_in_if: in_intrf.fb_t
+        stream_out_if: out_if_t.fwd_t
+        stream_in_if: in_if_t.fb_t
 
     @hw_func
     def type_to_byte_stream(
-        stream_in_if: in_intrf.fwd_t, stream_out_if: out_intrf.fb_t
+        stream_in_if: in_if_t.fwd_t, stream_out_if: out_if_t.fb_t
     ) -> type_to_byte_stream_t:
         o: type_to_byte_stream_t
         # .fwd_t/.fb_t may not be plain locals, so build the payload as the
         # interface's plain .stream_t and wrap it inline at the call site.
-        ser_in: ser.in_intrf.stream_t
+        ser_in: ser.in_if_t.stream_t
         ser_in.data.frag = t_to_bytes(stream_in_if.stream.data.frag)
         ser_in.data.eod[0] = stream_in_if.stream.data.eod[0]
         ser_in.valid = stream_in_if.stream.valid
-        r = ser(ser.in_intrf.fwd_t(ser_in), stream_out_if)
+        r = ser(ser.in_if_t.fwd_t(ser_in), stream_out_if)
         o.stream_out_if = r.stream_out_if
         o.stream_in_if.ready = r.stream_in_if.ready
         return o
 
-    type_to_byte_stream.in_intrf = in_intrf
-    type_to_byte_stream.out_intrf = out_intrf
-    type_to_byte_stream.in_fb_t = in_intrf.fb_t
-    type_to_byte_stream.out_fb_t = out_intrf.fb_t
+    type_to_byte_stream.in_if_t = in_if_t
+    type_to_byte_stream.out_if_t = out_if_t
+    type_to_byte_stream.in_fb_t = in_if_t.fb_t
+    type_to_byte_stream.out_fb_t = out_if_t.fb_t
     type_to_byte_stream.t = t
     type_to_byte_stream.n_bytes = n_bytes
     type_to_byte_stream.out_n = out_n
@@ -108,11 +108,11 @@ def make_byte_stream_to_type(
     residue forward, reproducing the old desync. See `stream/deserializer.py`.
 
     Returns byte_stream_to_type, with its complete return type at byte_stream_to_type.return_t:
-        byte_stream_to_type(stream_in_if: in_intrf.fwd_t,
-                            stream_out_if: out_intrf.fb_t) -> ..._t
+        byte_stream_to_type(stream_in_if: in_if_t.fwd_t,
+                            stream_out_if: out_if_t.fb_t) -> ..._t
         result fields: .stream_out_if (values), .stream_in_if (reverse half),
                        .runt (uint1_t)
-        attrs: .in_intrf .out_intrf .in_fb_t .out_fb_t .t .n_bytes .in_n
+        attrs: .in_if_t .out_if_t .in_fb_t .out_fb_t .t .n_bytes .in_n
     """
     n_bytes = byte_length(t)
     t_from_bytes = make_type_from_bytes(t, endian)
@@ -127,22 +127,22 @@ def make_byte_stream_to_type(
         check_keep=check_keep,
     )
 
-    in_intrf = deser.in_intrf
-    out_intrf = make_stream_interface(make_ndarray_fragment_t(t, 1))
+    in_if_t = deser.in_if_t
+    out_if_t = make_stream_interface(make_ndarray_fragment_t(t, 1))
 
     @struct
     class byte_stream_to_type_t(NamedTuple):
-        stream_out_if: out_intrf.fwd_t
-        stream_in_if: in_intrf.fb_t
+        stream_out_if: out_if_t.fwd_t
+        stream_in_if: in_if_t.fb_t
         runt: uint1_t
 
     @hw_func
     def byte_stream_to_type(
-        stream_in_if: in_intrf.fwd_t, stream_out_if: out_intrf.fb_t
+        stream_in_if: in_if_t.fwd_t, stream_out_if: out_if_t.fb_t
     ) -> byte_stream_to_type_t:
         o: byte_stream_to_type_t
         r = deser(stream_in_if, deser.out_fb_t(stream_out_if.ready))
-        outw: out_intrf.stream_t
+        outw: out_if_t.stream_t
         outw.data.frag = t_from_bytes(r.stream_out_if.stream.data.frag)
         outw.data.eod[0] = r.stream_out_if.stream.data.eod[0]
         outw.valid = r.stream_out_if.stream.valid
@@ -151,10 +151,10 @@ def make_byte_stream_to_type(
         o.runt = r.runt
         return o
 
-    byte_stream_to_type.in_intrf = in_intrf
-    byte_stream_to_type.out_intrf = out_intrf
-    byte_stream_to_type.in_fb_t = in_intrf.fb_t
-    byte_stream_to_type.out_fb_t = out_intrf.fb_t
+    byte_stream_to_type.in_if_t = in_if_t
+    byte_stream_to_type.out_if_t = out_if_t
+    byte_stream_to_type.in_fb_t = in_if_t.fb_t
+    byte_stream_to_type.out_fb_t = out_if_t.fb_t
     byte_stream_to_type.t = t
     byte_stream_to_type.n_bytes = n_bytes
     byte_stream_to_type.in_n = in_n

@@ -12,7 +12,7 @@ import PY_TO_LOGIC
 # that could carry it: no non-port construct may be declared with an
 # @interface's .fwd_t/.fb_t port-pairing type. That type only means something
 # at a real port crossing (a hw_func's own signature, or an inline
-# `intrf.fwd_t(...)`/`intrf.fb_t(...)` constructor call used directly as a
+# `some_if_t.fwd_t(...)`/`some_if_t.fb_t(...)` constructor call used directly as a
 # call argument) -- everywhere else, the correct type is the plain,
 # never-paired `.stream_t`. Merged from four originally separate files (each
 # probing a different declaration site, same mechanism and message shape):
@@ -28,7 +28,7 @@ import PY_TO_LOGIC
 # check is "which ElaborationError (if any) is raised."
 #
 # Two functions from the original files were true duplicates once merged
-# (both declared a bare `Feedback[chan_intrf.fwd_t]` and asserted the same
+# (both declared a bare `Feedback[chan_if_t.fwd_t]` and asserted the same
 # error) and were combined into one: see test_feedback_fwd_t_errors below.
 # Everything else that shared a name across the originals exercised a
 # distinct nuance and was kept, disambiguated.
@@ -38,22 +38,22 @@ import sys, os
 sys.path.insert(0, {repo_root!r})
 sys.path.insert(0, {pypeline_dir!r})
 from pypeline import MAIN, NamedTuple, struct, hw_func, Reg, Feedback, wires, Wire, Input, Output, uint1_t, uint8_t
-from stream.stream import make_stream_interface
+from stream import make_stream_interface
 
-chan_intrf = make_stream_interface(uint8_t)
+chan_if_t = make_stream_interface(uint8_t)
 
 def bad_null():
-    return chan_intrf.fwd_t(stream=chan_intrf.stream_t(data=0, valid=0))
+    return chan_if_t.fwd_t(stream=chan_if_t.stream_t(data=0, valid=0))
 
 def good_stream_null():
-    return chan_intrf.stream_t(data=0, valid=0)
+    return chan_if_t.stream_t(data=0, valid=0)
 
 @struct
 class consumer_t(NamedTuple):
-    stream_in_if: chan_intrf.fb_t
+    stream_in_if: chan_if_t.fb_t
 
 @hw_func
-def consumer(stream_in_if: chan_intrf.fwd_t) -> consumer_t:
+def consumer(stream_in_if: chan_if_t.fwd_t) -> consumer_t:
     o: consumer_t
     o.stream_in_if.ready = 1
     return o
@@ -116,7 +116,7 @@ def test_reg_fwd_t_errors():
     src = """
 @MAIN
 def m():
-    r: Reg[chan_intrf.fwd_t]
+    r: Reg[chan_if_t.fwd_t]
 """
     _expect_elaboration_error(src, "reg_fwd_t_test.py", ["r", "stream_t"])
 
@@ -125,7 +125,7 @@ def test_reg_fb_t_errors():
     src = """
 @MAIN
 def m():
-    r: Reg[chan_intrf.fb_t]
+    r: Reg[chan_if_t.fb_t]
 """
     _expect_elaboration_error(src, "reg_fb_t_test.py", ["r", "stream_t"])
 
@@ -135,7 +135,7 @@ def test_reg_fwd_t_array_errors():
     src = """
 @MAIN
 def m():
-    r: Reg[chan_intrf.fwd_t[2]]
+    r: Reg[chan_if_t.fwd_t[2]]
 """
     _expect_elaboration_error(src, "reg_fwd_t_array_test.py", ["r", "stream_t"])
 
@@ -145,7 +145,7 @@ def test_reg_stream_t_is_clean():
     src = """
 @MAIN
 def m():
-    r: Reg[chan_intrf.stream_t]
+    r: Reg[chan_if_t.stream_t]
     r.valid = 1
 """
     _expect_clean(src, "reg_stream_t_test.py")
@@ -158,9 +158,9 @@ def test_feedback_fwd_t_errors():
     src = """
 @MAIN
 def m():
-    r: Feedback[chan_intrf.fwd_t]
+    r: Feedback[chan_if_t.fwd_t]
     x: uint1_t = r.stream.valid
-    r = chan_intrf.fwd_t(stream=chan_intrf.stream_t(data=0, valid=0))
+    r = chan_if_t.fwd_t(stream=chan_if_t.stream_t(data=0, valid=0))
 """
     _expect_elaboration_error(src, "feedback_fwd_t_test.py", ["r", "stream_t"])
 
@@ -170,9 +170,9 @@ def test_feedback_stream_t_is_clean():
     src = """
 @MAIN
 def m():
-    r: Feedback[chan_intrf.stream_t]
+    r: Feedback[chan_if_t.stream_t]
     x: uint1_t = r.valid
-    r = chan_intrf.stream_t(data=0, valid=0)
+    r = chan_if_t.stream_t(data=0, valid=0)
 """
     _expect_clean(src, "feedback_stream_t_test.py")
 
@@ -183,7 +183,7 @@ def m():
 # above, generalized in _elab_ann_assign to any local AnnAssign, not just
 # Reg[T]. `.fwd_t`/`.fb_t` may still appear as: hw_func signature args/
 # return-struct fields (parsed elsewhere, never reaches this check), and
-# inline `intrf.fwd_t(...)`/`intrf.fb_t(...)` constructor-call *expressions*
+# inline `some_if_t.fwd_t(...)`/`some_if_t.fb_t(...)` constructor-call *expressions*
 # at a real port crossing (a call argument, or an assignment RHS) -- never as
 # any other local's or Feedback wire's own declared type.
 
@@ -192,7 +192,7 @@ def test_local_fwd_t_errors():
     src = """
 @MAIN
 def m() -> uint1_t:
-    bad: chan_intrf.fwd_t
+    bad: chan_if_t.fwd_t
     return bad.stream.valid
 """
     _expect_elaboration_error(src, "local_fwd_t_test.py", ["bad", "stream_t"])
@@ -202,7 +202,7 @@ def test_local_fb_t_errors():
     src = """
 @MAIN
 def m() -> uint1_t:
-    bad: chan_intrf.fb_t
+    bad: chan_if_t.fb_t
     return bad.ready
 """
     _expect_elaboration_error(src, "local_fb_t_test.py", ["bad", "stream_t"])
@@ -213,7 +213,7 @@ def test_local_stream_t_is_clean():
     src = """
 @MAIN
 def m() -> uint1_t:
-    good: chan_intrf.stream_t
+    good: chan_if_t.stream_t
     good.valid = 1
     return good.valid
 """
@@ -224,8 +224,8 @@ def test_feedback_fb_t_errors():
     src = """
 @MAIN
 def m() -> uint1_t:
-    r: Feedback[chan_intrf.fb_t]
-    r = chan_intrf.fb_t(ready=1)
+    r: Feedback[chan_if_t.fb_t]
+    r = chan_if_t.fb_t(ready=1)
     return r.ready
 """
     _expect_elaboration_error(src, "feedback_fb_t_test.py", ["r", "stream_t"])
@@ -239,25 +239,25 @@ def test_feedback_stream_t_is_clean_via_port_crossing():
     src = """
 @MAIN
 def m() -> uint1_t:
-    r: Feedback[chan_intrf.stream_t]
-    x: chan_intrf.stream_t
+    r: Feedback[chan_if_t.stream_t]
+    x: chan_if_t.stream_t
     x.valid = 1
     r = x
-    fb = consumer(stream_in_if=chan_intrf.fwd_t(stream=r))
+    fb = consumer(stream_in_if=chan_if_t.fwd_t(stream=r))
     return fb.stream_in_if.ready
 """
     _expect_clean(src, "feedback_stream_t_via_port_crossing_test.py")
 
 
 def test_unannotated_local_fwd_t_assign_errors():
-    # The same ban, but via a bare 'x = intrf.fwd_t(...)' assignment with no
+    # The same ban, but via a bare 'x = some_if_t.fwd_t(...)' assignment with no
     # type annotation at all -- must not be a loophole around the annotated
     # form's check (a plain assignment RHS that is itself a struct-constructor
     # call takes a different elaboration code path than AnnAssign).
     src = """
 @MAIN
 def m() -> uint1_t:
-    bad = chan_intrf.fwd_t(stream=chan_intrf.stream_t(data=0, valid=0))
+    bad = chan_if_t.fwd_t(stream=chan_if_t.stream_t(data=0, valid=0))
     return bad.stream.valid
 """
     _expect_elaboration_error(src, "unannotated_local_fwd_t_assign_test.py", ["bad", "stream_t"])
@@ -269,7 +269,7 @@ def test_inline_ctor_call_argument_is_clean():
     src = """
 @MAIN
 def m(data: uint8_t, valid: uint1_t) -> uint1_t:
-    fb = consumer(stream_in_if=chan_intrf.fwd_t(stream=chan_intrf.stream_t(data=data, valid=valid)))
+    fb = consumer(stream_in_if=chan_if_t.fwd_t(stream=chan_if_t.stream_t(data=data, valid=valid)))
     return fb.stream_in_if.ready
 """
     _expect_clean(src, "inline_ctor_call_argument_test.py")
@@ -286,48 +286,48 @@ def m(data: uint8_t, valid: uint1_t) -> uint1_t:
 
 def test_global_wire_fwd_t_errors():
     src = """
-bad: Wire[chan_intrf.fwd_t]
+bad: Wire[chan_if_t.fwd_t]
 
 @MAIN
 @wires
 def m():
-    bad = chan_intrf.fwd_t(stream=chan_intrf.stream_t(data=0, valid=0))
+    bad = chan_if_t.fwd_t(stream=chan_if_t.stream_t(data=0, valid=0))
 """
     _expect_elaboration_error(src, "global_wire_fwd_t_test.py", ["bad", "stream_t"])
 
 
 def test_global_wire_fb_t_errors():
     src = """
-bad: Wire[chan_intrf.fb_t]
+bad: Wire[chan_if_t.fb_t]
 
 @MAIN
 @wires
 def m():
-    bad = chan_intrf.fb_t(ready=1)
+    bad = chan_if_t.fb_t(ready=1)
 """
     _expect_elaboration_error(src, "global_wire_fb_t_test.py", ["bad", "stream_t"])
 
 
 def test_global_input_fwd_t_errors():
     src = """
-bad: Input[chan_intrf.fwd_t]
+bad: Input[chan_if_t.fwd_t]
 
 @MAIN
 @wires
 def m():
-    x: chan_intrf.stream_t = bad.stream
+    x: chan_if_t.stream_t = bad.stream
 """
     _expect_elaboration_error(src, "global_input_fwd_t_test.py", ["bad", "stream_t"])
 
 
 def test_global_output_fb_t_errors():
     src = """
-bad: Output[chan_intrf.fb_t]
+bad: Output[chan_if_t.fb_t]
 
 @MAIN
 @wires
 def m():
-    bad = chan_intrf.fb_t(ready=1)
+    bad = chan_if_t.fb_t(ready=1)
 """
     _expect_elaboration_error(src, "global_output_fb_t_test.py", ["bad", "stream_t"])
 
@@ -335,13 +335,13 @@ def m():
 def test_global_wire_stream_t_is_clean():
     # The correct replacement type must not trip the check.
     src = """
-good: Wire[chan_intrf.stream_t]
+good: Wire[chan_if_t.stream_t]
 good_ready: Wire[uint1_t]
 
 @MAIN
 @wires
 def m():
-    good = chan_intrf.stream_t(data=0, valid=0)
+    good = chan_if_t.stream_t(data=0, valid=0)
     good_ready = 1
 """
     _expect_clean(src, "global_wire_stream_t_test.py")
@@ -353,11 +353,11 @@ def test_bare_interface_wire_is_clean_and_multi_writer():
     # full flattened multi-writer support for free: .stream written by one
     # function, .ready written by another, both read by a third.
     src = """
-good_if: Wire[chan_intrf]
+good_if: Wire[chan_if_t]
 
 @hw_func
 def drive_stream():
-    good_if.stream = chan_intrf.stream_t(data=0, valid=1)
+    good_if.stream = chan_if_t.stream_t(data=0, valid=1)
 
 @hw_func
 def drive_ready():
@@ -375,12 +375,12 @@ def m() -> uint1_t:
 def test_bare_interface_wire_fwd_t_still_errors():
     # The bare-class sugar must not weaken the existing .fwd_t/.fb_t ban.
     src = """
-bad: Wire[chan_intrf.fwd_t]
+bad: Wire[chan_if_t.fwd_t]
 
 @MAIN
 @wires
 def m():
-    bad = chan_intrf.fwd_t(stream=chan_intrf.stream_t(data=0, valid=0))
+    bad = chan_if_t.fwd_t(stream=chan_if_t.stream_t(data=0, valid=0))
 """
     _expect_elaboration_error(src, "bare_interface_wire_fwd_t_test.py", ["bad", "stream_t"])
 
@@ -390,7 +390,7 @@ def m():
 # Checked in _try_eval_const's _check_no_indirect_interface_pairing_return: a
 # helper function that internally builds and returns a .fwd_t/.fb_t hides the
 # pairing construction behind a call boundary -- the value must be
-# constructed inline, `intrf.fwd_t(...)`/`intrf.fb_t(...)`, only at the point
+# constructed inline, `some_if_t.fwd_t(...)`/`some_if_t.fb_t(...)`, only at the point
 # it meets a real port. The one exemption is that sanctioned inline
 # constructor call itself.
 
@@ -399,7 +399,7 @@ def test_function_returning_fwd_t_errors():
     src = """
 @MAIN
 def m() -> uint1_t:
-    x: chan_intrf.stream_t = bad_null()
+    x: chan_if_t.stream_t = bad_null()
     return x.valid
 """
     _expect_elaboration_error(src, "function_returning_fwd_t_test.py", ["stream_t", "bad_null"])
@@ -409,7 +409,7 @@ def test_function_returning_stream_t_is_clean():
     src = """
 @MAIN
 def m() -> uint1_t:
-    x: chan_intrf.stream_t = good_stream_null()
+    x: chan_if_t.stream_t = good_stream_null()
     return x.valid
 """
     _expect_clean(src, "function_returning_stream_t_test.py")
@@ -427,7 +427,7 @@ def test_bare_assign_of_direct_ctor_call_still_errors():
     src = """
 @MAIN
 def m() -> uint1_t:
-    x = chan_intrf.fwd_t(stream=good_stream_null())
+    x = chan_if_t.fwd_t(stream=good_stream_null())
     return x.stream.valid
 """
     _expect_elaboration_error(src, "bare_assign_of_direct_ctor_call_test.py", ["x", "stream_t"])
@@ -443,7 +443,7 @@ def test_inline_ctor_call_argument_from_helper_is_clean():
     src = """
 @MAIN
 def m() -> uint1_t:
-    fb = consumer(stream_in_if=chan_intrf.fwd_t(stream=good_stream_null()))
+    fb = consumer(stream_in_if=chan_if_t.fwd_t(stream=good_stream_null()))
     return fb.stream_in_if.ready
 """
     _expect_clean(src, "inline_ctor_call_argument_from_helper_test.py")

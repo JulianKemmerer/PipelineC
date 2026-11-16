@@ -61,7 +61,7 @@ from pypeline import (
 from axi.axis import make_axis_interface
 from ndarray import make_ndarray_fragment_t
 from stream.serdes_common import check_choice
-from stream.stream import make_stream_interface
+from stream import make_stream_interface
 from stream.type_byte_stream import (
     make_byte_stream_to_type,
     make_type_to_byte_stream,
@@ -70,7 +70,7 @@ from stream.type_byte_stream import (
 FRAME_MODES = ("one_per_packet", "many_per_packet")
 
 
-def make_axis_max_len_limiter(axis_intrf, n, max_bytes):
+def make_axis_max_len_limiter(axis_if_t, n, max_bytes):
     """Truncate every frame to at most `max_bytes` bytes, forcing eod there.
 
     Purely combinational passthrough plus a byte counter -- no buffering, no
@@ -80,8 +80,8 @@ def make_axis_max_len_limiter(axis_intrf, n, max_bytes):
     end-of-frame, so the next frame is limited identically.
 
     Returns axis_max_len_limiter, with its complete return type at axis_max_len_limiter.return_t:
-        axis_max_len_limiter(axis_in_if: axis_intrf.fwd_t,
-                             axis_out_if: axis_intrf.fb_t) -> ..._t
+        axis_max_len_limiter(axis_in_if: axis_if_t.fwd_t,
+                             axis_out_if: axis_if_t.fb_t) -> ..._t
         fields: .axis_out_if (fwd), .axis_in_if (fb)
     """
     if not (isinstance(max_bytes, int) and max_bytes >= 1):
@@ -94,19 +94,19 @@ def make_axis_max_len_limiter(axis_intrf, n, max_bytes):
 
     @struct
     class axis_max_len_limiter_t(NamedTuple):
-        axis_out_if: axis_intrf.fwd_t
-        axis_in_if: axis_intrf.fb_t
+        axis_out_if: axis_if_t.fwd_t
+        axis_in_if: axis_if_t.fb_t
 
     @hw_func
     def axis_max_len_limiter(
-        axis_in_if: axis_intrf.fwd_t, axis_out_if: axis_intrf.fb_t
+        axis_in_if: axis_if_t.fwd_t, axis_out_if: axis_if_t.fb_t
     ) -> axis_max_len_limiter_t:
         o: axis_max_len_limiter_t
         counter: Reg[count_t]  # bytes of this frame already passed through
 
         below: uint1_t = counter < max_bytes
 
-        outw: axis_intrf.stream_t = axis_in_if.stream
+        outw: axis_if_t.stream_t = axis_in_if.stream
         n_kept: count_t = 0
         for i in range(n):
             # Lane i sits at frame offset counter + i, because keep is a
@@ -146,7 +146,7 @@ def make_axis_max_len_limiter(axis_intrf, n, max_bytes):
                 counter = 0
         return o
 
-    axis_max_len_limiter.axis_intrf = axis_intrf
+    axis_max_len_limiter.axis_if_t = axis_if_t
     axis_max_len_limiter.n = n
     axis_max_len_limiter.max_bytes = max_bytes
     return axis_max_len_limiter
@@ -174,11 +174,11 @@ def make_axis_to_type(
         or "ignore" (carry the residue, reproducing the old permanent desync).
 
     Returns axis_to_type, with its complete return type at axis_to_type.return_t:
-        axis_to_type(axis_in_if: axis_intrf.fwd_t,
-                     stream_out_if: out_intrf.fb_t) -> axis_to_type_t
+        axis_to_type(axis_in_if: axis_if_t.fwd_t,
+                     stream_out_if: out_if_t.fb_t) -> axis_to_type_t
         fields: .stream_out_if (values), .axis_in_if (reverse half of the AXIS
                 port), .runt (uint1_t)
-        attrs: .axis_intrf .out_intrf .axis_fb_t .out_fb_t .t .n_bytes .n
+        attrs: .axis_if_t .out_if_t .axis_fb_t .out_fb_t .t .n_bytes .n
     """
     check_choice("make_axis_to_type", "frame", frame, FRAME_MODES)
     n_bytes = byte_length(out_t)
@@ -194,15 +194,15 @@ def make_axis_to_type(
         check_keep=check_keep,
     )
 
-    axis_intrf = rx.in_intrf  # already an AXIS interface: n lanes of uint8_t
-    out_intrf = rx.out_intrf
+    axis_if_t = rx.in_if_t  # already an AXIS interface: n lanes of uint8_t
+    out_if_t = rx.out_if_t
     if limited:
-        limiter = make_axis_max_len_limiter(axis_intrf, n, n_bytes)
+        limiter = make_axis_max_len_limiter(axis_if_t, n, n_bytes)
 
     @struct
     class axis_to_type_t(NamedTuple):
-        stream_out_if: out_intrf.fwd_t
-        axis_in_if: axis_intrf.fb_t
+        stream_out_if: out_if_t.fwd_t
+        axis_in_if: axis_if_t.fb_t
         runt: uint1_t
 
     # Two whole function bodies rather than one with a factory-time `if`:
@@ -215,7 +215,7 @@ def make_axis_to_type(
 
         @hw_func
         def axis_to_type(
-            axis_in_if: axis_intrf.fwd_t, stream_out_if: out_intrf.fb_t
+            axis_in_if: axis_if_t.fwd_t, stream_out_if: out_if_t.fb_t
         ) -> axis_to_type_t:
             o: axis_to_type_t
             # The limiter's forward output feeds the deserializer, whose ready
@@ -225,8 +225,8 @@ def make_axis_to_type(
             # ready bit (an interface half may not be a plain local), wrapped
             # with .fb_t() at the call site.
             ready_for_limiter: Feedback[uint1_t]
-            lim = limiter(axis_in_if, axis_intrf.fb_t(ready_for_limiter))
-            r = rx(axis_intrf.fwd_t(lim.axis_out_if.stream), stream_out_if)
+            lim = limiter(axis_in_if, axis_if_t.fb_t(ready_for_limiter))
+            r = rx(axis_if_t.fwd_t(lim.axis_out_if.stream), stream_out_if)
             ready_for_limiter = r.stream_in_if.ready
             o.stream_out_if = r.stream_out_if
             o.axis_in_if.ready = lim.axis_in_if.ready
@@ -237,7 +237,7 @@ def make_axis_to_type(
 
         @hw_func
         def axis_to_type(
-            axis_in_if: axis_intrf.fwd_t, stream_out_if: out_intrf.fb_t
+            axis_in_if: axis_if_t.fwd_t, stream_out_if: out_if_t.fb_t
         ) -> axis_to_type_t:
             o: axis_to_type_t
             r = rx(axis_in_if, stream_out_if)
@@ -246,10 +246,10 @@ def make_axis_to_type(
             o.runt = r.runt
             return o
 
-    axis_to_type.axis_intrf = axis_intrf
-    axis_to_type.out_intrf = out_intrf
-    axis_to_type.axis_fb_t = axis_intrf.fb_t
-    axis_to_type.out_fb_t = out_intrf.fb_t
+    axis_to_type.axis_if_t = axis_if_t
+    axis_to_type.out_if_t = out_if_t
+    axis_to_type.axis_fb_t = axis_if_t.fb_t
+    axis_to_type.out_fb_t = out_if_t.fb_t
     axis_to_type.t = out_t
     axis_to_type.n_bytes = n_bytes
     axis_to_type.n = n
@@ -270,10 +270,10 @@ def make_type_to_axis(
         passing structs_per_packet=k to have an internal mod-k counter do it.
 
     Returns type_to_axis, with its complete return type at type_to_axis.return_t:
-        type_to_axis(stream_in_if: in_intrf.fwd_t,
-                     axis_out_if: axis_intrf.fb_t) -> type_to_axis_t
+        type_to_axis(stream_in_if: in_if_t.fwd_t,
+                     axis_out_if: axis_if_t.fb_t) -> type_to_axis_t
         fields: .axis_out_if (fwd), .stream_in_if (fb)
-        attrs: .in_intrf .axis_intrf .in_fb_t .axis_fb_t .t .n_bytes .n
+        attrs: .in_if_t .axis_if_t .in_fb_t .axis_fb_t .t .n_bytes .n
     """
     check_choice("make_type_to_axis", "frame", frame, FRAME_MODES)
     per_value = frame == "one_per_packet"
@@ -293,24 +293,24 @@ def make_type_to_axis(
         in_t, n, endian=endian, align="beat" if per_value else "packed"
     )
 
-    in_intrf = make_stream_interface(make_ndarray_fragment_t(in_t, 1))
-    axis_intrf = tx.out_intrf
+    in_if_t = make_stream_interface(make_ndarray_fragment_t(in_t, 1))
+    axis_if_t = tx.out_if_t
     counted = structs_per_packet is not None
     count_t = make_uint_t(max(1, (structs_per_packet or 1).bit_length()))
 
     @struct
     class type_to_axis_t(NamedTuple):
-        axis_out_if: axis_intrf.fwd_t
-        stream_in_if: in_intrf.fb_t
+        axis_out_if: axis_if_t.fwd_t
+        stream_in_if: in_if_t.fb_t
 
     @hw_func
     def type_to_axis(
-        stream_in_if: in_intrf.fwd_t, axis_out_if: axis_intrf.fb_t
+        stream_in_if: in_if_t.fwd_t, axis_out_if: axis_if_t.fb_t
     ) -> type_to_axis_t:
         o: type_to_axis_t
         n_in_packet: Reg[count_t]
 
-        tx_in: tx.in_intrf.stream_t
+        tx_in: tx.in_if_t.stream_t
         tx_in.data.frag = stream_in_if.stream.data.frag
         tx_in.valid = stream_in_if.stream.valid
         if per_value:
@@ -323,7 +323,7 @@ def make_type_to_axis(
             else:
                 tx_in.data.eod[0] = stream_in_if.stream.data.eod[0]
 
-        r = tx(tx.in_intrf.fwd_t(tx_in), axis_out_if)
+        r = tx(tx.in_if_t.fwd_t(tx_in), axis_out_if)
         o.axis_out_if = r.stream_out_if
         o.stream_in_if.ready = r.stream_in_if.ready
 
@@ -335,10 +335,10 @@ def make_type_to_axis(
                     n_in_packet = n_in_packet + 1
         return o
 
-    type_to_axis.in_intrf = in_intrf
-    type_to_axis.axis_intrf = axis_intrf
-    type_to_axis.in_fb_t = in_intrf.fb_t
-    type_to_axis.axis_fb_t = axis_intrf.fb_t
+    type_to_axis.in_if_t = in_if_t
+    type_to_axis.axis_if_t = axis_if_t
+    type_to_axis.in_fb_t = in_if_t.fb_t
+    type_to_axis.axis_fb_t = axis_if_t.fb_t
     type_to_axis.t = in_t
     type_to_axis.n_bytes = byte_length(in_t)
     type_to_axis.n = n

@@ -15,7 +15,7 @@ from pypeline import (
 )
 
 from fixed_point import make_fixed_t, make_fixed_resize
-from stream.stream import make_stream_t
+from stream import make_stream_t
 from stream.stream_auto_pipeline import make_stream_auto_pipeline
 
 from dsp.fir_common import data_range, signed_bits_for, unsigned_bits_for
@@ -56,9 +56,9 @@ def make_magnitude(
                losslessly, not rounded/saturated).
     rounding:  "truncate" | "round_half_up" | "round_half_even" | "round_half_away"
     overflow:  "wrap" | "saturate"
-    handshake: "elastic"    -> magnitude(stream_in_if: in_intrf.fwd_t,
-                                          stream_out_if: out_intrf.fb_t) -> magnitude_t
-                               (in_intrf built over make_complex_t(data_t))
+    handshake: "elastic"    -> magnitude(stream_in_if: in_if_t.fwd_t,
+                                          stream_out_if: out_if_t.fb_t) -> magnitude_t
+                               (in_if_t built over make_complex_t(data_t))
                "valid_only" -> magnitude(in_stream: make_stream_t(complex_t))
                                    -> make_stream_t(out_t)
     latency / start_latency / max_latency (keyword-only, default None):
@@ -69,7 +69,7 @@ def make_magnitude(
     The returned `magnitude` carries metadata attributes:
     .data_t .complex_t .out_t .acc_t .full_precision .rounding .overflow
     .handshake .in_fwd_t/.out_fwd_t (elastic) .in_stream_t/.out_stream_t
-    (valid_only) .in_fb_t/.out_fb_t .in_intrf/.out_intrf
+    (valid_only) .in_fb_t/.out_fb_t .in_if_t/.out_if_t
     """
     complex_t = make_complex_t(data_t)
 
@@ -106,17 +106,17 @@ def make_magnitude(
             max_latency=max_latency,
         )
 
-        in_intrf = sp_func.in_intrf
-        out_intrf = sp_func.out_intrf
+        in_if_t = sp_func.in_if_t
+        out_if_t = sp_func.out_if_t
 
         @struct
         class magnitude_t(NamedTuple):
-            stream_in_if: in_intrf.fb_t
-            stream_out_if: out_intrf.fwd_t
+            stream_in_if: in_if_t.fb_t
+            stream_out_if: out_if_t.fwd_t
 
         @hw_func
         def magnitude(
-            stream_in_if: in_intrf.fwd_t, stream_out_if: out_intrf.fb_t
+            stream_in_if: in_if_t.fwd_t, stream_out_if: out_if_t.fb_t
         ) -> magnitude_t:
             o: magnitude_t
             sp_o = sp_func(stream_in_if, stream_out_if)
@@ -168,14 +168,14 @@ def make_magnitude(
     magnitude.rounding = rounding
     magnitude.overflow = overflow
     magnitude.handshake = handshake
-    magnitude.in_fwd_t = in_intrf.fwd_t if handshake == "elastic" else None
+    magnitude.in_fwd_t = in_if_t.fwd_t if handshake == "elastic" else None
     magnitude.in_stream_t = in_stream_t if handshake == "valid_only" else None
-    magnitude.out_fwd_t = out_intrf.fwd_t if handshake == "elastic" else None
+    magnitude.out_fwd_t = out_if_t.fwd_t if handshake == "elastic" else None
     magnitude.out_stream_t = out_stream_t if handshake == "valid_only" else None
-    magnitude.in_fb_t = in_intrf.fb_t if handshake == "elastic" else None
-    magnitude.out_fb_t = out_intrf.fb_t if handshake == "elastic" else None
-    magnitude.in_intrf = in_intrf if handshake == "elastic" else None
-    magnitude.out_intrf = out_intrf if handshake == "elastic" else None
+    magnitude.in_fb_t = in_if_t.fb_t if handshake == "elastic" else None
+    magnitude.out_fb_t = out_if_t.fb_t if handshake == "elastic" else None
+    magnitude.in_if_t = in_if_t if handshake == "elastic" else None
+    magnitude.out_if_t = out_if_t if handshake == "elastic" else None
 
     # Latency metadata (valid_only mode only -- elastic's make_stream_auto_pipeline
     # has its own elastic-FIFO-based depth, not a fixed cycle latency). Lazy

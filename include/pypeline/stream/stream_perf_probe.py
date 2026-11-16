@@ -245,12 +245,12 @@ def make_probed_stream_fifo(data_t, depth: int, tap_name: str, mode: str = "fwft
     """
     fifo = make_stream_fifo(data_t, depth, mode)
 
-    intrf = fifo.stream_intrf
+    stream_if_t = fifo.stream_if_t
     capacity = fifo.capacity_beats
 
     @hw_func
     def probed_stream_fifo(
-        in_stream_if: intrf.fwd_t, out_stream_if: intrf.fb_t
+        in_stream_if: stream_if_t.fwd_t, out_stream_if: stream_if_t.fb_t
     ) -> fifo.return_t:
         result = fifo(in_stream_if=in_stream_if, out_stream_if=out_stream_if)
         stream_hs(tap_name + ".in", in_stream_if.stream.valid,
@@ -262,7 +262,7 @@ def make_probed_stream_fifo(data_t, depth: int, tap_name: str, mode: str = "fwft
                   out_stream_if.ready, capacity)
         return result
 
-    probed_stream_fifo.stream_intrf = intrf
+    probed_stream_fifo.stream_if_t = stream_if_t
     probed_stream_fifo.fwd_t = fifo.fwd_t
     probed_stream_fifo.fb_t = fifo.fb_t
     probed_stream_fifo.depth = depth
@@ -271,20 +271,20 @@ def make_probed_stream_fifo(data_t, depth: int, tap_name: str, mode: str = "fwft
     return probed_stream_fifo
 
 
-def make_probed_skid_buffer(data_t_or_intrf, tap_name: str, mode: str = "full"):
+def make_probed_skid_buffer(data_t_or_if_t, tap_name: str, mode: str = "full"):
     """`make_skid_buffer` with probes on both handshakes and its occupancy
     (taps `<tap_name>.in`/`.out`/`.occupancy`, capacity = its slot count).
     Same ports, result type and attributes as `make_skid_buffer`, plus
     `.capacity_beats` and `.tap_name`. The probes add no hardware.
     """
-    skid = make_skid_buffer(data_t_or_intrf, mode)
+    skid = make_skid_buffer(data_t_or_if_t, mode)
 
-    intrf = skid.stream_intrf
+    stream_if_t = skid.stream_if_t
     capacity = skid.n_slots
 
     @hw_func
     def probed_skid_buffer(
-        stream_in_if: intrf.fwd_t, stream_out_if: intrf.fb_t
+        stream_in_if: stream_if_t.fwd_t, stream_out_if: stream_if_t.fb_t
     ) -> skid.return_t:
         result = skid(stream_in_if=stream_in_if, stream_out_if=stream_out_if)
         stream_hs(tap_name + ".in", stream_in_if.stream.valid,
@@ -296,7 +296,7 @@ def make_probed_skid_buffer(data_t_or_intrf, tap_name: str, mode: str = "full"):
                   stream_out_if.ready, capacity)
         return result
 
-    for attr in ("stream_intrf", "fwd_t", "fb_t", "data_t", "mode", "n_slots", "latency"):
+    for attr in ("stream_if_t", "fwd_t", "fb_t", "data_t", "mode", "n_slots", "latency"):
         setattr(probed_skid_buffer, attr, getattr(skid, attr))
     probed_skid_buffer.capacity_beats = capacity
     probed_skid_buffer.tap_name = tap_name

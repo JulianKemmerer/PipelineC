@@ -9,7 +9,7 @@ its definition -- a credit counter, a req/ack pair, or a wide multi-signal bus a
 all expressed the same way.
 
     @interface
-    class my_intrf(NamedTuple):
+    class my_if_t(NamedTuple):
         payload: some_data_t         # feedforward
         go:      uint1_t             # feedforward
         credit:  Feedback[uint4_t]   # reverse
@@ -17,10 +17,10 @@ all expressed the same way.
 Hardware functions never take an interface directly -- they take the two ordinary
 `@struct`s it derives, one per direction, as attributes on the interface itself:
 
-    my_intrf.fwd_t     # feedforward fields
-    my_intrf.fb_t      # Feedback fields, unwrapped (None if the interface has none)
-    my_intrf.stream_t  # the plain {data, valid} half nested at .fwd_t.stream,
-                        # if this is a stream-shaped interface (None otherwise)
+    my_if_t.fwd_t     # feedforward fields
+    my_if_t.fb_t      # Feedback fields, unwrapped (None if the interface has none)
+    my_if_t.stream_t  # the plain {data, valid} half nested at .fwd_t.stream,
+                      # if this is a stream-shaped interface (None otherwise)
 
 Because the halves travel opposite ways, an *input* interface puts its
 feedforward half in an arg and its feedback half in a return field, and an
@@ -30,18 +30,21 @@ ends in `_if` (enforced by a lint in `interface_func.callee_ports` and
 `pypeline._check_partial_interface_ports`).
 
 Naming convention, two distinct suffixes:
-  - `_intrf`: a variable holding the `@interface` class itself, e.g.
-    `axis_intrf` -- always accessed directly (`axis_intrf.fwd_t`,
-    `axis_intrf.stream_t`), never re-aliased to a shorter local name. A short
+  - `_if_t`: the `@interface` class itself (a type, hence the `_t`), e.g.
+    `axis_if_t` -- always accessed directly (`axis_if_t.fwd_t`,
+    `axis_if_t.stream_t`), never re-aliased to a shorter local name. A short
     alias reintroduces the exact ambiguity `.fwd_t`/`.fb_t` exist to remove:
     a reader can no longer tell from the name alone whether a type is a
     paired port half or a standalone struct.
   - `_if`: an argument/field name holding an *instance* of one port half
-    (typed `some_intrf.fwd_t` or `some_intrf.fb_t`).
+    (typed `some_if_t.fwd_t` or `some_if_t.fb_t`).
 
-`.fwd_t`/`.fb_t`/`.stream_t` are memoized per interface and named
-deterministically from the interface's own canonical name, so repeated
-derivation yields identical definitions (canonical-name determinism). A plain
+`.fwd_t`/`.fb_t`/`.wire_t` are memoized per interface and named
+deterministically from the interface's own name and factory parameters, so
+repeated derivation yields identical definitions (canonical-name
+determinism). Each half's name is the interface's without its own `_t`, plus
+`_fwd_t`, `_fb_t` or `_wire_t` (`pypeline._interface_half_symbol`):
+`axis_if_t.fwd_t` is the struct `axis_if_fwd_t`. A plain
 valid-only stream (`stream.make_stream_t`) never needs an interface at all --
 it is just a `{data, valid}` struct -- and `make_stream_interface(T).stream_t`
 is literally that same struct, not a separately-derived twin.
@@ -74,6 +77,7 @@ from pypeline import (
     _struct_class_getitem,
     _describe,
     _derived_type,
+    _interface_half_symbol,
 )
 
 FWD = "fwd"
@@ -160,7 +164,9 @@ def _split_field(ann, where):
     return (ann, None)
 
 
-def _derive(iface, role):
+def _derive(iface, role, params):
+    """The `role` (FWD/FB) half of `iface`, or None if no field travels that
+    way. `params` is the interface's factory-parameter name suffix."""
     if not is_interface(iface):
         raise InterfaceError(f"{iface!r} is not an @interface")
     memo = iface._pypeline_iface_derived
@@ -176,7 +182,7 @@ def _derive(iface, role):
             fields.append((fname, chosen))
     if not fields:
         return None
-    name = f"{iface._pypeline_iface_canonical}_{'t' if role == FWD else 'feedback_t'}"
+    name = _interface_half_symbol(iface.__name__, role) + params
     cls = struct(NamedTuple(name, fields))
     cls._pypeline_name_info = _derived_type(iface, role, fields)
     cls._pypeline_interface = iface
@@ -185,14 +191,14 @@ def _derive(iface, role):
     return cls
 
 
-def _derive_wire(iface):
+def _derive_wire(iface, params):
     """The flat, non-directional struct backing `Wire[SomeInterface]` (the
     bare interface class used directly as a global Wire's type): one plain
     field per interface field, `Feedback[T]` fields unwrapped to plain `T`
     exactly like `.fb_t` unwraps them -- direction only matters at a real
     port crossing, and a Wire is not one, so both halves are just ordinary
     struct fields here, each independently multi-writer-flattenable like any
-    other plain @struct field."""
+    other plain @struct field. `params` is as for `_derive`."""
     memo = iface._pypeline_iface_derived
     if "wire" in memo:
         return memo["wire"]
@@ -203,7 +209,7 @@ def _derive_wire(iface):
         f, b = _split_field(iface.__annotations__[fname], where)
         chosen = f if f is not None else b
         fields.append((fname, chosen))
-    name = f"{iface._pypeline_iface_canonical}_wire_t"
+    name = _interface_half_symbol(iface.__name__, "wire") + params
     cls = struct(NamedTuple(name, fields))
     cls._pypeline_name_info = _derived_type(iface, "wire", fields)
     memo["wire"] = cls
@@ -237,15 +243,16 @@ def interface(cls):
     cls._pypeline_name_info = _describe(
         cls, "interface", factory_args, _sys._getframe(1)
     )
-    cls._pypeline_iface_canonical = cls.__name__ + (
+    params = (
         "_" + "_".join(f"{k}_{encode_param_value(v)}" for k, v in factory_args.items())
         if factory_args
         else ""
     )
+    cls._pypeline_iface_canonical = cls.__name__ + params
     cls._pypeline_iface_derived = {}
 
-    fwd = _derive(cls, FWD)
-    fb = _derive(cls, FB)
+    fwd = _derive(cls, FWD, params)
+    fb = _derive(cls, FB, params)
     if fwd is None and fb is None:
         raise InterfaceError(
             f"@interface {_tname(cls)!r} is empty: no feedforward and no Feedback fields"
@@ -263,5 +270,5 @@ def interface(cls):
     # one half of a port.
     if cls.stream_t is not None:
         cls.stream_t._pypeline_interface = cls
-    cls.wire_t = _derive_wire(cls)
+    cls.wire_t = _derive_wire(cls, params)
     return cls

@@ -9,7 +9,7 @@ diff -ruN '--exclude=generated-files' '--exclude=__pycache__' '--exclude=*.pyc' 
 +@MAIN(wireguard_env.wg_clk, reset_registers=wireguard_env.WG_REGS)
  def chacha20_pipeline_shared():
      pipeline_in_ready: Feedback[uint1_t]
-     pipeline_out: Feedback[chacha_shared_pipeline_out_stream_intrf.stream_t]
+     pipeline_out: Feedback[chacha_shared_pipeline_out_stream_if_t.stream_t]
 diff -ruN '--exclude=generated-files' '--exclude=__pycache__' '--exclude=*.pyc' a/src/chacha20poly1305/chacha20poly1305_decrypt_hw_io.py b/src/chacha20poly1305/chacha20poly1305_decrypt_hw_io.py
 --- a/src/chacha20poly1305/chacha20poly1305_decrypt_hw_io.py	2026-11-07 09:40:45.000000000 -0500
 +++ b/src/chacha20poly1305/chacha20poly1305_decrypt_hw_io.py	2026-11-07 12:03:07.431196743 -0500
@@ -63,8 +63,8 @@ diff -ruN '--exclude=generated-files' '--exclude=__pycache__' '--exclude=*.pyc' 
          keep_count=_keep_count(stream) if valid else 0,
          eod=1 if stream.data.eod[0] else 0,
      )
--    _snk.step(aead_axis_intrf.fwd_t(stream))
-+    _snk.step(aead_axis_intrf.fwd_t(stream), reset=rst)
+-    _snk.step(aead_axis_if_t.fwd_t(stream))
++    _snk.step(aead_axis_if_t.fwd_t(stream), reset=rst)
      result = _snk.check_nowait()
      if result is not None:
          idx = result.get("idx", "?")
@@ -75,7 +75,7 @@ diff -ruN '--exclude=generated-files' '--exclude=__pycache__' '--exclude=*.pyc' 
 -@MAIN(wireguard_env.TARGET_MHZ)
 +@MAIN(wireguard_env.wg_clk)
  @wires
- def decrypt_perf_tb() -> aead_axis_intrf.fwd_t:
+ def decrypt_perf_tb() -> aead_axis_if_t.fwd_t:
      key: uint8_t[CHACHA20_KEY_SIZE] = common.KEY
 diff -ruN '--exclude=generated-files' '--exclude=__pycache__' '--exclude=*.pyc' a/src/chacha20poly1305/decrypt_syn_tb.py b/src/chacha20poly1305/decrypt_syn_tb.py
 --- a/src/chacha20poly1305/decrypt_syn_tb.py	2026-11-07 09:40:45.000000000 -0500
@@ -86,7 +86,7 @@ diff -ruN '--exclude=generated-files' '--exclude=__pycache__' '--exclude=*.pyc' 
  # Time this MAIN normally rather than falsely declaring it wires-only.
 -@MAIN(wireguard_env.TARGET_MHZ)
 +@MAIN(wireguard_env.wg_clk, reset_registers=wireguard_env.WG_REGS)
- def decrypt_syn_tb() -> aead_axis_intrf.fwd_t:
+ def decrypt_syn_tb() -> aead_axis_if_t.fwd_t:
      # Test vectors
      key: uint8_t[CHACHA20_KEY_SIZE] = KEY
 diff -ruN '--exclude=generated-files' '--exclude=__pycache__' '--exclude=*.pyc' a/src/chacha20poly1305/decrypt_tb.py b/src/chacha20poly1305/decrypt_tb.py
@@ -101,8 +101,8 @@ diff -ruN '--exclude=generated-files' '--exclude=__pycache__' '--exclude=*.pyc' 
  }
  
  _scoreboard = Scoreboard()
- _src = common.ConvergedAxisSource(aead_axis_intrf, AEAD_BEAT_BYTES)
- _snk = common.ConvergedAxisSink(aead_axis_intrf, AEAD_BEAT_BYTES, scoreboard=_scoreboard)
+ _src = common.ConvergedAxisSource(aead_axis_if_t, AEAD_BEAT_BYTES)
+ _snk = common.ConvergedAxisSink(aead_axis_if_t, AEAD_BEAT_BYTES, scoreboard=_scoreboard)
 +common.SOURCES.append(_src)
  
  
@@ -133,7 +133,7 @@ diff -ruN '--exclude=generated-files' '--exclude=__pycache__' '--exclude=*.pyc' 
      # its duration), so sampling it once when the frame completes below is
 @@ -171,7 +176,15 @@
      got_verified = chacha20poly1305_decrypt_ports.is_verified_out
-     _snk.step(aead_axis_intrf.fwd_t(out),
+     _snk.step(aead_axis_if_t.fwd_t(out),
                ready=chacha20poly1305_decrypt_ports.axis_out_if.ready,
 -              sideband=got_verified)
 +              sideband=got_verified, reset=rst)
@@ -160,7 +160,7 @@ diff -ruN '--exclude=generated-files' '--exclude=__pycache__' '--exclude=*.pyc' 
 -@MAIN(wireguard_env.TARGET_MHZ)
 +@MAIN(wireguard_env.wg_clk)
  @wires
- def decrypt_tb() -> aead_axis_intrf.fwd_t:
+ def decrypt_tb() -> aead_axis_if_t.fwd_t:
      key: uint8_t[CHACHA20_KEY_SIZE] = common.KEY
 diff -ruN '--exclude=generated-files' '--exclude=__pycache__' '--exclude=*.pyc' a/src/chacha20poly1305/encrypt_dataflow.py b/src/chacha20poly1305/encrypt_dataflow.py
 --- a/src/chacha20poly1305/encrypt_dataflow.py	2026-11-07 09:40:45.000000000 -0500
@@ -191,8 +191,8 @@ diff -ruN '--exclude=generated-files' '--exclude=__pycache__' '--exclude=*.pyc' 
          keep_count=_keep_count(stream) if valid else 0,
          eod=1 if stream.data.eod[0] else 0,
      )
--    _snk.step(aead_axis_intrf.fwd_t(stream))
-+    _snk.step(aead_axis_intrf.fwd_t(stream), reset=rst)
+-    _snk.step(aead_axis_if_t.fwd_t(stream))
++    _snk.step(aead_axis_if_t.fwd_t(stream), reset=rst)
      result = _snk.check_nowait()
      if result is not None:
          message = None
@@ -203,7 +203,7 @@ diff -ruN '--exclude=generated-files' '--exclude=__pycache__' '--exclude=*.pyc' 
 -@MAIN(wireguard_env.TARGET_MHZ)
 +@MAIN(wireguard_env.wg_clk)
  @wires
- def encrypt_perf_tb() -> aead_axis_intrf.fwd_t:
+ def encrypt_perf_tb() -> aead_axis_if_t.fwd_t:
      key: uint8_t[CHACHA20_KEY_SIZE] = common.KEY
 diff -ruN '--exclude=generated-files' '--exclude=__pycache__' '--exclude=*.pyc' a/src/chacha20poly1305/encrypt_syn_tb.py b/src/chacha20poly1305/encrypt_syn_tb.py
 --- a/src/chacha20poly1305/encrypt_syn_tb.py	2026-11-07 09:40:45.000000000 -0500
@@ -214,7 +214,7 @@ diff -ruN '--exclude=generated-files' '--exclude=__pycache__' '--exclude=*.pyc' 
  # CSR constants do not change that requirement.
 -@MAIN(wireguard_env.TARGET_MHZ)
 +@MAIN(wireguard_env.wg_clk, reset_registers=wireguard_env.WG_REGS)
- def encrypt_syn_tb() -> aead_axis_intrf.fwd_t:
+ def encrypt_syn_tb() -> aead_axis_if_t.fwd_t:
      # Test vectors
      key: uint8_t[CHACHA20_KEY_SIZE] = KEY
 diff -ruN '--exclude=generated-files' '--exclude=__pycache__' '--exclude=*.pyc' a/src/chacha20poly1305/encrypt_tb.py b/src/chacha20poly1305/encrypt_tb.py
@@ -229,8 +229,8 @@ diff -ruN '--exclude=generated-files' '--exclude=__pycache__' '--exclude=*.pyc' 
  }
  
  _scoreboard = Scoreboard()
- _src = common.ConvergedAxisSource(aead_axis_intrf, AEAD_BEAT_BYTES)
- _snk = common.ConvergedAxisSink(aead_axis_intrf, AEAD_BEAT_BYTES, scoreboard=_scoreboard)
+ _src = common.ConvergedAxisSource(aead_axis_if_t, AEAD_BEAT_BYTES)
+ _snk = common.ConvergedAxisSink(aead_axis_if_t, AEAD_BEAT_BYTES, scoreboard=_scoreboard)
 +common.SOURCES.append(_src)
  
  
@@ -251,7 +251,7 @@ diff -ruN '--exclude=generated-files' '--exclude=__pycache__' '--exclude=*.pyc' 
 +    # No transfer while the DUT is in reset; a frame it cut is sent again
 +    rst = wireguard_env.wg_rst if wireguard_env.USE_RESET else 0
 +    _src.commit(chacha20poly1305_encrypt_ports.axis_in_if.ready, reset=rst)
-     _snk.step(aead_axis_intrf.fwd_t(chacha20poly1305_encrypt_ports.axis_out_if.stream),
+     _snk.step(aead_axis_if_t.fwd_t(chacha20poly1305_encrypt_ports.axis_out_if.stream),
 -              ready=chacha20poly1305_encrypt_ports.axis_out_if.ready)
 +              ready=chacha20poly1305_encrypt_ports.axis_out_if.ready, reset=rst)
 +    if int(rst):
@@ -277,7 +277,7 @@ diff -ruN '--exclude=generated-files' '--exclude=__pycache__' '--exclude=*.pyc' 
 -@MAIN(wireguard_env.TARGET_MHZ)
 +@MAIN(wireguard_env.wg_clk)
  @wires
- def encrypt_tb() -> aead_axis_intrf.fwd_t:
+ def encrypt_tb() -> aead_axis_if_t.fwd_t:
      key: uint8_t[CHACHA20_KEY_SIZE] = common.KEY
 diff -ruN '--exclude=generated-files' '--exclude=__pycache__' '--exclude=*.pyc' a/src/chacha20poly1305/tb_common_sim.py b/src/chacha20poly1305/tb_common_sim.py
 --- a/src/chacha20poly1305/tb_common_sim.py	2026-11-07 09:40:45.000000000 -0500
@@ -401,14 +401,14 @@ diff -ruN '--exclude=generated-files' '--exclude=__pycache__' '--exclude=*.pyc' 
 --- a/src/poly1305/poly1305_mcp_shared.py	2026-11-07 09:40:45.000000000 -0500
 +++ b/src/poly1305/poly1305_mcp_shared.py	2026-11-07 12:02:59.711233068 -0500
 @@ -249,7 +249,7 @@
- decrypt_epilogue_out_if: Wire[epilogue_out_intrf]
+ decrypt_epilogue_out_if: Wire[epilogue_out_if_t]
  
  
 -@MAIN(wireguard_env.TARGET_MHZ)
 +@MAIN(wireguard_env.wg_clk, reset_registers=wireguard_env.WG_REGS)
  def poly1305_prologue_shared():
      o = prologue_arbiter(
-         prologue_in_intrf.fwd_t(encrypt_prologue_in_if.stream),
+         prologue_in_if_t.fwd_t(encrypt_prologue_in_if.stream),
 @@ -263,7 +263,7 @@
      decrypt_prologue_out_if.stream = o.decrypt_out_if.stream
  
@@ -417,7 +417,7 @@ diff -ruN '--exclude=generated-files' '--exclude=__pycache__' '--exclude=*.pyc' 
 +@MAIN(wireguard_env.wg_clk, reset_registers=wireguard_env.WG_REGS)
  def poly1305_epilogue_shared():
      o = epilogue_arbiter(
-         epilogue_in_intrf.fwd_t(encrypt_epilogue_in_if.stream),
+         epilogue_in_if_t.fwd_t(encrypt_epilogue_in_if.stream),
 diff -ruN '--exclude=generated-files' '--exclude=__pycache__' '--exclude=*.pyc' a/src/poly1305_paired_tb.py b/src/poly1305_paired_tb.py
 --- a/src/poly1305_paired_tb.py	2026-11-07 09:40:45.000000000 -0500
 +++ b/src/poly1305_paired_tb.py	2026-11-07 12:02:59.711233068 -0500
@@ -428,7 +428,7 @@ diff -ruN '--exclude=generated-files' '--exclude=__pycache__' '--exclude=*.pyc' 
 -    @MAIN(wireguard_env.TARGET_MHZ)
 +    @MAIN(wireguard_env.wg_clk)
      @wires
-     def paired_mac_tb() -> poly1305_auth_tag_stream_intrf.fwd_t:
+     def paired_mac_tb() -> poly1305_auth_tag_stream_if_t.fwd_t:
          in_if.stream = drive_word()
 @@ -240,7 +240,7 @@
  
@@ -437,7 +437,7 @@ diff -ruN '--exclude=generated-files' '--exclude=__pycache__' '--exclude=*.pyc' 
 -    @MAIN(wireguard_env.TARGET_MHZ)
 +    @MAIN(wireguard_env.wg_clk)
      @wires
-     def paired_prep_tb() -> aead_axis_intrf.fwd_t:
+     def paired_prep_tb() -> aead_axis_if_t.fwd_t:
          in_if.stream = drive_word()
 @@ -269,7 +269,7 @@
      def drive_tag_ready() -> uint8_t:
@@ -446,8 +446,8 @@ diff -ruN '--exclude=generated-files' '--exclude=__pycache__' '--exclude=*.pyc' 
 -    @MAIN(wireguard_env.TARGET_MHZ)
 +    @MAIN(wireguard_env.wg_clk)
      @wires
-     def paired_tags_tb() -> aead_axis_intrf.fwd_t:
-         strip_ready: Feedback[aead_axis_intrf.fb_t]
+     def paired_tags_tb() -> aead_axis_if_t.fwd_t:
+         strip_ready: Feedback[aead_axis_if_t.fb_t]
 diff -ruN '--exclude=generated-files' '--exclude=__pycache__' '--exclude=*.pyc' a/src/poly1305_pipelined_syn_tb.py b/src/poly1305_pipelined_syn_tb.py
 --- a/src/poly1305_pipelined_syn_tb.py	2026-11-07 09:40:45.000000000 -0500
 +++ b/src/poly1305_pipelined_syn_tb.py	2026-11-07 12:02:59.711233068 -0500

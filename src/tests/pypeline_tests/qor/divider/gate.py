@@ -9,7 +9,7 @@ final generated VHDL and mapped artifacts, then drives that exact VHDL with
 valid traffic, bubbles, edge cases, and a pipeline flush.
 """
 from pypeline import *
-from stream.stream import make_stream_t
+from stream import make_stream_t
 
 
 @struct

@@ -49,7 +49,7 @@ def stream_test() -> uint16_t:
     x.c = sent
     x.d = 5
     x.sel = sent[0]
-    request:STREAM.in_intrf.stream_t
+    request:STREAM.in_if_t.stream_t
     request.data = x
     request.valid = sent < 24
     o = STREAM(STREAM.in_fwd_t(stream=request), STREAM.out_fb_t(ready=ready))

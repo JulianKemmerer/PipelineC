@@ -17,10 +17,10 @@ codebase), not coroutines.
 Usage (mirrors wireguard-fpga's `encrypt_tb.py`/`decrypt_tb.py` shape):
 
     from pypeline import sim_input, sim_output
-    from aead_types import axis128_intrf
+    from aead_types import axis128_if_t
 
-    src = AxisSimSource(axis128_intrf, 16)
-    snk = AxisSimSink(axis128_intrf, 16)
+    src = AxisSimSource(axis128_if_t, 16)
+    snk = AxisSimSink(axis128_if_t, 16)
 
     @sim_input
     def drive_in_word():
@@ -34,7 +34,7 @@ Usage (mirrors wireguard-fpga's `encrypt_tb.py`/`decrypt_tb.py` shape):
             check_frame(frame)
 
     @MAIN
-    def encrypt_tb() -> axis128_intrf.fwd_t:
+    def encrypt_tb() -> axis128_if_t.fwd_t:
         chacha20poly1305_encrypt_ports.axis_in = drive_in_word()
         chacha20poly1305_encrypt_ports.axis_out_ready = 1
         check_out()
@@ -61,10 +61,10 @@ class AxisSimSource:
     frame (any bytes-like object); `step(ready)` should be called exactly
     once per simulated cycle (typically from a `@sim_input` zero-arg
     function), advancing the in-flight frame once `ready` is true, and
-    returns the `axis_intrf.fwd_t` value for that cycle."""
+    returns the `axis_if_t.fwd_t` value for that cycle."""
 
-    def __init__(self, axis_intrf, n):
-        self.axis_intrf = axis_intrf
+    def __init__(self, axis_if_t, n):
+        self.axis_if_t = axis_if_t
         self.n = n
         self._queue = deque()
         self._current = None  # bytes remaining of the in-flight frame, or None
@@ -116,15 +116,15 @@ class AxisSimSource:
             return False
 
     def _null_word(self):
-        return self.axis_intrf.fwd_t(
-            self.axis_intrf.stream_t(
+        return self.axis_if_t.fwd_t(
+            self.axis_if_t.stream_t(
                 data=self._zero_frag(),
                 valid=0,
             )
         )
 
     def _zero_frag(self):
-        frag_t = self.axis_intrf.stream_t.typeof("data")
+        frag_t = self.axis_if_t.stream_t.typeof("data")
         bus_t = frag_t.typeof("frag")
         return frag_t(
             frag=bus_t(data=[0] * self.n, keep=[0] * self.n),
@@ -170,10 +170,10 @@ class AxisSimSource:
             data[i] = b
             keep[i] = 1
 
-        frag_t = self.axis_intrf.stream_t.typeof("data")
+        frag_t = self.axis_if_t.stream_t.typeof("data")
         bus_t = frag_t.typeof("frag")
-        word = self.axis_intrf.fwd_t(
-            self.axis_intrf.stream_t(
+        word = self.axis_if_t.fwd_t(
+            self.axis_if_t.stream_t(
                 data=frag_t(frag=bus_t(data=data, keep=keep), eod=[eod]),
                 valid=1,
             )
@@ -192,7 +192,7 @@ class AxisSimSink:
     """Queue-backed byte-frame collector. `step(word)` should be called
     exactly once per simulated cycle (typically from a `@sim_output` zero-arg
     function reading the real converged port value) with the interface's
-    current `axis_intrf.fwd_t` value; on `eod` it completes a frame, poppable
+    current `axis_if_t.fwd_t` value; on `eod` it completes a frame, poppable
     via `recv()`/`recv_nowait()`. Always behaves as if its own `ready` is 1
     (matching every existing testbench in this codebase) -- it has no
     backpressure/pause hook of its own.
@@ -209,8 +209,8 @@ class AxisSimSink:
     compare it against the next `Scoreboard.expect()`-ed value in one call --
     see `Scoreboard` below."""
 
-    def __init__(self, axis_intrf, n, scoreboard=None):
-        self.axis_intrf = axis_intrf
+    def __init__(self, axis_if_t, n, scoreboard=None):
+        self.axis_if_t = axis_if_t
         self.n = n
         self.scoreboard = scoreboard
         self._queue = deque()
@@ -329,8 +329,8 @@ class ConvergedAxisSimSource:
     requires. Do not attach a pause generator to the wrapped source.
     """
 
-    def __init__(self, axis_intrf, n):
-        self._source = AxisSimSource(axis_intrf, n)
+    def __init__(self, axis_if_t, n):
+        self._source = AxisSimSource(axis_if_t, n)
         self._offered = None
         self._held = False
         self._null = self._source._null_word()
@@ -384,8 +384,8 @@ class ConvergedAxisSimSink:
     Counts `accepted_beats` and `stalled_cycles`.
     """
 
-    def __init__(self, axis_intrf, n, scoreboard=None):
-        self._sink = AxisSimSink(axis_intrf, n, scoreboard=scoreboard)
+    def __init__(self, axis_if_t, n, scoreboard=None):
+        self._sink = AxisSimSink(axis_if_t, n, scoreboard=scoreboard)
         self._n = n
         self._stalled = None
         self.accepted_beats = 0

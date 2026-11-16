@@ -29,7 +29,7 @@ from pypeline import (
 )
 
 from fixed_point import make_fixed_t, make_fixed_resize
-from stream.stream import make_stream_interface, make_stream_t
+from stream import make_stream_interface, make_stream_t
 from stream.stream_auto_pipeline import make_stream_auto_pipeline
 
 from dsp.fir_common import data_range, signed_bits_for, unsigned_bits_for
@@ -62,8 +62,8 @@ def make_moving_avg(
                then unused).
     rounding:  "truncate" | "round_half_up" | "round_half_even" | "round_half_away"
     overflow:  "wrap" | "saturate"
-    handshake: "elastic"    -> moving_avg(stream_in_if: in_intrf.fwd_t,
-                                           stream_out_if: out_intrf.fb_t) -> moving_avg_t
+    handshake: "elastic"    -> moving_avg(stream_in_if: in_if_t.fwd_t,
+                                           stream_out_if: out_if_t.fb_t) -> moving_avg_t
                "valid_only" -> moving_avg(in_stream: make_stream_t(data_t))
                                    -> make_stream_t(out_t)
     latency / start_latency / max_latency (keyword-only, default None):
@@ -74,7 +74,7 @@ def make_moving_avg(
     The returned `moving_avg` carries metadata attributes:
     .data_t .out_t .n .normalize .sum_t .avg_t .full_precision .rounding
     .overflow .handshake .in_fwd_t/.out_fwd_t (elastic) .in_stream_t/
-    .out_stream_t (valid_only) .in_fb_t/.out_fb_t .in_intrf/.out_intrf
+    .out_stream_t (valid_only) .in_fb_t/.out_fb_t .in_if_t/.out_if_t
     """
     if not (isinstance(n, int) and n >= 1):
         raise ValueError(f"make_moving_avg: n must be an int >= 1, got {n!r}")
@@ -128,27 +128,27 @@ def make_moving_avg(
             max_latency=max_latency,
         )
 
-        in_intrf = make_stream_interface(data_t)
-        out_intrf = sp_func.out_intrf
+        in_if_t = make_stream_interface(data_t)
+        out_if_t = sp_func.out_if_t
 
         @struct
         class moving_avg_t(NamedTuple):
-            stream_in_if: in_intrf.fb_t
-            stream_out_if: out_intrf.fwd_t
+            stream_in_if: in_if_t.fb_t
+            stream_out_if: out_if_t.fwd_t
 
         @hw_func
         def moving_avg(
-            stream_in_if: in_intrf.fwd_t, stream_out_if: out_intrf.fb_t
+            stream_in_if: in_if_t.fwd_t, stream_out_if: out_if_t.fb_t
         ) -> moving_avg_t:
             window: Reg[data_val_t[n]]
             sum_reg: Reg[sum_val_t]
             new_sum: sum_val_t = sum_reg + stream_in_if.stream.data.val - window[n - 1]
             avg: avg_t = avg_t(val=new_sum)
 
-            sp_in: sp_func.in_intrf.stream_t
+            sp_in: sp_func.in_if_t.stream_t
             sp_in.data = avg
             sp_in.valid = stream_in_if.stream.valid
-            sp_o = sp_func(sp_func.in_intrf.fwd_t(sp_in), stream_out_if)
+            sp_o = sp_func(sp_func.in_if_t.fwd_t(sp_in), stream_out_if)
 
             accepted: uint1_t = stream_in_if.stream.valid & sp_o.stream_in_if.ready
             if accepted:
@@ -224,14 +224,14 @@ def make_moving_avg(
     moving_avg.rounding = rounding
     moving_avg.overflow = overflow
     moving_avg.handshake = handshake
-    moving_avg.in_fwd_t = in_intrf.fwd_t if handshake == "elastic" else None
+    moving_avg.in_fwd_t = in_if_t.fwd_t if handshake == "elastic" else None
     moving_avg.in_stream_t = in_stream_t if handshake == "valid_only" else None
-    moving_avg.out_fwd_t = out_intrf.fwd_t if handshake == "elastic" else None
+    moving_avg.out_fwd_t = out_if_t.fwd_t if handshake == "elastic" else None
     moving_avg.out_stream_t = out_stream_t if handshake == "valid_only" else None
-    moving_avg.in_fb_t = in_intrf.fb_t if handshake == "elastic" else None
-    moving_avg.out_fb_t = out_intrf.fb_t if handshake == "elastic" else None
-    moving_avg.in_intrf = in_intrf if handshake == "elastic" else None
-    moving_avg.out_intrf = out_intrf if handshake == "elastic" else None
+    moving_avg.in_fb_t = in_if_t.fb_t if handshake == "elastic" else None
+    moving_avg.out_fb_t = out_if_t.fb_t if handshake == "elastic" else None
+    moving_avg.in_if_t = in_if_t if handshake == "elastic" else None
+    moving_avg.out_if_t = out_if_t if handshake == "elastic" else None
 
     # Latency metadata (valid_only mode only -- see magnitude.py's identical
     # comment for why this is a lazy accessor rather than an eager attribute).

@@ -74,42 +74,42 @@ rx_ignore = make_axis_to_type(pt_t, N, frame="many_per_packet", on_runt="ignore"
 
 @MAIN
 def rx_one_main(
-    axis_in_if: rx_one.axis_intrf.fwd_t, stream_out_if: rx_one.out_fb_t
+    axis_in_if: rx_one.axis_if_t.fwd_t, stream_out_if: rx_one.out_fb_t
 ) -> rx_one.return_t:
     return rx_one(axis_in_if, stream_out_if)
 
 
 @MAIN
 def tx_one_main(
-    stream_in_if: tx_one.in_intrf.fwd_t, axis_out_if: tx_one.axis_fb_t
+    stream_in_if: tx_one.in_if_t.fwd_t, axis_out_if: tx_one.axis_fb_t
 ) -> tx_one.return_t:
     return tx_one(stream_in_if, axis_out_if)
 
 
 @MAIN
 def rx_many_main(
-    axis_in_if: rx_many.axis_intrf.fwd_t, stream_out_if: rx_many.out_fb_t
+    axis_in_if: rx_many.axis_if_t.fwd_t, stream_out_if: rx_many.out_fb_t
 ) -> rx_many.return_t:
     return rx_many(axis_in_if, stream_out_if)
 
 
 @MAIN
 def tx_many_main(
-    stream_in_if: tx_many.in_intrf.fwd_t, axis_out_if: tx_many.axis_fb_t
+    stream_in_if: tx_many.in_if_t.fwd_t, axis_out_if: tx_many.axis_fb_t
 ) -> tx_many.return_t:
     return tx_many(stream_in_if, axis_out_if)
 
 
 @MAIN
 def rx_pad_main(
-    axis_in_if: rx_pad.axis_intrf.fwd_t, stream_out_if: rx_pad.out_fb_t
+    axis_in_if: rx_pad.axis_if_t.fwd_t, stream_out_if: rx_pad.out_fb_t
 ) -> rx_pad.return_t:
     return rx_pad(axis_in_if, stream_out_if)
 
 
 @MAIN
 def rx_ignore_main(
-    axis_in_if: rx_ignore.axis_intrf.fwd_t, stream_out_if: rx_ignore.out_fb_t
+    axis_in_if: rx_ignore.axis_if_t.fwd_t, stream_out_if: rx_ignore.out_fb_t
 ) -> rx_ignore.return_t:
     return rx_ignore(axis_in_if, stream_out_if)
 
@@ -118,12 +118,12 @@ def rx_ignore_main(
 
 
 def _in_beat(mod, data, keep, eod, valid=1):
-    st = mod.axis_intrf.stream_t
+    st = mod.axis_if_t.stream_t
     frag_t = st.typeof("data")
     bus_t = frag_t.typeof("frag")
     data = list(data) + [0] * (N - len(data))
     keep = list(keep) + [0] * (N - len(keep))
-    return mod.axis_intrf.fwd_t(
+    return mod.axis_if_t.fwd_t(
         st(data=frag_t(frag=bus_t(data=data, keep=keep), eod=[eod]), valid=valid)
     )
 
@@ -166,11 +166,11 @@ def _rx(top, mod, beats, cycles=60):
 
 def _tx(top, mod, values, cycles=60):
     """Feed values in; return the emitted (data, keep, eod) beats."""
-    frag_t = mod.in_intrf.stream_t.typeof("data")
+    frag_t = mod.in_if_t.stream_t.typeof("data")
 
     def word(v, valid=1, eod=0):
-        return mod.in_intrf.fwd_t(
-            mod.in_intrf.stream_t(data=frag_t(frag=v, eod=[eod]), valid=valid)
+        return mod.in_if_t.fwd_t(
+            mod.in_if_t.stream_t(data=frag_t(frag=v, eod=[eod]), valid=valid)
         )
 
     sim_reset()

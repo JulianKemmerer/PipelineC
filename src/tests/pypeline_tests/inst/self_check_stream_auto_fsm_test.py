@@ -120,7 +120,7 @@ def self_check_stream_auto_fsm() -> int16_t:
     ready_now: uint1_t = ready_reg
     ready_reg = ~ready_reg
 
-    in_stream: OPS_FSM.in_intrf.stream_t
+    in_stream: OPS_FSM.in_if_t.stream_t
     in_stream.data = x
     in_stream.valid = ~sent
 
