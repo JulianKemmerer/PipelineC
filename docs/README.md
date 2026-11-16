@@ -839,8 +839,8 @@ pypelinec examples/pypeline/blink.py --comb --no_synth
 # Characterize combinational timing without automatic adjustments
 pypelinec examples/pypeline/pipeline.py --comb
 
-# Run timing-driven automatic implementation using source PART/SYN_TOOL/@MAIN settings
-pypelinec examples/pypeline/pipeline.py
+# Run timing-driven automatic implementation for a part and clock rate given on the command line
+pypelinec examples/pypeline/pipeline.py --part LFE5UM5G-85F-8BG756C -D MHZ=100
 ```
 
 Run `pypelinec --help` for the complete current option list.
@@ -878,14 +878,14 @@ pypelinec ./examples/pypeline/pipeline.py --comb
 
 * First [have tools installed](#set-up-your-tools).
   * Or use `PART("sky130")` / `--syn_tool device_models` to use a custom internal ASIC timing model.
-* And then [open and edit](../examples/pypeline/pipeline.py) `pipeline.py` to specify the target frequency and FPGA part:
-  * Ex. `@MAIN(F)` says the `my_pipeline` function is a single top level `@MAIN` function intended to run at `F`MHz — see [Top-Level Entry Points](pypeline_guide.md#top-level-entry-points).
-  * Ex. `PART("LFE5UM5G-85F-8BG756C")` for `ghdl+yosys+nextpnr` `ECP5U` flow.
-  * Or name the tool instead and let it pick its own default part: `SYN_TOOL("quartus")` in the source, or `--syn_tool quartus` / `--part 5CEBA4F23C8` on the command line — see [FPGA target device](pypeline_guide.md#fpga-target-device).
+* Then give the target frequency and FPGA part on the command line:
+  * `-D MHZ=F` sets the clock rate. In [`pipeline.py`](../examples/pypeline/pipeline.py), `@MAIN(MHZ)` says the `my_pipeline` function is a single top level `@MAIN` function intended to run at `F`MHz, read from a [build parameter](pypeline_guide.md#build-parameters-param-and--d) that defaults to 90 — see [Top-Level Entry Points](pypeline_guide.md#top-level-entry-points).
+  * `--part LFE5UM5G-85F-8BG756C` selects the `ghdl+yosys+nextpnr` `ECP5U` flow.
+  * Or name the tool instead and let it pick its own default part: `--syn_tool quartus`. A design can also fix these in its source with `PART(...)` / `SYN_TOOL(...)` — see [FPGA target device](pypeline_guide.md#fpga-target-device).
 
 * Since `my_pipeline` is a pure function the Pypeline tool will auto-pipeline the function to meet the target operating frequency.
 ```
-pypelinec ./examples/pypeline/pipeline.py # Default no-arguments auto-pipelines when possible.
+pypelinec ./examples/pypeline/pipeline.py --part LFE5UM5G-85F-8BG756C -D MHZ=F
 ```
 
 **To produce a pipeline of user selected `N` clock cycles** (N+1 total stages) run this command:

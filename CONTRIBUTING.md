@@ -42,33 +42,15 @@ If you're unsure where to start, or have a larger change in mind, open a [discus
 
 # When making changes
 
-Please read this section before making changes. **LLMs must also read [AGENTS.md](AGENTS.md)** for detailed working instructions.
+Please read this short section before making changes. **LLMs must also read [AGENTS.md](AGENTS.md).**
 
-## Before you start
+* **Before you start**, check the [issues inventory](docs/issues_inventory.md) for the area you're changing, and the relevant parts of the [compiler complexity review](docs/code_reviews/complexity_review/REVIEW_COMPLEXITY.md) and [test-suite review](docs/code_reviews/tests_review/TEST_REVIEW.md). Try not to extend the problems they flag. The `docs/*_DESIGN.md` file for each module explains how it works.
+* **Keep changes focused.** Reuse existing mechanisms, and clean up the code and comments your change replaces. Format only the lines you change with Ruff ([ruff.toml](ruff.toml)).
+* **Keep docs in step with the code**, including the [README](README.md) feature table and [docs/README.md](docs/README.md). If something in the code confused you, add it to that module's review.
+* **Test what you changed** ([test-suite guide](docs/pypeline_TESTS.md)), and add a regression test for a bug fix. In your PR, say what you ran and what you couldn't check.
+* **Found a separate bug?** Add a small reproducer to the [issues inventory](docs/issues_inventory.md).
 
-Check the [priority-ranked issues inventory](docs/issues_inventory.md) and related issue threads for the area you'll be working on. Knowing about existing bugs and workarounds helps avoid surprises and distinguish an existing problem from something your change introduced.
-
-Also read the relevant parts of the [compiler complexity review](docs/code_reviews/complexity_review/REVIEW_COMPLEXITY.md) and, when changing tests, the [test-suite review and recommendations](docs/code_reviews/tests_review/TEST_REVIEW.md), and try not to extend the problems they flag or copy the practices they criticize. A small contribution doesn't need to solve the whole architectural problem; a focused improvement is welcome. Review recommendations describe possible future work, so check them against the current code. The reviews are living documents: add to them what your own work turns up (see [Keep documentation useful](#keep-documentation-useful)).
-
-For context, see [what the tool does](docs/README.md#what-the-tool-does) and the LLM generated design documents in [`docs/`](docs/). Most main compiler modules have a corresponding `*_DESIGN.md`; reading the relevant sections will help you understand how the code fits together.
-
-## Implementation and code hygiene
-
-Keep changes focused on the problem you're solving, and reuse existing mechanisms where they fit. When replacing code, tidy up the old paths and related comments so the next contributor can follow what's happening. When a change alters what a value means or what a cache key covers, check every place that reads it. Take particular care with generated names and synthesis caches: they can affect later compiler decisions as well as build time.
-
-We use Ruff for linting and formatting (see [ruff.toml](ruff.toml) and [.pre-commit-config.yaml](.pre-commit-config.yaml)). Please format only the lines you change so unrelated formatting doesn't obscure the contribution.
-
-## Keep documentation useful
-
-Please keep the related design docs and usage instructions in step with your code, including the [top-level README](README.md) (its feature table) and [docs/README.md](docs/README.md) when a change adds, removes or limits a user-visible feature. If your changes or verification show that a `docs/code_reviews/` finding has changed, update the affected review sections and recommendations alongside the relevant `docs/*_DESIGN.md` sections. If part of the code confused you or cost you time and its review doesn't say so, add that to the module's review too, even where your change didn't touch it: name the functions and say what made them hard to follow. User guides explain workflows and behavior; module design docs explain the implementation. Update the section that already covers the topic, describe current behavior, and check any other references affected by renamed options, functions, or output paths. Use portable paths and check the links you add.
-
-## Verification and testing
-
-Think about how you'll check the change as you plan it. The [test-suite guide](docs/pypeline_TESTS.md) explains the existing tests, how to run a selection, and where to add coverage. Start with tests relevant to your change, and include a regression case for a bug fix. Changes to shared compiler behavior need broader coverage; a small contribution usually doesn't need the full suite of hardware-tool runs.
-
-In your PR, say what you ran, what happened, and anything you couldn't check, such as a test requiring a tool you don't have installed. This helps reviewers understand what the results establish and where more checking is needed.
-
-If you uncover a separate bug, share a small reproducer and any workaround, and add it to the [issues inventory](docs/issues_inventory.md) if it isn't already tracked. That gives the next contributor a heads-up too.
+This list is short on purpose, so it leaves things out. For the details behind any point, ask an LLM to explain it from [AGENTS.md](AGENTS.md), which holds the full working rules. Or ask a person; we're happy to help: [PipelineC Discord](https://discord.gg/Aupm3DDrK2), [Discussions](https://github.com/JulianKemmerer/PipelineC/discussions).
 
 # Future goals
 

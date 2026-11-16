@@ -11,7 +11,7 @@
 
 # What is PypelineC?
 
-A hardware description language (HDL) adding high level synthesis(HLS)-like automatic pipelining as a language construct/compiler feature. 
+A hardware description language (HDL) adding high level synthesis(HLS)-like automatic pipelining as a language construct/compiler feature. The goal is a portable HDL: one design you can take between FPGA and ASIC targets and clock rates without re-implementing it to meet timing.
 
 If a computation can be written as a [pure function](https://en.wikipedia.org/wiki/Combinational_logic) without side effects (i.e. no registers/static variables) then it can be auto-pipelined. Conceptually similar to technologies like [Intel's variable latency Hyper-Pipelining](https://www.intel.com/content/www/us/en/programmable/documentation/jbr1444752564689.html#esc1445881961208) and [Xilinx's retiming options](https://www.xilinx.com/support/answers/65410.html). Sharing some of the compiler driven pipelining design goals of [Google's XLS Project](https://google.github.io/xls/), the [DFiantHDL language](https://dfianthdl.github.io/), and certain [CIRCT](https://circt.llvm.org/) dialects as well.
 
@@ -127,7 +127,8 @@ Synthesis:
   Gowin EDA, 
   Efinix Efinity,
   Cologne Chip Toolchain,
-  PyRTL Models
+  PyRTL Models,
+  sky130 ASIC timing models (GHDL+Yosys+built-in liberty STA)
 Simulation: 
   Modelsim, 
   Verilator,
@@ -139,6 +140,15 @@ Simulation:
 ![PypelineC Tool Flow](./docs/images/flow.svg)
 
 ## Why Pypeline?
+
+**A portable HDL.** Moving a traditional RTL design to a new FPGA, an ASIC process, or a
+higher clock rate usually means re-implementing parts of it just to meet timing: adding
+or moving pipeline stages, re-balancing multi-cycle paths, rewriting state machines.
+PypelineC keeps that work in the compiler instead. You write the logic once as pure
+functions, and the compiler pipelines them for each target, using timing feedback from
+that target's synthesis tools. Only the parts that really are clock-by-clock hardware
+(registers, RAMs, interconnect) are written cycle by cycle, so a design does not need to
+be rewritten for each new device or operating frequency.
 
 Pypeline describes hardware directly, but replaces much of the ceremony of traditional
 RTL with compact Python syntax and reusable abstractions:

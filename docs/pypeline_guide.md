@@ -1074,25 +1074,6 @@ def counter(increment: uint1_t) -> uint32_t:
     return count
 ```
 
-**`Reg[T]` may never use an `@interface`'s `.fwd_t`/`.fb_t` ([Bidirectional Ports: `@interface`](#bidirectional-ports-interface))** — a hard
-`ElaborationError`, not a style preference. `.fwd_t`/`.fb_t` signal "this value is one
-half of a genuine bidirectional port pairing"; a register is internal state, never a
-port, so it never needs (or should imply) that. Use `.stream_t` instead — the plain
-`{data, valid}` type with no pairing implication — and only wrap/unwrap via `.stream`
-at the point the register's value actually meets a real port field:
-
-```python
-# Wrong -- ElaborationError: Reg[T] cannot use an @interface's .fwd_t/.fb_t
-buf: Reg[chan_intrf.fwd_t]
-
-# Right
-buf: Reg[chan_intrf.stream_t]
-...
-o.stream_out_if.stream = buf   # wrap only where it meets the real port field
-```
-
-See [Where `.fwd_t`/`.fb_t` may appear — and where it may not](#where-fwd_tfb_t-may-appear--and-where-it-may-not) in the `@interface` section for the general rule (Reg[T] is one case of it).
-
 ### Read / write semantics
 
 Registers use **blocking assignment** semantics, just like ordinary software variables.
@@ -1197,10 +1178,6 @@ def feedback_nand(a: uint1_t, b: uint1_t) -> uint1_t:
 
 In the generated VHDL, all signals are concurrent — "source order" is irrelevant.
 The compiler resolves the combinational loop correctly.
-
-Like `Reg[T]`, `Feedback[T]` may never use an `@interface`'s `.fwd_t`/`.fb_t` port-pairing
-type as `T` — see
-[Where `.fwd_t`/`.fb_t` may appear — and where it may not](#where-fwd_tfb_t-may-appear--and-where-it-may-not).
 
 **`Feedback[T]` vs `Reg[T]`:**
 
@@ -4348,10 +4325,8 @@ itself gets a distinct suffix, so the two kinds of name are never visually inter
 Two related but separate questions come up constantly with interfaces: *what kind of value
 is this* (plain value, stream, or interface half), and *what kind of place is this value
 stored* (local, register, feedback, global wire). Neither tree implies the other — any
-storage kind on the right can hold any value kind on the left, **except** that `.fwd_t`/
-`.fb_t` may only ever sit at a real port boundary (see
-[Where `.fwd_t`/`.fb_t` may appear — and where it may not](#where-fwd_tfb_t-may-appear--and-where-it-may-not)
-below):
+storage kind on the right can hold any value kind on the left, except `.fwd_t`/`.fb_t`
+([Where `.fwd_t`/`.fb_t` may appear — and where it may not](#where-fwd_tfb_t-may-appear--and-where-it-may-not)):
 
 ```text
 value kind:                          storage kind:
@@ -4367,9 +4342,7 @@ ordinary value (T)                   T
 ```
 
 `.stream_t` is a plain value like any other — it can sit in a local, a `Reg[T]`, a global
-`Wire[T]`, anywhere. `.fwd_t`/`.fb_t` are the exception: they mark "this value is one half
-of a real port pairing", so they're restricted to exactly the places a real port boundary
-can occur.
+`Wire[T]`, anywhere.
 
 ### Ports: two halves under one name
 
@@ -4576,8 +4549,8 @@ return fields. The shape follows from the interface function's own signature:
 
 Every port keeps the name you gave it, and a half is omitted when that direction is empty.
 Reverse halves are whole structs — construct them inline, directly in the call arguments, at
-the exact point they cross into the real port (never as their own local variable first; see
-[Registers: `Reg[T]`](#registers-regt)'s `.fwd_t`/`.fb_t` restriction):
+the exact point they cross into the real port (see
+[Where `.fwd_t`/`.fb_t` may appear](#where-fwd_tfb_t-may-appear--and-where-it-may-not)):
 
 ```python
 @MAIN(80.0)
@@ -4635,7 +4608,7 @@ exercises both crossings against a hand-written twin, plain signals included.
 
 That means not a plain local variable (even one built up over several statements, or
 assigned via a bare `x = intrf.fwd_t(...)` with no type annotation at all), not
-`Feedback[T]`, not `Reg[T]` (see [Registers: `Reg[T]`](#registers-regt)), and not a
+`Feedback[T]`, not `Reg[T]`, and not a
 global `Wire[T]`/`Input[T]`/`Output[T]`. None of these are themselves a port — a local
 is scratch space, `Feedback[T]` is a same-cycle forward reference to a value that meets
 a port *elsewhere*, `Reg[T]` is internal state, and a global `Wire`/`Input`/`Output` is

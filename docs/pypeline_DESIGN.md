@@ -7,11 +7,6 @@ internals (Logic() graph, FuncElaborator, CONST_REF_RD, etc.) see
 (`@hw_func`, `_build_reg_sim_func`, multi-MAIN runner, performance tuning) see
 [`pypeline_sim_DESIGN.md`](pypeline_sim_DESIGN.md).
 
-Auto-pipelined RAM factories use `SET_AUTO_PIPELINE_RAM_PLAN_CACHE` and
-`AUTO_PIPELINE_RAM_PLAN_CACHE` to retain complete implementations across design
-re-imports. Plans include request/write timing and bank structure, not just output
-latency. See [auto-pipelined RAM](AUTO_PIPELINE_DESIGN.md#ram-compiler-sweep-and-simulation).
-
 # Documentation conventions
 
 **Reference, not a logbook.** `docs/*.md` are **reference documents**: they describe
@@ -1349,11 +1344,6 @@ Native simulation state for resets (`_sim_reg_modes`, `_sim_root_resets`,
 
 ### `AUTO_PIPELINE(func, latency=None, start_latency=None, max_latency=None)` — Forced Submodule Pipelining with `.latency`
 
-The compiler also uses fixed tags internally for AUTO_FSM functional units.
-`_auto_fsm_implementation` defaults to `None`; an internal tag records a concrete
-placement recipe and digest there. It is copied into the elaborated latency
-constraint and enforced by AUTO_PIPELINE. It adds no public constructor option.
-
 Python equivalent of PipelineC's `#pragma AUTOPIPELINE [N]`, plus a feedback
 channel the C pragma doesn't have. `AUTO_PIPELINE(func)` is a class (all-caps factory
 style, like `MULTI_CYCLE`) whose instances are callable tags. Calls made through one
@@ -1490,6 +1480,16 @@ The factories capture these parameters like any others
 even when left at `None`. `make_stream_auto_pipeline` also takes `name=`, which names
 its core's group. Under the [capture rule](#user-names-name) an unset `name=` is not
 captured.
+
+The compiler also uses fixed tags internally for AUTO_FSM functional units.
+`_auto_fsm_implementation` defaults to `None`; an internal tag records a concrete
+placement recipe and digest there. It is copied into the elaborated latency
+constraint and enforced by AUTO_PIPELINE. It adds no public constructor option.
+
+Auto-pipelined RAM factories use `SET_AUTO_PIPELINE_RAM_PLAN_CACHE` and
+`AUTO_PIPELINE_RAM_PLAN_CACHE` to retain complete implementations across design
+re-imports. Plans include request/write timing and bank structure, not just output
+latency. See [auto-pipelined RAM](AUTO_PIPELINE_DESIGN.md#ram-compiler-sweep-and-simulation).
 
 ### `AUTO_COMB_AREA_OPT(func)` — Zero-Cycle Resource Sharing
 
