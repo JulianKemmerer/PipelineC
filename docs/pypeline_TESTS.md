@@ -38,6 +38,12 @@ categories are empty; an empty category costs nothing to run.
 `PARSE_FILE` incidentally is `unit`; a test whose whole point is parsing a design and
 inspecting the resulting `parser_state` is `elab_introspect`.
 
+`elab_introspect:untyped_namedtuple_test` parses one fixture importing
+`stream_perf`, verifies that untyped host tuples are absent while typed and nested
+structs remain registered, and runs GHDL VHDL-2008 analysis on `c_structs_pkg`.
+The explicit empty `__annotations__` fixture reproduces issue #394 on Python 3.8
+as well as Python 3.10+. This is a package legality check, with no synthesis.
+
 ## Naming convention in `inst/`
 
 - `*_test.py` -- a registered test file. Every one **must** appear in some category

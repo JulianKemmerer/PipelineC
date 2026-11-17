@@ -129,6 +129,13 @@ Only reuse a build when compiler/design bytes, parameters, backend/part, constra
 
 ## 6. A cheaper HDL legality lane
 
+`elab_introspect:untyped_namedtuple_test` is a focused package-legality check
+for issue #394 in the tree based on `9b2cb7cb`: one parse, type-table assertions,
+and GHDL analysis without synthesis. The unchanged compiler fails on an empty
+record; the nonempty-annotation registration guard passes. It remains separate
+from the multi-pass `c_structs_pkg_relayout_test`, whose repeated builds verify
+layout changes rather than discovery of host-only classes.
+
 There is already an emission path: `pypelinec ... --comb --no_synth` writes fixed/comb HDL without a timing sweep. [generated_naming_build_test](../../../src/tests/pypeline_tests/inst/generated_naming_build_test.py) and [multi_clock_ghdl_test](../../../src/tests/pypeline_tests/inst/multi_clock_ghdl_test.py) demonstrate GHDL import/elaboration using the emitted file list. Factor that into a shared compile helper; no new compiler mode is required for the basic idea.
 
 Start with VHDL identifier, port/type, aggregate-layout and interface-specialization regressions whose stated failure is illegal HDL: `underscore_name_test`, `array_compare_bracket_name_test`, `interface_factory_two_widths_test`, and selected language/serializer fixtures. Use the compiler's emitted ordered file list, actual emitted top name, VHDL-2008 and required RAM compatibility flags; support file lists without oversized single shell arguments. Assert that the expected entities and observables exist, so trimming does not make an empty design pass.

@@ -1455,7 +1455,11 @@ point_t = make_point_t(uint32_t, 2)
 ```
 
 `_discover_structs_from_module` walks the live module namespace after `exec_module` and
-registers all `NamedTuple` subclasses in `struct_to_field_type_dict`. Registration is
+registers `NamedTuple` subclasses with nonempty field annotations in
+`struct_to_field_type_dict`. Untyped host-side `collections.namedtuple` classes
+(including `statistics.LinearRegression`, reached through `stream_perf`) are ignored:
+Python 3.10+ supplies an empty `__annotations__` even on an untyped class, so merely
+checking for that attribute would emit an invalid empty VHDL record. Registration is
 handled by `_register_struct_recursive`, which recursively registers nested struct field
 types (e.g. `vga_pos_t` inside `vga_timing_signals_t`) so that the backend can look up
 every field type at any depth. The `@struct`

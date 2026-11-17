@@ -6730,7 +6730,9 @@ def _register_struct_recursive(obj, parser_state, visited=None):
         inspect.isclass(obj)
         and issubclass(obj, tuple)
         and hasattr(obj, "_fields")
-        and hasattr(obj, "__annotations__")
+        # Python 3.10+ gives even untyped collections.namedtuple classes an
+        # empty __annotations__. Host-only tuples must not emit empty records.
+        and getattr(obj, "__annotations__", None)
     ):
         return
     # An @interface is a bidirectional declaration, not a hardware struct: its

@@ -291,6 +291,14 @@ The 367 old samples total **32,745.3 test-seconds (9.10 h)**, including two fail
 
 ## elab_introspect
 
+`untyped_namedtuple_test` is an addition to this snapshot:
+[test](../../../src/tests/pypeline_tests/inst/untyped_namedtuple_test.py),
+[fixture](../../../src/tests/pypeline_tests/inst/untyped_namedtuple_design.py).
+One parse plus GHDL VHDL-2008 package analysis checks that host-only namedtuples
+do not emit empty records and that typed/nested structs remain registered (#394).
+Keep it as a focused legality regression; it does not need the multi-pass builds
+of `c_structs_pkg_relayout_test`.
+
 | Test name | Source | Current execution | Historical cost | Purpose | Still useful / recommendation | Proposed lane |
 |---|---|---|---|---|---|---|
 | `async_fifo_elab_test` | [inst/async_fifo_elab_test.py](../../../src/tests/pypeline_tests/inst/async_fifo_elab_test.py) | PARSE_FILE + assertions | U (not measured) | In-process checks of async global FIFOs: a Fifo[T] whose ends are used on two clocks. Each design is written to a temp .py file and parsed with PY_TO_LOGIC.PARSE_FILE, then checked against the parser state, the raised ElaborationError, or the written crossing report. | Keep: graph/type/diagnostic assertions catch errors that a successful build can miss. | measure first |

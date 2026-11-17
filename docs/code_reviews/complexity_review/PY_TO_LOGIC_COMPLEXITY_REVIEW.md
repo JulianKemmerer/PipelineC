@@ -52,6 +52,16 @@ A function that writes some fields of a global wire it also reads elaborates the
 
 Type descriptions are parse state with no declaration, and an interface half's role does not survive into it (tree after commit `a4440697`, found while adding interface roles to the design diagram). `PARSE_FILE` assigns `pypeline_name_descriptions`, `pypeline_type_canonical`, `pypeline_user_names`, `pypeline_type_identities` and the other `pypeline_*` tables at its start rather than `LOGIC.ParserState` declaring them, so `DIAGRAM._Types` reads them with `getattr`. A type's interface role lives on the Python class (`_pypeline_interface_role`); the parse keeps only the description kind (`interface_fwd` / `interface_fb`) of the halves themselves. `interface_func._plain_shape_of` copies a half into a role-less `<half class>_plain` struct for the `Feedback`s it generates, so the diagram recovers a copy's role by matching its fields against the halves' and its half by C-name prefix ([DIAGRAM_DESIGN.md](../../DIAGRAM_DESIGN.md#types-and-interface-roles)). Recording, where `_register_struct_recursive` registers a type, its role and the half a plain copy stands for in a declared table would make both exact. `pypeline_operator_impl_ops` (registered operator implementation → the operators dispatched to it, every dispatch site since the tree after `70922c58`; it was `pypeline_compare_impl_ops`, comparisons only) is another such table: AUTO reads it for comparisons and `DIAGRAM` to draw a call as the operator the source wrote, both with `getattr`. It is per callee, not per call site, so a direct call to the same specialization looks like an operator. The names a design's modules give its types (`aead_axis_if_t = make_stream_interface(...)`) are not recorded at all (tree after commit `dd3b3204`): `DIAGRAM._module_type_names` walks the other design files' modules in `sys.modules` and, for the top file, which `PARSE_FILE` runs with `module_from_spec` outside `sys.modules`, the globals `_new_parser_state` keeps in `top_level_module_globals`, again set without a declaration.
 
+The module-discovery walk reaches host-only libraries as well as hardware types
+(tree based on `9b2cb7cb`, issue [#394](https://github.com/JulianKemmerer/PipelineC/issues/394)).
+`_register_struct_recursive` cannot treat the existence of `__annotations__` as
+evidence of typed fields: Python 3.10+ supplies an empty dictionary on untyped
+`collections.namedtuple` classes, including `statistics.LinearRegression` imported
+by `stream_perf`. The registration gate requires nonempty annotations;
+`untyped_namedtuple_test.py` reproduces the old GHDL package rejection and checks
+that typed and nested structs survive. Discovery still walks host modules; this
+guard does not consolidate the registration paths described above.
+
 ## Validation
 
 Use branch/loop partial struct writes, nested arrays, dynamic indices, hardware-local shadowing and custom operators as differential cases. Verify exceptions preserve original helper diagnostics and helpers are not evaluated repeatedly after classification. Compare cold/warm/reparsed builds, emitted type identities, source locations and clock crossing reports. The [constant-evaluation probe](REVIEW_EXPERIMENTS.md#constant-evaluation-outcomes) is a method-level experiment, not a complete design compile.

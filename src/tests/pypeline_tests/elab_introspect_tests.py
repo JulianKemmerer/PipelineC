@@ -18,6 +18,15 @@ from common import INST_DIR, Test, main
 
 def get_tests() -> list:
     tests = []
+    # Issue #394: host namedtuples are ignored, typed/nested structs survive,
+    # and GHDL accepts the generated package (one parse, no synthesis).
+    tests.append(
+        Test(
+            name="untyped_namedtuple_test",
+            category="elab_introspect",
+            cmd=[INST_DIR / "untyped_namedtuple_test.py"],
+        )
+    )
     tests.append(Test(name="auto_comb_delay_opt_test", category="elab_introspect",
                       cmd=[INST_DIR / "auto_comb_delay_opt_test.py"]))
     tests.append(Test(name="auto_comb_area_opt_test", category="elab_introspect",
