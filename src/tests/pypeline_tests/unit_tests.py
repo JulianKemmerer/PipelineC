@@ -536,6 +536,16 @@ def get_tests() -> list:
             cmd=[INST_DIR / "reset_sweep_path_test.py"],
         )
     )
+    # Issue #395: one type package, GHDL elaboration warnings as errors, and
+    # value checks for first-member enum defaults in nested records/arrays.
+    tests.append(
+        Test(
+            name="enum_null_test",
+            category="unit",
+            cmd=[INST_DIR / "enum_null_test.py"],
+            requires=["ghdl"],
+        )
+    )
     # Generated VHDL doesn't change between parse passes of one run:
     # c_structs_pkg only grows within one output directory, and shared C
     # built-in entities name no call site. Every synthesized leaf hashes these

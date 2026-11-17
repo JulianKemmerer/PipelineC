@@ -6288,12 +6288,13 @@ def C_TYPE_STR_TO_VHDL_NULL_STR(c_type_str, parser_state):
         # Use same type from C
         return c_type_str + "_NULL"
     elif LOGIC.C_TYPE_IS_ENUM(c_type_str, parser_state):
-        # Null is always first,left value, converted to u/int
-        int_type = parser_state.enum_info_dict[c_type_str].int_c_type
-        if LOGIC.C_TYPE_IS_INT_N(int_type):
-            return "signed(" + c_type_str + "_to_slv(" + c_type_str + "'left))"
-        else:
-            return "unsigned(" + c_type_str + "_to_slv(" + c_type_str + "'left))"
+        # Preserve the first declared encoding without calling a package-body
+        # function from a package-declaration constant (VHDL elaboration order).
+        enum_info = parser_state.enum_info_dict[c_type_str]
+        first_value = next(iter(enum_info.id_to_int_val.values()))
+        return CONST_VAL_STR_TO_VHDL(
+            str(first_value), enum_info.int_c_type, parser_state
+        )
     elif LOGIC.C_TYPE_IS_ARRAY(c_type_str):
         elem_type, dims = LOGIC.C_ARRAY_TYPE_TO_ELEM_TYPE_AND_DIMS(c_type_str)
         text = ""

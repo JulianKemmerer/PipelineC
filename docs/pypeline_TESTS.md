@@ -44,6 +44,14 @@ structs remain registered, and runs GHDL VHDL-2008 analysis on `c_structs_pkg`.
 The explicit empty `__annotations__` fixture reproduces issue #394 on Python 3.8
 as well as Python 3.10+. This is a package legality check, with no synthesis.
 
+`unit:enum_null_test` supplies a hand-built shared-IR type fixture to the VHDL
+package writer. GHDL analysis and elaboration use `-Werror=elaboration`, then a
+VHDL testbench checks first-member defaults in records, nested record arrays and
+enum arrays. Cases include zero, sparse nonzero, signed negative/positive and a
+41-bit one-hot encoding. This catches issue #395 without synthesis; the existing
+`enum_test` registrations retain native behavior and device_models synthesis
+coverage of Pypeline enum designs.
+
 ## Naming convention in `inst/`
 
 - `*_test.py` -- a registered test file. Every one **must** appear in some category

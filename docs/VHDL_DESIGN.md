@@ -60,6 +60,15 @@ Downstream simulation and synthesis should consume `vhdl_files.txt`, not a
 directory glob. Intermediate sweep candidates can coexist in the output
 tree, and a glob can silently combine entities from different timing shapes.
 
+Record `_NULL` constants are elaborated in the type package declaration, before
+its body. `C_TYPE_STR_TO_VHDL_NULL_STR` emits an enum default directly from the
+first value in `EnumInfo.id_to_int_val`, in declaration order, using
+`CONST_VAL_STR_TO_VHDL` with `EnumInfo.int_c_type`. This preserves nonzero,
+signed and one-hot encodings, including wide literals, without calling the
+package body's `<enum>_to_slv` function before it is elaborated. Nested records
+and arrays use the same default helper. `enum_null_test.py` checks these values
+in GHDL with elaboration warnings treated as errors.
+
 `vhdl_files.txt` is deliberately one whitespace-separated line of absolute
 paths with no other formatting: that makes it usable, unmodified, as a GHDL
 `@file` response file (`ghdl -i ... @vhdl_files.txt`, or cocotb's

@@ -112,24 +112,23 @@ Within each group, bugs that affect both front ends come first, problems in the 
 | 32 | [#385][i385] | Python | `scope=` operator registrations are ignored on top-level functions and leak through shared callees | Yes, in process |
 | 33 | [#386][i386] | Python | Omitting an `@hw_func` argument that has a default crashes the build | Yes |
 | 34 | [#391][i391] | Python | `AUTO_PIPELINE(f, latency=2)` of a function with a variable multiply cannot realize 2 clocks | Yes |
-| 35 | [#395][i395] | Both | An enum field's `_NULL` calls `<enum>_to_slv` before its body is elaborated: a GHDL `-Welaboration` warning | Yes, GHDL |
-| 36 | [#362][i362] | Python | Unsupported constructs crash with internal errors | Yes |
-| 37 | [#361][i361] | Python | `sim_print` on the `sim_finish()` cycle is missing from VHDL simulation output | Yes, GHDL |
-| 38 | [#286][i286] | C | The tool does not run on macOS | No, from the thread |
-| 39 | [#52][i52] | C | A typedef alias gives a misleading type error | Yes |
-| 40 | [#388][i388] | C | Any C float `+` or `*` stops the build at `GET_RAW_HDL_WIRES_DECL_TEXT` | Yes |
-| 41 | [#76][i76] | Both | No `switch` (C) or `match` (Python) | C yes; Python from the code |
-| 42 | [#398][i398] | Python | No formal equivalence check of generated HDL against the source or another build (feature request) | No, from the issue |
-| 43 | [#365][i365] | Both | `--coarse --sweep` may crash on narrow leaves | Not reproduced |
-| 44 | [#372][i372] | Python | `AUTO_PIPELINE(latency=N)` adds N cuts when `@pipeline_latency` calls already supply N cycles | Yes |
-| 45 | [#366][i366] | Python | AUTO_FSM deeply opened schedules may fail to elaborate | No, needs a long AUTO_FSM search |
-| 46 | [#389][i389] | Python | A path inside an imported helper is blamed on the function around it | Yes, in process |
-| 47 | [#380][i380] | Both | The top level's global-wire connections come out in a hash-dependent order, so `top.vhd` changes between builds | Yes |
-| 48 | [#381][i381] | Both | After the sweep meets timing, a failed trim trial is kept and the build ends TIMING NOT MET | Yes |
-| 49 | [#397][i397] | Both | The sweep resynthesizes every MAIN together on each pass, so whole-design synthesis dominates a multi-MAIN build (feature request) | No, from the issue |
-| 50 | [#390][i390] | Both | A hierarchy with inferred multiplies is sliced as if its DSP leaves shrank with it: a Karatsuba body needs 10–34 stages where ~5 would do | Yes, Vivado |
-| 51 | [#396][i396] | Both | AUTO_PIPELINE does not know DSP48 boundaries, so its registers land in the fabric (feature request) | No, from the issue |
-| 52 | [#393][i393] | Both | sky130 area estimates leave out primitives whose delay is modeled from measured widths | Yes |
+| 35 | [#362][i362] | Python | Unsupported constructs crash with internal errors | Yes |
+| 36 | [#361][i361] | Python | `sim_print` on the `sim_finish()` cycle is missing from VHDL simulation output | Yes, GHDL |
+| 37 | [#286][i286] | C | The tool does not run on macOS | No, from the thread |
+| 38 | [#52][i52] | C | A typedef alias gives a misleading type error | Yes |
+| 39 | [#388][i388] | C | Any C float `+` or `*` stops the build at `GET_RAW_HDL_WIRES_DECL_TEXT` | Yes |
+| 40 | [#76][i76] | Both | No `switch` (C) or `match` (Python) | C yes; Python from the code |
+| 41 | [#398][i398] | Python | No formal equivalence check of generated HDL against the source or another build (feature request) | No, from the issue |
+| 42 | [#365][i365] | Both | `--coarse --sweep` may crash on narrow leaves | Not reproduced |
+| 43 | [#372][i372] | Python | `AUTO_PIPELINE(latency=N)` adds N cuts when `@pipeline_latency` calls already supply N cycles | Yes |
+| 44 | [#366][i366] | Python | AUTO_FSM deeply opened schedules may fail to elaborate | No, needs a long AUTO_FSM search |
+| 45 | [#389][i389] | Python | A path inside an imported helper is blamed on the function around it | Yes, in process |
+| 46 | [#380][i380] | Both | The top level's global-wire connections come out in a hash-dependent order, so `top.vhd` changes between builds | Yes |
+| 47 | [#381][i381] | Both | After the sweep meets timing, a failed trim trial is kept and the build ends TIMING NOT MET | Yes |
+| 48 | [#397][i397] | Both | The sweep resynthesizes every MAIN together on each pass, so whole-design synthesis dominates a multi-MAIN build (feature request) | No, from the issue |
+| 49 | [#390][i390] | Both | A hierarchy with inferred multiplies is sliced as if its DSP leaves shrank with it: a Karatsuba body needs 10–34 stages where ~5 would do | Yes, Vivado |
+| 50 | [#396][i396] | Both | AUTO_PIPELINE does not know DSP48 boundaries, so its registers land in the fabric (feature request) | No, from the issue |
+| 51 | [#393][i393] | Both | sky130 area estimates leave out primitives whose delay is modeled from measured widths | Yes |
 
 ## Wrong hardware, or simulation disagrees with hardware
 
@@ -616,15 +615,7 @@ Within each group, bugs that affect both front ends come first, problems in the 
 - **Reproduce:** `python3 src/tests/pypeline_tests/run_all.py --category known_issues -t fixed_latency_variable_multiply_known_issue -j 1` (XFAIL while the bug is present). It builds `inst/fixed_latency_variable_multiply_design.py` with `--comb --no_synth`.
 - **Workaround:** leave out `latency=` and let the sweep choose the cuts for the clock goal (`AUTO_PIPELINE(scale)` builds), or use `start_latency=2`, which also builds.
 
-### 35. [#395][i395]: an enum field's `_NULL` calls `<enum>_to_slv` before its package body is elaborated
-
-- **Front ends:** both (shared VHDL emission). Seen with Python.
-- **What happens:** a struct with an enum-typed field gets a `_NULL` constant in `c_structs_pkg.pkg.vhd` whose enum field is `unsigned(<enum>_to_slv(<enum>'left))`. The function's body is in the package body, so the constant calls it before the body is elaborated, which VHDL does not allow. GHDL reports `function "<enum>_to_slv" is called before elaborated of its body [-Welaboration]`, and a lint that fails on warnings stops. GHDL simulation and Vivado 2026.1 accept it. WireGuard's lint waives the warning until this is fixed.
-- **Where to look:** the enum branch of the null-value helper in `VHDL.py` (`"unsigned(" + c_type_str + "_to_slv(" + c_type_str + "'left))"`). The first member's encoding is known when the VHDL is written, so a literal (`to_unsigned(0, W)`, or the signed equivalent) would leave no package-declaration constant calling a package function.
-- **Reproduce:** a struct with an `@enum` field (`@struct class bank_t` holding a `state_t` and a `uint8_t`), built with `--comb --no_synth`, then `ghdl -i --std=08 -frelaxed` on `vhdl_files.txt` and `ghdl -m --std=08 -frelaxed -Welaboration top`. It has no reproducer in `known_issues_tests.py`.
-- **Workaround:** none needed for simulation or Vivado. Waive the warning in a GHDL lint.
-
-### 36. [#362][i362]: unsupported Python constructs crash with internal errors
+### 35. [#362][i362]: unsupported Python constructs crash with internal errors
 
 - **Front ends:** Python.
 - **What happens:** several natural constructs that Pypeline does not support fail with an internal exception instead of an error naming the construct and its line:
@@ -640,7 +631,7 @@ Within each group, bugs that affect both front ends come first, problems in the 
 - **Reproduce:** in the issue.
 - **Workarounds:** `x[i]`: `bits: uint1_t[8] = uint_to_array_le(x, 1)`, then `bits[i]`. Enums: use the members (`state_t.RUN`), and wrap an enum in a `@struct` to make an array of it. Structs: subclass `NamedTuple`.
 
-### 37. [#361][i361]: `sim_print` on the `sim_finish()` cycle is missing from VHDL simulation output
+### 36. [#361][i361]: `sim_print` on the `sim_finish()` cycle is missing from VHDL simulation output
 
 - **Front ends:** Python (`sim_finish()` is Pypeline's).
 - **What happens:** a `sim_print` that runs on the same cycle as `sim_finish()` appears in native simulation but not in the cocotb+GHDL output, and the run still exits 0. The print's write and `std.env.finish` happen on the same clock edge, and the finish wins. This affects plain prints as well as `debug=True` ones, so it also breaks the native-versus-VHDL cycle diff.
@@ -648,14 +639,14 @@ Within each group, bugs that affect both front ends come first, problems in the 
 - **Reproduce:** in the issue, or `sim_finish_debug_print_race_test` in `src/tests/pypeline_tests/known_issues_tests.py` (it passes while the bug is present).
 - **Workaround:** call `sim_finish()` one cycle after the last print.
 
-### 38. [#286][i286]: the tool does not run on macOS
+### 37. [#286][i286]: the tool does not run on macOS
 
 - **Front ends:** C only. Python builds never run `cpp`.
 - **What happens (from the thread):** Apple's `cpp` is clang, which does not behave like the GNU preprocessor PipelineC expects; comments in headers break preprocessing. Using `clang -E` and `clang -MM -MG` got the examples through elaboration.
 - **Where to look:** `preprocess_file`, `preprocess_text` and `get_included_files` in `src/C_TO_LOGIC.py` (around `:76`, `:121` and `:162-168`), and the `cpp` check in `REQUIRE_CPP`.
 - **Not verified here:** needs a Mac.
 
-### 39. [#52][i52]: a typedef alias gives a misleading type error
+### 38. [#52][i52]: a typedef alias gives a misleading type error
 
 - **Front ends:** C only. A Python type alias is a plain assignment.
 - **What happens:** `typedef uint8_t byte_t;` is skipped silently, and later code fails with a misleading error such as `Unsupported binary operation between types (explicit casting required for now): byte_t + uint1_t`. The warning that used to explain this, `WARN_NO_RENAMING_TYPEDEFS` (`src/C_TO_LOGIC.py:8560`), is commented out.
@@ -675,7 +666,7 @@ Within each group, bugs that affect both front ends come first, problems in the 
 
 - **Workaround:** `#define byte_t uint8_t`. Verified.
 
-### 40. [#388][i388]: any float `+` or `*` in C stops the build at `GET_RAW_HDL_WIRES_DECL_TEXT`
+### 39. [#388][i388]: any float `+` or `*` in C stops the build at `GET_RAW_HDL_WIRES_DECL_TEXT`
 
 - **Front ends:** C only. Python floats are library code under `include/pypeline/`.
 - **What happens:** the design parses, then the build exits with status 255 while writing the zero-added-clocks VHDL, after printing `GET_RAW_HDL_WIRES_DECL_TEXT for float_uint8_uint23 ?`. `float_uint8_uint23` is the bit-manipulation helper that the generated C for the float operators (`BIN_OP_PLUS_float_float` and the multiply) calls to pack sign, exponent and mantissa. Any C `float` `+` or `*` reaches it, with or without synthesis, and on the baseline commit too. `examples/tool_tests/open_tools.c` is one such design. It is the second command of `src/tests/c_tests/test_builds.sh "--comb --no_synth"`, which runs with `set -e` and stops there. The examples the script builds first (blink, pipeline_and_fsm, global_fifo, clock_crossing, async_clock_crossing, internal_clocks, user_func_latency) build.
@@ -685,24 +676,24 @@ Within each group, bugs that affect both front ends come first, problems in the 
 
 ## Missing features that block designs
 
-### 41. [#76][i76]: no `switch` or `match` statement
+### 40. [#76][i76]: no `switch` or `match` statement
 
 - **Front ends:** both.
 - **What happens:** C `switch` fails with the internal error "C ast node cannot be parsed to logic" (verified). Python has no handling for `match` (Python 3.10 and later), so elaboration stops with "Unsupported statement" (from the code).
 - **Where to look:** C: `C_AST_NODE_TO_LOGIC` (`src/C_TO_LOGIC.py:444`). Python: `_elab_stmt` (`src/PY_TO_LOGIC.py:2649`).
 - **Workaround:** an `if`/`else if` chain in C, `if`/`elif` in Python.
 
-### 42. [#398][i398]: no formal equivalence check of generated HDL against the source or another build
+### 41. [#398][i398]: no formal equivalence check of generated HDL against the source or another build
 
 - **Front ends:** Python is the requested scope; HDL-to-HDL comparison could also serve the shared backend.
 - **What happens:** this is a verification feature request, not a reproduced wrong result. Builds and simulation do not formally prove that generated HDL preserves the Python design's behavior. WireGuard's existing RTL equivalence script treats the generated ChaCha20-Poly1305 cores as black boxes, leaving their implementation outside that proof. The request proposes a combinational reference generated from the same source, compared against pipelined outputs after their known latency; AUTO_FSM needs transaction alignment at its valid/ready handshake. Suggested proof tools are Yosys equivalence passes or a SymbiYosys miter. Comparing two generated builds, such as compiler versions or equal-latency builds with and without `--latency_hints`, is the proposed smaller first step.
 - **Where to look:** `SYN.WRITE_FINAL_FILES` for generated HDL, `SIM.GET_MAIN_FUNC_LATENCIES` for final MAIN latencies, and `OPEN_TOOLS.GET_GHDL_PLUGIN_FLAGS` / `WRITE_YOSYS_SCRIPT` for existing GHDL/Yosys integration. See [the build driver](SYN_DESIGN.md#the-build-driver-srcpipelinec) and [simulation dispatch](SIM_DESIGN.md#3-when-simulation-runs). A reference produced by the same elaborator checks transformations relative to that reference; it cannot detect a source-translation bug shared by both outputs.
 - **Starting example:** the issue links WireGuard's [RTL equivalence script](https://github.com/chili-chips/wireguard-fpga/blob/main/3.build/hw_build.openXC7/run-leq.sh) and [downstream tracking issue #42](https://github.com/chili-chips/wireguard-fpga/issues/42). The script compares gold/gate RTL trees; it is not a Python-to-HDL proof. No proof was run for this entry, and there is no known-issue regression: the formal build workflow is missing.
-- **Workaround:** native-versus-GHDL simulation checks the vectors exercised by a testbench, and HDL lint catches invalid output such as [#395][i395]; neither provides the requested equivalence proof.
+- **Workaround:** native-versus-GHDL simulation checks the vectors exercised by a testbench, and HDL lint checks generated output legality; neither provides the requested equivalence proof.
 
 ## Slower builds, extra hardware, and reports not yet reproduced
 
-### 43. [#365][i365]: `--coarse --sweep` may crash on narrow leaves
+### 42. [#365][i365]: `--coarse --sweep` may crash on narrow leaves
 
 - **Front ends:** both (shared pipelining code).
 - **What happens (from the docs):** on a design with many 1-3 bit leaves at a high cut count, `--coarse --sweep` can raise `GET_BITS_PER_STAGE_DICT: interior zero-bit stage … for a 2-bit op`. The planned sweep caps legal cuts at the leaf's width minus one (`SWEEP.SliceLandscape.finalize()`); the coarse path uses `RAW_VHDL.LEAF_MAX_SPLIT_SLICES`, which returns no cap for bit-split leaves.
@@ -710,7 +701,7 @@ Within each group, bugs that affect both front ends come first, problems in the 
 - **Reproduce:** not reproduced yet. A chain of four `uint2_t` adds built with `--syn_tool pyrtl --coarse --start 12 --stop 12` completed normally.
 - **Workaround:** use the default planned sweep.
 
-### 44. [#372][i372]: `AUTO_PIPELINE(func, latency=N)` adds cuts its `@pipeline_latency` calls make unnecessary
+### 43. [#372][i372]: `AUTO_PIPELINE(func, latency=N)` adds cuts its `@pipeline_latency` calls make unnecessary
 
 - **Front ends:** Python. The planner is shared; C's `#pragma AUTOPIPELINE N` was not checked.
 - **What happens:** when `func`'s `@pipeline_latency` calls already supply the N cycles, the planner still places N cuts. They survive only where they add no latency: in logic running parallel to those calls. That branch gets registers it does not need, and anything leaving it before the return value (a `VOLATILE` or C global write) appears later. The hardware meets the declared latency, but it is larger than it needs to be.
@@ -718,14 +709,14 @@ Within each group, bugs that affect both front ends come first, problems in the 
 - **Reproduce:** in the issue, or `python3 src/tests/pypeline_tests/known_issues_tests.py -k fixed_auto_pipeline_extra_cuts` (XFAIL while the bug is present).
 - **Workaround:** leave `latency=` off when the calls already supply it, or move the parallel logic out of the tagged function.
 
-### 45. [#366][i366]: AUTO_FSM deeply opened schedules may fail to elaborate
+### 44. [#366][i366]: AUTO_FSM deeply opened schedules may fail to elaborate
 
 - **Front ends:** Python (AUTO_FSM is Python-only and experimental).
 - **What happens (from the docs):** rescheduling the donut design (`examples/pypeline/vga_donut.py`) under a tightened budget produced a 412-operation, 131-state plan whose generated source failed to elaborate with "Bit index [14:14] out of range for uint9_t". The default control path avoids it only by meeting timing before the search opens the schedule that far.
 - **Where to look:** AUTO_FSM's source generation for opened operations in `src/AUTO_FSM.py`; `docs/AUTO_FSM_DESIGN.md` §6.
 - **Reproduce:** not re-run here; it needs a long AUTO_FSM search.
 
-### 46. [#389][i389]: a path inside an imported helper is blamed on the function around it
+### 45. [#389][i389]: a path inside an imported helper is blamed on the function around it
 
 - **Front ends:** Python.
 - **What happens:** a call's instance is labeled with the name it is called by. An imported function called by its bare name (`square`, or an alias such as WireGuard's `feedback_mul_add_mod` for `poly1305_math_residue_mul_add_mod_inferred`) has a module-prefixed function name that is in no register name, and the sweep attributes a critical path by finding function names inside register names. A path inside the helper goes to the nearest enclosing function found by name, or to the AUTO_PIPELINE region root around it, which is also found by its instance's label path. The sweep then mini-sweeps that whole function or region instead of the repeated helper, which can take more registers or more syntheses.
@@ -733,7 +724,7 @@ Within each group, bugs that affect both front ends come first, problems in the 
 - **Reproduce:** the two-module design is in the issue. `python3 src/tests/pypeline_tests/run_all.py --category known_issues -t imported_helper_attribution_known_issue -j 1` (XFAIL while the bug is present) runs it in process, with no synthesis tool (`inst/imported_helper_attribution_test.py`).
 - **Workaround:** call the helper from a function in its own module: a same-module call is labeled with the module-prefixed name.
 
-### 47. [#380][i380]: the top level's global-wire connections come out in a hash-dependent order
+### 46. [#380][i380]: the top level's global-wire connections come out in a hash-dependent order
 
 - **Front ends:** both. Only the order of concurrent assignments changes, so the hardware is the same.
 - **What happens:** for a global wire with several readers, the generated top level (`top/top.vhd`) connects each reader in a block of its own, and the blocks come out in a different order from one build to the next. `global_wire_nested_split_test.py` writes one `top.vhd` with `PYTHONHASHSEED=0` and another with `PYTHONHASHSEED=1`. A generated file should depend only on the design, and any cache keyed by its text, such as reused synthesis logs, misses.
@@ -741,7 +732,7 @@ Within each group, bugs that affect both front ends come first, problems in the 
 - **Reproduce:** `src/tests/pypeline_tests/inst/top_level_reader_order_test.py` (registered in `known_issues_tests.py`) builds the design with both seeds and compares the two files.
 - **Workaround:** set `PYTHONHASHSEED` to a fixed value for builds whose output is compared.
 
-### 48. [#381][i381]: after the sweep meets timing, a failed trim trial is kept
+### 47. [#381][i381]: after the sweep meets timing, a failed trim trial is kept
 
 - **Front ends:** both (the sweep is shared). Seen with Python.
 - **What happens:** once timing is met, the sweep retries with fewer cuts to show the stage count is minimal (a trim). In `sweep_failed_trim_design.py` on `device_models` at 80 MHz, the first measured implementation meets timing at 88.7 MHz, with `lane0` at 2 cuts and `lane1` at 1. The trim then builds both lanes at 0 cuts. `lane0` was announced as "retrying at ~1 cuts", but is built at 0 too. That trial fails at 47.7 MHz. Its critical path ends at the `digest` output port, which has no end register, so the report is applied to every MAIN of the clock ("Assuming all clock domains had critical paths"). The verdict names only `counter` and `check`, which nothing can pipeline (`nothing_auto_pipelinable`). The build then ends TIMING NOT MET on the failed trial instead of restoring the passing implementation, although [`SWEEP_DESIGN.md`](SWEEP_DESIGN.md) says a failed zero-cut probe restores it. The same happens when `check` registers the output: the failing path then starts and ends in `check`'s registers (Yosys appears to merge the two equal counters into one), runs through the unregistered lanes, and is attributed to `check` alone. The trigger is a failed trim whose critical path is attributed only to MAINs that cannot be pipelined.
@@ -749,7 +740,7 @@ Within each group, bugs that affect both front ends come first, problems in the 
 - **Reproduce:** `python3 src/tests/pypeline_tests/run_all.py --category known_issues -k sweep_failed_trim` (about 75 seconds, XFAIL while the bug is present).
 - **Workaround:** none verified. The sweep log's `action=met` lines show the passing cut counts.
 
-### 49. [#397][i397]: the sweep resynthesizes every MAIN together on each pass, so whole-design synthesis dominates a multi-MAIN build
+### 48. [#397][i397]: the sweep resynthesizes every MAIN together on each pass, so whole-design synthesis dominates a multi-MAIN build
 
 - **Front ends:** both (the sweep and the backends are shared). Seen with Python.
 - **What happens:** this is a feature request about build time, not a wrong result. Each sweep pass synthesizes all MAINs in one run, even a MAIN that already met timing and whose netlist did not change. In the WireGuard ChaCha20-Poly1305 build from the issue (three MAINs, Vivado 2026.1, xc7a200t, `-j 8`) 7 whole-design runs of about 7.7 minutes take 54 of the 115 minutes. `chacha20_pipeline_shared` meets timing at pass 3 and is resynthesized in passes 4 to 7. Pass 6 repeats pass 5's 71.56 MHz. The issue's suggestions, biggest first: reuse a finished MAIN's last result while its netlist is unchanged; one Vivado run per MAIN, in parallel under `-j` (MAINs connect only through global wires, and twins with equal keys could share one run), with one whole-design run to confirm; incremental synthesis from the previous pass's checkpoint; a cheaper synthesis directive while exploring; a bigger step or a bisection after a pass with no gain.
@@ -757,7 +748,7 @@ Within each group, bugs that affect both front ends come first, problems in the 
 - **Reproduce:** build the WireGuard Pypeline design in the issue and read the "Total elapsed time" and "Time by build phase" lines the build prints. Not in `known_issues_tests.py`: the cost shows only in a vendor-tool run of a multi-MAIN design.
 - **Workaround:** `--syn_cache DIR` reuses whole-design logs between output directories when the inputs are identical, which helps repeat builds but not the passes of one sweep.
 
-### 50. [#390][i390]: a hierarchy with inferred multiplies is sliced as if its DSP leaves shrank with it
+### 49. [#390][i390]: a hierarchy with inferred multiplies is sliced as if its DSP leaves shrank with it
 
 - **Front ends:** both (the landscape and the coarse slicer are shared). Seen with Python.
 - **What happens:** a hierarchy measured as a whole is shorter than its children chained, and
@@ -778,7 +769,7 @@ Within each group, bugs that affect both front ends come first, problems in the 
 - **Workaround:** a single inferred product (`make_inferred_mult`) for a body whose depth matters.
   WireGuard's `inferred_body` choice takes the feedback body from 10 stages to 3, at more DSPs.
 
-### 51. [#396][i396]: AUTO_PIPELINE does not know DSP48 boundaries, so its registers land in the fabric
+### 50. [#396][i396]: AUTO_PIPELINE does not know DSP48 boundaries, so its registers land in the fabric
 
 - **Front ends:** both (the planner is shared). Seen with Python.
 - **What happens:** this is a feature request, not a wrong result. The planner places cuts by the delay landscape and does not know a DSP48 can absorb registers at its inputs (`AREG`/`BREG`/`CREG`/`DREG`), after its multiplier (`MREG`) and at its output (`PREG`), nor that it has a pre-adder and a post-adder with a `PCIN`/`PCOUT` cascade. The cuts it adds land in fabric flip-flops while the DSP48s run combinationally. In WireGuard's Poly1305 pair coefficient (130-bit Karatsuba, 34-bit inferred leaves, 36 DSP48E1, Vivado 2026.1, xc7a200t) the worst path at 80 MHz falls from 37.4 ns at 0 stages to 11.4 ns at 8, always through two DSP48E1 levels with no internal register used and 19 or more CARRY4 levels around them.
@@ -786,7 +777,7 @@ Within each group, bugs that affect both front ends come first, problems in the 
 - **Reproduce:** the manual Vivado probe `src/tests/pypeline_tests/qor/poly1305/body.py` from [#390][i390], or the table in the issue. Not in `known_issues_tests.py`: only vendor synthesis shows the stage count.
 - **Workaround:** a single inferred product (`make_inferred_mult`) lets Vivado place the DSP registers itself, at more DSPs. See [#390][i390].
 
-### 52. [#393][i393]: sky130 area estimates leave out primitives whose delay is modeled from measured widths
+### 51. [#393][i393]: sky130 area estimates leave out primitives whose delay is modeled from measured widths
 
 - **Front ends:** both (the `device_models` backend).
 - **What happens:** a primitive operator whose delay comes from the width model (`Function: BIN_OP_AND_uint32_t_uint32_t modeled path delay: ... from measured widths`) is never synthesized on its own, so its leaf area is never measured or cached. The build's area estimate then reports `N leaf area(s) not yet cached` and leaves those operators out, and the `_area.json` sidecar lists them in `missing_leaf_area_funcs`. This holds even in the mode the area estimate exists for (`--no_hier_syn --no_sweep`), which measures every uncached leaf on the spot. The estimate is low for any design that uses such operators, and the warning never goes away.
@@ -844,7 +835,6 @@ Within each group, bugs that affect both front ends come first, problems in the 
 [i391]: https://github.com/JulianKemmerer/PipelineC/issues/391
 [i392]: https://github.com/JulianKemmerer/PipelineC/issues/392
 [i393]: https://github.com/JulianKemmerer/PipelineC/issues/393
-[i395]: https://github.com/JulianKemmerer/PipelineC/issues/395
 [i396]: https://github.com/JulianKemmerer/PipelineC/issues/396
 [i397]: https://github.com/JulianKemmerer/PipelineC/issues/397
 [i398]: https://github.com/JulianKemmerer/PipelineC/issues/398

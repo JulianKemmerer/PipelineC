@@ -372,6 +372,7 @@ of `c_structs_pkg_relayout_test`.
 | `factory_main_api_unit_test` | [inst/factory_main_api_unit_test.py](../../../src/tests/pypeline_tests/inst/factory_main_api_unit_test.py) | Python assertions / wrapper | M 1.7 s / PASS | In-process checks of @MAIN registration, the API that lets code make @MAINs (factories, loops, generated functions): | Keep compiler-contract checks; select by feature and measured cost, since this category alone does not guarantee a cheap run. | fast candidate |
 | `floor_and_bits_cap_unit_test` | [inst/floor_and_bits_cap_unit_test.py](../../../src/tests/pypeline_tests/inst/floor_and_bits_cap_unit_test.py) | Python assertions / wrapper | M 0.5 s / PASS | Floor-stop evidence, restored winner verdicts, useful bit-cut caps and coherent placement-group removal. | Keep compiler-contract checks; select by feature and measured cost, since this category alone does not guarantee a cheap run. | fast candidate |
 | `generated_naming_test` | [inst/generated_naming_test.py](../../../src/tests/pypeline_tests/inst/generated_naming_test.py) | Python assertions / wrapper | M 2.7 s / PASS | Identity and readability contracts, including interfaces and overflow. | Keep compiler-contract checks; select by feature and measured cost, since this category alone does not guarantee a cheap run. | fast candidate |
+| `enum_null_test` | [inst/enum_null_test.py](../../../src/tests/pypeline_tests/inst/enum_null_test.py) | Shared-IR package emission + GHDL analysis/elaboration/simulation | Outside historical timing sample | First-member enum defaults are legal package constants and retain sparse, signed and wide one-hot encodings in nested aggregates. | Keep: warning-as-error legality checks cover an oracle absent from native enum tests and ordinary synthesis. | fast candidate |
 | `generated_vhdl_stability_test` | [inst/generated_vhdl_stability_test.py](../../../src/tests/pypeline_tests/inst/generated_vhdl_stability_test.py) | Python assertions / wrapper | M 0.8 s / PASS | Generated VHDL doesn't change between parse passes of one run. | Keep compiler-contract checks; select by feature and measured cost, since this category alone does not guarantee a cheap run. | fast candidate |
 | `global_fifo_api_unit_test` | [inst/global_fifo_api_unit_test.py](../../../src/tests/pypeline_tests/inst/global_fifo_api_unit_test.py) | Python assertions / wrapper | M 0.6 s / PASS | Unit checks of pypeline.py's global FIFO API, with no design build: Fifo[T] and its wire type, the global_fifo(n) / global_sync_fifo(n) initializers and the depth they build, the stream-module port helper that native sim and the compiler share, and the FIFO MAIN generator's names. | Keep compiler-contract checks; select by feature and measured cost, since this category alone does not guarantee a cheap run. | fast candidate |
 | `global_fifo_path_unit_test` | [inst/global_fifo_path_unit_test.py](../../../src/tests/pypeline_tests/inst/global_fifo_path_unit_test.py) | Python assertions / wrapper | M 2.7 s / PASS | Unit checks of how the sweep treats a global FIFO's MAIN: a parsed FIFO design (PY_TO_LOGIC.PARSE_FILE, no synthesis) and fake timing path reports. | Keep compiler-contract checks; select by feature and measured cost, since this category alone does not guarantee a cheap run. | fast candidate |
@@ -1519,6 +1520,16 @@ Python entry registered; custom entrypoint/manual calls. Registration(s): `nativ
 | [test_widen_back_to_back_packets](../../../src/tests/pypeline_tests/inst/dwidth_converter_test.py#L181) | 8 full narrow beats spanning 2 wide outputs, eod[0] only on the very last (8th) beat -> first wide beat eod[0]=0, second wide beat eod[0]=1. |
 | [test_narrow_full_beat_drain](../../../src/tests/pypeline_tests/inst/dwidth_converter_test.py#L210) | One fully-kept wide beat with eod[0]=1 -> drains into 4 narrow beats, eod[0] only on the last (highest-address) one drained. |
 | [test_widen_narrow_round_trip](../../../src/tests/pypeline_tests/inst/dwidth_converter_test.py#L245) | narrow -> dwidth_widen -> dwidth_narrow -> narrow reproduces the original stream. |
+
+### inst/enum_null_test.py
+
+Python entry registered; module auto-discovery. Registration: `unit:enum_null_test`.
+One shared-IR package and a GHDL testbench, with no synthesis. The original
+review's historical registration counts and timings exclude this test.
+
+| Declaration | Purpose / execution note |
+|---|---|
+| [test_enum_null_uses_first_declared_encoding](../../../src/tests/pypeline_tests/inst/enum_null_test.py#L20) | GHDL rejects calls before package-body elaboration; asserts zero, sparse, signed and wide one-hot first encodings in nested records and arrays. |
 
 ### inst/enum_test.py
 
