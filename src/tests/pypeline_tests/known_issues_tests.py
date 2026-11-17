@@ -61,6 +61,16 @@ SWEEP_FLOAT32_BLOCKED = {
 
 def get_tests() -> list:
     tests = []
+    # Selective stream probes: an excluded occupancy tap is a NullTap, but
+    # _note_occupancy calls its missing emptied() method. GitHub issue #399.
+    tests.append(
+        Test(
+            name="stream_perf_disabled_occupancy_known_issue",
+            category="known_issues",
+            cmd=[INST_DIR / "stream_perf_disabled_occupancy_test.py"],
+            expect_fail=True,
+        )
+    )
     # Native sim: `~q` of a Wire[uint1_t] written from a comparison is always
     # truthy (the wire holds a Python bool; ~True is -2), unlike the hardware's
     # one-bit NOT. Issue #392.

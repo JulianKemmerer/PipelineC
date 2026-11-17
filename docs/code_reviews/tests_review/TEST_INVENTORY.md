@@ -588,6 +588,7 @@ The 367 old samples total **32,745.3 test-seconds (9.10 h)**, including two fail
 
 | Test name | Source | Current execution | Historical cost | Purpose | Still useful / recommendation | Proposed lane |
 |---|---|---|---|---|---|---|
+| `stream_perf_disabled_occupancy_known_issue` | [inst/stream_perf_disabled_occupancy_test.py](../../../src/tests/pypeline_tests/inst/stream_perf_disabled_occupancy_test.py) | Python worker assertions; expect nonzero | U (outside historical sample) | An excluded occupancy probe must be a no-op when another tap is enabled; exercises the missing `NullTap.emptied()` call. | Keep GitHub #399 reproducer; promote to native_sim on fix. Existing registry matching and all-taps integration checks miss this combination. | issue/manual |
 | `fixed_auto_pipeline_extra_cuts_known_issue` | [inst/fixed_auto_pipeline_extra_cuts_test.py](../../../src/tests/pypeline_tests/inst/fixed_auto_pipeline_extra_cuts_test.py) | Python assertions / wrapper; expect nonzero | U (not measured) | Known issue: AUTO_PIPELINE(func, latency=N) plans N register cuts in func's own logic even when func's @pipeline_latency calls already supply the N cycles. | Keep opt-in bug reproducer; match the intended error/artifact, not arbitrary nonzero exit. Promote to normal regression after a verified fix. | issue/manual |
 | `float_format_cast_inline_logic_known_issue` | [inst/float_format_cast_test.py](../../../src/tests/pypeline_tests/inst/float_format_cast_test.py) | Python assertions / wrapper; expect nonzero | U (not measured) | C float-format conversion: out-of-range numeric results and hidden inline conversion logic are separate bug reproducers. Variant: inline. | Keep opt-in bug reproducer; match the intended error/artifact, not arbitrary nonzero exit. Promote to normal regression after a verified fix. | issue/manual |
 | `float_format_cast_wraps_known_issue` | [inst/float_format_cast_test.py](../../../src/tests/pypeline_tests/inst/float_format_cast_test.py) | Python assertions / wrapper; expect nonzero | U (not measured) | C float-format conversion: out-of-range numeric results and hidden inline conversion logic are separate bug reproducers. Variant: values. | Keep opt-in bug reproducer; match the intended error/artifact, not arbitrary nonzero exit. Promote to normal regression after a verified fix. | issue/manual |
@@ -2828,6 +2829,14 @@ Python entry registered; custom entrypoint/manual calls. Registration(s): `nativ
 | Declaration | Purpose / execution note |
 |---|---|
 | [test_divider_mcp_handshake](../../../src/tests/pypeline_tests/inst/stream_multi_cycle_test.py#L102) | Divider mcp handshake. |
+
+### inst/stream_perf_disabled_occupancy_test.py
+
+Python worker assertions registered as `known_issues:stream_perf_disabled_occupancy_known_issue`.
+
+| Case | Purpose |
+|---|---|
+| [test_unselected_occupancy_probe_is_noop](../../../src/tests/pypeline_tests/inst/stream_perf_disabled_occupancy_test.py#L18) | An occupancy tap excluded by a nonempty registry selection must remain a no-op, including its buffer-reset notification. |
 
 ### inst/stream_perf_test.py
 

@@ -201,6 +201,7 @@ Category qualification avoids current duplicate-name ambiguity. `--category ... 
 
 | Gap | Smallest useful addition | Why existing tests do not settle it |
 |---|---|---|
+| Selectively disabled occupancy probes | Keep `stream_perf_disabled_occupancy_known_issue` until the missing `NullTap.emptied()` method is fixed, then promote it to native_sim | At `10e5bfac`, `stream_perf_test.test_registry_enablement` checks an unmatched tap's snapshot without running the occupancy worker, while `stream_perf_probe_test.py` enables all taps. Neither reaches `_note_occupancy` with a NullTap. The isolated reproducer covers this contract without a WireGuard simulation or HDL build. |
 | Primitive bit operations | Independent vectors for typed zero, max, sign/width preservation, rotate by 0/width/over-width, endian pack/unpack and invalid widths; one HDL self-check | bit_manip_test only elaborates. Native implementations now exist; the handoff's NotImplementedError claim is obsolete. Soft barrel rotate tests exercise a different implementation |
 | CORDIC hardware | A small HDL compile and golden-output latency/CE check, preserving quadrant/degenerate edges | cordic_test is native-only; old 21-minute PyRTL synthesis is not evidence that a small GHDL check is too expensive |
 | Nested multi-writer global wires | Re-run the specific missing comb GHDL scenario when implementation work begins; retain an explicit reproducer if it fails | Existing comment says the combination was not rechecked; plain synth/native success does not establish cycle parity |
