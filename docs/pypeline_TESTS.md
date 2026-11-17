@@ -817,12 +817,11 @@ hand-worked numbers.
     cases, headline and report formatting, and `buffer_tap_errors`;
   - a probed FIFO between `ConvergedAxisSimSource` and a backpressuring
     `ConvergedAxisSimSink`, measured by a `PhaseRunner`.
-- `stream_perf_disabled_occupancy_known_issue` (known_issues, plain Python,
-  `inst/stream_perf_disabled_occupancy_test.py`): enables an unrelated tap and
-  calls the occupancy worker for an excluded buffer. It expects the disabled
-  probe to do nothing; `NullTap.emptied()` raises `AttributeError` instead
-  (GitHub #399, [inventory entry](issues_inventory.md#invalid-hdl-crashes-and-misleading-errors)).
-  XFAIL records this crash; promote the test to `native_sim` when fixed.
+- `stream_perf_disabled_occupancy_test` (native_sim, plain Python,
+  `inst/stream_perf_disabled_occupancy_test.py`): an excluded occupancy probe
+  ignores its first sample, subsequent transfers and a simulation reset while
+  a selected handshake remains recorded. This exercises `NullTap.emptied()`
+  (GitHub #399) without a downstream design or HDL build.
 - `stream_perf_probe_test.py` (native_sim via `pypelinec --sim --comb`, and
   synth_device_models `--comb`): two MAINs run the same probed producer → FIFO →
   consumer chain, closed through `Feedback[T]`. Its `@final(sim=True)` hook checks:

@@ -1,7 +1,7 @@
-"""Known issue (GitHub #399): an unselected occupancy probe must be a no-op
-when another tap is enabled. The occupancy worker instead calls emptied()
-on NullTap and raises AttributeError. No HDL build or downstream design is
-needed. Registered with expect_fail until the library bug is fixed.
+"""Regression for GitHub #399: an unselected occupancy probe is a no-op
+when another tap is enabled, including after simulation reset. Exercise the
+occupancy worker's NullTap.emptied() call without an HDL build or downstream
+design. Registered in native_sim with ordinary pass/fail assertions.
 """
 
 import sys
@@ -22,6 +22,15 @@ def test_unselected_occupancy_probe_is_noop():
     assert isinstance(probe.REGISTRY.tap("disabled.occupancy"), NullTap)
     probe._note_occupancy("disabled.occupancy", 0, 0, 0, 0, 2, 1)
     assert probe.REGISTRY.snapshot() == {}
+    probe._note_hs("selected", 1, 1, None, 1)
+    selected = probe.REGISTRY.snapshot()
+    assert set(selected) == {"selected"}
+    # Subsequent transfers and the first sample after reset stay unrecorded.
+    probe._note_occupancy("disabled.occupancy", 1, 1, 0, 0, 2, 2)
+    sim_reset()
+    probe._note_occupancy("disabled.occupancy", 0, 0, 0, 0, 2, 3)
+    assert probe.REGISTRY.active_names() == ["selected"]
+    assert probe.REGISTRY.snapshot() == selected
 
 
 if __name__ == "__main__":

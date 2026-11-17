@@ -56,6 +56,8 @@ PLAIN_PYTHON_TEST_FILES = [
     "self_timed_factory_test.py",
     "skid_buffer_test.py",
     "stream_perf_test.py",
+    # Excluded occupancy probes remain no-ops before/after sim reset (#399).
+    "stream_perf_disabled_occupancy_test.py",
     "ram_test.py",
     "stream_ram_test.py",
     "axis_test.py",

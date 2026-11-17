@@ -405,6 +405,9 @@ class NullTap:
     def flush(self):
         pass
 
+    def emptied(self):
+        pass
+
     def reset(self):
         pass
 

@@ -125,8 +125,11 @@ inside one MAIN, the two calls share a name and only one is counted. Give them d
 names (a factory `tap_name` argument) or put them under different MAINs.
 
 `REGISTRY.enable([...])` turns taps on. It accepts exact names, a `<label>/` or `<block>`
-prefix, or `"all"`. Everything else gets a no-op `NullTap`, so a disabled probe costs one
-call per cycle.
+prefix, or `"all"`. Everything else gets a no-op `NullTap`, including occupancy
+probes on their first sample and after a buffer reset (`emptied()`). You can select
+handshake taps without enabling their buffers' occupancy taps. Disabled taps do not
+appear in snapshots or active names; selected buffers still count discarded beats
+when reset.
 
 `REGISTRY` and `MAIN_LABELS` must only be mutated in place (`.enable(...)`,
 `.update(...)`), never rebound. A `@sim_output` body runs against a detached copy of its
