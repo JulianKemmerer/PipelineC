@@ -145,6 +145,24 @@ The cycle is committed when the epoch changes, so a cycle is never counted twice
 `stream_bottleneck.check_taps` checks that every tap in a phase saw the same number of
 cycles. A spread there means some rate is inflated.
 
+### Waveforms
+
+A simulation that records a waveform (`pypelinec tb.py --sim --comb --run all --wave
+run.vcd`, see [Waveforms](../../../docs/pypeline_guide.md#waveforms)) also shows every probe
+there, its tap enabled or not, as `sim_wave` signals:
+
+| Probe | Signals |
+|---|---|
+| `hs`, `stream_hs` | `<label>/<name>/valid` and `<label>/<name>/ready` |
+| `state` | `<label>/<name>`: the state's member name from `names` (its value without `names`) |
+| `arb`, `arb_n` | `<label>/<name>/sel`, the selected requester's label, and `<label>/<name>/granted` |
+| `occupancy` | none of its own: the buffer's `.in` and `.out` handshakes are there |
+
+A `.` in a name is a scope too, so a probed FIFO named `fifo` shows `<label>/fifo/in/valid`
+and `<label>/fifo/out/ready`. A probe in a pipelined pure MAIN or an AUTO_PIPELINE core,
+which the placement rules already exclude, raises when a waveform is recorded: its cycle
+would not be the hardware's.
+
 ## Tap metrics
 
 **Handshake taps** sort every cycle into exactly one of four classes. That partition is
@@ -415,6 +433,7 @@ Reports:
 | [`stream_perf_test.py`](../../../src/tests/pypeline_tests/inst/stream_perf_test.py) | every metric against hand-worked traces (meter, taps, epoch, buffer/arbiter partitions, registry matching), bottleneck rollup/walk/headline/reports on a synthetic graph, the report helpers, and a `sim_call` run of a probed FIFO with the converged AXIS source/sink |
 | [`stream_perf_probe_test.py`](../../../src/tests/pypeline_tests/inst/stream_perf_probe_test.py) | probes under the real multi-MAIN runner: MAIN-labelled names, one count per cycle through `Feedback[T]`, service periods and the verdict; also elaborated to VHDL (`--comb` synth) |
 | [`stream_perf_tb_test.py`](../../../src/tests/pypeline_tests/inst/stream_perf_tb_test.py) | the complete testbench above, with result checks in its `@final` hook; also elaborated to VHDL |
+| [`waves_test.py`](../../../src/tests/pypeline_tests/inst/waves_test.py) | probes in a waveform (`native_vcd`/`native_fst` variants): a handshake's `valid`/`ready` and a state probe's member name at every cycle |
 
 **See also:** [Byte-Stream & Struct Framing Library](pypeline_stream_guide.md) ·
 [FIFOs](../../../docs/pypeline_guide.md#fifos-make_stream_fifo) ·

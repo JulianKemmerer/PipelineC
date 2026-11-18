@@ -2,10 +2,11 @@
 """Multi-MAIN global-wire simulation runner for pypeline designs.
 
 Usage:
-    pypeline_sim.py <design_file.py> --run <N>
+    pypeline_sim.py <design_file.py> --run <N> [--wave FILE.vcd|FILE.fst]
 
 Runs the pypeline design for N clock cycles, simulating all @MAIN functions
 and global Wire[T]/Input[T]/Output[T] signals with delta-cycle convergence.
+--wave records the run's waveform (SIM.START_NATIVE_WAVES).
 
 Each clock cycle:
   1. All MAINs are queued and run; wires that change cause dependent MAINs to
@@ -55,6 +56,10 @@ RUN_ALL = "all"
 # loudly instead of hanging forever.
 _RUN_ALL_SAFETY_CAP = 10_000_000
 
+# Module name import_design gives the design file, as PY_TO_LOGIC.PARSE_FILE
+# does: its global Wires are the top-level ones, which carry no module prefix
+DESIGN_MODULE_NAME = "pypeline_design"
+
 
 def parse_run_arg(s: str):
     """argparse type= callable for --run: accepts a positive int cycle count, or the
@@ -88,8 +93,13 @@ def run_sim(
     design_params=None,
     unbuilt_latency_reads=None,
     goal_mode=None,
+    wave=None,
+    wave_signals=(),
 ) -> None:
     """Run the native simulation.
+
+    wave names a waveform file (.vcd or .fst) to record the run to, with the
+    global Wires matching the wave_signals globs (SIM.START_NATIVE_WAVES).
 
     main_latencies / auto_pipeline_latencies / auto_fsm_schedules are passed only
     by the pipelinec driver after a non---comb build (SIM.DO_OPTIONAL_SIM):
@@ -314,6 +324,11 @@ def run_sim(
                 "name": fn._pypeline_main.name,
             }
 
+    if wave is not None:
+        # Imported only here: plain native runs load no compiler module
+        import SIM
+
+        SIM.START_NATIVE_WAVES(wave, wave_signals, mains, design_wires)
     # Activate simulation mode so @hw_func wrappers use sim bodies instead of
     # falling through to raw functions (which the elaborator relies on for its
     # exception-based hardware-function detection via _try_eval_const).
@@ -378,6 +393,8 @@ def run_sim(
             pypeline.RUN_FINAL_HOOKS("sim", pending_exc=pending_exc)
         finally:
             pypeline._sim_run_in_progress = False
+            if wave is not None:
+                SIM.STOP_NATIVE_WAVES()
 
 
 def _refuse_multi_clock(mains) -> None:
@@ -479,7 +496,8 @@ def _check_built_mains(mains, main_latencies, built_hardware_from) -> None:
         )
 
 
-def _call_main(main_fn, arg_types: tuple) -> None:
+def _call_main(main_fn, arg_types: tuple):
+    """Run one @MAIN for this cycle; returns what it returned."""
     # Fresh zeros on every call, so no call can see an argument object a previous
     # call (or cycle) was handed.
     args = [pypeline.sim_zero(t) for t in arg_types]
@@ -494,11 +512,10 @@ def _call_main(main_fn, arg_types: tuple) -> None:
     try:
         region = pypeline._sim_pipelined_main_info.get(main_fn)
         if region is None:
-            pypeline.sim_call(main_fn, *args)
-        else:
-            # A pipelined pure MAIN: its global writes go to its collector, its
-            # own reads see its own writes (see pypeline._sim_region_for)
-            pypeline._sim_run_in_region(region, pypeline.sim_call, main_fn, *args)
+            return pypeline.sim_call(main_fn, *args)
+        # A pipelined pure MAIN: its global writes go to its collector, its
+        # own reads see its own writes (see pypeline._sim_region_for)
+        return pypeline._sim_run_in_region(region, pypeline.sim_call, main_fn, *args)
     finally:
         pypeline._sim_inst_stack.pop()
 
@@ -531,12 +548,24 @@ def _run_clock_cycle(mains: list, main_arg_types: dict, cycle: int) -> None:
     # Final pass: _sim_converging is False so @sim_output functions execute.
     # _sim_current_main is set like in the convergence loop so pipelined
     # MAINs' write diversion (and reader tracking) sees the executing MAIN.
-    for main_fn in mains:
-        pypeline._sim_current_main = main_fn
-        try:
-            _call_main(main_fn, main_arg_types[main_fn])
-        finally:
-            pypeline._sim_current_main = None
+    # A waveform (--wave) gets each MAIN's return and, once the pass ends, the
+    # cycle's converged wires -- also when a sim_finish() ends the pass.
+    waves = pypeline._sim_wave_recorder
+    try:
+        for main_fn in mains:
+            pypeline._sim_current_main = main_fn
+            try:
+                returned = _call_main(main_fn, main_arg_types[main_fn])
+            finally:
+                pypeline._sim_current_main = None
+            if waves is not None:
+                waves.main_return(main_fn, returned)
+    except pypeline.SimFinish:
+        if waves is not None:
+            waves.end_cycle(cycle)
+        raise
+    if waves is not None:
+        waves.end_cycle(cycle)
 
     # Commit all register writes simultaneously — the simulated clock edge —
     # then the synchronous resets of that edge.
@@ -636,11 +665,13 @@ def _convergence_loop(mains: list, main_arg_types: dict, cycle: int) -> None:
 
 class _DesignWires(tuple):
     """What _discover_wire_names found: unpacks as (wires, insts); .resets
-    holds (sim name, its _Reset, "Input" or "Wire") for each reset binding and
-    .clocks every _Clock a wire is marked with or bound to."""
+    holds (sim name, its _Reset, "Input" or "Wire") for each reset binding,
+    .clocks every _Clock a wire is marked with or bound to, and .ports the sim
+    names of the Input and Output wires (the top-level ports)."""
 
     resets = ()
     clocks = ()
+    ports = frozenset()
 
 
 def _discover_wire_names(module) -> tuple:
@@ -650,7 +681,8 @@ def _discover_wire_names(module) -> tuple:
     Inst[f] / Fifo[T] declaration. Names are module-qualified ("<module>.<wire>",
     matching pypeline.py's _GlobalWireRewriter) so two unrelated modules
     declaring a same-named Wire[T] (e.g. both calling it "key") don't collide.
-    The result also carries the reset bindings and wire clocks (_DesignWires).
+    The result also carries the reset bindings, wire clocks and top-level
+    ports (_DesignWires).
     """
     import types
 
@@ -660,6 +692,7 @@ def _discover_wire_names(module) -> tuple:
     insts: list = []
     resets: list = []
     clocks: list = []
+    ports: set = set()
 
     def _scan(mod):
         if id(mod) in seen_ids:
@@ -673,6 +706,8 @@ def _discover_wire_names(module) -> tuple:
                 if qualified not in result_keys:
                     result.append((qualified, pypeline._wire_ann_inner_ctype(ann)))
                     result_keys.add(qualified)
+                    if not isinstance(ann, pypeline._WireType):
+                        ports.add(qualified)
                     if isinstance(ann, pypeline._GlobalInstType):
                         insts.append((mod, name, ann))
                     value = vars(mod).get(name)
@@ -696,6 +731,7 @@ def _discover_wire_names(module) -> tuple:
     found = _DesignWires((result, insts))
     found.resets = tuple(resets)
     found.clocks = tuple(clocks)
+    found.ports = frozenset(ports)
     return found
 
 
@@ -772,7 +808,7 @@ def import_design(path: str):
     pypeline.RESET_DESIGN_PARAM_DECLARATIONS()
 
     abs_path = os.path.abspath(path)
-    spec = importlib.util.spec_from_file_location("pypeline_design", abs_path)
+    spec = importlib.util.spec_from_file_location(DESIGN_MODULE_NAME, abs_path)
     module = importlib.util.module_from_spec(spec)
     # Add the design file's directory to sys.path so its local imports work.
     design_dir = os.path.dirname(abs_path)
@@ -855,12 +891,41 @@ def main() -> None:
         metavar="NAME[=VALUE]",
         help="Set a design parameter, as for pypelinec (see param()). Repeatable.",
     )
+    parser.add_argument(
+        "--wave",
+        metavar="FILE",
+        default=None,
+        help="Write the run's waveform to FILE: .vcd, or .fst (converted with "
+        "GTKWave's vcd2fst). As pypelinec --sim --wave.",
+    )
+    parser.add_argument(
+        "--wave_signals",
+        action="append",
+        default=[],
+        metavar="PATTERN",
+        help="With --wave, also record the global Wires whose waveform path "
+        "matches the glob PATTERN, as pypelinec --wave_signals. Repeatable.",
+    )
     args = parser.parse_args()
     try:
         pypeline.SET_DESIGN_PARAMS(pypeline.PARSE_DESIGN_PARAM_DEFINES(args.define))
     except pypeline.DesignParamError as e:
         parser.error(str(e))
-    run_sim(args.design_file, args.run, sim_mode=args.mode)
+    if args.wave_signals and args.wave is None:
+        parser.error("--wave_signals chooses what --wave FILE records; give --wave too")
+    if args.wave is not None:
+        import SIM
+
+        problem = SIM.NATIVE_WAVE_PROBLEM(args.wave)
+        if problem is not None:
+            parser.error(problem)
+    run_sim(
+        args.design_file,
+        args.run,
+        sim_mode=args.mode,
+        wave=args.wave,
+        wave_signals=args.wave_signals,
+    )
 
 
 if __name__ == "__main__":

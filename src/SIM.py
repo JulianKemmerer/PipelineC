@@ -1,4 +1,6 @@
 import os
+import re
+import shutil
 import sys
 
 import COCOTB
@@ -142,6 +144,8 @@ def _DO_OPTIONAL_SIM(
                 args.run,
                 part=getattr(args, "part", None),
                 syn_tool=getattr(args, "syn_tool", None),
+                wave=getattr(args, "wave", None),
+                wave_signals=getattr(args, "wave_signals", ()),
                 **hardware,
             )
     else:
@@ -231,6 +235,8 @@ _SETTINGS_OUTSIDE_BUILD_INPUTS = frozenset(
         "cxxrtl",
         "verilator",
         "main_cpp",
+        "wave",
+        "wave_signals",
     )
 )
 # Environment variables that are BUILD_INPUTS: the compiler's own knobs, by
@@ -511,6 +517,8 @@ def SIMULATE_BUILT_HARDWARE(args, src_file, build_inputs) -> bool:
                 built_hardware_from=out_dir,
                 design_params=record["design_params"],
                 unbuilt_latency_reads=record.get("unbuilt_latency_reads"),
+                wave=args.wave,
+                wave_signals=args.wave_signals,
             )
         except pypeline.BuiltHardwareError as e:
             sys.exit(f"ERROR: {e}")
@@ -699,3 +707,633 @@ def _PIPELINED_NATIVE_SIM_ERROR(problems):
         "function and pass values as arguments/return values. See "
         "pypeline_guide.md 'Global wires in pipelined code'."
     )
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Waveforms: --wave FILE (docs/SIM_DESIGN.md#6-waveforms)
+# ─────────────────────────────────────────────────────────────────────────────
+
+# Waveform format of each file extension --wave accepts
+_WAVE_FORMATS = {".vcd": "vcd", ".fst": "fst", ".ghw": "ghw"}
+# The formats native simulation writes: VCD, and FST converted from it by vcd2fst
+NATIVE_WAVE_FORMATS = ("vcd", "fst")
+
+
+def WAVE_FORMAT(path):
+    """The waveform format --wave FILE names by its extension: "vcd", "fst" or
+    "ghw". Raises ValueError for any other extension."""
+    fmt = _WAVE_FORMATS.get(os.path.splitext(path)[1].lower())
+    if fmt is None:
+        raise ValueError(
+            f"--wave {path}: name the waveform file .vcd, .fst or .ghw (its "
+            f"extension picks the format)"
+        )
+    return fmt
+
+
+def NATIVE_WAVE_PROBLEM(path):
+    """Why native simulation cannot write the waveform file path, or None.
+    Checked before a run starts (CHECK_WAVE_ARGS, pypeline_sim's --wave) and
+    again by START_NATIVE_WAVES."""
+    try:
+        fmt = WAVE_FORMAT(path)
+    except ValueError as e:
+        return str(e)
+    if fmt not in NATIVE_WAVE_FORMATS:
+        return (
+            f"--wave {path}: native simulation writes .vcd or .fst; .ghw is "
+            f"GHDL's own format (simulate the generated VHDL with --cocotb --ghdl)"
+        )
+    if fmt == "fst" and shutil.which("vcd2fst") is None:
+        return (
+            f"--wave {path}: native simulation writes FST by converting its VCD "
+            f"with GTKWave's vcd2fst, which is not on PATH: install GTKWave, or "
+            f"write a .vcd"
+        )
+    return _WAVE_DIRECTORY_PROBLEM(path)
+
+
+def _WAVE_DIRECTORY_PROBLEM(path):
+    """An error when the directory of the waveform file path does not exist."""
+    directory = os.path.dirname(os.path.abspath(path))
+    if not os.path.isdir(directory):
+        return f"--wave {path}: the directory {directory} does not exist"
+    return None
+
+
+def CHECK_WAVE_ARGS(args):
+    """Called by the driver right after SET_SIM_TOOL: exit with an error,
+    before anything is built or simulated, when --wave / --wave_signals cannot
+    be honored. --wave needs --sim and a simulator that writes waveforms:
+    native simulation (.vcd, .fst) or cocotb + GHDL (.vcd, .fst, .ghw, set in
+    the generated Makefile, so not with --makefile). --wave_signals needs
+    --wave and native simulation."""
+    wave, patterns = args.wave, args.wave_signals
+    if wave is None:
+        if patterns:
+            sys.exit(
+                "ERROR: --wave_signals chooses what --wave FILE records; give --wave too"
+            )
+        return
+    if not args.sim:
+        sys.exit(f"ERROR: --wave {wave} records a simulation: add --sim")
+    if SIM_TOOL is pypeline_sim:
+        problem = NATIVE_WAVE_PROBLEM(wave)
+    elif SIM_TOOL is COCOTB and args.ghdl:
+        problem = _GHDL_WAVE_PROBLEM(args)
+    else:
+        problem = (
+            f"--wave {wave}: waveforms come from native simulation (a .py design "
+            f"with no simulator flag) or from --cocotb --ghdl"
+        )
+    if problem is not None:
+        sys.exit(f"ERROR: {problem}")
+
+
+def _GHDL_WAVE_PROBLEM(args):
+    """Why --cocotb --ghdl cannot write args.wave, or None."""
+    if args.makefile:
+        return (
+            f"--wave {args.wave}: --wave sets GHDL's options in the generated "
+            f"Makefile; with --makefile, set them in your Makefile's SIM_ARGS"
+        )
+    if args.wave_signals:
+        return (
+            "--wave_signals chooses native simulation's global Wires; GHDL "
+            "records every signal its waveform format can hold"
+        )
+    try:
+        WAVE_FORMAT(args.wave)
+    except ValueError as e:
+        return str(e)
+    return _WAVE_DIRECTORY_PROBLEM(args.wave)
+
+
+# Kinds of the nodes of a signal's layout: the tree a value is flattened
+# through to its leaves, which are its VCD variables
+_WAVE_BITS = 0  # (kind, mask): an integer of a hardware type, two's complement
+_WAVE_INT = 1  # (kind,): an integer of no type, as wide as its widest value
+_WAVE_ENUM = 2  # (kind, enum class): a string variable holding the member's name
+_WAVE_STR = 3  # (kind,): a string variable
+_WAVE_STRUCT = 4  # (kind, ((field, node), ...)): a struct scope of its fields
+_WAVE_ARRAY = 5  # (kind, (node, ...)): one signal per element, name[i]
+# Whitespace, which a VCD string value cannot hold
+_VCD_SPACE_RE = re.compile(r"\s")
+
+
+def _wave_layout_of_ctype(t):
+    """The layout of a value of the Pypeline type t."""
+    import pypeline
+
+    if getattr(t, "_pypeline_is_enum", False):
+        return (_WAVE_ENUM, t)
+    elem = pypeline._array_elem_ctype(t)
+    if elem is not None:
+        return (_WAVE_ARRAY, (_wave_layout_of_ctype(elem),) * pypeline._array_len(t))
+    if hasattr(t, "_fields"):
+        return (
+            _WAVE_STRUCT,
+            tuple((f, _wave_layout_of_ctype(t.__annotations__[f])) for f in t._fields),
+        )
+    return (_WAVE_BITS, (1 << pypeline._leaf_bit_width(t)) - 1)
+
+
+def _wave_layout_of_value(value):
+    """The layout of a value given to sim_wave: a Pypeline value (an integer,
+    @struct, @enum member or array) takes its type's, a list or tuple is an
+    array, a str a string, and a plain int or bool an integer of no type."""
+    cls = type(value)
+    if isinstance(value, str):
+        return (_WAVE_STR,)
+    if getattr(cls, "_pypeline_is_enum", False) or (
+        hasattr(cls, "_fields") and hasattr(cls, "_pypeline_ctype_name")
+    ):
+        return _wave_layout_of_ctype(cls)
+    if isinstance(value, (list, tuple)):
+        return (_WAVE_ARRAY, tuple(_wave_layout_of_value(e) for e in value))
+    if isinstance(value, int):
+        ctype = getattr(value, "_ctype", None)
+        return (_WAVE_INT,) if ctype is None else _wave_layout_of_ctype(ctype)
+    raise TypeError(
+        f"a {cls.__name__} is not a value a waveform can show: give a Pypeline "
+        f"value, an int, a bool, a str, or a list of them"
+    )
+
+
+def _wave_shape_key(value):
+    """A cheap key of what a value's layout depends on: values with one key
+    have one layout, so WaveRecorder compares layouts once per new key."""
+    name = getattr(type(value), "_pypeline_ctype_name", None)
+    if name is not None:  # an @struct value or @enum member
+        return name
+    if isinstance(value, str):
+        return "str"
+    if isinstance(value, (list, tuple)):
+        return ("list", len(value), _wave_shape_key(value[0]) if value else None)
+    ctype = getattr(value, "_ctype", None)  # a SimVal's type
+    if ctype is None:
+        return "int"
+    return getattr(ctype, "_pypeline_ctype_name", None) or ctype._ctype_name
+
+
+def _wave_layouts_match(a, b):
+    """Whether values of layout b flatten to the variables of layout a: the
+    same tree, where an integer of no type fits an integer of a type."""
+    if a[0] != b[0]:
+        return {a[0], b[0]} == {_WAVE_BITS, _WAVE_INT}
+    if a[0] in (_WAVE_BITS, _WAVE_ENUM):
+        return a[1] == b[1]
+    if a[0] == _WAVE_STRUCT:
+        return len(a[1]) == len(b[1]) and all(
+            fa == fb and _wave_layouts_match(na, nb)
+            for (fa, na), (fb, nb) in zip(a[1], b[1])
+        )
+    if a[0] == _WAVE_ARRAY:
+        return len(a[1]) == len(b[1]) and all(map(_wave_layouts_match, a[1], b[1]))
+    return True
+
+
+def _wave_layout_text(node):
+    """How a message names a layout."""
+    kind = node[0]
+    if kind == _WAVE_BITS:
+        return f"a {node[1].bit_length()}-bit integer"
+    if kind == _WAVE_INT:
+        return "an integer of no type"
+    if kind == _WAVE_ENUM:
+        return f"an @enum {node[1].__name__}"
+    if kind == _WAVE_STR:
+        return "a str"
+    if kind == _WAVE_STRUCT:
+        return f"a struct of {', '.join(f for f, _n in node[1])}"
+    return f"a {len(node[1])}-element array"
+
+
+class _WaveShapeError(Exception):
+    """A value does not fit its signal's layout."""
+
+
+def _wave_flatten(node, value, out):
+    """Append the leaf values of value, flattened through its layout node, to
+    out: ints, and strs for string variables."""
+    kind = node[0]
+    if kind == _WAVE_BITS:
+        out.append(int(value) & node[1])
+    elif kind == _WAVE_STRUCT:
+        for field, child in node[1]:
+            _wave_flatten(child, getattr(value, field), out)
+    elif kind == _WAVE_ARRAY:
+        if len(value) != len(node[1]):
+            raise _WaveShapeError(f"{len(value)} elements where it had {len(node[1])}")
+        for child, elem in zip(node[1], value):
+            _wave_flatten(child, elem, out)
+    elif kind == _WAVE_ENUM:
+        member = node[1]._value2member_map_.get(int(value))
+        out.append(str(int(value)) if member is None else member.name)
+    elif kind == _WAVE_INT:
+        value = int(value)
+        if value < 0:
+            raise _WaveShapeError(
+                f"the negative integer {value}, which has no type to give its "
+                f"width: pass a typed value such as int8_t(x)"
+            )
+        out.append(value)
+    else:
+        out.append(value if isinstance(value, str) else str(value))
+
+
+def _vcd_code(n):
+    """The VCD identifier code of the n-th variable: base 94 in '!'..'~'."""
+    code = ""
+    while True:
+        n, digit = divmod(n, 94)
+        code += chr(33 + digit)
+        if n == 0:
+            return code
+
+
+class _WaveVar:
+    """One VCD variable: a leaf of a recorded signal."""
+
+    __slots__ = ("code", "kind", "width", "grows")
+
+    def __init__(self, code, kind, width, grows):
+        self.code = code  # its VCD identifier code
+        self.kind = kind  # "wire" or "string"
+        self.width = width  # its bits; a growing variable's widest value so far
+        self.grows = grows  # an integer of no type, as wide as its widest value
+
+    def line(self, value):
+        """The VCD value change setting this variable to value."""
+        if self.kind == "string":
+            return f"s{_VCD_SPACE_RE.sub('_', value)} {self.code}\n"
+        if self.grows:
+            self.width = max(self.width, value.bit_length())
+        elif self.width == 1:
+            return f"{value}{self.code}\n"
+        return f"b{value:b} {self.code}\n"
+
+
+class _VcdWriter:
+    """A VCD file whose variables are declared while values are written, and
+    whose growing variables are only as wide as their widest value: value
+    changes stream to <path>.body.tmp (those at time 0 stay in memory), and
+    close() writes the header, with every scope and final width, the time-0
+    values as $dumpvars, then the body. Timescale 1 ps."""
+
+    def __init__(self, path):
+        self.path = path  # the VCD file close() writes
+        self._body_path = path + ".body.tmp"  # value changes after time 0
+        self._body = None  # that file, opened by the first write after time 0
+        # The scope tree: name -> _WaveVar, or (scope kind, {name: ...}) for a scope
+        self._root = {}
+        self._var_count = 0  # variables declared, numbering their codes
+        self._time0 = []  # value changes at time 0, for $dumpvars
+        self._time = 0  # time of the last value changes written
+
+    def scope(self, path, kind):
+        """Declare the scope at path (a tuple of names) of kind "module" or
+        "struct"; missing parents are module scopes. An existing scope stays."""
+        self._scope_children(path, kind)
+
+    def var(self, path, kind, width, grows):
+        """Declare and return a new _WaveVar at path."""
+        children = self._scope_children(path[:-1], "module")
+        if path[-1] in children:
+            raise ValueError(f"two waveform signals are named '{'/'.join(path)}'")
+        var = _WaveVar(_vcd_code(self._var_count), kind, width, grows)
+        self._var_count += 1
+        children[path[-1]] = var
+        return var
+
+    def _scope_children(self, path, kind):
+        children = self._root
+        for depth, name in enumerate(path):
+            node = children.get(name)
+            if node is None:
+                node = children[name] = (
+                    kind if depth == len(path) - 1 else "module",
+                    {},
+                )
+            elif isinstance(node, _WaveVar):
+                raise ValueError(
+                    f"'{'/'.join(path[: depth + 1])}' cannot be both a waveform "
+                    f"signal and a scope of signals"
+                )
+            children = node[1]
+        return children
+
+    def write(self, time, text):
+        """Write value changes (VCD lines) at time, never before the last."""
+        if time == 0:
+            self._time0.append(text)
+            return
+        if self._body is None:
+            self._body = open(self._body_path, "w")
+        if time != self._time:
+            self._body.write(f"#{time}\n")
+            self._time = time
+        self._body.write(text)
+
+    def close(self, end_time):
+        """Write the VCD file, its last values lasting until end_time."""
+        if self._body is not None:
+            self._body.close()
+        with open(self.path, "w") as out:
+            out.write("$version PypelineC native simulation $end\n")
+            out.write("$timescale 1ps $end\n")
+            self._write_scopes(out, self._root)
+            out.write("$enddefinitions $end\n#0\n$dumpvars\n")
+            out.writelines(self._time0)
+            out.write("$end\n")
+            if self._body is not None:
+                with open(self._body_path) as body:
+                    shutil.copyfileobj(body, out)
+                os.remove(self._body_path)
+            if end_time > self._time:
+                out.write(f"#{end_time}\n")
+
+    def _write_scopes(self, out, children):
+        for name, node in children.items():
+            if not isinstance(node, _WaveVar):
+                out.write(f"$scope {node[0]} {name} $end\n")
+                self._write_scopes(out, node[1])
+                out.write("$upscope $end\n")
+            elif node.kind == "string":
+                out.write(f"$var string 1 {node.code} {name} $end\n")
+            elif node.width == 1:
+                out.write(f"$var wire 1 {node.code} {name} $end\n")
+            else:
+                out.write(
+                    f"$var wire {node.width} {node.code} {name} [{node.width - 1}:0] $end\n"
+                )
+
+
+class _WaveSignal:
+    """One recorded value: a port, a selected global Wire, a @MAIN's return
+    or a sim_wave tap."""
+
+    __slots__ = ("layout", "keys", "vars", "last")
+
+    def __init__(self, layout, variables):
+        self.layout = layout  # its layout tree, fixed when it is declared
+        self.keys = set()  # _wave_shape_key of the values known to fit the layout
+        self.vars = variables  # its leaves' _WaveVars, in flattening order
+        self.last = None  # the leaf values last written
+
+
+class WaveRecorder:
+    """The waveform of one native simulation run: made and installed as
+    pypeline's sim_wave recorder by START_NATIVE_WAVES, fed by pypeline_sim
+    each cycle (main_return, end_cycle) and by sim_wave (tap), closed by
+    STOP_NATIVE_WAVES.
+
+    A signal's path is a tuple of names below the top scope (the top-level
+    entity's name). Its layout comes from its type or its first value; a value
+    is flattened to a tuple of leaf values when it is sampled, and end_cycle
+    writes the leaves that changed at the cycle's time."""
+
+    def __init__(self, path, top, clock_name, period):
+        self.path = path  # the waveform file: .vcd, or .fst converted from a VCD
+        self._fst = WAVE_FORMAT(path) == "fst"
+        self._writer = _VcdWriter(path + ".vcd" if self._fst else path)
+        self._top = top  # name of the top scope, the top-level entity
+        self._period = period  # one clock period, in ps
+        self._signals = {}  # signal path -> _WaveSignal
+        self._pending = {}  # signal path -> its leaf values sampled this cycle
+        self._tap_paths = {}  # (tap name, @MAIN wrapper or None) -> signal path
+        self._wires = []  # (signal path, _sim_wire_state key), sampled every cycle
+        self._returns = {}  # @MAIN wrapper -> the signal path of its return port
+        self._noted = set()  # signal paths already noted as sampled twice in a cycle
+        self._cycles = 0  # cycles written
+        self._clock = self._writer.var((top, clock_name), "wire", 1, False)
+
+    def add_wires(self, design_wires, patterns):
+        """Declare the top-level ports (every Input and Output, by its port
+        name) and the global Wires whose path below the top scope,
+        <module>/<wire> (<wire> for a Wire of the top-level file), matches one
+        of the fnmatch patterns."""
+        import fnmatch
+
+        wire_info, _insts = design_wires
+        matched = set()
+        for key, ctype in wire_info:
+            module, name = key.rsplit(".", 1)
+            if key in design_wires.ports or module == pypeline_sim.DESIGN_MODULE_NAME:
+                names = (name,)
+            else:
+                names = (module.replace(".", "_"), name)
+            if key not in design_wires.ports:
+                hits = [p for p in patterns if fnmatch.fnmatchcase("/".join(names), p)]
+                if not hits:
+                    continue
+                matched.update(hits)
+            path = (self._top,) + names
+            self._declare(path, _wave_layout_of_ctype(ctype))
+            self._wires.append((path, key))
+        for pattern in patterns:
+            if pattern not in matched:
+                print(f"WARNING: --wave_signals {pattern!r} matches no global Wire")
+
+    def add_main_returns(self, mains):
+        """Declare the return port <main>_return_output of each @MAIN that
+        returns a value, except pipelined ones: native simulation computes
+        their return at stage 0, cycles before the hardware's port shows it."""
+        import inspect
+        import pypeline
+
+        pipelined = []
+        for fn in mains:
+            return_t = inspect.unwrap(fn).__annotations__.get("return")
+            if return_t is None:
+                continue
+            name = fn._pypeline_main.name
+            if fn in pypeline._sim_pipelined_main_info:
+                pipelined.append(name)
+                continue
+            path = (self._top, f"{name}_return_output")
+            self._declare(path, _wave_layout_of_ctype(return_t))
+            self._returns[fn] = path
+        if pipelined:
+            print(
+                f"NOTE: the waveform leaves out the return ports of pipelined "
+                f"@MAIN {', '.join(sorted(pipelined))}: native simulation "
+                f"computes them at stage 0, not at the cycle the hardware's port "
+                f"shows them"
+            )
+
+    def _declare(self, path, layout):
+        variables = []
+        self._declare_node(path, layout, variables)
+        signal = self._signals[path] = _WaveSignal(layout, variables)
+        return signal
+
+    def _declare_node(self, path, node, variables):
+        kind = node[0]
+        if kind == _WAVE_STRUCT:
+            self._writer.scope(path, "struct")
+            for field, child in node[1]:
+                self._declare_node(path + (field,), child, variables)
+        elif kind == _WAVE_ARRAY:
+            for i, child in enumerate(node[1]):
+                self._declare_node(path[:-1] + (f"{path[-1]}[{i}]",), child, variables)
+        elif kind == _WAVE_BITS:
+            width = node[1].bit_length()
+            variables.append(self._writer.var(path, "wire", width, False))
+        elif kind == _WAVE_INT:
+            variables.append(self._writer.var(path, "wire", 1, True))
+        else:
+            variables.append(self._writer.var(path, "string", 1, False))
+
+    def tap(self, name, value, main):
+        """sim_wave(name, value) in the final pass of a cycle, under @MAIN main
+        (None outside one): a name starting with "/" is a path below the top
+        scope, any other is below the MAIN's scope; "/" and "." separate the
+        scopes of a path."""
+        key = (name, main)
+        path = self._tap_paths.get(key)
+        if path is None:
+            path = self._tap_paths[key] = self._tap_path(name, main)
+        self._sample(path, value)
+
+    def _tap_path(self, name, main):
+        if not isinstance(name, str):
+            raise TypeError(
+                f"sim_wave(name, value): the name must be a str, got {name!r}"
+            )
+        names = tuple(
+            _VCD_SPACE_RE.sub("_", part) for part in re.split(r"[/.]", name) if part
+        )
+        if not names:
+            raise ValueError(f"sim_wave({name!r}, ...): the name has no signal name")
+        if name.startswith("/") or main is None:
+            return (self._top,) + names
+        return (self._top, main._pypeline_main.name) + names
+
+    def main_return(self, main, value):
+        """The value @MAIN main returned in the final pass of a cycle."""
+        path = self._returns.get(main)
+        if path is not None:
+            self._sample(path, value)
+
+    def _sample(self, path, value):
+        signal = self._signals.get(path)
+        key = _wave_shape_key(value)
+        try:
+            if signal is None:
+                signal = self._declare(path, _wave_layout_of_value(value))
+                signal.keys.add(key)
+            elif key not in signal.keys:
+                layout = _wave_layout_of_value(value)
+                if not _wave_layouts_match(signal.layout, layout):
+                    raise _WaveShapeError(
+                        f"{_wave_layout_text(layout)} where it was "
+                        f"{_wave_layout_text(signal.layout)}"
+                    )
+                signal.keys.add(key)
+            leaves = []
+            _wave_flatten(signal.layout, value, leaves)
+        except (_WaveShapeError, TypeError, AttributeError) as e:
+            raise ValueError(
+                f"waveform signal '{'/'.join(path)}' got {e}: a signal keeps the "
+                f"type it started with, so give a value of another type its own name"
+            ) from None
+        if path in self._pending and path not in self._noted:
+            self._noted.add(path)
+            print(
+                f"NOTE: waveform signal '{'/'.join(path)}' was sampled more than "
+                f"once in a cycle; the waveform shows the last value. Give each "
+                f"sim_wave call its own name to see them all."
+            )
+        self._pending[path] = tuple(leaves)
+
+    def end_cycle(self, cycle):
+        """After the final pass of cycle: sample the ports and selected Wires,
+        then write every signal that changed at time cycle * period, the clock
+        rising there (from cycle 1) and falling half a period later."""
+        import pypeline
+
+        state = pypeline._sim_wire_state
+        for path, key in self._wires:
+            self._sample(path, state[key])
+        lines = []
+        for path, leaves in self._pending.items():
+            signal = self._signals[path]
+            if leaves == signal.last:
+                continue
+            last = signal.last or (None,) * len(leaves)
+            for var, new, old in zip(signal.vars, leaves, last):
+                if new != old:
+                    lines.append(var.line(new))
+            signal.last = leaves
+        self._pending.clear()
+        time = cycle * self._period
+        clock = self._clock.code
+        lines.append(f"{1 if cycle else 0}{clock}\n")
+        self._writer.write(time, "".join(lines))
+        if cycle:
+            self._writer.write(time + self._period // 2, f"0{clock}\n")
+        self._cycles = cycle + 1
+
+    def close(self):
+        """Write the waveform file, ending after the last cycle written; an
+        .fst is converted from the VCD by vcd2fst, which keeps the VCD if that
+        fails."""
+        import subprocess
+
+        self._writer.close(self._cycles * self._period)
+        if self._fst:
+            vcd = self._writer.path
+            proc = subprocess.run(
+                ["vcd2fst", "-v", vcd, "-f", self.path], capture_output=True, text=True
+            )
+            if proc.returncode != 0:
+                print(
+                    f"WARNING: vcd2fst could not convert the waveform (exit "
+                    f"{proc.returncode}): {proc.stderr.strip()}. The VCD is {vcd}"
+                )
+                return
+            os.remove(vcd)
+        signals = len(self._signals) + 1  # and the clock
+        print(
+            f"Waveform: {self.path} ({signals} signal{'s' * (signals != 1)}, "
+            f"{self._cycles} cycle{'s' * (self._cycles != 1)})"
+        )
+
+
+def START_NATIVE_WAVES(path, patterns, mains, design_wires):
+    """Start recording a native simulation's waveform to path (.vcd or .fst):
+    pypeline_sim.run_sim calls this once a run's @MAINs and global wires are
+    known, before its first cycle. The top scope is SYN.TOP_LEVEL_MODULE (the
+    top-level entity), the clock its port name with one period per cycle
+    (clk, 1 ns, when no @MAIN names a rate); patterns are the --wave_signals
+    globs. Installs a WaveRecorder as pypeline's sim_wave recorder."""
+    import pypeline
+
+    problem = NATIVE_WAVE_PROBLEM(path)
+    if problem is not None:
+        raise ValueError(problem)
+    clock = next(
+        (fn._pypeline_main.clock for fn in mains if fn._pypeline_main.clock), None
+    )
+    recorder = WaveRecorder(
+        path,
+        SYN.TOP_LEVEL_MODULE or "top",
+        "clk" if clock is None else clock.port_name,
+        1000 if clock is None else round(1e6 / clock.mhz),
+    )
+    recorder.add_wires(design_wires, patterns)
+    recorder.add_main_returns(mains)
+    pypeline.SET_SIM_WAVE_RECORDER(recorder)
+
+
+def STOP_NATIVE_WAVES():
+    """Close the waveform START_NATIVE_WAVES started, however the run ended:
+    it ends after the last complete cycle (a sim_finish() cycle included), so
+    a failing run still leaves a valid waveform."""
+    import pypeline
+
+    recorder = pypeline._sim_wave_recorder
+    pypeline.SET_SIM_WAVE_RECORDER(None)
+    if recorder is not None:
+        recorder.close()

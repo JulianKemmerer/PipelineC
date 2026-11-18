@@ -437,9 +437,10 @@ Within each group, bugs that affect both front ends come first, problems in the 
 
 - **Front ends:** Python, native simulation only. The generated hardware is correct.
 - **What happens:** with `q: Wire[uint1_t]` written from a comparison (`q = t >= 2`), `if ~q:` is taken in every cycle of native simulation. The wire holds the comparison's Python `bool`, and `~True` is `-2`, which is truthy. In hardware `~q` is the one-bit NOT, so native and HDL simulation disagree from the first cycle in which the comparison is true. The issue's design prints `q` from the third cycle in GHDL and never natively.
+- **Also:** a list of plain ints written to an array wire stays plain ints. With `lanes_w: Wire[uint8_t[2]]` written as `lanes_w = [1, 2]`, `array_to_uint_le(lanes_w)` packs each element at its own bit length: 5 natively, `0x0201` = 513 in GHDL. A testbench writing fields of a struct wire the same way sees the same widths.
 - **Where to look (suspected, not traced):** `pypeline._sim_wire_write` stores the value as given, so a Python `bool` stays a `bool`. Casting a write to the wire's type, the way a typed local gets its type through `_TypedAnnAssignRewriter`, would make `~` the one-bit NOT.
-- **Reproduce:** the design and both runs are in the issue. `python3 src/tests/pypeline_tests/run_all.py --category known_issues -t native_invert_compare_wire_known_issue -j 1` (XFAIL while the bug is present) runs it natively and asserts the hardware's answer (`inst/native_invert_compare_wire_test.py`).
-- **Workaround:** test `q == 0` instead of `~q`, or assign the comparison to a typed local first (`c: uint1_t = t >= 2`, then `q = c`).
+- **Reproduce:** the design and both runs are in the issue. `python3 src/tests/pypeline_tests/run_all.py --category known_issues -t native_invert_compare_wire_known_issue -j 1` (XFAIL while the bug is present) runs both designs natively and asserts the hardware's answers (`inst/native_invert_compare_wire_test.py`).
+- **Workaround:** test `q == 0` instead of `~q`, or assign the value to a typed local first (`c: uint1_t = t >= 2`, then `q = c`; `lanes: uint8_t[2] = [1, 2]`), or cast it (`uint8_t(x)`).
 
 ## Invalid HDL, crashes and misleading errors
 

@@ -792,7 +792,8 @@ any rate, so these tests check the rate itself.
   does not know included), a `--latency_hints` file's contents, the compiler hash, a
   `PIPELINEC_*` environment variable and a record without build inputs each make the run
   build, naming what changed. `-j`, `--out_dir`, `--syn_cache`, `--syn_cache_prune`,
-  simulation options, `-D` order and other environment variables don't. A `--sim` or
+  simulation options (`--run`, `--cocotb`, `--wave`, `--wave_signals`), `-D` order and
+  other environment variables don't. A `--sim` or
   `--rebuild` run, another top and a C top are never up to date.
 - `built_hardware_sim_test.py` (build_report_device_models): one sky130 build of
   `built_hardware_top_design.py`, whose real ports keep all of
@@ -851,6 +852,35 @@ hand-worked numbers.
   - every packet checked, with exact byte accounting;
   - 2.0 B/cycle sustained;
   - consistent taps, buffer conservation and the verdict.
+
+## Waveform coverage
+
+`--wave FILE` ([SIM_DESIGN.md](SIM_DESIGN.md#6-waveforms)) is covered by one wrapper,
+`inst/waves_test.py`, registered once per variant, and its fixture `inst/waves_design.py`
+(ports, a struct/array/enum/signed global Wire, a return, `sim_wave` signals of each kind,
+`axis_wave`, a handshake and a state probe, and a `sim_finish()` end). Each variant was
+mutation-checked by hand: samples written a cycle late, the `sim_finish()` cycle dropped,
+untyped widths not grown, enums shown as bits, ports, probes or the pipelined-MAIN refusal
+skipped, axis lanes reversed, `.fst` passed to GHDL as `--vcd`, and `--wave` counted as a
+build input each fail a check.
+- `waves_unit` (unit, in-process): VCD layouts of structs, arrays, enums, signed and
+  untyped values and strings; tap paths and source-text names; the sampled-twice NOTE;
+  type changes; clock edges, cycle times and the end time; the header written at close;
+  `--wave_signals` globs; `CHECK_WAVE_ARGS`'s refusals; `pypeline_sim_debug.py`'s per-run
+  files; `sim_wave`'s gating (no recorder, convergence, constant folding, pipelined MAIN).
+- `waves_native_vcd` (native_sim): `pypelinec --sim --comb --wave` on the fixture, every
+  signal's value at every cycle time, values changing exactly at their cycle, the clock,
+  the `sim_finish()` end time and the absence of an unselected Wire; standalone
+  `pypeline_sim.py --wave` must write the same bytes.
+- `waves_native_fst` (native_sim, needs `vcd2fst` and `fst2vcd`): the same checks on the
+  `.fst`, read back through `fst2vcd`, and no leftover VCD.
+- `waves_elab` (elab): the fixture elaborates, and its top level has only the clock,
+  `rst`, `count` and the return port.
+- `waves_ghdl` (build_report_device_models, needs `ghdl` and `cocotb-config`): `--cocotb
+  --ghdl --wave` with `.vcd`, `.fst` and `.ghw` passes GHDL its `--vcd=`/`--fst=`/`--wave=`
+  option and writes only that file; without `--wave`, `cocotb/top.vcd`.
+
+`built_hardware_current_test` (above) checks that `--wave` is not a build input.
 
 ## AUTO_MULTI_CYCLE coverage
 
@@ -1032,10 +1062,11 @@ The remaining global wire tests:
   with no shared wire, where `global_wires_pkg` is not written but `top.vhd` uses
   its types, so GHDL rejects the VHDL
   ([#384](https://github.com/JulianKemmerer/PipelineC/issues/384)).
-- `native_invert_compare_wire_known_issue` (`known_issues`, native sim only): `~q`,
-  where `q: Wire[uint1_t]` is written from a comparison, is truthy in every cycle
-  because the wire holds a Python `bool` (`native_invert_compare_wire_test.py`
-  asserts the hardware's answer,
+- `native_invert_compare_wire_known_issue` (`known_issues`, native sim only): native
+  simulation keeps a wire's value uncast. `~q`, where `q: Wire[uint1_t]` is written from
+  a comparison, is truthy in every cycle because the wire holds a Python `bool`, and
+  `array_to_uint_le` of a `Wire[uint8_t[2]]` written as `[1, 2]` packs to 5, not
+  `0x0201` (`native_invert_compare_wire_test.py` asserts the hardware's answers,
   [#392](https://github.com/JulianKemmerer/PipelineC/issues/392)).
 
 **Pipeline timing.** See the guide's

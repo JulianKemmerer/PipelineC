@@ -190,6 +190,27 @@ def get_tests() -> list:
             needs_out_dir=True,
         )
     )
+    # pypelinec --sim --comb --wave on waves_design.py: every port, Wire,
+    # return, sim_wave signal and probe at every cycle time, the clock and the
+    # sim_finish() end time; standalone pypeline_sim.py writes the same VCD.
+    # The FST variant reads the vcd2fst result back through fst2vcd.
+    tests.append(
+        Test(
+            name="waves_native_vcd",
+            category="native_sim",
+            cmd=[INST_DIR / "waves_test.py", "--variant", "native_vcd"],
+            needs_out_dir=True,
+        )
+    )
+    tests.append(
+        Test(
+            name="waves_native_fst",
+            category="native_sim",
+            cmd=[INST_DIR / "waves_test.py", "--variant", "native_fst"],
+            needs_out_dir=True,
+            requires=["vcd2fst", "fst2vcd"],
+        )
+    )
     tests.append(
         Test(
             name="sim_model_convergence_test",

@@ -25,6 +25,10 @@ particular is slow. On mismatch, the report also prints +/- --context cycles
 of debug-tagged lines around the first divergence, side by side, from both
 logs -- no manual grep round-trip needed.
 
+--wave FILE.vcd (or .fst) records both runs' waveforms, each to its own file
+(<out_dir>/native.vcd and <out_dir>/vhdl.vcd), since the two runs are
+concurrent; --wave_signals goes to the native run only.
+
 Design notes: docs/pypeline_sim_DESIGN.md (`sim_print(..., debug=True)` and
 "pypeline_sim_debug.py under non---comb"). User docs: docs/README.md.
 """
@@ -74,6 +78,32 @@ def _cycles_of_debug_lines(stdout_text):
         if cur_cycle is not None and _DEBUG_LINE_RE.match(line):
             cycles[cur_cycle].append(line)
     return cycles
+
+
+def _wave_run_args(wave, wave_signals, out_dir):
+    """The --wave arguments of the native and the VHDL run, for this tool's
+    --wave FILE and --wave_signals: each run writes its own file,
+    <out_dir>/native.<ext> and <out_dir>/vhdl.<ext> (FILE's extension picks the
+    format), since the two run at once. Raises ValueError for a format native
+    simulation cannot write."""
+    if wave is None:
+        if wave_signals:
+            raise ValueError(
+                "--wave_signals chooses what --wave FILE records; give --wave too"
+            )
+        return [], []
+    import SIM
+
+    fmt = SIM.WAVE_FORMAT(wave)
+    if fmt not in SIM.NATIVE_WAVE_FORMATS:
+        raise ValueError(
+            f"--wave {wave}: both runs write the waveform, and native simulation "
+            f"writes .vcd or .fst"
+        )
+    native = ["--wave", os.path.join(out_dir, "native." + fmt)]
+    for pattern in wave_signals:
+        native += ["--wave_signals", pattern]
+    return native, ["--wave", os.path.join(out_dir, "vhdl." + fmt)]
 
 
 def _find_c_file(pypelinec_args):
@@ -131,6 +161,20 @@ def main():
         f"around the first divergence, from both runs side by side "
         f"(default: {_DEFAULT_CONTEXT_CYCLES}; 0 disables).",
     )
+    parser.add_argument(
+        "--wave",
+        metavar="FILE",
+        default=None,
+        help="Record both runs' waveforms, as '<out_dir>/native.<ext>' and "
+        "'<out_dir>/vhdl.<ext>': FILE's extension, .vcd or .fst, picks the format.",
+    )
+    parser.add_argument(
+        "--wave_signals",
+        action="append",
+        default=[],
+        metavar="PATTERN",
+        help="Passed to the native run (pypelinec --wave_signals). Repeatable.",
+    )
     args, pypelinec_args = parser.parse_known_args()
 
     if "--cocotb" in pypelinec_args or "--ghdl" in pypelinec_args:
@@ -149,6 +193,13 @@ def main():
     os.makedirs(out_dir, exist_ok=True)
     native_log_path = os.path.join(out_dir, "native.log")
     vhdl_log_path = os.path.join(out_dir, "vhdl.log")
+    try:
+        native_wave_args, vhdl_wave_args = _wave_run_args(
+            args.wave, args.wave_signals, os.path.abspath(out_dir)
+        )
+    except ValueError as e:
+        print(f"error: {e}", file=sys.stderr)
+        return 2
 
     # Both branches below run the two sims CONCURRENTLY; what differs is
     # whether an expensive build-only pass has to happen first (non---comb) or
@@ -181,14 +232,14 @@ def main():
                 shutil.rmtree(sim_out_dir)
             if os.path.isdir(build_out_dir):
                 shutil.copytree(build_out_dir, sim_out_dir, symlinks=True)
-        native_args = no_sim_args + ["--sim", "--out_dir", native_out_dir]
-        vhdl_args = no_sim_args + [
-            "--cocotb",
-            "--ghdl",
-            "--sim",
-            "--out_dir",
-            vhdl_out_dir,
-        ]
+        native_args = (
+            no_sim_args + ["--sim", "--out_dir", native_out_dir] + native_wave_args
+        )
+        vhdl_args = (
+            no_sim_args
+            + ["--cocotb", "--ghdl", "--sim", "--out_dir", vhdl_out_dir]
+            + vhdl_wave_args
+        )
         with concurrent.futures.ThreadPoolExecutor(max_workers=2) as pool:
             native_future = pool.submit(_run_pypelinec, native_args, "native")
             vhdl_future = pool.submit(_run_pypelinec, vhdl_args, "VHDL/cocotb")
@@ -198,13 +249,14 @@ def main():
             native_returncode = native_returncode or build_returncode
             vhdl_returncode = vhdl_returncode or build_returncode
     else:
-        native_args = list(pypelinec_args) + ["--out_dir", native_out_dir]
-        vhdl_args = list(pypelinec_args) + [
-            "--cocotb",
-            "--ghdl",
-            "--out_dir",
-            vhdl_out_dir,
-        ]
+        native_args = (
+            list(pypelinec_args) + ["--out_dir", native_out_dir] + native_wave_args
+        )
+        vhdl_args = (
+            list(pypelinec_args)
+            + ["--cocotb", "--ghdl", "--out_dir", vhdl_out_dir]
+            + vhdl_wave_args
+        )
         # Comb: native sim is fast; VHDL/cocotb+GHDL sim is slow -- run both
         # concurrently (they're independent subprocesses writing to separate
         # --out_dirs) rather than paying their combined wall-clock time
@@ -221,6 +273,8 @@ def main():
         f.write(native_stdout)
     with open(vhdl_log_path, "w") as f:
         f.write(vhdl_stdout)
+    if native_wave_args:
+        print(f"Waveforms: {native_wave_args[1]}  {vhdl_wave_args[1]}")
 
     native_cycles = _cycles_of_debug_lines(native_stdout)
     vhdl_cycles = _cycles_of_debug_lines(vhdl_stdout)

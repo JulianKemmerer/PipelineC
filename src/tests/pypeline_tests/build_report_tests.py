@@ -477,6 +477,17 @@ def get_tests() -> list:
             requires=["ghdl"],
         )
     )
+    # --cocotb --ghdl --wave: GHDL writes the .vcd/.fst/.ghw asked for (its
+    # --vcd=/--fst=/--wave= option), and cocotb/top.vcd without --wave
+    tests.append(
+        Test(
+            name="waves_ghdl",
+            category=DM,
+            cmd=[INST_DIR / "waves_test.py", "--variant", "ghdl"],
+            needs_out_dir=True,
+            requires=["ghdl", "cocotb-config"],
+        )
+    )
     # Global wires below the root of a pipelined function and VOLATILE ones:
     # per-instance hardware timing self-checked under cocotb+GHDL, and the
     # native sim refusals (SimPipelineModelError) for what it cannot model.

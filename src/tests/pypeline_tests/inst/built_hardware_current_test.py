@@ -183,6 +183,7 @@ def test_operational_settings_are_not_inputs():
             dict(syn_cache="store"),
             dict(syn_cache_prune=30.0),
             dict(run=99, cocotb=True, ghdl=True),
+            dict(wave="run.vcd", wave_signals=["*"]),
             dict(define=["B", "A=1", "A=1"]),
         ):
             verdict, printed = is_current(design, make_args(**overrides))

@@ -63,6 +63,7 @@ For the shared pypeline.py type system and `SimVal` foundations, see
   - [`@sim_input` — Driving Simulation Inputs](#sim_input--driving-simulation-inputs)
   - [`sim_print` — printf-style Console + Hardware Output](#sim_print--printf-style-console--hardware-output)
   - [`sim_print(..., debug=True)` — tagged prints for `pypeline_sim_debug.py`](#sim_print-debugtrue--tagged-prints-for-pypeline_sim_debugpy)
+  - [`sim_wave` — signals in the simulation's waveform](#sim_wave--signals-in-the-simulations-waveform)
   - [`sim_assert` / `sim_finish` — simulation control builtins](#sim_assert--sim_finish--simulation-control-builtins)
   - [`@initial` / `@final` — start/end-of-run hooks](#initial--final--startend-of-run-hooks)
   - [Invocation via `pipelinec --sim --run N`](#invocation-via-pipelinec---sim---run-n)
@@ -1657,8 +1658,14 @@ however the run ended: the `@final(sim)` hooks. See
 3. _sim_converging = False
    all MAINs run once more — the **final pass**:
      @sim_output functions fire; print/side-effects execute with converged wire values
+     with --wave: each MAIN's return goes to the waveform recorder, then end_cycle()
+     writes the cycle (also when a sim_finish() ends the pass)
 4. _sim_reg_flush_buffer()           ← simulated clock edge: all flip-flops update
 ```
+
+Step 3 is the waveform's sample point: `_sim_wire_state` then holds the cycle's converged
+wires, which register commits do not change (see
+[Waveforms](SIM_DESIGN.md#6-waveforms)).
 
 ### Delta-Cycle Convergence Queue
 
@@ -1893,6 +1900,36 @@ pre-existing format-string-sharing between native and VHDL rendering) is what le
 `pypeline_sim_debug.py` (`src/pypeline_sim_debug.py`) diff `debug=True` lines between the two
 sims as plain strings, with no per-value normalization needed. See `docs/pypeline_guide.md`'s
 `sim_print(..., debug=True)` section for usage.
+
+### `sim_wave` — signals in the simulation's waveform
+
+`sim_wave(name, value)` (or `sim_wave(value)`) shows a value as a signal of the waveform
+`pypelinec --sim --wave FILE` records ([guide](pypeline_guide.md#waveforms)). Like
+`sim_print`, it is a plain function in `pypeline.py`, gated by `_sim_converging`, so it
+records once per cycle in the final pass. Unlike `sim_print`, hardware never sees it:
+`sim_wave._is_sim_output = True`, so `FuncElaborator._elab_stmt` deletes the call, arguments
+included, and `_check_sim_only_call_sites` allows it only as a statement. Under
+`_const_folding` it raises `SimOnlyCallInElab`, as an `@sim_output` wrapper does.
+
+- **The recorder.** It records into `_sim_wave_recorder`, which
+  `SIM.START_NATIVE_WAVES` installs through `SET_SIM_WAVE_RECORDER` for a `run_sim` with a
+  `wave` file, and `SIM.STOP_NATIVE_WAVES` removes. `pypeline` only calls its `tap(name,
+  value, main)` method and never imports `SIM`; with no recorder (`sim_call` loops, runs
+  without `--wave`) `sim_wave` returns at once. `sim_wave_enabled()` answers whether a call
+  would record now, so a library (the stream perf probes) skips building names nothing
+  records. Naming, layout and timing are the recorder's:
+  [SIM_DESIGN.md](SIM_DESIGN.md#6-waveforms).
+- **Names from source.** With one argument the name is the argument's source text with its
+  whitespace removed (`sim_wave(o.axis_in_if.ready)` is `o.axis_in_if.ready`, the scopes
+  `o/axis_in_if/ready`). `_sim_wave_source_name` takes the caller frame's file and line
+  (the original source's, as for `sim_print(debug=True)`) and finds the one-argument
+  `sim_wave` call spanning that line among those `_sim_wave_one_arg_calls` parsed from the
+  file (`ast.get_source_segment`), cached per file in `_sim_wave_calls`. No call there, or
+  more than one, is a `ValueError` asking for a name.
+- **Pipelined regions.** A tap's cycle must be the hardware's, so, like
+  `sim_print(debug=True)`, `sim_wave` calls `_sim_check_debug_probe_not_in_pipeline(frame,
+  what)`, which raises inside a pipelined pure MAIN or an AUTO_PIPELINE core: native sim
+  evaluates those at stage 0.
 
 ### `sim_assert` / `sim_finish` — simulation control builtins
 
@@ -2893,6 +2930,14 @@ mid-run assert (still the error raised) and a failing final hook; syn-only hooks
 running in sim; and the `sim_finish()`-in-a-hook and bad-decorator errors.
 `inst/hooks_order_test.py` covers the driver flows (native `--sim --comb` here; the build
 variants in `elab_tests.py` and `build_report_tests.py`).
+
+Waveforms are covered by `inst/waves_test.py`. Its `unit` variant (`unit` category) checks
+`sim_wave` itself: it records only with a recorder, in a final pass, outside constant
+folding and outside pipelined MAINs, and names a one-argument call after its source text.
+Its `native_vcd` and `native_fst` variants run `inst/waves_design.py` through `pipelinec
+--sim --comb --wave` and check every signal at every cycle time; standalone
+`pypeline_sim.py --wave` must write the same file. See
+[SIM_DESIGN.md](SIM_DESIGN.md#8-tests) for the rest of its variants.
 
 `sim_model` is covered by `inst/sim_model_test.py`, registered twice: as a plain-`python3`
 run (both model forms on vhdl-bodied accumulators, two-call-site instance independence,

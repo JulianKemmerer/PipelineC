@@ -8457,17 +8457,18 @@ def sim_print(s, *, debug=False):
         # Fail loudly rather than emit a print that will silently mis-compare
         # (see pypeline_sim_DESIGN.md's Limitations). Only triggers under a
         # pipelined build; plain native/--comb sim has no pipelined context.
-        _sim_check_debug_probe_not_in_pipeline(
-            f"{frame.f_code.co_filename}:{frame.f_lineno}"
-        )
+        _sim_check_debug_probe_not_in_pipeline(frame)
         s = f"{tag}: {s}"
     print(s)
     return SimVal(0)
 
 
-def _sim_check_debug_probe_not_in_pipeline(loc: str) -> None:
-    """Raise if a sim_print(debug=True) is executing inside pipelined comb
-    (a pipelined pure MAIN, or an AUTO_PIPELINE core's func evaluation)."""
+def _sim_check_debug_probe_not_in_pipeline(frame, what="sim_print(debug=True)") -> None:
+    """Raise if a probe whose cycle must be the hardware's -- a
+    sim_print(debug=True), which pypeline_sim_debug.py compares against VHDL,
+    or a sim_wave tap -- is executing inside pipelined comb (a pipelined pure
+    MAIN, or an AUTO_PIPELINE core's func evaluation). frame is its caller's;
+    what names the probe."""
     in_pipelined_main = (
         _sim_current_main is not None and _sim_current_main in _sim_pipelined_main_info
     )
@@ -8477,17 +8478,135 @@ def _sim_check_debug_probe_not_in_pipeline(loc: str) -> None:
     )
     if in_pipelined_main or in_auto_pipeline_core:
         where = "a pipelined pure MAIN" if in_pipelined_main else "an AUTO_PIPELINE core"
+        fine_anywhere = (
+            " (plain sim_print(...) without debug=True is fine anywhere -- it is "
+            "not cycle-compared)"
+            if what == "sim_print(debug=True)"
+            else ""
+        )
         raise RuntimeError(
-            f"sim_print(debug=True) at {loc} executed inside {where}. Its cycle "
-            f"cannot be compared against VHDL: native sim runs pipelined comb at "
-            f"stage-0 timing while the VHDL fires it at its retimed pipeline "
-            f"stage. Move debug=True probes into a stateful (0-latency) MAIN "
-            f"that reads the pipeline's output wires (plain sim_print(...) "
-            f"without debug=True is fine anywhere -- it is not cycle-compared)."
+            f"{what} at {frame.f_code.co_filename}:{frame.f_lineno} executed "
+            f"inside {where}. Its cycle cannot be the hardware's: native sim runs "
+            f"pipelined comb at stage-0 timing while the VHDL computes it at its "
+            f"retimed pipeline stage. Move it into a stateful (0-latency) MAIN "
+            f"that reads the pipeline's output wires{fine_anywhere}."
         )
 
 
 sim_print._is_sim_print = True
+
+
+# ─────────────────────────────────────────────
+# sim_wave -- a named signal in the simulation's waveform
+# (an @sim_output: elaboration deletes the call; native sim records it with --wave)
+# ─────────────────────────────────────────────
+
+# The running native simulation's waveform recorder (SIM.WaveRecorder,
+# installed by SIM.START_NATIVE_WAVES), or None when none is recorded
+_sim_wave_recorder = None
+# Source file -> (first line, last line, argument text) of each one-argument
+# sim_wave(value) call in it, which names its signal after that text
+_sim_wave_calls = {}
+
+
+def SET_SIM_WAVE_RECORDER(recorder):
+    """Install the waveform recorder sim_wave records to (None: none)."""
+    global _sim_wave_recorder
+    _sim_wave_recorder = recorder
+
+
+def sim_wave_enabled():
+    """True when a sim_wave call would be recorded now: a waveform is being
+    recorded and this is a cycle's final pass. Lets a library skip building
+    signal names nothing would record."""
+    return _sim_wave_recorder is not None and not _sim_converging
+
+
+def sim_wave(*args):
+    """Show a value as a signal in the simulation's waveform
+    (`pypelinec ... --sim --wave FILE.vcd`), once per cycle, with the cycle's
+    converged values (@sim_output semantics). Hardware never sees it:
+    elaboration deletes the call, arguments included.
+
+        sim_wave("state", st)          # <MAIN>/state
+        sim_wave("/phase", "warmup")   # a string, at the top scope
+        sim_wave(o.axis_in_if.ready)   # named after its source: o/axis_in_if/ready
+
+    A name starting with "/" is a path below the top scope; any other name is
+    below the scope of the @MAIN being run. "/" and "." separate scopes. With
+    one argument the signal is named after the argument's source text.
+
+    The value is a Pypeline value (its type gives the signal's width; an
+    @struct is a scope of its fields, an array one signal per element, an
+    @enum the member's name), a bool, a non-negative int (as wide as its widest
+    value), a str, or a list of these. A signal keeps the type of its first
+    value. Inside a pipelined pure MAIN or an AUTO_PIPELINE core it raises,
+    like sim_print(debug=True): native sim computes those at stage 0, not at
+    the cycle the hardware does. Without --wave it does nothing.
+    """
+    if _const_folding:
+        raise SimOnlyCallInElab(sim_wave)
+    if _sim_converging or _sim_wave_recorder is None:
+        return SimVal(0)
+    frame = _sys._getframe(1)
+    if len(args) == 2:
+        name, value = args
+    elif len(args) == 1:
+        name, value = _sim_wave_source_name(frame), args[0]
+    else:
+        raise TypeError(
+            f"sim_wave takes (name, value) or (value), got {len(args)} arguments"
+        )
+    _sim_check_debug_probe_not_in_pipeline(frame, f"sim_wave({name!r}, ...)")
+    _sim_wave_recorder.tap(name, value, _sim_current_main)
+    return SimVal(0)
+
+
+# Deleted by elaboration, and allowed only as a statement, like an @sim_output
+sim_wave._is_sim_output = True
+
+
+def _sim_wave_source_name(frame):
+    """The signal name of the sim_wave(value) call frame is running: the
+    argument's source text without whitespace (o.axis_in_if.ready)."""
+    filename, line = frame.f_code.co_filename, frame.f_lineno
+    calls = _sim_wave_calls.get(filename)
+    if calls is None:
+        calls = _sim_wave_calls[filename] = _sim_wave_one_arg_calls(filename)
+    texts = [text for first, last, text in calls if first <= line <= last]
+    if len(texts) != 1:
+        found = "none" if not texts else f"{len(texts)} of them"
+        raise ValueError(
+            f"sim_wave(value) at {filename}:{line} names its signal after the "
+            f"argument's source text, but the source there has {found}; name "
+            f"the signal: sim_wave('name', value)"
+        )
+    return texts[0]
+
+
+def _sim_wave_one_arg_calls(filename):
+    """(first line, last line, argument text) of each one-argument sim_wave
+    call in filename's source; empty when the source cannot be read."""
+    import linecache
+
+    source = "".join(linecache.getlines(filename))
+    try:
+        tree = _ast.parse(source)
+    except SyntaxError:
+        return []
+    calls = []
+    for node in _ast.walk(tree):
+        if (
+            isinstance(node, _ast.Call)
+            and len(node.args) == 1
+            and not node.keywords
+            and "sim_wave"
+            in (getattr(node.func, "id", None), getattr(node.func, "attr", None))
+        ):
+            text = _ast.get_source_segment(source, node.args[0])
+            if text is not None:  # None: no positions (inside an f-string, on 3.8)
+                calls.append((node.lineno, node.end_lineno, "".join(text.split())))
+    return calls
 
 
 # ─────────────────────────────────────────────

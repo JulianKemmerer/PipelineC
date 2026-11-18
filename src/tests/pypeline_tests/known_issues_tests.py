@@ -61,9 +61,10 @@ SWEEP_FLOAT32_BLOCKED = {
 
 def get_tests() -> list:
     tests = []
-    # Native sim: `~q` of a Wire[uint1_t] written from a comparison is always
-    # truthy (the wire holds a Python bool; ~True is -2), unlike the hardware's
-    # one-bit NOT. Issue #392.
+    # Native sim stores a wire's value uncast: `~q` of a Wire[uint1_t] written
+    # from a comparison is always truthy (the wire holds a Python bool; ~True
+    # is -2), unlike the hardware's one-bit NOT, and array_to_uint_le of a
+    # Wire[uint8_t[2]] written as [1, 2] packs to 5, not 0x0201. Issue #392.
     tests.append(
         Test(
             name="native_invert_compare_wire_known_issue",

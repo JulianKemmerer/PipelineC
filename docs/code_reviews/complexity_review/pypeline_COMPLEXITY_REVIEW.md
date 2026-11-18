@@ -37,6 +37,20 @@ Use one `OperatorRegistry` with operator-kind data, explicit precedence and a sc
 
 Introduce a `DesignSession` owning registries and immutable build selections, plus a separate `SimulationSession`. Capture source/AST once in a function descriptor and prepare simulation lazily. A typed operator specification should supply promotion, truncation and evaluation rules to both elaboration and simulation. These are structural changes; merely splitting this file by topic would not remove duplicated semantics.
 
+**Confirmed defect: a global wire holds whatever was written to it** (tree after commit
+`0b710cca`, found adding waveforms). `_sim_wire_write` and `_sim_wire_lens_write` store the
+value as given, never cast to the wire's type (`_sim_wire_ctype`), so what a reader sees
+depends on how the writer spelled the value. A comparison stays a Python `bool` (`~q` is
+`-2`, [#392](https://github.com/JulianKemmerer/PipelineC/issues/392)); a list literal stays
+plain ints, which `array_to_uint_le` packs at their own bit lengths (`[1, 2]` gives 5 where
+GHDL gives `0x0201`); a testbench's `ports.aad_len = AAD_LEN` stays an untyped int.
+`known_issues:native_invert_compare_wire_known_issue` reproduces the first two. Every
+consumer of wire values inherits this: the waveform recorder takes ports' and Wires'
+widths from their declared types, and `axis_wave` casts its lanes, to stay correct.
+Casting at the write (`_sim_cast_deep` with the wire's ctype, as `_TypedAnnAssignRewriter`
+does for typed locals) would fix all of them; measure the native simulation cost, since
+wire writes are a hot path.
+
 **`@interface` is part library, part `pypeline.py`, coupled by attribute names** (tree after commit `5b816e9d`, found while renaming the interface halves). The design documents call `@interface` a pure library construct (`include/pypeline/interface.py`), but this module names its halves (`_derived_type`, `_interface_half_symbol`), checks port pairing (`_check_partial_interface_ports`, `_interface_half_of`) and encodes interface parameters (`encode_param_value`), all by reading the stamps `interface()` sets: `_pypeline_is_interface`, `_pypeline_interface`, `_pypeline_interface_role`, `_pypeline_iface_derived` and `_pypeline_iface_canonical`. `PY_TO_LOGIC`, `DIAGRAM`, `interface_func` and `stream.stream` read some of the same stamps. Nothing declares them in one place, so a change to what an interface carries means finding every reader by grep. The half names show the cost: `interface._derive` builds the half class names (and so their C type keys) and `_derived_type` here builds their VHDL descriptions, and at `5b816e9d` the two used different suffixes (`<name>_t`/`<name>_feedback_t` against `<name>_fwd_t`/`<name>_fb_t`). `_interface_half_symbol` is the one rule both use. One small record type for the stamps, defined here and filled by `interface()`, would give the readers one definition.
 
 ## Validation

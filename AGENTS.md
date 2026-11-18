@@ -227,12 +227,12 @@ For test-runner commands, see [Testing](#testing).
 - **Ternary branches must have identical types.** A bare integer literal gets its
   minimum width, so `CONST if c else x16` fails when `CONST = 1`. Bind the constant to
   a typed local first (`k: uint16_t = CONST`).
-- **Native sim doesn't model VHDL-only primitives.** Functions that exist only as
-  VHDL primitives (`rotl`, `bswap`, `bit_dup`, `array_to_uint_le`, and `vhdl()`-based
-  wrappers like `make_stream_fifo`) raise `NotImplementedError` in native sim. That is
-  expected. Use them in designs anyway, and test that code through cocotb + GHDL.
-  Check the specific factory first: being built on `vhdl()` doesn't by itself mean a
-  wrapper can't simulate natively.
+- **Native sim runs raw `vhdl()` only through a `@sim_model`.** A `vhdl()`-based
+  function without one raises `NotImplementedError` in native sim. That is expected.
+  Use it in designs anyway, and test that code through cocotb + GHDL. Check the
+  specific function first: `make_fifo`, `make_ram` and `make_stream_ram` attach models
+  (so `make_stream_fifo` and `make_stream_auto_pipeline` simulate), and the bit
+  primitives (`rotl`, `bswap`, `bit_dup`, `array_to_uint_le`, ...) have native bodies.
 - **Native sim runs one clock.** It refuses a design whose `@MAIN`s name more than
   one clock ([Simulation across clocks](docs/pypeline_guide.md#simulation-across-clocks)).
   Check multi-clock behavior with HDL simulation or synthesis, and each clock's logic

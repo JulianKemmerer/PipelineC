@@ -54,6 +54,16 @@ def get_tests() -> list:
         )
         for filename in NO_SYNTH_TEST_FILES
     ]
+    # sim_wave signals, axis_wave and stream perf probes elaborate away: the
+    # waves fixture's top level has only its clock, ports and MAIN return
+    tests.append(
+        Test(
+            name="waves_elab",
+            category="elab",
+            cmd=[INST_DIR / "waves_test.py", "--variant", "elab"],
+            needs_out_dir=True,
+        )
+    )
     # @initial/@final(syn) hooks around a --no_synth build, and a MAIN calling
     # a hook failing elaboration
     for variant in ("no_synth", "call_from_hw"):

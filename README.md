@@ -96,6 +96,7 @@ uint1_t blink()
 | Verilog based existing module import | No | No |
 | Traditional HDL simulator support | [Yes](docs/pypeline_guide.md#simulation) | Yes |
 | Native Simulation | [Yes](docs/pypeline_guide.md#simulation) | No |
+| Waveforms (VCD/FST) from native simulation, with named signals (New) | [Yes](docs/README.md#waveforms) | No |
 | Valid-Ready handshaking | [Yes](docs/pypeline_guide.md#the-stream-interface-validready-handshaking) | Yes |
 | Globally visible point to point wires | [Yes](docs/pypeline_guide.md#global-signals) | Yes |
 | Multiple clock domains / Clock domain crossings | [Yes](docs/pypeline_guide.md#part-iv--multiple-clock-domains) | Yes |

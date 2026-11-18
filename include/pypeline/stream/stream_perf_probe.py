@@ -55,6 +55,16 @@ must only be mutated in place (`.enable(...)`, `.update(...)`): a
 `@sim_output` body executes against a detached copy of its module's globals,
 so rebinding either name would leave the probes writing into orphans.
 
+WAVEFORMS
+---------
+In a simulation that records a waveform (`pypelinec --sim --wave FILE`), every
+probe also shows its signals there, enabled in REGISTRY or not (`sim_wave`):
+`<label>/<name>/valid` and `/ready` for `hs`/`stream_hs`, `<label>/<name>`
+as the state's member name for `state`, `<label>/<name>/sel` (the selected
+requester's label) and `/granted` for `arb`/`arb_n`. A "." in a name is a
+scope too: `fifo.in` gives `<label>/fifo/in/valid`. `occupancy` shows nothing
+of its own; the buffer's `.in` and `.out` handshakes are already there.
+
 See pypeline_stream_perf_guide.md for the metrics these feed.
 """
 
@@ -131,7 +141,24 @@ def _data_keep(data):
 
 # --- plain-Python workers (kept out of the @sim_output bodies, which are
 # --- AST-rewritten; a one-line body keeps that rewriting trivial) ----------
+def _wave(name, **signals):
+    """Show a probe in the simulation's waveform (pypelinec --sim --wave), as
+    the signals <label>/<name>/<signal>, or as <label>/<name> itself for the
+    one signal `value`."""
+    path = "/" + _qualified(name)
+    for signal, value in signals.items():
+        pypeline.sim_wave(path if signal == "value" else path + "/" + signal, value)
+
+
+def _member_name(index, names):
+    """names[index], or the index in decimal when it is out of range."""
+    index = int(index)
+    return names[index] if 0 <= index < len(names) else str(index)
+
+
 def _note_hs(name, valid, ready, keep, epoch):
+    if pypeline.sim_wave_enabled():
+        _wave(name, valid=valid, ready=ready)
     if not REGISTRY.any_enabled():
         return
     tap = REGISTRY.tap(_qualified(name), HandshakeTap)
@@ -139,6 +166,8 @@ def _note_hs(name, valid, ready, keep, epoch):
 
 
 def _note_state(name, value, names, epoch):
+    if pypeline.sim_wave_enabled():
+        _wave(name, value=_member_name(value, names) if names else value)
     if not REGISTRY.any_enabled():
         return
     REGISTRY.tap(_qualified(name), StateTap).sample(epoch, (value, names))
@@ -165,6 +194,8 @@ def _note_occupancy(name, in_valid, in_ready, out_valid, out_ready, capacity, ep
 
 
 def _note_arb(name, sel, reqs, granted, labels, epoch):
+    if pypeline.sim_wave_enabled():
+        _wave(name, sel=_member_name(sel, labels), granted=granted)
     if not REGISTRY.any_enabled():
         return
     tap = REGISTRY.tap(_qualified(name), ArbTap, tuple(labels))

@@ -387,8 +387,8 @@ wherever a passage risks ambiguity about which of these worlds is being discusse
 Pypeline source can be simulated directly in Python. This section covers the language
 APIs for decorating and calling functions. The rest of the
 simulation feature set — `@sim_output`/`@sim_input`, `sim_print`/`sim_assert`/`sim_finish`,
-`@initial`/`@final` start/end hooks, `@sim_model`, and debug-tagged output — is reference
-material covered in
+`@initial`/`@final` start/end hooks, `@sim_model`, debug-tagged output, and waveforms with
+`sim_wave` — is reference material covered in
 [Simulation Reference](#simulation-reference) in Part VI, once you've got the basics down.
 
 **Testbenches run on the built design.** Keep the hardware top, with its real input and
@@ -6583,7 +6583,8 @@ See `src/tests/pypeline_tests/inst/vhdl_text_test.py` for a complete example.
 
 The rest of the simulation feature set, beyond the [Simulation](#simulation) basics in
 Part I: side-effect hooks, console output and simulation control, start/end-of-run hooks,
-the native-vs-VHDL debug probes, and Python simulation models for hand-written VHDL.
+the native-vs-VHDL debug probes, waveforms, and Python simulation models for hand-written
+VHDL.
 
 ### `@sim_output` — side effects once per cycle
 
@@ -6837,6 +6838,60 @@ the first cycle where native and VHDL disagree pinpoints the boundary responsibl
 See [Native-vs-VHDL cycle diff](README.md#pypeline_sim_debugpy--native-vs-vhdl-cycle-diff-tool)
 for tool invocation and output files.
 
+### Waveforms
+
+`pypelinec ... --sim --wave run.vcd` records the simulation's waveform (`.fst` works too);
+[Waveforms](README.md#waveforms) under Tools & CLI has the flags and GHDL's waveforms. A
+native simulation's waveform holds the clock, every `Input` and `Output`, each `@MAIN`'s
+return port (`<main>_return_output`), the
+[stream perf probes](../include/pypeline/stream/pypeline_stream_perf_guide.md#waveforms) and
+the global `Wire`s that `--wave_signals` selects, under the top-level entity's name
+(`top`) and with their hardware names. An `@struct` is a scope of its fields, an array one
+signal per element (`lanes[0]`, `lanes[1]`, ...) and an `@enum` its member's name.
+
+`sim_wave` shows any value as a signal. Write it as a statement, like a `@sim_output`
+call: it records once per cycle, with the cycle's converged values, and elaboration
+deletes it, arguments included.
+
+```python
+from pypeline import sim_wave
+
+@MAIN(100.0)
+def counter():
+    state: Reg[state_t]
+    count: Reg[uint8_t]
+    sim_wave("state", state)         # top/counter/state: the member's name
+    sim_wave(count)                  # top/counter/count: named after its source
+    sim_wave("/phase", "warmup")     # top/phase: a str, at the top scope
+    sim_wave("dbg.next", count + 1)  # top/counter/dbg/next: "." and "/" make scopes
+```
+
+- A name is below the scope of the `@MAIN` being run, unless it starts with `/`. With one
+  argument, the signal is named after the argument's source text.
+- The value is a Pypeline value (its type gives the width), a `bool`, a non-negative
+  `int` (as wide as its widest value), a `str`, or a list of these. A signal keeps the
+  type of its first value: a plain `int` takes that type's width, and a value of any
+  other type raises.
+- Two calls with one name in a cycle show the last value, with a NOTE.
+- Inside a pipelined pure `@MAIN` or an `AUTO_PIPELINE` core it raises, like
+  `sim_print(debug=True)`: native simulation computes those at stage 0, not at the cycle
+  the hardware does. Show the pipeline's outputs from stateful code instead.
+- Without `--wave` it does nothing, and HDL simulators never see it.
+
+`axis_wave(prefix, axis_if)` (`from axi.axis import axis_wave`) shows an AXI-Stream
+interface value as the flat signals a top-level port wrapper gives it: `<prefix>_tdata`
+and `<prefix>_tkeep` with lane 0 in the low bits, `<prefix>_tlast`, `<prefix>_tvalid` and
+`<prefix>_tready`. A testbench that drives a design's structured interface wires can so
+show the ports the hardware top has:
+
+```python
+import axis_ports  # declares axis_in_if: Wire[axis_if_t]
+
+@sim_output
+def port_waves():
+    axis_wave("/s_axis", axis_ports.axis_in_if)  # top/s_axis_tdata, ...
+```
+
 ### `@sim_model` — Python simulation models for hardware functions
 
 `sim_model(target)` attaches a Python model to any `@hw_func`/`@MAIN` function: whenever
@@ -6999,6 +7054,8 @@ tracks the row.
 | Simulation | **A `@sim_input` result stored in a local, or used inside an expression** | Rejected | `x = stim()` and `stim() + 1` raise a clear error in native sim (at import) and in elaboration. Declare a module-level `Input[T]` and assign the call to it as its own statement (`in0 = stim()`); it becomes a real top-level port (see [`@sim_input`](#sim_input--driving-simulation-inputs)). A future version could accept a local by turning it into an implicit `Input[T]` port of the function's return type | — |
 | Simulation | **`sim_print` of a `uint32_t` value ≥ 2³¹** | Fails in VHDL only | `sim_print` lowers to `integer'image(to_integer(x))`, and VHDL's `integer` is 32-bit *signed*, so GHDL raises `overflow detected` at runtime. Native simulation prints it happily, so this only ever appears in a cocotb/GHDL run — mask or narrow the value before probing it | [#360](https://github.com/JulianKemmerer/PipelineC/issues/360) |
 | Simulation | **`sim_print` on the `sim_finish()` cycle** | Missing in VHDL simulation | Native simulation prints the line; in GHDL the run ends before it is written. Print one cycle before finishing | [#361](https://github.com/JulianKemmerer/PipelineC/issues/361) |
+| Simulation | **`sim_wave` signals in HDL simulation** | Not supported | `sim_wave` and the stream perf probes record in native simulation only. Elaboration deletes them, so GHDL's `--wave` dump has the generated VHDL's own signals instead | — |
+| Simulation | **Records and arrays in GHDL's VCD and FST** | Not supported by GHDL | GHDL's VCD and FST writers skip records and arrays of vectors, which hold most Pypeline data. Write `--wave FILE.ghw`, GHDL's own format, which keeps every VHDL type, or record the native simulation | — |
 | Simulation | **`@initial`/`@final` under `sim_call`** | Not run | Hooks run in clocked simulation runs (`pypelinec --sim`, `pypeline_sim.py`) and `pypelinec` builds. A plain Python script that drives `sim_call` itself has no run start/end for the tools to hook — call its setup/teardown code directly | — |
 
 Native simulation cannot detect restrictions that appear only after emitting VHDL, such

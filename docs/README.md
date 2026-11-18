@@ -1001,8 +1001,9 @@ The template drives only the clock, so any other inputs stay undriven ('U').
 Native simulation reads the same undriven inputs, `Input[T]` wires and `@MAIN`
 arguments, as zero, so the two simulations can differ on a design that depends on them.
 `--makefile FILE` supplies an existing simulator Makefile instead of the generated one.
-The simulation also writes a standard `.vcd` waveform file, `<out_dir>/cocotb/top.vcd`,
-for viewers like [GTKWave](https://gtkwave.github.io/gtkwave/) and
+Without [`--wave`](#waveforms), the simulation also writes a standard `.vcd` waveform
+file, `<out_dir>/cocotb/top.vcd`, for viewers like
+[GTKWave](https://gtkwave.github.io/gtkwave/) and
 [Surfer](https://surfer-project.org/). For the counter, `counter_return_output` is always
 `the_counter_reg` plus one, from the adder before the output port:
 
@@ -1012,6 +1013,41 @@ For designs with automatic latency, omit `--comb` from both native and generated
 simulation and reuse or copy a warm output directory so both runs see the same converged
 implementation. Pair hand-written `vhdl()` with `@sim_model`; use the cycle-diff tool
 below when their timing may disagree.
+
+#### Waveforms
+
+`--wave FILE` writes the simulation's waveform to FILE, for viewers like
+[GTKWave](https://gtkwave.github.io/gtkwave/) and [Surfer](https://surfer-project.org/).
+Its extension picks the format:
+
+```sh
+# Native simulation: .vcd, or .fst converted with GTKWave's vcd2fst
+pypelinec examples/pypeline/counter.py --sim --comb --run 5 --wave counter.vcd
+pypelinec design_tb.py --sim --comb --run all --wave run.fst --wave_signals 'my_ports/*'
+
+# Generated VHDL: GHDL writes FILE itself (.vcd, .fst or .ghw)
+pypelinec design_tb.py --sim --comb --cocotb --ghdl --run all --wave run.ghw
+```
+
+| | Native simulation | `--cocotb --ghdl` |
+|---|---|---|
+| Formats | `.vcd`, `.fst` (needs `vcd2fst` on the `PATH`) | `.vcd`, `.fst`, `.ghw` |
+| Signals | The clock, the top-level `Input`/`Output` ports, each `@MAIN`'s return port, [`sim_wave`](pypeline_guide.md#waveforms) signals, [stream perf probes](../include/pypeline/stream/pypeline_stream_perf_guide.md#waveforms), and the global `Wire`s `--wave_signals` selects | Every signal of the generated VHDL. GHDL's VCD and FST skip records and arrays of vectors, which hold most Pypeline data; `.ghw` keeps them |
+| Types | An `@struct` is a scope of its fields, an array one signal per element, an `@enum` its member's name | VHDL's |
+
+`--wave_signals PATTERN` (native simulation only, repeatable) adds the global `Wire`s whose
+path below the top scope matches the glob: `<module>/<wire>`, with each `.` in the
+module's name as `_` (the hardware's name prefix), or `<wire>` for a `Wire` of the
+top-level file. `*` matches any characters, `/` included, so `'*'` adds every `Wire`.
+`python3 src/pypeline_sim.py DESIGN.py --run N --wave FILE` takes the same two flags.
+With `--makefile`, `--wave` is refused: set GHDL's waveform option in your Makefile's
+`SIM_ARGS` instead.
+
+A native waveform takes one clock period per cycle at 1 ps resolution: cycle N's values
+change at N·P, where the clock rises, and the clock falls half a period later. A run
+ended by `sim_finish()` includes its last cycle, and a run that fails still leaves the
+waveform of its complete cycles. The cocotb testbench's first clock edge is at 1 ps, so
+from cycle 1 on, GHDL's waveform runs P − 1 ps ahead of native simulation's.
 
 #### Other HDL simulators
 
@@ -1084,7 +1120,9 @@ runs is always saved to `<out_dir>/native.log` and `<out_dir>/vhdl.log` (`--out_
 defaults to a fresh `./pypeline_sim_debug_out_<design>_<pid>` directory if not given).
 On mismatch, the tool also prints a side-by-side dump of both runs' debug-tagged lines
 for `--context` cycles before and after the first divergence (default 10; pass
-`--context 0` to suppress it). See the guide's
+`--context 0` to suppress it). `--wave FILE.vcd` (or `.fst`) records both runs'
+[waveforms](#waveforms), as `<out_dir>/native.vcd` and `<out_dir>/vhdl.vcd`, since the two
+run at once; `--wave_signals` goes to the native run. See the guide's
 [`sim_print(..., debug=True)`](pypeline_guide.md#sim_print-debugtrue--tagged-prints)
 section for how to tag prints for this tool.
 
@@ -1617,6 +1655,9 @@ These are only needed for `--sim` runs (see [Simulation](#simulation)):
 * **cocotb + GHDL**: Follow the [cocotb install instructions](https://docs.cocotb.org/).
   GHDL is currently the only simulator supported, and `ghdl` must be on the `PATH`. Use
   `--cocotb --ghdl`.
+* **GTKWave** (optional): Views waveforms (`--wave`), as does
+  [Surfer](https://surfer-project.org/). Its `vcd2fst` must be on the `PATH` for native
+  simulation to write `.fst` files.
 
 ### Environment variables
 

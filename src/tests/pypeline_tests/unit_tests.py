@@ -351,6 +351,18 @@ def get_tests() -> list:
             cmd=[INST_DIR / "latency_memory_unit_test.py"],
         )
     )
+    # Waveform output (SIM.py's waveform block), in-process: VCD layout of
+    # structs/arrays/enums/signed/untyped values, signal paths and source-text
+    # names, the sampled-twice NOTE, type changes, clock edges and end time,
+    # --wave_signals globs, the --wave refusals and pypeline_sim_debug.py's
+    # per-run waveform files
+    tests.append(
+        Test(
+            name="waves_unit",
+            category="unit",
+            cmd=[INST_DIR / "waves_test.py", "--variant", "unit"],
+        )
+    )
     # Up-to-date builds (SIM.BUILD_INPUTS, SIM.BUILT_HARDWARE_IS_CURRENT) on
     # written records: which sources, -D values, settings, hint contents,
     # compiler and environment knobs make a build run again, and which

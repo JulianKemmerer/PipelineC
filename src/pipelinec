@@ -194,6 +194,25 @@ parser.add_argument(
     "clock cycles.",
 )
 parser.add_argument(
+    "--wave",
+    type=str,
+    default=None,
+    metavar="FILE",
+    help="Write the simulation's waveform to FILE. Native simulation writes "
+    ".vcd, or .fst (converted with GTKWave's vcd2fst): the clock, top-level "
+    "ports, @MAIN returns, sim_wave() signals and stream perf probes. "
+    "--cocotb --ghdl has GHDL write FILE: .vcd, .fst or .ghw.",
+)
+parser.add_argument(
+    "--wave_signals",
+    action="append",
+    default=[],
+    metavar="PATTERN",
+    help="With --wave and native simulation, also record the global Wires whose "
+    "waveform path (<module>/<wire>, or <wire> for the top file's) matches the "
+    "glob PATTERN; '*' records them all. Repeatable.",
+)
+parser.add_argument(
     "--cocotb",
     help="Use cocotb to drive simulation. Specify simulator with additional flags.",
     action="store_true",
@@ -489,6 +508,8 @@ C_TO_LOGIC.MULT_STYLE = args.mult
 OPEN_TOOLS.YOSYS_JSON_ONLY = args.yosys_json
 # Sim tool selection
 SIM.SET_SIM_TOOL(args, src_file)
+# --wave / --wave_signals need a simulator that can honor them
+SIM.CHECK_WAVE_ARGS(args)
 # A comb-only native Pypeline (.py) simulation run needs no build at all -- see
 # SIM.NATIVE_SIM_SKIPS_BUILD.
 if SIM.NATIVE_SIM_SKIPS_BUILD(args):

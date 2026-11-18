@@ -10,6 +10,9 @@ from pypeline import (
     uint32_t,
     make_uint_t,
     sim_assert,
+    sim_output,
+    sim_wave,
+    array_to_uint_le,
 )
 
 from kept_data_bus import make_kept_data_bus_t
@@ -46,6 +49,32 @@ def make_axis_t(n, elem_t=uint8_t, ndims=1):
     bus_t = make_kept_data_bus_t(elem_t, n)
     fragment_t = make_ndarray_fragment_t(bus_t, ndims)
     return make_stream_t(fragment_t)
+
+
+@sim_output
+def axis_wave(prefix, axis_if):
+    """Show an AXI-Stream interface in the simulation's waveform (pypelinec
+    --sim --wave FILE) as the flat signals a top-level port wrapper gives it:
+    <prefix>_tdata and <prefix>_tkeep (lane 0 in the least significant bits,
+    as uint_to_array_le unpacks them), <prefix>_tlast (eod[0]),
+    <prefix>_tvalid and <prefix>_tready.
+
+    axis_if is a whole `make_axis_interface(n)` value with both halves, such
+    as a `Wire[axis_if_t]` global a testbench drives; its lanes are bytes
+    (elem_t uint8_t, the default). The prefix is a sim_wave name: one starting
+    with "/" is a path below the top scope, so
+    `axis_wave("/encrypt_s_axis", ports.axis_in_if)` gives
+    top/encrypt_s_axis_tdata, ... like the top-level ports. Call it as a
+    statement from a @MAIN or @sim_output; elaboration deletes the call.
+    """
+    stream = axis_if.stream
+    frag = stream.data.frag
+    # Cast each lane: a testbench may write plain ints, which pack at their own width
+    sim_wave(prefix + "_tdata", array_to_uint_le([uint8_t(lane) for lane in frag.data]))
+    sim_wave(prefix + "_tkeep", array_to_uint_le([uint1_t(bit) for bit in frag.keep]))
+    sim_wave(prefix + "_tlast", uint1_t(stream.data.eod[0]))
+    sim_wave(prefix + "_tvalid", uint1_t(stream.valid))
+    sim_wave(prefix + "_tready", uint1_t(axis_if.ready))
 
 
 def make_axis_broadcast_interlock(axis_if_t, n):

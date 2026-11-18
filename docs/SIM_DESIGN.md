@@ -32,8 +32,14 @@ simulator for Pypeline designs, or an external HDL simulator run on the generate
   - [CXXRTL (`CXXRTL.py`)](#cxxrtl-cxxrtlpy)
   - [ModelSim (`MODELSIM.py`)](#modelsim-modelsimpy)
   - [EDA Playground (`EDAPLAY.py`)](#eda-playground-edaplaypy)
-- [6. Import structure](#6-import-structure)
-- [7. Tests](#7-tests)
+- [6. Waveforms](#6-waveforms)
+  - [What a native waveform holds](#what-a-native-waveform-holds)
+  - [Layout of a value](#layout-of-a-value)
+  - [Timing](#timing)
+  - [The VCD writer and FST](#the-vcd-writer-and-fst)
+  - [Limitations](#limitations)
+- [7. Import structure](#7-import-structure)
+- [8. Tests](#8-tests)
 
 ---
 
@@ -41,7 +47,7 @@ simulator for Pypeline designs, or an external HDL simulator run on the generate
 
 | module | role |
 |---|---|
-| `src/SIM.py` | selects the simulator (`SET_SIM_TOOL`), decides whether a run needs a build (`NATIVE_SIM_SKIPS_BUILD`, `SIM_AT_COMB_STAGE`, `BUILT_HARDWARE_IS_CURRENT`, `SIMULATE_BUILT_HARDWARE`), runs it (`DO_OPTIONAL_SIM`, and `DO_COMB_STAGE_SIM` after a `--comb` build's final files), records what native simulation and the next build's up-to-date check take from a build (`NATIVE_SIM_HARDWARE`, `BUILD_INPUTS`, `WRITE_BUILT_HARDWARE`) and gathers what every backend needs (`GET_SIM_GEN_INFO`, `GET_SIM_FILES`, `GET_MAIN_FUNC_LATENCIES`) |
+| `src/SIM.py` | selects the simulator (`SET_SIM_TOOL`), decides whether a run needs a build (`NATIVE_SIM_SKIPS_BUILD`, `SIM_AT_COMB_STAGE`, `BUILT_HARDWARE_IS_CURRENT`, `SIMULATE_BUILT_HARDWARE`), runs it (`DO_OPTIONAL_SIM`, and `DO_COMB_STAGE_SIM` after a `--comb` build's final files), records what native simulation and the next build's up-to-date check take from a build (`NATIVE_SIM_HARDWARE`, `BUILD_INPUTS`, `WRITE_BUILT_HARDWARE`), gathers what every backend needs (`GET_SIM_GEN_INFO`, `GET_SIM_FILES`, `GET_MAIN_FUNC_LATENCIES`), and checks and writes waveforms (`CHECK_WAVE_ARGS`; native simulation's `WaveRecorder`, see [Waveforms](#6-waveforms)) |
 | `src/pypeline_sim.py` | the native simulator, used as `SIM_TOOL` for `.py` designs ([`pypeline_sim_DESIGN.md`](pypeline_sim_DESIGN.md)) |
 | `src/COCOTB.py` | cocotb + GHDL on the generated VHDL, with a generated or user Makefile and testbench |
 | `src/VERILATOR.py` | GHDL + yosys to Verilog, then Verilator with a generated or user `main.cpp` |
@@ -67,7 +73,9 @@ object, which the rest of `SIM.py` compares by identity (`SIM_TOOL is COCOTB`):
 There is no `--native` flag: for a `.py` design, the absence of every other simulator flag
 selects the native simulator. `--run N` (or `--run all`) is the cycle count every backend
 that runs cycles reads from `args.run`. `--makefile` (cocotb) and `--main_cpp` (Verilator)
-replace the generated driver files.
+replace the generated driver files. `--wave FILE` (and, native only, `--wave_signals`)
+records a waveform with the native simulator or cocotb + GHDL; the driver calls
+`CHECK_WAVE_ARGS(args)` right after `SET_SIM_TOOL` ([Waveforms](#6-waveforms)).
 
 ## 3. When simulation runs
 
@@ -246,7 +254,10 @@ They share two `SIM.py` helpers:
   before the first edge and to 0 after it, the pulse native simulation drives
   ([guide](pypeline_guide.md#resets-in-simulation));
 - a `Makefile` from `GET_MAKEFILE_TEXT`. GHDL is the only supported simulator (`--ghdl`,
-  `--std=08`, plus `-frelaxed` when `AUTO_PIPELINE.RAM_REQUIRES_RELAXED_VHDL`).
+  `--std=08`, plus `-frelaxed` when `AUTO_PIPELINE.RAM_REQUIRES_RELAXED_VHDL`). Its
+  `SIM_ARGS` hold GHDL's waveform option, `GHDL_WAVE_ARG(args.wave)`: `--vcd=<top>.vcd`
+  (written in `cocotb/`) without `--wave`, else `--vcd=`, `--fst=` or `--wave=` (GHW) with
+  the absolute path of the `--wave` file, by its extension (`GHDL_WAVE_OPTIONS`).
 
 It then runs `make` in that directory, prints stdout only (`pypeline_sim_debug.py`'s cycle
 diff parses the interleaved `Clock: N` and `[SIM DEBUG PRINT: ...]` lines in order), and
@@ -316,17 +327,141 @@ debug entry, not a pass/fail simulation.
 `SETUP_EDAPLAY` copies every file `GET_SIM_FILES` finds into `all_vhdl_files/` and prints
 the edaplayground.com link to drag them into. Nothing is simulated locally.
 
-## 6. Import structure
+## 6. Waveforms
+
+`--wave FILE` records a simulation's waveform; the user guide is
+[Waveforms](pypeline_guide.md#waveforms).
+
+- **Checking the request.** `CHECK_WAVE_ARGS(args)` exits with an error before anything is
+  built or simulated when `--wave` lacks `--sim`, the simulator is neither the native one
+  nor cocotb + GHDL, the extension is not one the simulator writes (`WAVE_FORMAT`: `.vcd`,
+  `.fst`, `.ghw`), the file's directory does not exist, or `--wave` comes with
+  `--makefile`; and when `--wave_signals` lacks `--wave` or goes to GHDL.
+  `NATIVE_WAVE_PROBLEM` holds the native rules (`.vcd` or `.fst`, and `vcd2fst` on `PATH`
+  for `.fst`); `pypeline_sim.py --wave` and `START_NATIVE_WAVES` check with it too. Both
+  settings are in `_SETTINGS_OUTSIDE_BUILD_INPUTS`, so a waveform never makes a build run
+  again.
+- **GHDL.** `COCOTB.GHDL_WAVE_ARG` passes the file to GHDL's own writer (see
+  [cocotb](#cocotb-cocotbpy)), which dumps the design's VHDL signals. Its VCD and FST
+  writers skip records and arrays of vectors (`$comment <signal> is not handled`), which is
+  most Pypeline data; its GHW keeps every VHDL type.
+- **Native simulation.** `pypeline_sim.run_sim(..., wave=, wave_signals=)`, given `wave`
+  by both of `DO_OPTIONAL_SIM`'s native calls (the comb and pipelined paths) and by
+  `SIMULATE_BUILT_HARDWARE`, imports `SIM` only then. Before the first cycle it calls
+  `START_NATIVE_WAVES(path, patterns, mains, design_wires)`, which makes a `WaveRecorder`
+  and installs it as `pypeline._sim_wave_recorder` (`pypeline.SET_SIM_WAVE_RECORDER`;
+  `pypeline` never imports `SIM`). In each cycle's final pass, `_run_clock_cycle` hands
+  the recorder every MAIN's return (`main_return`) and `pypeline.sim_wave` hands it its
+  values (`tap`); after the pass, also when a `sim_finish()` ends it, `end_cycle(cycle)`
+  samples the ports and selected Wires from `pypeline._sim_wire_state` and writes the
+  cycle. `STOP_NATIVE_WAVES()` closes the file in `run_sim`'s `finally`, after the
+  `@final(sim)` hooks, however the run ended.
+
+### What a native waveform holds
+
+The top scope is `SYN.TOP_LEVEL_MODULE` (`--top`, default `top`), the top-level entity's
+name. Below it:
+
+| signal | path |
+|---|---|
+| the clock | `top/<port>`: `_Clock.port_name` of the MAINs' clock (`clk_80p0`), `clk` when no MAIN names one |
+| each `Input` and `Output` | `top/<name>`, the port's name (`design_wires.ports`) |
+| each `@MAIN`'s return | `top/<main>_return_output`, the return port, except a pipelined MAIN's (`pypeline._sim_pipelined_main_info`), whose return native simulation computes at stage 0; one NOTE names them |
+| a global Wire matching a `--wave_signals` glob | `top/<module>/<wire>`, `<module>` the module's name with `.` as `_` (its hardware prefix, `PY_TO_LOGIC._discover_global_wires`); a Wire of the top-level file (`pypeline_sim.DESIGN_MODULE_NAME`) is `top/<wire>` |
+| `sim_wave(name, value)` | `top/<MAIN>/<name>` (the running MAIN's hardware name), or `top/<name>` for a name starting with `/` or outside any MAIN; `/` and `.` separate scopes |
+| stream perf probes | `sim_wave` signals of the probes (`<label>/<name>/valid`, ...): [stream perf guide](../include/pypeline/stream/pypeline_stream_perf_guide.md#waveforms) |
+
+`add_wires` matches each Wire's path below the top scope with `fnmatch.fnmatchcase`, in
+which `*` also matches `/`; a pattern that matches no Wire prints a WARNING. `_tap_path`
+resolves a `sim_wave` name once per `(name, MAIN)`.
+
+### Layout of a value
+
+A signal's layout (`_wave_layout_of_ctype`, `_wave_layout_of_value`) is the tree a value
+is flattened through to its leaves, which are its VCD variables:
+
+- an integer type: a `wire` variable of the type's width, two's complement for a signed
+  type;
+- an `@struct`: a `$scope struct` holding its fields;
+- an array: one signal per element, named `name[i]` (a struct element is a
+  `$scope struct name[i]`);
+- an `@enum`: a `string` variable holding the member's name, or the decimal value when no
+  member has it;
+- a `str`: a `string` variable, whitespace written as `_`;
+- a plain `int` or `bool`, which has no type: a `wire` variable as wide as its widest
+  value. A negative one raises.
+
+A port, Wire or return takes its type's layout; a `sim_wave` signal takes its first
+value's. Each sample is flattened to a tuple of leaf values (`_wave_flatten`), checked
+cheaply: a value whose `_wave_shape_key` (its type's name, or a list's length and first
+element's key) the signal has seen fits; a new key compares the layouts
+(`_wave_layouts_match`), where an integer of no type fits a typed one (masked to its
+width). Any other change raises a `ValueError` naming the signal. A signal sampled twice
+in one cycle shows the last value, with one NOTE per signal.
+
+### Timing
+
+The timescale is 1 ps and one cycle is one clock period, `P = round(1e6 / MHz)` ps
+(1000 without a rate):
+
+- cycle N's values are written at time N·P, and a value changes exactly there;
+- the clock rises at N·P for N ≥ 1, the commit that ends cycle N−1, falls half a period
+  later, and is low through cycle 0;
+- the file ends at (cycles written)·P. A `sim_finish()` cycle is written, but a MAIN after
+  the finishing one in the final pass has no return and no `sim_wave` values that cycle.
+  An error drops its incomplete cycle, so a failing run still leaves a valid file.
+
+The cocotb testbench's first rising edge is at 1 ps, and then one per P, so GHDL's cycle N
+(N ≥ 1) starts at 1 + (N−1)·P: P − 1 ps before native simulation's.
+
+### The VCD writer and FST
+
+`_VcdWriter` writes the header last, so a `sim_wave` signal first seen in a later cycle
+still gets a variable, and an untyped integer's width is its widest value's: changes after
+time 0 stream to `FILE.body.tmp`, and those at time 0 stay in memory. `close()` writes
+`$version`, `$timescale 1ps`, the scope tree, `$enddefinitions`, the time-0 values as
+`$dumpvars`, the body and the end time, then removes the temporary file. Identifier codes
+are base 94 (`_vcd_code`). A variable has no value until its first sample. The file has no
+`$date`, so the same run always writes the same bytes. `end_cycle` writes only the leaves
+whose values changed: each signal's leaf tuple is compared with the last one written.
+
+For `FILE.fst`, the VCD is written to `FILE.fst.vcd` and converted by GTKWave's
+`vcd2fst -v`; the VCD is removed after a conversion and kept, with a WARNING, after a
+failure. `vcd2fst` (GTKWave 3.3.104) keeps struct scopes and string variables, and ignores
+`$attrbegin`, so an FST has no enum tables.
+
+### Limitations
+
+- `sim_wave` signals and probes exist in native simulation only: elaboration deletes the
+  calls, so GHDL's dump has none of them, only the generated VHDL's signals.
+- Registers appear only through `sim_wave` (a `Reg` read is its value), and MAIN
+  arguments, which native simulation drives with zeros, not at all.
+- Native simulation runs one clock, so a waveform has one.
+
+## 7. Import structure
 
 `SIM.py` imports every backend and `pypeline_sim` at module level, and the backends import
 `SIM` back for `GET_SIM_GEN_INFO` / `GET_SIM_FILES`. This works because no module reads
 another's attributes while being imported (`src_module_import_test.py` imports every src
 module first in a fresh interpreter). `SIM.py` also imports `AUTO_PIPELINE`,
 `AUTO_MULTI_CYCLE`, `LOGIC`, `SYN` and `VHDL` at module level, so importing `SIM` loads
-the whole compiler; `VHDL.py` does not import `SIM`.
+the whole compiler; `VHDL.py` does not import `SIM`. `pypeline_sim.py` imports `SIM` only
+inside `run_sim` and `main()`, when a waveform is asked for: plain native runs load no
+compiler module, and `SIM` loads no `PY_TO_LOGIC`. Run as a script, `pypeline_sim.py` is
+`__main__`, so `SIM`'s own `import pypeline_sim` loads a second, unused copy of it; the
+two share `pypeline`, whose state the run uses.
 
-## 7. Tests
+## 8. Tests
 
+- `waves_test.py` (`inst/`, one file of five registrations): `unit` checks the waveform
+  block in-process (layouts, paths and source-text names, the sampled-twice NOTE, type
+  changes, clock edges and end time, Wire globs, `CHECK_WAVE_ARGS`'s refusals,
+  `pypeline_sim_debug.py`'s per-run files, `sim_wave`'s gating); `native_vcd` and
+  `native_fst` (`native_sim`) check every signal of `waves_design.py` at every cycle time
+  through `pypelinec --sim --comb --wave`, and that standalone `pypeline_sim.py` writes
+  the same VCD (an FST read back by `fst2vcd`); `elab` checks that the fixture's taps and
+  probes add no top-level port; `ghdl` (`build_report_device_models`) checks that GHDL
+  writes the `.vcd`, `.fst` and `.ghw` asked for, and `cocotb/top.vcd` without `--wave`.
 - `cocotb_verdict_test.py`: cocotb's `results.xml` verdict for a clean `sim_finish()` stop
   and for a real failure.
 - `long_file_list_arg_len_test.py`: file lists longer than `MAX_ARG_STRLEN` reach GHDL and
@@ -337,7 +472,8 @@ the whole compiler; `VHDL.py` does not import `SIM`.
   built for its real top, and each refusal; the same build again is up to date, and
   `--rebuild` builds; see
   [`pypeline_TESTS.md`](pypeline_TESTS.md).
-- `built_hardware_current_test.py` (unit): which build inputs make a recorded build current.
+- `built_hardware_current_test.py` (unit): which build inputs make a recorded build current
+  (not `--wave` and `--wave_signals`, among other operational settings).
 - The `native_vs_vhdl_sim` category (`native_vs_vhdl_sim_tests.py`) runs designs through
   both the native simulator and cocotb + GHDL and diffs the cycle logs; see
   [`pypeline_TESTS.md`](pypeline_TESTS.md).

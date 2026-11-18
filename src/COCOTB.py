@@ -57,6 +57,19 @@ include $(shell cocotb-config --makefiles)/Makefile.sim
       """
 
 
+# GHDL's option writing each waveform format (SIM.WAVE_FORMAT): GHW is GHDL's
+# own, the one that keeps records and arrays of vectors
+GHDL_WAVE_OPTIONS = {"vcd": "--vcd", "fst": "--fst", "ghw": "--wave"}
+
+
+def GHDL_WAVE_ARG(wave):
+    """GHDL's waveform option for --wave FILE (None: <top>.vcd in the cocotb
+    directory, where make runs)."""
+    if wave is None:
+        return f"--vcd={SYN.TOP_LEVEL_MODULE}.vcd"
+    return f"{GHDL_WAVE_OPTIONS[SIM.WAVE_FORMAT(wave)]}={os.path.abspath(wave)}"
+
+
 def DO_SIM(multimain_timing_params, parser_state, args):
     print(
         "================== Doing cocotb Simulation ================================",
@@ -252,7 +265,9 @@ async def my_first_test(dut):
 
             if AUTO_PIPELINE.RAM_REQUIRES_RELAXED_VHDL(parser_state):
                 sim_make_args += "EXTRA_ARGS += -frelaxed\n"
-            sim_make_args += f"SIM_ARGS += --vcd={SYN.TOP_LEVEL_MODULE}.vcd --ieee-asserts=disable-at-0\n"
+            sim_make_args += (
+                f"SIM_ARGS += {GHDL_WAVE_ARG(args.wave)} --ieee-asserts=disable-at-0\n"
+            )
             sim_tool_path = GET_TOOL_PATH("ghdl")
             if sim_tool_path is None:
                 raise Exception("GHDL does not appear installed. ghdl not in path!")
