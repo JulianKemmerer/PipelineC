@@ -83,9 +83,7 @@ def GET_VERSION_STR() -> str:
             _VERSION_STR = sha + ("-dirty" if dirty else "")
             return _VERSION_STR
 
-    # No usable git repo here (e.g. a pip/nix install) -- fall back to the
-    # installed package's version, which poetry-dynamic-versioning already
-    # embeds the commit into (see pyproject.toml format-jinja).
+    # Without a Git revision, use the installed package version if available.
     try:
         from importlib import metadata
 
