@@ -8,8 +8,10 @@ built_hardware_core_design.py, then native --sim runs of
 built_hardware_tb_design.py in that build's --out_dir:
 
 - test_testbench_runs_on_the_built_latencies: no elaboration or synthesis,
-  the out_dir is left unchanged, and results arrive after the built
-  AUTO_PIPELINE depth and AUTO_FSM latency;
+  the out_dir is left unchanged, results arrive after the built
+  AUTO_PIPELINE depth and AUTO_FSM latency, and the testbench's stateless
+  simulation-only @MAIN (@MAIN over @sim_output) runs although the build never
+  held it;
 - test_undecided_tag_is_refused: -D EXTRA_TAG=1 reads the latency of a tag
   the build never decided;
 - test_latency_the_build_read_but_never_built_is_served: the core design
@@ -94,6 +96,8 @@ def test_testbench_runs_on_the_built_latencies(designs, hw):
     assert f"BODY.latency {body}" in log and f"region result after {body} cycles" in log
     assert f"OPS_FSM.latency {fsm['latency']}" in log
     assert f"FSM result after {fsm['latency']} cycles" in log
+    assert "built_hardware_tb_log" not in record["main_latencies"]
+    assert "built_hardware_tb: simulation-only MAIN ran" in log
     print("test_testbench_runs_on_the_built_latencies PASS")
 
 

@@ -18,6 +18,13 @@ that exclusion, this function would independently fail elaboration (as an
 unused, never-instantiated orphan) even though every one of its call sites is
 correctly skipped -- "ignored during elaboration" must hold for the function
 itself, not just its call sites.
+
+The same holds for simulation-only @MAINs (@MAIN over @sim_input/@sim_output):
+`report` and `stimulus` below are registered @MAINs whose bodies hold Python
+the elaborator cannot represent. Neither the top-level sweep nor the
+registered-@MAIN step may elaborate them (checked by the exit code: elaboration
+fails on either body, and `No functions were decorated as @MAIN` cannot hide it
+because `tb` is hardware).
 """
 
 import sys, os, itertools
@@ -62,3 +69,17 @@ def tb():
     in_global()
     in1 = in_return()
     out0 = combine(in0, in1)
+
+
+@MAIN
+@sim_input
+def stimulus():
+    # A simulation-only @MAIN: Python the hardware cannot represent
+    in0 = {i: next(_ctr) for i in range(2)}[1]
+
+
+@MAIN
+@sim_output
+def report():
+    lines = sorted({str(v): v for v in (int(in0), int(out0))}.items())
+    print(f"in0={int(in0)} out0={int(out0)}", lines)

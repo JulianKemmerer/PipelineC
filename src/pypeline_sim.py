@@ -265,7 +265,8 @@ def run_sim(
         candidates = [
             fn
             for fn in mains
-            if getattr(fn, "_pipeline_latency", None) is None
+            if fn._pypeline_main.sim_only is None
+            and getattr(fn, "_pipeline_latency", None) is None
             and pypeline._pipeline_latency_reachable(fn)
         ]
         if candidates:
@@ -468,8 +469,11 @@ def _check_built_design_params(design_params, built_hardware_from) -> None:
 
 
 def _main_needs_build(fn) -> bool:
-    """A @MAIN the sweep could pipeline: not @wires, not stateful (stateful
-    MAINs are self-timed) and without @pipeline_latency."""
+    """A @MAIN the sweep could pipeline: hardware (not a simulation-only
+    @MAIN over @sim_output/@sim_input, which no build has), not @wires, not
+    stateful (stateful MAINs are self-timed) and without @pipeline_latency."""
+    if fn._pypeline_main.sim_only is not None:
+        return False
     if getattr(fn, "_pypeline_has_state", False) or getattr(fn, "_pipeline_latency", None) is not None:
         return False
     layer = fn
@@ -491,8 +495,9 @@ def _check_built_mains(mains, main_latencies, built_hardware_from) -> None:
     if unbuilt:
         raise pypeline.BuiltHardwareError(
             f"@MAIN {', '.join(unbuilt)} is not part of the hardware built in "
-            f"{built_hardware_from}, so its pipeline latency is unknown. Make it "
-            "@wires or stateful, or build it as part of that top."
+            f"{built_hardware_from}, so its pipeline latency is unknown. If it only "
+            "runs testbench Python, put @sim_output or @sim_input under its @MAIN; "
+            "otherwise build it as part of that top."
         )
 
 

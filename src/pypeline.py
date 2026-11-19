@@ -2286,6 +2286,9 @@ class _MainInfo(typing.NamedTuple):
     reset: object = _CLOCK_RESET
     # Which registers that reset resets: "requested" (only Reg[T, RESET]) or "all"
     reset_registers: str = "requested"
+    # "@sim_output" or "@sim_input" for a simulation-only @MAIN (@MAIN over that
+    # decorator): plain Python in native sim, never elaborated; None for hardware
+    sim_only: "str | None" = None
 
 
 def _frame_origin(frame):
@@ -2305,7 +2308,10 @@ def _register_main(
     used verbatim: MAIN() checks a user's name= first, and a global
     instance's MAIN passes its wire's key plus a suffix, which may be longer
     than a user name may be. Names must be deterministic: the build and
-    native sim re-execute the design and find each MAIN by its name."""
+    native sim re-execute the design and find each MAIN by its name.
+
+    A func that @sim_output/@sim_input already wrapped is registered as it is,
+    a simulation-only MAIN (_MainInfo.sim_only; see _check_sim_only_main)."""
     fn = _inspect.unwrap(func) if callable(func) else None
     if fn is None or not hasattr(fn, "__code__"):
         raise TypeError(f"MAIN({func!r}) at {origin}: a @MAIN must be a function")
@@ -2315,7 +2321,14 @@ def _register_main(
             f"after the design's @MAINs were collected. Make @MAINs while the "
             f"design is imported: in module-level code, or in factories it calls."
         )
-    wrapped = _sim_type_wrap(func)
+    sim_only = _sim_only_kind(func)
+    if sim_only is not None:
+        _check_sim_only_main(fn, sim_only, clock, reset, reset_registers, origin)
+        # Already wrapped by @sim_output/@sim_input; _sim_type_wrap would rebuild
+        # its body from this module's globals (see _sim_type_wrap)
+        wrapped = func
+    else:
+        wrapped = _sim_type_wrap(func)
     for other in _main_registry:
         if other is wrapped:
             raise TypeError(
@@ -2331,10 +2344,38 @@ def _register_main(
             _module_prefix(wrapped.__module__), wrapped.__name__
         )
     wrapped._pypeline_main = _MainInfo(
-        name, named, clock, origin, reset, reset_registers
+        name, named, clock, origin, reset, reset_registers, sim_only
     )
     _main_registry.append(wrapped)
     return wrapped
+
+
+def _check_sim_only_main(fn, kind, clock, reset, reset_registers, origin):
+    """A simulation-only @MAIN (@MAIN over @sim_output or @sim_input) is a
+    process of the simulator: no ports and no hardware, so no arguments, no
+    return value, and no clock or reset of its own. `fn` is its raw function."""
+    what = f"@MAIN over {kind} '{fn.__qualname__}' at {origin}"
+    # `-> None` returns nothing, also as the string a postponed annotation is
+    returns = fn.__annotations__.get("return")
+    if _inspect.signature(fn).parameters or returns not in (None, "None"):
+        raise TypeError(
+            f"{what} takes no arguments and returns nothing: it is a simulation "
+            f"process with no ports. Share values with it through Wire/Input/"
+            f"Output[T] wires."
+        )
+    if clock is not None or reset is not _CLOCK_RESET or reset_registers != "requested":
+        raise TypeError(
+            f"{what} names no clock or reset: it is no hardware, and runs on the "
+            f"simulation's one clock. Write a bare @MAIN."
+        )
+
+
+def HARDWARE_MAINS():
+    """The registered @MAINs that are hardware, in registration order:
+    _main_registry without the simulation-only ones (@MAIN over @sim_output
+    or @sim_input). What elaboration reads, so that a simulation-only @MAIN
+    reaches no hardware; native simulation runs every registered @MAIN."""
+    return [fn for fn in _main_registry if fn._pypeline_main.sim_only is None]
 
 
 def _duplicate_main_names(mains):
@@ -2409,6 +2450,25 @@ def MAIN(
 
     Implies @hw_func: inputs/outputs are type-cast for simulation and
     the function can be passed to sim_call().
+
+    A @MAIN over @sim_output or @sim_input is a simulation-only @MAIN: a
+    process of the simulator, such as a testbench's stimulus or checker,
+    written in plain Python. It is never elaborated, so it needs no hardware
+    and no latency from a build. It takes no arguments, returns nothing, and
+    names no clock or reset (a bare @MAIN)::
+
+        @MAIN
+        @sim_input
+        def drive():        # once per cycle, when first reached
+            in0 = next_stimulus()
+
+        @MAIN
+        @sim_output
+        def check():        # in every cycle's final pass, on converged wires
+            assert out0 == expected()
+
+    Put the decorator below @MAIN. Stimulus and checks go in separate MAINs: a
+    @sim_input body runs before its cycle converges, a @sim_output body after.
     """
     if name is not None:
         _check_user_name(name, "MAIN")
@@ -2493,6 +2553,24 @@ def _main_clock_arg(positional, mhz, clock, origin):
     return _Clock(value, origin=origin)
 
 
+def _check_sim_only_stack(fn, kind):
+    """@sim_output / @sim_input applied to `fn`: refuse a function that is
+    already the other kind, and a registered @MAIN (the decorator belongs
+    below @MAIN, which then makes a simulation-only @MAIN)."""
+    name = getattr(fn, "__qualname__", fn)
+    have = _sim_only_kind(fn)
+    if have is not None and have != kind:
+        raise TypeError(
+            f"{kind} on {name!r}, which is already {have}: a function is one or "
+            f"the other"
+        )
+    if getattr(fn, "_pypeline_main", None) is not None:
+        raise TypeError(
+            f"{kind} on the @MAIN {name!r}: put {kind} below @MAIN (@MAIN, then "
+            f"{kind}, then def) to make a simulation-only @MAIN"
+        )
+
+
 def sim_output(fn):
     """Mark a function as simulation output-only.
 
@@ -2515,7 +2593,16 @@ def sim_output(fn):
     module-level variable will only see that mutation in its own subsequent
     calls (it runs against a rebuilt, detached copy of the module's globals
     dict), not from other code reading the true module attribute externally.
+
+    Under @MAIN it is a simulation-only @MAIN, a process of the simulator
+    that runs in every cycle's final pass (see MAIN)::
+
+        @MAIN
+        @sim_output
+        def check():
+            assert out0 == expected()
     """
+    _check_sim_only_stack(fn, "@sim_output")
     fn._pypeline_sim_only = True  # its own body is plain Python: no call-site check
     hw_fn = _sim_type_wrap(fn)
 
@@ -2574,7 +2661,16 @@ def sim_input(fn):
     kwargs awareness) -- fine for zero-arg usage, but a @sim_input function
     called with different arguments within the same cycle returns the first
     call's cached result regardless of the later call's own arguments.
+
+    Under @MAIN it is a simulation-only @MAIN, a process of the simulator
+    that runs once per cycle, when first reached (see MAIN)::
+
+        @MAIN
+        @sim_input
+        def drive():
+            in0 = next_stimulus()
     """
+    _check_sim_only_stack(fn, "@sim_input")
     fn._pypeline_sim_only = True  # its own body is plain Python: no call-site check
     hw_fn = _sim_type_wrap(fn)
 

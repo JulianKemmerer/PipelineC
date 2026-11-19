@@ -296,6 +296,16 @@ def get_tests() -> list:
     )
     tests.append(
         Test(
+            # A @MAIN over @sim_input (stimulus) and over @sim_output (checker,
+            # and a MAIN(fn, name=) finisher) around one hardware @MAIN: each
+            # sim-only MAIN runs once per cycle, in registration order.
+            name="sim_only_main_test",
+            category="native_sim",
+            cmd=[PYPELINE_SIM, INST_DIR / "sim_only_main_test.py", "--run", "20"],
+        )
+    )
+    tests.append(
+        Test(
             # dsp/fir_tb.py testbench-library end-to-end (@sim_input driver +
             # @sim_output checker); --run must exceed both tbs' deadlines.
             name="fir_sim_tb_test",

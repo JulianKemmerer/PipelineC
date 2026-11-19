@@ -803,6 +803,9 @@ any rate, so these tests check the rate itself.
   built from a copy, so one case can edit a source. It checks that:
   - the testbench run parses and synthesizes nothing and leaves the directory unchanged,
     and results arrive after the recorded AUTO_PIPELINE depth and AUTO_FSM latency;
+  - the testbench's stateless simulation-only `@MAIN` (`@MAIN` over `@sim_output`) runs,
+    although the build never held it, where a hardware `@MAIN` the sweep could pipeline
+    would be refused;
   - the testbench reads the value the build read for the unbuilt tag, which a
     `--latency_hints` file seeds to a nonzero depth;
   - a tag the build never decided (`-D EXTRA_TAG=1`), a call of the tag the build only
@@ -1199,7 +1202,7 @@ covered:
   `sim_loop_reg_state_test`), casts, widths and types (`call_arg_width_test`,
   `nested_truncate_test`, `struct_ctor_positional_test`, `cast_interface_test`,
   `char_array_test`, `enum_test`, `bit_math_test`), the `sim_*` APIs (`sim_input_test`,
-  `sim_output_direct_wire_test`, `sim_print_test`, `sim_assert_finish_test`,
+  `sim_output_direct_wire_test`, `sim_only_main_test`, `sim_print_test`, `sim_assert_finish_test`,
   `main_args_sim_test`);
 - elaboration-rule, error and API tests, whose designs are rejected or whose subject is a
   call form or a naming or clock rule (`interface_type_error_test`,
@@ -1236,7 +1239,7 @@ covered:
 
 | Test | Category | What it covers |
 |---|---|---|
-| `factory_main_api_unit_test` | `unit` | `MAIN`'s six forms and the record each leaves (`_pypeline_main`); `mhz` with the call form; `name=` checks; default names (top file, module prefix, `@hw_func(name=)`); one function registered twice; `MAIN()` during a simulation run; a non-function; the duplicate-name message; the name helpers `PY_TO_LOGIC` aliases; native sim's name map for build results; an `ELABORATE_LIVE_ROOTS` MAIN root keyed by its name |
+| `factory_main_api_unit_test` | `unit` | `MAIN`'s six forms and the record each leaves (`_pypeline_main`); `mhz` with the call form; `name=` checks; default names (top file, module prefix, `@hw_func(name=)`); one function registered twice; `MAIN()` during a simulation run; a non-function; the duplicate-name message; the name helpers `PY_TO_LOGIC` aliases; native sim's name map for build results; an `ELABORATE_LIVE_ROOTS` MAIN root keyed by its name; simulation-only `@MAIN`s (`@MAIN` over `@sim_output`/`@sim_input`): the record, `HARDWARE_MAINS()`, no built latency needed, and the refusals (arguments, a return value, a clock or reset, the decorators wrongly stacked) |
 | `factory_main_elab_test` | `elab_introspect` | four lanes made in a loop (keys, rates, ports, source description, wire users); a bare made MAIN's rate through a wire; an imported module's factory MAIN; a pure-factory library's function registered by the design; a renamed top-level MAIN; a plain def passed to `MAIN()`, with and without `name=`; a factory closure's wire users under its key; re-parse names. Errors: two MAINs with one name, a MAIN named like a function, a MAIN whose module holds hardware but was imported in a function |
 | `factory_main_sim_test` | `native_sim` | under `pypeline_sim.py`: counter lanes from one factory keep their own registers, stateless lanes their own wire elements, two stateless MAINs their own `make_stream_fifo` model state; duplicate names stop the run; the multi-rate refusal names made MAINs; `MAIN()` in an `@initial(sim)` hook is an error |
 | `factory_main_pipeline_latency_test` | `native_sim` | two lanes reaching one `@pipeline_latency` helper from one source line, with build timing that differs per lane, each dispatch to their own stage graph |

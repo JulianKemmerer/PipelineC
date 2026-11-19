@@ -230,7 +230,8 @@ Design file (.py)
 
 **Layer 1** (`PARSE_FILE`):
 - Executes the design file as a Python module
-- Discovers `@MAIN` entry points via `pypeline._main_registry`: `@MAIN` defs and MAINs made in code
+- Discovers `@MAIN` entry points via `pypeline.HARDWARE_MAINS()` (`pypeline._main_registry`
+  without the simulation-only MAINs): `@MAIN` defs and MAINs made in code
 - Discovers struct types via `_discover_structs_from_module`
 - Discovers enum types via `_discover_enums_from_module` (registers them in `parser_state.enum_info_dict`)
 - Captures all module-level names (constants `N`, `M`, helper functions, closures) into
@@ -3016,14 +3017,14 @@ be robust to it**:
   like `src/tests/pypeline_tests/def/file_c.py`'s `def bump(x: uint1_t) -> uint1_t`
   still work unchanged (`uint1_t` resolves to a real ctype).
 - **`node.name in main_names` is identity-based, not name-based.** Comparing bare Python
-  names against `{f.__name__ for f in pypeline._main_registry}` would be a real
+  names against `{f.__name__ for f in pypeline.HARDWARE_MAINS()}` would be a real
   name-collision hazard once arbitrary stdlib modules are reachable — e.g. the standard
   library's own `tokenize.py` defines a plain, unrelated top-level `def main():` for its own
   CLI entry point, which would match a name-based check purely because *some* real `@MAIN`
   function elsewhere in the design happens to also be named `main` (an extremely common name
   to pick). Both Step 5 (deciding which top-level defs to collect) and Step 7 (assigning
   `main_mhz`/clock-domain info) instead compare the *actual function object*:
-  `main_func_ids = {id(f) for f in pypeline._main_registry}`, checked via
+  `main_func_ids = {id(f) for f in pypeline.HARDWARE_MAINS()}`, checked via
   `id(fglobals.get(node.name)) in main_func_ids` — true only for the exact function
   object `@MAIN` registered, never a same-named unrelated function in another file.
   Step 5 takes a registered def through Steps 6/7 only when its MAIN name
@@ -3103,7 +3104,9 @@ Everything after discovery is unchanged:
 Running the design registers every `@MAIN` it executes in `pypeline._main_registry`
 ([`pypeline_DESIGN.md`](pypeline_DESIGN.md#main--mainfn--registering-mains)), and native
 sim runs all of them: `@MAIN` defs, and MAINs made in code with `MAIN(fn, name=...)` (a
-factory's function, one per lane in a loop, generated source, a plain def). Step 7
+factory's function, one per lane in a loop, generated source, a plain def). Elaboration
+reads `pypeline.HARDWARE_MAINS()`, the registry without the simulation-only MAINs
+([below](#sim_output--sim_input-calls--elaborator-skip)). Step 7
 elaborates the top-level defs whose MAIN name is their own. `_elaborate_registered_mains`
 (Step 7.2) elaborates every other registered MAIN, in registration order, after Step 7 so
 that its callees exist. It reads the registry when it runs, not at Step 3, so MAINs
@@ -3133,7 +3136,7 @@ A MAIN's name is its table key, its entity name and its port prefix. Being in `m
 makes it protected in `EmissionNames`, so it is emitted verbatim.
 
 `ELABORATE_LIVE_ROOTS` has no lost-MAIN check: it elaborates the roots it is given. A
-root in `_main_registry` goes through `_elaborate_main` under its MAIN name, so native
+root in `HARDWARE_MAINS()` goes through `_elaborate_main` under its MAIN name, so native
 sim's pipeline models are keyed like the build's MAINs; a root marked
 `_pypeline_global_inst` (a global instance's or FIFO's MAIN) also gets that kind as its
 `func_no_added_latency` reason. A generated root exec'd in a copy of a design module's
@@ -6066,6 +6069,19 @@ Python-only) body isn't representable as hardware. The collection step (`PARSE_F
 any match before appending to `all_func_defs`, so `@sim_output`/`@sim_input` functions
 never enter the top-level elaboration/stub-registration pipeline at all, regardless of
 their annotations.
+
+**Simulation-only `@MAIN`s.** A `@MAIN` over `@sim_output`/`@sim_input` is registered
+(`_MainInfo.sim_only` is that tag, see
+[`pypeline_sim_DESIGN.md`](pypeline_sim_DESIGN.md#simulation-only-mains)) but is no
+hardware, so every registry reader in this module takes `pypeline.HARDWARE_MAINS()`, the
+registry without them, instead of `_main_registry`: Step 3's `main_func_ids` and
+`main_raw_ids`, Step 7.2 (`_elaborate_registered_mains`: the duplicate-name check, the
+lost-MAIN check and the elaboration), clock inference and conflicts (`_assign_clocks`,
+`_design_clocks`), reset assignment (`_assign_resets`) and `ELABORATE_LIVE_ROOTS`. The
+module-level def of such a MAIN is bound to its sim-only wrapper, so the sweep above skips
+it by its `_is_sim_output`/`_is_sim_input` tag. A body the elaborator could not represent
+is therefore never reached, and no entity or clock exists for the MAIN. A global
+registry reader added later takes `HARDWARE_MAINS()` too.
 
 **Not the same dispatch path as `sim_print`.** The same `if`/`elif` chain also checks
 `getattr(callee, "_is_sim_print", False)` — a deliberately distinct marker, checked

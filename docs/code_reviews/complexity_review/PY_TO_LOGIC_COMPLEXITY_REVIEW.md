@@ -62,6 +62,19 @@ by `stream_perf`. The registration gate requires nonempty annotations;
 that typed and nested structs survive. Discovery still walks host modules; this
 guard does not consolidate the registration paths described above.
 
+The `@MAIN` registry had seven direct readers and no shared filter (tree after commit
+`84685d25`, found while making `@MAIN` over `@sim_output`/`@sim_input` a simulation-only
+MAIN). `PARSE_FILE` Step 3 (`main_func_ids`, `main_raw_ids`), `_elaborate_registered_mains`,
+`_assign_clocks`, `_design_clocks`, `_assign_resets` and `ELABORATE_LIVE_ROOTS` each read
+`pypeline._main_registry` themselves. Native sim runs every registered MAIN while
+elaboration must see only the hardware ones. `pypeline.HARDWARE_MAINS()` is the filter and
+each of those readers calls it; `pypeline_sim.run_sim` keeps the raw registry on purpose.
+A reader added later still has to choose between the two by hand, and the tests catch only
+part of a wrong choice. `sim_input_output_elab_test` fails when no reader filters:
+`_elaborate_registered_mains` then elaborates a Python-only body. No test checks the
+other readers one at a time, and none fails for the reverse mistake in a place that must
+see every MAIN.
+
 ## Validation
 
 Use branch/loop partial struct writes, nested arrays, dynamic indices, hardware-local shadowing and custom operators as differential cases. Verify exceptions preserve original helper diagnostics and helpers are not evaluated repeatedly after classification. Compare cold/warm/reparsed builds, emitted type identities, source locations and clock crossing reports. The [constant-evaluation probe](REVIEW_EXPERIMENTS.md#constant-evaluation-outcomes) is a method-level experiment, not a complete design compile.

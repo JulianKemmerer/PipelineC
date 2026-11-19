@@ -9,6 +9,11 @@
   @hw_func(name=)) and name= checks;
 - errors: one function registered twice, MAIN() during a simulation run,
   something that is not a function;
+- simulation-only @MAINs (@MAIN over @sim_output or @sim_input): recorded as
+  such in _pypeline_main.sim_only, kept in registration order, left out of
+  HARDWARE_MAINS() and of the build a replayed top needs; the refusals (no
+  arguments, return value, clock or reset; the decorators in the wrong order
+  or both kinds);
 - the duplicate-name message (ignoring case, naming both origins);
 - the name helpers PY_TO_LOGIC aliases from pypeline;
 - native sim's name -> MAIN map for build results (pypeline_sim);
@@ -26,7 +31,7 @@ sys.path.insert(
 )
 
 import pypeline
-from pypeline import MAIN, Reg, hw_func, uint8_t
+from pypeline import MAIN, Reg, hw_func, sim_input, sim_output, uint8_t
 
 THIS_FILE = os.path.basename(__file__)
 
@@ -277,6 +282,117 @@ def test_live_root_main_is_keyed_by_its_name():
     print("test_live_root_main_is_keyed_by_its_name PASS")
 
 
+def test_sim_only_main_forms():
+    with _registry():
+
+        @MAIN
+        def hw() -> uint8_t:
+            return 1
+
+        @MAIN
+        @sim_output
+        def checker():
+            pass
+
+        @MAIN
+        @sim_input
+        def driver() -> None:  # `-> None` returns nothing
+            pass
+
+        @sim_output
+        def made_in_code():
+            pass
+
+        made = MAIN(made_in_code, name="made0")
+        assert made is made_in_code, "the sim-only wrapper itself is registered"
+        assert checker._pypeline_main.sim_only == "@sim_output", checker._pypeline_main
+        assert driver._pypeline_main.sim_only == "@sim_input", driver._pypeline_main
+        assert made._pypeline_main[:2] == ("made0", True), made._pypeline_main
+        assert hw._pypeline_main.sim_only is None, hw._pypeline_main
+        # One registry keeps the order native sim runs the MAINs in; elaboration
+        # reads the hardware ones
+        assert pypeline._main_registry[-4:] == [hw, checker, driver, made]
+        assert pypeline.HARDWARE_MAINS()[-1:] == [hw]
+        assert not {checker, driver, made} & set(pypeline.HARDWARE_MAINS())
+    print("test_sim_only_main_forms PASS")
+
+
+def test_sim_only_main_needs_no_build():
+    import pypeline_sim
+
+    with _registry():
+
+        @MAIN
+        def hw() -> uint8_t:
+            return 1
+
+        @MAIN
+        @sim_output
+        def checker():
+            pass
+
+        assert pypeline_sim._main_needs_build(hw)
+        assert not pypeline_sim._main_needs_build(checker)
+    print("test_sim_only_main_needs_no_build PASS")
+
+
+def test_sim_only_main_takes_no_ports():
+    with _registry():
+
+        @sim_output
+        def with_arg(a: uint8_t):
+            pass
+
+        @sim_input
+        def with_return() -> uint8_t:
+            return 1
+
+        _expect(TypeError, lambda: MAIN(with_arg), "takes no arguments", "with_arg")
+        _expect(TypeError, lambda: MAIN(with_return), "returns nothing", "with_return")
+        assert pypeline.HARDWARE_MAINS() == pypeline._main_registry
+    print("test_sim_only_main_takes_no_ports PASS")
+
+
+def test_sim_only_main_names_no_clock_or_reset():
+    with _registry():
+        for kwargs in ({"mhz": 50.0}, {"reset": None}, {"reset_registers": "all"}):
+
+            @sim_output
+            def checker():
+                pass
+
+            _expect(
+                TypeError,
+                lambda: MAIN(checker, **kwargs),
+                "names no clock or reset",
+                "bare @MAIN",
+            )
+        assert not [f for f in pypeline._main_registry if f.__name__ == "checker"]
+    print("test_sim_only_main_names_no_clock_or_reset PASS")
+
+
+def test_sim_only_decorators_refuse_wrong_stacking():
+    with _registry():
+
+        @MAIN
+        def hw() -> uint8_t:
+            return 1
+
+        @sim_input
+        def driver():
+            pass
+
+        @sim_output
+        def checker():
+            pass
+
+        _expect(TypeError, lambda: sim_output(hw), "put @sim_output below @MAIN")
+        _expect(TypeError, lambda: sim_input(hw), "put @sim_input below @MAIN")
+        _expect(TypeError, lambda: sim_output(driver), "already @sim_input")
+        _expect(TypeError, lambda: sim_input(checker), "already @sim_output")
+    print("test_sim_only_decorators_refuse_wrong_stacking PASS")
+
+
 if __name__ == "__main__":
     test_decorator_forms()
     test_call_form_registers_a_factory_function()
@@ -293,4 +409,9 @@ if __name__ == "__main__":
     test_name_helpers_are_shared_with_the_compiler()
     test_build_results_find_mains_by_name()
     test_live_root_main_is_keyed_by_its_name()
+    test_sim_only_main_forms()
+    test_sim_only_main_needs_no_build()
+    test_sim_only_main_takes_no_ports()
+    test_sim_only_main_names_no_clock_or_reset()
+    test_sim_only_decorators_refuse_wrong_stacking()
     print("factory_main_api_unit_test: all PASS")

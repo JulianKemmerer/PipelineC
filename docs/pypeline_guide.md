@@ -502,7 +502,8 @@ a design can have.
 Native simulation has nothing to drive those argument ports with, so they read as zero
 every cycle (it prints a notice saying so), and the return value is not observed. To
 give a design stimulus and check its results in simulation, use `Input[T]`/`Output[T]`
-globals with [`@sim_input`](#sim_input--driving-simulation-inputs) and `@sim_output`.
+globals with [`@sim_input`](#sim_input--driving-simulation-inputs) and `@sim_output`,
+called from a `@MAIN` or made into [`@MAIN`s of their own](#simulation-only-mains).
 
 ### Frequency constraint
 
@@ -4895,8 +4896,9 @@ start on a fresh beat, so a non-block-aligned leading segment needs its last bea
 with not-kept bytes rather than letting the trailer merge into the leftover lanes).
 `AxisSimSource.send(frame, keep_mask=...)` is the same idea for native sim.
 
-For native testbenches driven via `@sim_input`/`@sim_output`,
-`include/pypeline/axi/axis_sim.py`'s `AxisSimSource`/`AxisSimSink` cover the same ground in
+For native testbenches driven via `@sim_input`/`@sim_output` (run as
+[simulation-only `@MAIN`s](#simulation-only-mains) when the testbench has no hardware of
+its own), `include/pypeline/axi/axis_sim.py`'s `AxisSimSource`/`AxisSimSink` cover the same ground in
 plain Python — API-inspired by cocotb's `cocotbext-axi` (queue-backed `send()`/`recv()`, a
 `set_pause_generator()` backpressure hook) but not that library itself: Pypeline's native
 sim is a synchronous, non-async, delta-cycle-converging function-call model, incompatible
@@ -6571,6 +6573,11 @@ its output, for example. Leave it untagged and it is timed like any other functi
 separate "wrapper" tag is needed: every operator is already its own submodule, so a
 function's delay is always derived from what it instantiates.
 
+**`@wires` does not mark a testbench.** Python that only runs in native simulation is a
+[simulation-only `@MAIN`](#simulation-only-mains): `@MAIN` over `@sim_input` or
+`@sim_output`. `@wires` is for a `@MAIN` that is built into the simulated HDL and only
+wires, such as one that reads wires to end the simulation (`if done: sim_finish()`).
+
 See `src/tests/pypeline_tests/inst/func_wires_test.py` for the full example.
 
 See `src/tests/pypeline_tests/inst/vhdl_text_test.py` for a complete example.
@@ -6660,6 +6667,38 @@ a real top-level port instead, which is what lets the same top elaborate (a pipe
 That cache is keyed by the function alone, not by its arguments. Calling one `@sim_input`
 function twice in a cycle with different arguments currently returns the first call's
 value both times ([#355](https://github.com/JulianKemmerer/PipelineC/issues/355)). Use a separate function for each value.
+
+### Simulation-only `@MAIN`s
+
+A `@MAIN` over `@sim_input` or `@sim_output` is a process of the simulator, not hardware:
+a testbench's stimulus or checker, written in plain Python.
+
+```python
+@MAIN
+@sim_input
+def drive():            # once per cycle, when first reached, before the cycle converges
+    in0 = next_stimulus()
+
+@MAIN
+@sim_output
+def check():            # in every cycle's final pass, on the converged wires
+    assert int(out0) == expected()
+```
+
+Elaboration never sees it, so its body may use any Python and a build has no entity,
+clock or timing for it. A testbench simulated on [built hardware](README.md#simulating-a-testbench-on-built-hardware)
+needs no built latency for it either, while a hardware `@MAIN` the build could have
+pipelined but never held is refused there.
+
+A simulation-only `@MAIN` takes no arguments, returns nothing and names no clock or reset
+(write a bare `@MAIN`; `MAIN(fn, name=...)` takes such a function too). Put the decorator
+under `@MAIN`, and use one kind per function.
+
+Put stimulus and checks in separate `@MAIN`s. An `@sim_input` body runs when first reached,
+before its cycle's wires have converged, so a check there reads stale values. An
+`@sim_output` body runs only after convergence. Native simulation runs the `@MAIN`s of a
+cycle in registration order, and a `sim_finish()` ends the cycle where it is called, so
+register the `@MAIN` that finishes after the ones whose last-cycle checks matter.
 
 ### `sim_print` — printf-style console output
 

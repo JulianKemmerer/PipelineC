@@ -1245,7 +1245,9 @@ The simulation stops with an error, instead of guessing, when:
 - the testbench uses an AUTO_PIPELINE, AUTO_FSM, AUTO_MULTI_CYCLE or auto-pipelined RAM
   the build never decided, at the testbench's clock goal when the build built it for
   several goals, or has a `@MAIN` the sweep could pipeline that the build
-  never built. Testbench MAINs are normally `@wires` or stateful, which need no build.
+  never built. A testbench's own processes are
+  [simulation-only `@MAIN`s](pypeline_guide.md#simulation-only-mains) (`@MAIN` over
+  `@sim_input` or `@sim_output`), which need no build; so do stateful and `@wires` MAINs.
   A tag the built design read but never used, such as a factory's unused alternative,
   is allowed as long as the testbench only reads its `.latency`: it gets the value the
   build read.

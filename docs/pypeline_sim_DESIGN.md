@@ -61,6 +61,7 @@ For the shared pypeline.py type system and `SimVal` foundations, see
   - [Register Commit Timing](#register-commit-timing)
   - [`@sim_output` — Controlled Side Effects](#sim_output--controlled-side-effects)
   - [`@sim_input` — Driving Simulation Inputs](#sim_input--driving-simulation-inputs)
+  - [Simulation-only `@MAIN`s](#simulation-only-mains)
   - [`sim_print` — printf-style Console + Hardware Output](#sim_print--printf-style-console--hardware-output)
   - [`sim_print(..., debug=True)` — tagged prints for `pypeline_sim_debug.py`](#sim_print-debugtrue--tagged-prints-for-pypeline_sim_debugpy)
   - [`sim_wave` — signals in the simulation's waveform](#sim_wave--signals-in-the-simulations-waveform)
@@ -1830,6 +1831,47 @@ awareness) — a `@sim_input` function called with different arguments within th
 returns the first call's cached result regardless of the later call's own arguments
 ([#355](https://github.com/JulianKemmerer/PipelineC/issues/355)).
 
+### Simulation-only `@MAIN`s
+
+A `@MAIN` over `@sim_output` or `@sim_input` is a process of the simulation with no hardware:
+a testbench's stimulus or checker. `_register_main` sees the function's `_is_sim_output` /
+`_is_sim_input` tag (`_sim_only_kind`), registers that wrapper itself instead of calling
+`_sim_type_wrap` again (a second wrap rebuilds the body from `pypeline.py`'s globals, the
+bug `_sim_type_wrap`'s docstring describes), and records the tag as `_MainInfo.sim_only`
+(`"@sim_output"`, `"@sim_input"`, or None for hardware). `_check_sim_only_main` refuses what
+a process with no ports cannot have: a parameter, a return annotation, a clock, `reset=` or
+`reset_registers=`. The decorators refuse the reverse stacking (`@sim_output` over a
+registered `@MAIN`) and a function of both kinds (`_check_sim_only_stack`).
+
+Native simulation runs it like any other MAIN: one root instance frame named after it,
+a call when the cycle's convergence loop starts (every MAIN starts queued), again whenever
+a wire it read changes, and one in the final pass, in `_main_registry` order. The tag
+decides what the call does:
+
+- a `@sim_output` MAIN returns at once while `_sim_converging` and runs its body in the final
+  pass;
+- a `@sim_input` MAIN runs its body at its first call of the cycle, in the convergence
+  loop, and answers every later call from `_sim_input_cache`. Its body therefore runs before
+  the cycle's wires have converged, and a check belongs in a `@sim_output` MAIN (a
+  testbench with both writes its stimulus in one and its checks in the other).
+
+Because the final pass runs MAINs in registration order and `sim_finish()` ends the pass
+where it is called, the MAIN that finishes is registered after the checkers.
+
+What a simulation-only MAIN is left out of:
+
+- `HARDWARE_MAINS()`, `_main_registry` without the sim-only MAINs, is what
+  `PY_TO_LOGIC` reads (see
+  [`PY_TO_LOGIC_DESIGN.md`](PY_TO_LOGIC_DESIGN.md#sim_output--sim_input-calls--elaborator-skip)):
+  elaboration, clock inference, the registered-MAIN step and resets never see it, so its
+  body may hold any Python and no entity exists for it;
+- `_main_needs_build`: replaying another top's built hardware needs no latency for it;
+- `run_sim`'s pipeline-latency candidates (`PREPARE_PIPELINE_LATENCY_SIM` elaborates its
+  candidates as live roots).
+
+`_refuse_multi_clock` and the run's clock goal (`_run_goal_text`) see it too, but they
+read only `_MainInfo.clock`, which a sim-only MAIN never names.
+
 ### `sim_print` — printf-style Console + Hardware Output
 
 `sim_print(...)` looks like `@sim_output` (same once-per-cycle/final-pass firing) but is
@@ -2276,9 +2318,9 @@ what the build did not decide:
 - **Design parameters.** After the import, `_check_built_design_params` compares every
   parameter both runs declare with the build's value.
 - **MAINs.** `_check_built_mains` refuses a `@MAIN` the build never built when the sweep
-  could have pipelined it: not `@wires`, not stateful and without `@pipeline_latency`
-  (`_main_needs_build`). A built MAIN the testbench does not run, such as the top's port
-  wiring, is skipped.
+  could have pipelined it: hardware (not a [simulation-only `@MAIN`](#simulation-only-mains)),
+  not `@wires`, not stateful and without `@pipeline_latency` (`_main_needs_build`). A built
+  MAIN the testbench does not run, such as the top's port wiring, is skipped.
 
 Keys match across the two tops because they never name the top: a named tag's key is its
 name, and an unnamed tag's is `CANONICAL_CALLABLE_KEY` of its function.
@@ -2473,7 +2515,8 @@ refused rather than silently mis-simulated); the rest are constraints on how you
   sweep (its state fixes its own cycle timing); if the build ever reports a nonzero latency for
   one, `run_sim` ignores it with a warning rather than stacking a write delay on top of the
   MAIN's explicit registers. `@sim_input`/`@sim_output` stimulus should likewise be driven from
-  stateful MAINs — inside a pipelined MAIN it would be delayed with everything else.
+  stateful MAINs or [simulation-only `@MAIN`s](#simulation-only-mains), which are never
+  delayed — inside a pipelined MAIN it would be delayed with everything else.
 - **Same source line, multiple AUTO_PIPELINE instances.** Two calls of the *same* AUTO_PIPELINE
   object on one physical source line share one delay line (identical `_sim_inst_stack` key)
   unless `SIM_TRACE_LOCATIONS=True` restores column-level call identity — the same pre-existing

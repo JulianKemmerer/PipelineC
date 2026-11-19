@@ -15,6 +15,7 @@ from pypeline import (
     param,
     sim_assert,
     sim_finish,
+    sim_output,
     sim_print,
     uint1_t,
     uint16_t,
@@ -40,6 +41,20 @@ if EXTRA_TAG:
 print(f"built_hardware_tb: BODY.latency {core.BODY.latency}")
 print(f"built_hardware_tb: OPS_FSM.latency {core.OPS_FSM.latency}")
 print(f"built_hardware_tb: SPARE.latency {core.SPARE_LATENCY}")
+
+
+# A simulation-only @MAIN: stateless Python the build never held. Replay accepts
+# it without a built latency, which it would refuse a stateless hardware @MAIN.
+# Registered before the testbench, whose sim_finish() ends its last final pass.
+_sim_only_runs = []  # one entry per cycle the simulation-only @MAIN ran
+
+
+@MAIN
+@sim_output
+def built_hardware_tb_log():
+    if not _sim_only_runs:
+        print("built_hardware_tb: simulation-only MAIN ran")
+    _sim_only_runs.append(1)
 
 
 # Synchronous reset pin (pulsed in cycle 0 by the simulators): every @MAIN

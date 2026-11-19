@@ -7623,7 +7623,7 @@ def _elaborate_registered_mains(parser_state, elaborated_ids, files_to_elaborate
     but the hardware knows neither that module's wires nor its names. A pure
     factory module needs no discovery; its closures are elaborated on demand
     anyway."""
-    registered = list(_pypeline_mod._main_registry)
+    registered = _pypeline_mod.HARDWARE_MAINS()
     duplicate = _pypeline_mod._duplicate_main_names(registered)
     if duplicate is not None:
         raise ElaborationError(duplicate)
@@ -7983,7 +7983,7 @@ def _assign_clocks(parser_state):
     wire_decls = parser_state.pypeline_wire_decls
     clocks = [
         fn._pypeline_main.clock
-        for fn in _pypeline_mod._main_registry
+        for fn in _pypeline_mod.HARDWARE_MAINS()
         if fn._pypeline_main.clock is not None
     ]
     for decl in wire_decls.values():
@@ -8318,7 +8318,7 @@ def _design_clocks(parser_state):
     (make_clock(100.0, reset=rst) is the clock @MAIN(100.0) runs on)."""
     clocks = [
         fn._pypeline_main.clock
-        for fn in _pypeline_mod._main_registry
+        for fn in _pypeline_mod.HARDWARE_MAINS()
         if fn._pypeline_main.clock is not None
     ]
     for decl in parser_state.pypeline_wire_decls.values():
@@ -8384,7 +8384,7 @@ def _assign_resets(parser_state):
         if clk.reset is not None:
             key_for(clk.reset, f"make_clock(...) at {clk.origin}")
     primaries = _pypeline_mod._clock_primary_resets(clocks)
-    infos = {fn._pypeline_main.name: fn._pypeline_main for fn in _pypeline_mod._main_registry}
+    infos = {fn._pypeline_main.name: fn._pypeline_main for fn in _pypeline_mod.HARDWARE_MAINS()}
     decl_mains = {}  # MAIN -> the global instance declaration whose hardware it holds
     for decl in parser_state.pypeline_global_insts.values():
         for main in decl.main_names:
@@ -9622,7 +9622,7 @@ def _elaborate_live_roots(roots):
     SYN.DEL_ALL_CACHES()
     AUTO_PIPELINE.DEL_ZERO_ADDED_CLKS_TIMING_PARAMS_CACHE()
     dummy = ast.parse("def sim_root(): pass").body[0]
-    registered = {id(f) for f in _pypeline_mod._main_registry}
+    registered = {id(f) for f in _pypeline_mod.HARDWARE_MAINS()}
     for root in roots:
         if id(root) in registered:
             # A @MAIN: its build entity and timing are keyed by its MAIN name
@@ -9811,6 +9811,8 @@ def _PARSE_FILE_ONCE(py_file, run_syn_initial_hooks=False, resolved_part=None):
     _discover_enums_from_module(module, parser_state)
 
     # ── Step 3: collect MAINs from the pypeline registry ──
+    # The hardware ones: a simulation-only @MAIN (@MAIN over @sim_output or
+    # @sim_input) is plain Python and never reaches elaboration.
     # Identity-based (not name-based): a top-level function elsewhere that
     # merely happens to share its bare Python name with an actual @MAIN
     # function -- e.g. some unrelated, transitively-discovered module's own
@@ -9818,11 +9820,11 @@ def _PARSE_FILE_ONCE(py_file, run_syn_initial_hooks=False, resolved_part=None):
     # ast.ImportFrom-following (see _process_imports) could pull in files far
     # outside the design's own source tree, where a generic name collision
     # like this becomes possible.
-    main_func_ids = {id(f) for f in pypeline._main_registry}
+    main_func_ids = {id(f) for f in pypeline.HARDWARE_MAINS()}
     # A plain def passed to MAIN() (`MAIN(foo, name="lane0")`) stays bound to
     # its module name unwrapped. Step 5 leaves it to Step 7.2, which
     # elaborates the registered wrapper, so it is not elaborated twice.
-    main_raw_ids = {id(inspect.unwrap(f)) for f in pypeline._main_registry}
+    main_raw_ids = {id(inspect.unwrap(f)) for f in pypeline.HARDWARE_MAINS()}
 
     # ── Step 4: AST parse for hardware elaboration ──
     source = READ_SOURCE_TEXT(py_file)
@@ -9883,6 +9885,8 @@ def _PARSE_FILE_ONCE(py_file, run_syn_initial_hooks=False, resolved_part=None):
                 # which could raise even though the function is otherwise fully
                 # invisible to hardware. "Can simply be ignored during elaboration"
                 # must hold regardless of whether the function carries annotations.
+                # A simulation-only @MAIN's def is skipped here the same way: its
+                # wrapper is a @sim_output/@sim_input one, outside main_func_ids.
                 _top_level_callee = fglobals.get(node.name)
                 if (
                     getattr(_top_level_callee, "_is_sim_output", False)

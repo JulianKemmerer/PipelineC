@@ -1265,7 +1265,11 @@ the caller's frame (`_frame_origin`).
    a name verbatim, since a global instance's `<key>_INST` may be longer than a user name
    may be.
 2. **Wraps** with `_sim_type_wrap`, so `@MAIN` implies `@hw_func`; it is idempotent, so
-   `@MAIN` stacks with `@hw_func`, `@wires` and `pipeline_latency`.
+   `@MAIN` stacks with `@hw_func`, `@wires` and `pipeline_latency`. A function already
+   wrapped by `@sim_output`/`@sim_input` is a *simulation-only MAIN*: it is registered as
+   it is (a second wrap would rebuild its body from this module's globals), and
+   `_check_sim_only_main` refuses parameters, a return annotation, a clock, `reset=` and
+   `reset_registers=`. See [`pypeline_sim_DESIGN.md`](pypeline_sim_DESIGN.md#simulation-only-mains).
 3. **Refuses a wrapper already registered** (identity in `_main_registry`): each MAIN
    needs a function of its own, and the record lives on the wrapper.
 4. **Names it:** `name`, else the function's `@hw_func(name=)` (`_pypeline_user_name`),
@@ -1275,9 +1279,11 @@ the caller's frame (`_frame_origin`).
    name with dots as underscores, as import discovery prefixes it. Names come only from
    source, so every re-execution of the design (pin-and-confirm passes, `--sim` after a
    build) gives each MAIN the same name.
-5. **Records** `_MainInfo(name, named, clock, origin)` on the wrapper as `_pypeline_main`
-   (`named`: given by `name=` or `@hw_func(name=)`), and appends the wrapper to
-   `_main_registry`.
+5. **Records** `_MainInfo(name, named, clock, origin, reset, reset_registers, sim_only)` on
+   the wrapper as `_pypeline_main` (`named`: given by `name=` or `@hw_func(name=)`;
+   `sim_only`: `"@sim_output"`, `"@sim_input"` or None), and appends the wrapper to
+   `_main_registry`. `HARDWARE_MAINS()` is `_main_registry` without the MAINs whose
+   `sim_only` is set: what elaboration reads.
 
 `_duplicate_main_names(mains)` returns the message for the first two MAINs whose names
 are equal ignoring case, as VHDL compares them, naming both qualnames and origins; None
@@ -1824,7 +1830,7 @@ flag). See
 
 | Name | Type | Content | Consumer |
 |---|---|---|---|
-| `_main_registry` | `list` | Every registered `@MAIN`'s wrapper (each with its `_MainInfo` as `_pypeline_main`), in registration order | `PY_TO_LOGIC.PARSE_FILE` (Steps 3, 5 and 7.2) and `ELABORATE_LIVE_ROOTS`; `pypeline_sim.run_sim`, which runs them |
+| `_main_registry` | `list` | Every registered `@MAIN`'s wrapper (each with its `_MainInfo` as `_pypeline_main`), in registration order | `pypeline_sim.run_sim`, which runs all of them; `PY_TO_LOGIC` (`PARSE_FILE` Steps 3, 5 and 7.2, clock and reset assignment, `ELABORATE_LIVE_ROOTS`) reads `HARDWARE_MAINS()`, which leaves out the simulation-only ones |
 | `_global_fifo_type_cache` | `dict[type, (type, type)]` | `T` → the end and wire types of `Fifo[T]` | `_global_fifo_types` |
 | `_global_fifo_async_type_cache` | `dict[type, (type, type, type)]` | `T` → the word, write-result and read-result types of an async `Fifo[T]`'s crossing stubs | `_global_fifo_async_types` |
 | `_part_registry` | `str \| None` | FPGA part string | `PY_TO_LOGIC.PARSE_FILE` — populates `parser_state.part` |
@@ -2716,13 +2722,13 @@ shared `Logic.vhdl_module_text` field (also used by the C frontend's `__vhdl__("
 | `make_int_t(n)` | Dynamically creates `intN_t` for arbitrary bit width `n` |
 | `NamedTuple` | Re-export of `typing.NamedTuple` |
 | `@struct` | Adds `__class_getitem__`, stamps canonical `_pypeline_ctype_name`, wraps scalar fields in sim |
-| `@MAIN` / `MAIN(fn, name=, mhz=, clock=, reset=, reset_registers=)` | Registers a function as a hardware entry point, also one made in code; implies `@hw_func`; records its name, clock and reset and appends to `_main_registry` |
+| `@MAIN` / `MAIN(fn, name=, mhz=, clock=, reset=, reset_registers=)` | Registers a function as a hardware entry point, also one made in code; implies `@hw_func`; records its name, clock and reset and appends to `_main_registry`. Over `@sim_output`/`@sim_input` it registers a simulation-only MAIN, which `HARDWARE_MAINS()` leaves out |
 | `make_clock(mhz, name=, syn_mhz=, reset=)` / `_Clock` | A clock, identified by rate and name, with its primary reset; for `@MAIN(clk)`, wire markers and pin/wire bindings ([`make_clock`](#make_clockmhz-name-syn_mhz-reset--clocks)) |
 | `make_reset(kind=, active=)` / `_Reset` | A synchronous active-high reset, bound to an `Input` or `Wire` ([`make_reset`](#make_reset--resets)) |
 | `RESET` / `NO_RESET` | `Reg[T, ...]` markers: reset under any policy / never ([`Reg[T]`](#regt--_regtype)) |
 | `param(name, default, *, type, choices, help, env)` | Declares a build parameter and returns its value for this build: `-D NAME=VALUE`, else environment variable `env` (only when given and set), else `default` ([Design Parameters](#design-parameters-param--d)) |
 | `SET_DESIGN_PARAMS`, `PARSE_DESIGN_PARAM_DEFINES`, `CHECK_DESIGN_PARAM_USE`, `DESIGN_PARAM_REPORT`, `DESIGN_PARAM_LIST_TEXT`, `PRINT_DESIGN_PARAM_BANNER_ONCE` | Driver side of `param()`: install and parse the `-D` table, check how the design uses injected names after an import, and produce the `source_provenance.json` record, the `--list_params` text and the build banner |
-| `@sim_output` | Marks a function as simulation output-only; no-op during convergence passes; executes in final pass per cycle |
+| `@sim_output` | Marks a function as simulation output-only; no-op during convergence passes; executes in final pass per cycle; under `@MAIN` it is a simulation-only MAIN |
 | `sim_print(fstring_or_str)` | printf-style console output — same once-per-cycle firing as `@sim_output`, but *also* elaborates to a real VHDL `write(output, ...)` statement (see `PY_TO_LOGIC_DESIGN.md`) |
 | `sim_wave(name, value)` / `sim_wave(value)` | A signal in the native simulation's waveform (`--wave`): records into `_sim_wave_recorder` in the final pass; marked `_is_sim_output`, so elaboration deletes it; one argument names it after its source text ([`sim_wave`](pypeline_sim_DESIGN.md#sim_wave--signals-in-the-simulations-waveform)) |
 | `sim_wave_enabled()` / `SET_SIM_WAVE_RECORDER(recorder)` | Whether a `sim_wave` call would record now (a library skips building names otherwise); install or remove the recorder (`SIM.START_NATIVE_WAVES` / `STOP_NATIVE_WAVES`) |
@@ -2789,7 +2795,7 @@ shared `Logic.vhdl_module_text` field (also used by the C frontend's `__vhdl__("
 | `_sim_current_main` | Module-level variable; MAIN function currently executing; enables wire reader recording |
 | `_sim_reg_begin_buffer()` | Switch register writes to buffered mode (used by `pypeline_sim.py` per cycle) |
 | `_sim_reg_flush_buffer()` | Commit buffered register writes atomically — the simulated clock edge |
-| `_main_registry` | Module-level list of all registered `@MAIN` wrappers in registration order |
+| `_main_registry` | Module-level list of all registered `@MAIN` wrappers in registration order (`HARDWARE_MAINS()`: the hardware ones) |
 | `_sim_run_in_progress` | Module-level bool; `True` from a `pypeline_sim` run's `@initial(sim)` hooks to the end of its `@final(sim)` hooks; `MAIN()` refuses then |
 | `_hook_registry` / `_syn_hook_snapshot` | `@initial`/`@final` hooks of the current design import (cleared with `_main_registry`); the syn hooks the driver ran `@initial` from, reused for syn `@final` |
 | `_part_registry` | Module-level str or None: FPGA part string (read by `PY_TO_LOGIC.PARSE_FILE`) |
