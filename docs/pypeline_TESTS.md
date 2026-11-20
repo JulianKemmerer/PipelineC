@@ -1078,8 +1078,8 @@ The remaining global wire tests:
   built with `_replace()` or `_make()` keeps its Python field values, so a `uint8_t`
   field set to 300 holds 300 where the hardware holds 44, and a `uint8_t[2]` field set
   to `[1, 2]` packs to 5, not `0x0201`. `native_struct_replace_cast_test.py` asserts the
-  hardware's answers for a wire, a typed local and a `Reg` (issue TBD, in the
-  [issues inventory](issues_inventory.md)).
+  hardware's answers for a wire, a typed local and a `Reg`
+  ([#401](https://github.com/JulianKemmerer/PipelineC/issues/401)).
 
 **Pipeline timing.** See the guide's
 [Global wires in pipelined code](pypeline_guide.md#global-wires-in-pipelined-code).

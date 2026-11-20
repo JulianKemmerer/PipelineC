@@ -50,8 +50,8 @@ stayed an untyped int. Field and index writes were already cast; whole-wire writ
 One gap stays open. A struct-typed write is not wrapped (`_sim_cast_deep` returns structs as given), because
 `@struct`'s typed constructor `_typed_new` types the fields when the struct is built; `NamedTuple._replace` and `_make`
 bypass it, so a wire, typed local or `Reg` written with `s._replace(a=300)` keeps 300 in a `uint8_t` field
-(`known_issues:native_struct_replace_cast_known_issue`, issue TBD in the
-[issues inventory](../../issues_inventory.md)). A `_make` that goes through `_typed_new` would close it, but
+(`known_issues:native_struct_replace_cast_known_issue`,
+[#401](https://github.com/JulianKemmerer/PipelineC/issues/401)). A `_make` that goes through `_typed_new` would close it, but
 `_sim_lens_set` builds every struct field write with `_replace`, so it would re-type every field on every field write, a
 cost not yet measured. The change also exposed a coupling: the synthetic ctype names the rewriter injects into the exec
 namespace were keyed by source position, and `_lower_unpack` gives every leaf of one unpacking statement the statement's

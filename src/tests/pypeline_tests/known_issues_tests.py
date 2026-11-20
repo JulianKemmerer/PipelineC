@@ -64,12 +64,31 @@ def get_tests() -> list:
     # Native sim keeps the Python values of a struct built with _replace() or
     # _make(): a uint8_t field set to 300 holds 300 (hardware: 44) and a
     # uint8_t[2] field set to [1, 2] packs to 5 (hardware: 0x0201), on a wire,
-    # in a typed local and in a Reg. The constructor types them. Issue TBD.
+    # in a typed local and in a Reg. The constructor types them. Issue #401.
     tests.append(
         Test(
             name="native_struct_replace_cast_known_issue",
             category="known_issues",
             cmd=[INST_DIR / "native_struct_replace_cast_test.py"],
+            expect_fail=True,
+        )
+    )
+    # A module-level struct or array constant, typed by its class or an
+    # annotation, used directly in a hardware function does not elaborate:
+    # passing K.lanes to a function, writing K or T to a port, or indexing T
+    # with a signal each stop the build. A typed local (`t: uint8_t[2] = T`)
+    # works. Native simulation runs the design. Issue #402.
+    tests.append(
+        Test(
+            name="module_compound_const_known_issue",
+            category="known_issues",
+            cmd=[
+                PYPELINEC,
+                INST_DIR / "module_compound_const_design.py",
+                "--comb",
+                "--no_synth",
+            ],
+            needs_out_dir=True,
             expect_fail=True,
         )
     )

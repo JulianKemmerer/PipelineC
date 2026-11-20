@@ -2768,8 +2768,8 @@ Two traps when writing a design that will be diffed against real VHDL:
   make simulation hardware-accurate for functions decorated with `@hw_func` or `@MAIN`. Inner
   functions must carry `@hw_func` to opt in. See Bit-Accurate Arithmetic section for ctype-chain
   limitations (plain int operands, shifts, `__radd__`).
-- **A struct built with `_replace()` or `_make()` keeps its Python field values** (issue TBD,
-  in the [issues inventory](issues_inventory.md)) — a struct value written to a wire, a typed
+- **A struct built with `_replace()` or `_make()` keeps its Python field values**
+  ([#401](https://github.com/JulianKemmerer/PipelineC/issues/401)) — a struct value written to a wire, a typed
   local or a `Reg` is not cast, because `@struct`'s typed constructor (`_typed_new`) types the
   fields when the struct is *built*. `NamedTuple._replace` and `_make` bypass that constructor
   (`_replace` builds its result with `_make`, which calls `tuple.__new__`), so
