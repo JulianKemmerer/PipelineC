@@ -9369,6 +9369,8 @@ def _sim_wire_read(name: str):
 
 def _sim_wire_write(name: str, value, claim_key=None) -> None:
     """Set the current global wire value (struct types preserved, not converted to int).
+    The value arrives already cast to the wire's type by _GlobalWireRewriter
+    (_cast_to_wire_type), so a whole-wire write stores what the hardware wire holds.
     claim_key (the writing function's qualified name, baked in by
     _GlobalWireRewriter) records a whole-wire () claim for that function's
     per-invocation zero-reset (see _sim_wire_reset_claims).
@@ -9827,11 +9829,17 @@ class _GlobalWireRewriter(_ast.NodeTransformer):
 
     Replaces:
       - Name(id='wire', ctx=Load)      →  _sim_wire_read('<mod>.wire')
-      - wire = expr                    →  _sim_wire_write('<mod>.wire', expr)   (Expr stmt)
+      - wire = expr                    →  _sim_wire_write('<mod>.wire', cast(expr))   (Expr stmt)
       - wire, x = a, b                 →  tmp = (a, b); wire = tmp[0]; x = tmp[1]  (each leaf
                                           then rewritten as above; see _lower_unpack)
       - module.wire  (Load)            →  _sim_wire_read('<mod>.wire')          (cross-module read)
-      - module.wire = expr             →  _sim_wire_write('<mod>.wire', expr)   (cross-module write)
+      - module.wire = expr             →  _sim_wire_write('<mod>.wire', cast(expr))   (cross-module write)
+
+    cast(...) is `_sim_cast_deep(value, <the written leaf's ctype>)` (_cast_to_wire_type):
+    every write stores a value of the wire's type, as the hardware wire does, so a
+    comparison, an untyped int or a list of ints is truncated / bit-packed at the
+    wire's width rather than at its own. Struct-typed writes are not wrapped: a
+    struct value was built by its constructor, which already typed its fields.
 
     `wire: T = expr` (and any other local binding of a wire's name) never reaches
     this class: _check_no_local_binds_wire_name rejects it first.
@@ -9867,12 +9875,13 @@ class _GlobalWireRewriter(_ast.NodeTransformer):
         self._module_wire_ctypes = (
             module_wire_ctypes or {}
         )  # (alias, attr) -> inner_ctype
-        # leaf_ctypes_out: filled in-place, synthetic __wire_leaf_ctype_L_C__ name ->
+        # leaf_ctypes_out: filled in-place, synthetic __wire_leaf_ctype_N__ name ->
         # ctype object -- ctype objects can't be embedded directly as ast.Constant
-        # values (Python's compiler only accepts literal types there), so field/index
-        # lens writes reference a synthetic global name instead, exactly like
+        # values (Python's compiler only accepts literal types there), so the cast
+        # of every wire write references a synthetic global name instead, like
         # _TypedAnnAssignRewriter's __sim_ann_L_C__ mechanism.
         self._leaf_ctypes_out = leaf_ctypes_out if leaf_ctypes_out is not None else {}
+        self._leaf_ctype_serial = _itertools.count()  # unique synthetic ctype names
         # written_wire_names: qualified sim keys of every wire this function
         # writes anywhere in its body (whole-wire or any field/index lens write).
         # Non-empty => the decoration site injects a one-line
@@ -9897,10 +9906,27 @@ class _GlobalWireRewriter(_ast.NodeTransformer):
     def _claim_key_const(self):
         return _ast.Constant(value=self._claim_key)
 
-    def _leaf_ctype_name(self, ctype, node):
-        key = f"__wire_leaf_ctype_{node.lineno}_{node.col_offset}__"
+    def _leaf_ctype_name(self, ctype):
+        """A Name node for a new synthetic global holding ctype. The name is a
+        per-rewriter serial, not a source position: _lower_unpack gives every leaf
+        of one unpacking statement the statement's position, and two leaves of
+        different types must not share a name."""
+        key = f"__wire_leaf_ctype_{next(self._leaf_ctype_serial)}__"
         self._leaf_ctypes_out[key] = ctype
         return _ast.Name(id=key, ctx=_ast.Load())
+
+    def _cast_to_wire_type(self, value_node, ctype):
+        """Wrap an already-visited value expression in _sim_cast_deep(value, ctype), so
+        the write stores a value of the wire's (or field's / element's) type, not
+        whatever the expression evaluated to. A struct ctype and an unresolved
+        (None) ctype leave the value as it is."""
+        if ctype is None or hasattr(ctype, "_fields"):
+            return value_node
+        return _ast.Call(
+            func=_ast.Name(id="_sim_cast_deep", ctx=_ast.Load()),
+            args=[value_node, self._leaf_ctype_name(ctype)],
+            keywords=[],
+        )
 
     def visit_Name(self, node):
         if node.id in self._wire_names and isinstance(node.ctx, _ast.Load):
@@ -9998,21 +10024,14 @@ class _GlobalWireRewriter(_ast.NodeTransformer):
                 node = node.value
         return None, None, None, None
 
-    def _build_lens_write(
-        self, wire_name, path_nodes, leaf_ctype, value_node, ref_node
-    ):
-        """Build `_sim_wire_lens_write(wire_name, [path...], value)` (optionally
-        _sim_cast_deep-wrapped), (re-)visiting path_nodes/value_node from scratch so
-        nested wire reads are rewritten and no AST node is shared between call sites.
+    def _build_lens_write(self, wire_name, path_nodes, leaf_ctype, value_node):
+        """Build `_sim_wire_lens_write(wire_name, [path...], value)` (value cast to
+        the leaf's type, _cast_to_wire_type), (re-)visiting path_nodes/value_node
+        from scratch so nested wire reads are rewritten and no AST node is shared
+        between call sites.
         """
         visited_path = [self.visit(_copy.deepcopy(p)) for p in path_nodes]
-        visited_value = self.visit(value_node)
-        if leaf_ctype is not None:
-            visited_value = _ast.Call(
-                func=_ast.Name(id="_sim_cast_deep", ctx=_ast.Load()),
-                args=[visited_value, self._leaf_ctype_name(leaf_ctype, ref_node)],
-                keywords=[],
-            )
+        visited_value = self._cast_to_wire_type(self.visit(value_node), leaf_ctype)
         return _ast.Expr(
             value=_ast.Call(
                 func=_ast.Name(id="_sim_wire_lens_write", ctx=_ast.Load()),
@@ -10109,7 +10128,7 @@ class _GlobalWireRewriter(_ast.NodeTransformer):
                         func=_ast.Name(id="_sim_wire_write", ctx=_ast.Load()),
                         args=[
                             _ast.Constant(value=wire_name),
-                            self.visit(node.value),
+                            self._cast_to_wire_type(self.visit(node.value), root[1]),
                             self._claim_key_const(),
                         ],
                         keywords=[],
@@ -10130,7 +10149,7 @@ class _GlobalWireRewriter(_ast.NodeTransformer):
                     )
                     return _ast.copy_location(
                         self._build_lens_write(
-                            wire_name, path_nodes, leaf_ctype, node.value, node
+                            wire_name, path_nodes, leaf_ctype, node.value
                         ),
                         node,
                     )
@@ -10158,7 +10177,7 @@ class _GlobalWireRewriter(_ast.NodeTransformer):
                     func=_ast.Name(id="_sim_wire_write", ctx=_ast.Load()),
                     args=[
                         _ast.Constant(value=wire_name),
-                        new_val,
+                        self._cast_to_wire_type(new_val, root[1]),
                         self._claim_key_const(),
                     ],
                     keywords=[],
@@ -10181,15 +10200,7 @@ class _GlobalWireRewriter(_ast.NodeTransformer):
                 # _build_lens_write's self.visit(value_node), which is only meant for
                 # unvisited source expressions.
                 visited_path = [self.visit(_copy.deepcopy(p)) for p in path_nodes]
-                cast_val = (
-                    _ast.Call(
-                        func=_ast.Name(id="_sim_cast_deep", ctx=_ast.Load()),
-                        args=[new_val, self._leaf_ctype_name(leaf_ctype, node)],
-                        keywords=[],
-                    )
-                    if leaf_ctype is not None
-                    else new_val
-                )
+                cast_val = self._cast_to_wire_type(new_val, leaf_ctype)
                 new_node = _ast.Expr(
                     value=_ast.Call(
                         func=_ast.Name(id="_sim_wire_lens_write", ctx=_ast.Load()),

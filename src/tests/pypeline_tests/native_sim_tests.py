@@ -97,6 +97,10 @@ PLAIN_PYTHON_TEST_FILES = [
     "interface_mixing_rules_test.py",
     "interface_hw_func_pairing_error_test.py",
     "soft_ops_test.py",
+    # Every write to a global wire is cast to the wire's type: `~q` of a
+    # comparison, a list of ints packed at the element width, wrap on a wider
+    # value or `+=`, unpacking into leaves of different types.
+    "native_invert_compare_wire_test.py",
 ]
 # fmt: on
 

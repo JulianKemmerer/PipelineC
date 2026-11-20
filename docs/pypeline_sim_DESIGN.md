@@ -943,13 +943,24 @@ to module-level `Wire[T]`/`Input[T]`/`Output[T]` names to call the sim wire stat
 | Original AST | Transformed AST |
 |---|---|
 | `Name(id='wire', ctx=Load)` | `_sim_wire_read('wire')` |
-| `wire = expr` (Assign, whole-wire) | `_sim_wire_write('wire', expr)` (Expr stmt, no local binding) |
+| `wire = expr` (Assign, whole-wire) | `_sim_wire_write('wire', _sim_cast_deep(expr, <wire ctype>))` (Expr stmt, no local binding) |
 | `wire, x = a, b` (Tuple/List target with any wire-rooted leaf, any nesting) | `__wire_unpack_…__ = (a, b)` then `wire = __wire_unpack_…__[0]`, `x = __wire_unpack_…__[1]`, each leaf Assign rewritten by the rows above/below (`_lower_unpack`) |
 | `module_alias.wire` (Attribute, Load) | `_sim_wire_read('wire')` |
-| `module_alias.wire = expr` (Attribute, Store, whole-wire) | `_sim_wire_write('wire', expr)` |
-| `wire.field = expr` / `wire[i] = expr` (any nesting, incl. `module_alias.wire.field = expr`) | `_sim_wire_lens_write('wire', [path...], expr)` |
-| `wire += expr` (AugAssign, whole-wire) | `_sim_wire_write('wire', _sim_wire_read('wire') + expr)` |
-| `wire.field += expr` (AugAssign, field/index) | `_sim_wire_lens_write('wire', [path...], _sim_wire_lens_read('wire', [path...]) + expr)` |
+| `module_alias.wire = expr` (Attribute, Store, whole-wire) | `_sim_wire_write('wire', _sim_cast_deep(expr, <wire ctype>))` |
+| `wire.field = expr` / `wire[i] = expr` (any nesting, incl. `module_alias.wire.field = expr`) | `_sim_wire_lens_write('wire', [path...], _sim_cast_deep(expr, <leaf ctype>))` |
+| `wire += expr` (AugAssign, whole-wire) | `_sim_wire_write('wire', _sim_cast_deep(_sim_wire_read('wire') + expr, <wire ctype>))` |
+| `wire.field += expr` (AugAssign, field/index) | `_sim_wire_lens_write('wire', [path...], _sim_cast_deep(_sim_wire_lens_read('wire', [path...]) + expr, <leaf ctype>))` |
+
+**Every write is cast to the type it stores into** (`_cast_to_wire_type`): the wire's type for
+a whole-wire write, the statically-resolved leaf type for a field/index write. The hardware
+wire has that width, so a comparison written to a `Wire[uint1_t]` is a one-bit value (`~q` is
+the one-bit NOT, not `~True == -2`), a list of ints written to a `Wire[uint8_t[2]]` packs at
+8 bits per element (`array_to_uint_le` gives `0x0201`, not `5`), and a value wider than the
+wire (or the result of `wire += x`) is truncated to the wire's width. A struct-typed write is
+not wrapped: `_sim_cast_deep` leaves structs as they are, because struct construction
+already types the scalar and array-of-scalar fields (see the `_replace()` limitation under
+Limitations). A wire whose ctype could not be resolved is not wrapped either.
+Under `SIM_RAW_INTS` `_sim_cast` is a no-op, so raw mode is unchanged.
 
 Module-level wire declarations (`wire: Wire[T]` with no value) are `AnnAssign` nodes with
 `value=None` and are left untouched.
@@ -1012,13 +1023,16 @@ Both reuse `_sim_lens_set` (the same struct-`_replace`/list-copy mechanism
 `_TypedAnnAssignRewriter` uses for local compound variables — see below) and
 `_sim_wire_current_or_zero`, which returns `_sim_wire_state[name]` if present, else a fresh
 `_make_sim_zero(ctype)` built from the registered `_sim_wire_ctype[name]`. A leaf write is
-`_sim_cast_deep`-wrapped when the leaf ctype was staticaly resolvable, exactly like a local
+`_sim_cast_deep`-wrapped when the leaf ctype was statically resolvable, exactly like a local
 compound variable's field write — but since a ctype object can't be embedded directly as an
 `ast.Constant` value (Python's compiler only accepts literal types there), the rewriter stashes
-it in a `leaf_ctypes_out` out-dict under a synthetic `__wire_leaf_ctype_<line>_<col>__` name and
-references that name instead, exactly mirroring `_TypedAnnAssignRewriter`'s
-`__sim_ann_<line>_<col>__` mechanism (see below); the decoration site merges `leaf_ctypes_out`
-into the rewritten function's exec namespace alongside `ann_ctypes_out`.
+it in a `leaf_ctypes_out` out-dict under a synthetic `__wire_leaf_ctype_<n>__` name and
+references that name instead, like `_TypedAnnAssignRewriter`'s `__sim_ann_<line>_<col>__`
+mechanism (see below); the decoration site merges `leaf_ctypes_out` into the rewritten
+function's exec namespace alongside `ann_ctypes_out`. The wire's `<n>` is a per-rewriter serial,
+not a source position: `_lower_unpack` gives every leaf of one unpacking statement the
+statement's position, so a position-keyed name made `s.wide, s.narrow = ...` cast every leaf to
+the type registered last. Whole-wire writes use the same names and the same helper.
 
 ### Per-invocation zero-reset via runtime claim tracking
 
@@ -1562,7 +1576,7 @@ below for how wire names are discovered.
 
 ```python
 def _sim_wire_read(name: str)               # returns current value; records reader dependency; raises if name was never discovered
-def _sim_wire_write(name: str, value)       # stores value as-is (struct types preserved)
+def _sim_wire_write(name: str, value)       # stores value (already cast to the wire's type by _GlobalWireRewriter; struct types preserved)
 ```
 
 `sim_reset()` clears both `_sim_reg_state` and `_sim_wire_state`.
@@ -2754,11 +2768,16 @@ Two traps when writing a design that will be diffed against real VHDL:
   make simulation hardware-accurate for functions decorated with `@hw_func` or `@MAIN`. Inner
   functions must carry `@hw_func` to opt in. See Bit-Accurate Arithmetic section for ctype-chain
   limitations (plain int operands, shifts, `__radd__`).
-- **A whole-wire write is not cast to the wire's type
-  ([#392](https://github.com/JulianKemmerer/PipelineC/issues/392))** — `_sim_wire_write` stores
-  the value as given, so a `Wire[uint1_t]` written from a comparison (`q = t >= 2`) holds a Python
-  `bool`. `~q` is then `-2`, which is truthy, where hardware gives the one-bit NOT. Test
-  `q == 0`, or assign the comparison to a typed local first.
+- **A struct built with `_replace()` or `_make()` keeps its Python field values** (issue TBD,
+  in the [issues inventory](issues_inventory.md)) — a struct value written to a wire, a typed
+  local or a `Reg` is not cast, because `@struct`'s typed constructor (`_typed_new`) types the
+  fields when the struct is *built*. `NamedTuple._replace` and `_make` bypass that constructor
+  (`_replace` builds its result with `_make`, which calls `tuple.__new__`), so
+  `w = s._replace(a=300)` on a `uint8_t` field stores 300, and a list set that way packs at
+  its elements' own widths. Elaboration rejects `_replace` in hardware code, so only sim-only
+  code builds such a value. Build the struct with its constructor (`pair_t(a=..., lanes=...)`)
+  or write the field (`w.a = 300`, which is cast).
+  `known_issues:native_struct_replace_cast_known_issue` reproduces it.
 - **`Input[T]` wires** — initialized to zero at `sim_reset()`; driving a per-cycle value is
   supported via `@sim_input` (see above).
 - **`@MAIN` arguments** — top-level input ports with no driver: `pypeline_sim.py`

@@ -6,6 +6,8 @@
     AUTO_PIPELINE, C_TO_LOGIC <-> C_TO_FSM, ...), which only works while no module
     reads another's attributes during its own import; a new import-time read
     shows up here as "partially initialized module".
+  - Every src module imports with the stdlib `distutils` unavailable, as on
+    Python 3.12, which removed it.
   - A Python design builds with no C preprocessor on PATH (#363): only the C
     front end runs cpp, and it checks for cpp when it first runs it
     (C_TO_LOGIC.REQUIRE_CPP), not when C_TO_LOGIC is imported.
@@ -60,6 +62,32 @@ def test_every_src_module_imports_first():
         if p.returncode != 0:
             failures.append(f"{mod}: {p.stdout.strip().splitlines()[-1]}")
     assert not failures, "src modules that fail as the first import:\n  " + "\n  ".join(failures)
+
+
+def test_src_modules_import_without_distutils():
+    # A None entry in sys.modules makes `import distutils` (and any
+    # `from distutils.x import y`) raise ImportError, as it does on Python 3.12.
+    code = (
+        "import importlib, sys\n"
+        "sys.modules['distutils'] = None\n"
+        "failures = []\n"
+        f"for mod in {_src_modules()!r}:\n"
+        "    try:\n"
+        "        importlib.import_module(mod)\n"
+        "    except Exception as e:\n"
+        "        failures.append(f'{mod}: {type(e).__name__}: {e}')\n"
+        "print('\\n'.join(failures))\n"
+        "sys.exit(1 if failures else 0)\n"
+    )
+    p = subprocess.run(
+        [sys.executable, "-c", code],
+        cwd=SRC_DIR,
+        env=dict(os.environ, PYTHONPATH=SRC_DIR, PYTHONDONTWRITEBYTECODE="1"),
+        stdout=subprocess.PIPE,
+        stderr=subprocess.STDOUT,
+        text=True,
+    )
+    assert p.returncode == 0, "src modules that need distutils:\n  " + p.stdout.strip().replace("\n", "\n  ")
 
 
 def test_python_build_without_cpp():

@@ -23,8 +23,8 @@ import json
 import hashlib
 import math
 import os
+import shutil
 import sys
-from distutils.dir_util import copy_tree
 from pathlib import Path
 
 import AUTO
@@ -3953,7 +3953,11 @@ def WRITE_0_ADDED_CLKS_INIT_FILES(parser_state):
         PY_TO_LOGIC.WRITE_CLOCK_CROSSING_REPORT(parser_state, output_directory)
 
     # Copy pipelinec vhdl directory to output so users can export output directory alone
-    copy_tree(f"{REPO_ABS_DIR()}/src/vhdl", SYN.SYN_OUTPUT_DIRECTORY + "/built_in")
+    shutil.copytree(
+        f"{REPO_ABS_DIR()}/src/vhdl",
+        SYN.SYN_OUTPUT_DIRECTORY + "/built_in",
+        dirs_exist_ok=True,
+    )
 
 
 # ─────────────────────────────────────────────

@@ -37,19 +37,30 @@ Use one `OperatorRegistry` with operator-kind data, explicit precedence and a sc
 
 Introduce a `DesignSession` owning registries and immutable build selections, plus a separate `SimulationSession`. Capture source/AST once in a function descriptor and prepare simulation lazily. A typed operator specification should supply promotion, truncation and evaluation rules to both elaboration and simulation. These are structural changes; merely splitting this file by topic would not remove duplicated semantics.
 
-**Confirmed defect: a global wire holds whatever was written to it** (tree after commit
-`0b710cca`, found adding waveforms). `_sim_wire_write` and `_sim_wire_lens_write` store the
-value as given, never cast to the wire's type (`_sim_wire_ctype`), so what a reader sees
-depends on how the writer spelled the value. A comparison stays a Python `bool` (`~q` is
-`-2`, [#392](https://github.com/JulianKemmerer/PipelineC/issues/392)); a list literal stays
-plain ints, which `array_to_uint_le` packs at their own bit lengths (`[1, 2]` gives 5 where
-GHDL gives `0x0201`); a testbench's `ports.aad_len = AAD_LEN` stays an untyped int.
-`known_issues:native_invert_compare_wire_known_issue` reproduces the first two. Every
-consumer of wire values inherits this: the waveform recorder takes ports' and Wires'
-widths from their declared types, and `axis_wave` casts its lanes, to stay correct.
-Casting at the write (`_sim_cast_deep` with the wire's ctype, as `_TypedAnnAssignRewriter`
-does for typed locals) would fix all of them; measure the native simulation cost, since
-wire writes are a hot path.
+**Wire writes are cast to the wire's type; a struct built by `_replace()` is not** (finding made on the tree after commit
+`0b710cca`, while adding waveforms; revalidated on `3d0b54af` plus the change that added `_GlobalWireRewriter._cast_to_wire_type`).
+`_sim_wire_write` and `_sim_wire_lens_write` used to store the value as given, so what a reader saw depended on how the
+writer spelled it: a comparison stayed a Python `bool` (`~q` was `-2`,
+[#392](https://github.com/JulianKemmerer/PipelineC/issues/392)), a list literal stayed plain ints that `array_to_uint_le`
+packed at their own bit lengths (`[1, 2]` gave 5 where GHDL gives `0x0201`), and a testbench's `ports.aad_len = AAD_LEN`
+stayed an untyped int. Field and index writes were already cast; whole-wire writes (`wire = x`, `module.wire = x`,
+`wire += x`, unpacked leaves) were not. The rewriter now wraps every one in `_sim_cast_deep(value, <ctype>)`
+(`_cast_to_wire_type`), `axis_wave` and WireGuard's `port_waves` no longer cast, and
+`native_sim:native_invert_compare_wire_test` asserts the hardware's answers for each shape.
+One gap stays open. A struct-typed write is not wrapped (`_sim_cast_deep` returns structs as given), because
+`@struct`'s typed constructor `_typed_new` types the fields when the struct is built; `NamedTuple._replace` and `_make`
+bypass it, so a wire, typed local or `Reg` written with `s._replace(a=300)` keeps 300 in a `uint8_t` field
+(`known_issues:native_struct_replace_cast_known_issue`, issue TBD in the
+[issues inventory](../../issues_inventory.md)). A `_make` that goes through `_typed_new` would close it, but
+`_sim_lens_set` builds every struct field write with `_replace`, so it would re-type every field on every field write, a
+cost not yet measured. The change also exposed a coupling: the synthetic ctype names the rewriter injects into the exec
+namespace were keyed by source position, and `_lower_unpack` gives every leaf of one unpacking statement the statement's
+position, so in `s.wide, s.narrow = ...` every leaf was cast to the type registered last (`wide=44` for 300 on the tree
+before the change). The names are a per-rewriter serial. Cost: the six WireGuard native runs (encrypt,
+decrypt and shared, each with the random and the fixed-vector testbench, `--comb`, one run each on both trees, the two
+trees running side by side with two other jobs on four cores) took 487, 171, 570, 159, 566 and 213 s with the cast and
+487, 171, 574, 162, 564 and 213 s before it, and printed identical output. The PDW testbench (`pdw_tb`, a wire-heavy design, the two trees
+side by side as above) took 4839 s with the cast and 4858 s before it.
 
 **`@interface` is part library, part `pypeline.py`, coupled by attribute names** (tree after commit `5b816e9d`, found while renaming the interface halves). The design documents call `@interface` a pure library construct (`include/pypeline/interface.py`), but this module names its halves (`_derived_type`, `_interface_half_symbol`), checks port pairing (`_check_partial_interface_ports`, `_interface_half_of`) and encodes interface parameters (`encode_param_value`), all by reading the stamps `interface()` sets: `_pypeline_is_interface`, `_pypeline_interface`, `_pypeline_interface_role`, `_pypeline_iface_derived` and `_pypeline_iface_canonical`. `PY_TO_LOGIC`, `DIAGRAM`, `interface_func` and `stream.stream` read some of the same stamps. Nothing declares them in one place, so a change to what an interface carries means finding every reader by grep. The half names show the cost: `interface._derive` builds the half class names (and so their C type keys) and `_derived_type` here builds their VHDL descriptions, and at `5b816e9d` the two used different suffixes (`<name>_t`/`<name>_feedback_t` against `<name>_fwd_t`/`<name>_fb_t`). `_interface_half_symbol` is the one rule both use. One small record type for the stamps, defined here and filled by `interface()`, would give the readers one definition.
 

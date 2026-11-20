@@ -217,10 +217,10 @@ ctrl_regs: Wire[pdw_ctrl_t]
 
 @MAIN(pdw_clk, reset=ctrl_rst, reset_registers="all")
 def ctrl_main():
-    # Typed locals first: uint_to_array_le splits by the value's WIDTH, and a
-    # port read straight into it carries only whatever width its current value
-    # implies (a plain int in native sim). Naming the type pins it at 32/4 bits
-    # -- the same reason pdw_main reads `rx0_tdata: uint32_t` before slicing.
+    # Typed locals first: uint_to_array_le splits by the value's WIDTH, and
+    # these name it, 32 and 4 bits, before the split -- the same reason
+    # pdw_main reads `rx0_tdata: uint32_t` before slicing. The port reads are
+    # already that wide; the locals just state it where it is used.
     ctrl_tdata: uint32_t = tx0_s_axis_tdata
     ctrl_tkeep: tkeep_t = tx0_s_axis_tkeep
     ci: pdw_ctrl.axis_if_t.stream_t

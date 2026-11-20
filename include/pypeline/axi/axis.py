@@ -69,12 +69,12 @@ def axis_wave(prefix, axis_if):
     """
     stream = axis_if.stream
     frag = stream.data.frag
-    # Cast each lane: a testbench may write plain ints, which pack at their own width
-    sim_wave(prefix + "_tdata", array_to_uint_le([uint8_t(lane) for lane in frag.data]))
-    sim_wave(prefix + "_tkeep", array_to_uint_le([uint1_t(bit) for bit in frag.keep]))
-    sim_wave(prefix + "_tlast", uint1_t(stream.data.eod[0]))
-    sim_wave(prefix + "_tvalid", uint1_t(stream.valid))
-    sim_wave(prefix + "_tready", uint1_t(axis_if.ready))
+    # Wire values are already typed (native sim casts every wire write), so no casts here
+    sim_wave(prefix + "_tdata", array_to_uint_le(frag.data))
+    sim_wave(prefix + "_tkeep", array_to_uint_le(frag.keep))
+    sim_wave(prefix + "_tlast", stream.data.eod[0])
+    sim_wave(prefix + "_tvalid", stream.valid)
+    sim_wave(prefix + "_tready", axis_if.ready)
 
 
 def make_axis_broadcast_interlock(axis_if_t, n):

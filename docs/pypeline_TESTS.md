@@ -1065,12 +1065,21 @@ The remaining global wire tests:
   with no shared wire, where `global_wires_pkg` is not written but `top.vhd` uses
   its types, so GHDL rejects the VHDL
   ([#384](https://github.com/JulianKemmerer/PipelineC/issues/384)).
-- `native_invert_compare_wire_known_issue` (`known_issues`, native sim only): native
-  simulation keeps a wire's value uncast. `~q`, where `q: Wire[uint1_t]` is written from
-  a comparison, is truthy in every cycle because the wire holds a Python `bool`, and
-  `array_to_uint_le` of a `Wire[uint8_t[2]]` written as `[1, 2]` packs to 5, not
-  `0x0201` (`native_invert_compare_wire_test.py` asserts the hardware's answers,
-  [#392](https://github.com/JulianKemmerer/PipelineC/issues/392)).
+- `native_invert_compare_wire_test` (`native_sim`, native sim only): every write to a
+  wire is cast to the wire's type. Each test runs a small design through
+  `pypeline_sim.py` and asserts the hardware's answer:
+  - `~q`, where `q: Wire[uint1_t]` is written from a comparison, is the one-bit NOT;
+  - `array_to_uint_le` of a `Wire[uint8_t[2]]` written as `[1, 2]` is `0x0201`, also
+    through an array field of a struct wire;
+  - `w = t + 250` on a `Wire[uint8_t]` and `acc += n` wrap at 8 bits;
+  - unpacking `wide, narrow = 300, 257` into wires, or `s.wide, s.narrow = ...` into
+    fields, of different types casts each leaf to its own type.
+- `native_struct_replace_cast_known_issue` (`known_issues`, native sim only): a struct
+  built with `_replace()` or `_make()` keeps its Python field values, so a `uint8_t`
+  field set to 300 holds 300 where the hardware holds 44, and a `uint8_t[2]` field set
+  to `[1, 2]` packs to 5, not `0x0201`. `native_struct_replace_cast_test.py` asserts the
+  hardware's answers for a wire, a typed local and a `Reg` (issue TBD, in the
+  [issues inventory](issues_inventory.md)).
 
 **Pipeline timing.** See the guide's
 [Global wires in pipelined code](pypeline_guide.md#global-wires-in-pipelined-code).

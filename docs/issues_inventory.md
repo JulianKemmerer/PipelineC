@@ -4,7 +4,7 @@ This lists every open [PipelineC issue][issues], most serious first, for contrib
 
 Feature ideas and design questions live in [Discussions][discussions]. Before starting on code, read [`CONTRIBUTING.md`](../CONTRIBUTING.md): changes usually start with a discussion.
 
-- **Baseline:** commit `5d2a9ca62616932aa401c8a3b07973afbb357ce5`. Every `file:line` reference points into that commit, except references into `src/C_TO_LOGIC.py`, `src/LOGIC.py` and `src/RAW_VHDL.py`, which point into commit `5f81adf4` (`LOGIC.py` was split out of `C_TO_LOGIC.py` before it). The entries for [#369][i369], [#370][i370], [#371][i371], [#372][i372], [#379][i379], [#380][i380], [#381][i381], [#382][i382] to [#386][i386] and [#389][i389] to [#400][i400] cite code newer than the baseline, so they name functions instead. [#390][i390] was verified on commit `16f70fd2`.
+- **Baseline:** commit `5d2a9ca62616932aa401c8a3b07973afbb357ce5`. Every `file:line` reference points into that commit, except references into `src/C_TO_LOGIC.py`, `src/LOGIC.py` and `src/RAW_VHDL.py`, which point into commit `5f81adf4` (`LOGIC.py` was split out of `C_TO_LOGIC.py` before it). The entries for [#369][i369], [#370][i370], [#371][i371], [#372][i372], [#379][i379], [#380][i380], [#381][i381], [#382][i382] to [#386][i386], [#389][i389] to [#391][i391] and [#393][i393] to [#400][i400] cite code newer than the baseline, so they name functions instead. [#390][i390] was verified on commit `16f70fd2`.
 - **Verified** means reproduced on that commit, in some cases by simulating the generated VHDL in GHDL. Unverified entries come from reading the code or from the issue thread.
 
 ## Before you start
@@ -63,7 +63,7 @@ Issues #353 and later include their reproducers in the issue itself.
 
 - `python3 src/tests/pypeline_tests/run_all.py` runs the Python suites. It accepts `-j N` and `--category …`.
 - `src/tests/c_tests/test_builds.sh "--comb --no_synth"` builds the C examples.
-- `python3 src/tests/pypeline_tests/known_issues_tests.py` runs expect-fail reproducers of known bugs, including those for [#361][i361], [#369][i369] to [#372][i372], [#376][i376], [#378][i378] to [#386][i386], [#389][i389], [#391][i391] and [#392][i392]. A fixed bug shows up as XPASS.
+- `python3 src/tests/pypeline_tests/known_issues_tests.py` runs expect-fail reproducers of known bugs, including those for [#361][i361], [#369][i369] to [#372][i372], [#376][i376], [#378][i378] to [#386][i386], [#389][i389] and [#391][i391]. A fixed bug shows up as XPASS.
 
 ## Ranking
 
@@ -93,7 +93,7 @@ Within each group, bugs that affect both front ends come first, problems in the 
 | 13 | [#355][i355] | Python | `@sim_input` ignores its arguments within a cycle | Yes |
 | 14 | [#379][i379] | Python | Native simulation after a build drops pipeline placements inside a `@MAIN` of an imported module | Yes, in process |
 | 15 | [#382][i382] | Python | Native simulation gives two instances one state when only a stateless caller tells them apart | Yes, GHDL |
-| 16 | [#392][i392] | Python | In native simulation, `~` of a one-bit wire written from a comparison is always true | Yes, GHDL |
+| 16 | TBD | Python | Native simulation keeps the Python values of a struct built with `_replace()` or `_make()` | Yes |
 | 17 | [#356][i356] | Both | String literals containing `_` produce invalid VHDL | Yes, GHDL |
 | 18 | [#357][i357] | Both | A `char` register with an integer initial value: invalid VHDL in C, rejected in Python | Yes, GHDL |
 | 19 | [#371][i371] | Both | `@pipeline_latency`/`FUNC_LATENCY` on a wire-only body produces invalid VHDL | Yes, GHDL |
@@ -434,14 +434,13 @@ Within each group, bugs that affect both front ends come first, problems in the 
 - **Reproduce:** `python3 src/tests/pypeline_tests/known_issues_tests.py -t stateless_caller_sim_state_known_issue` (XFAIL while the bug is present; needs GHDL). The design is `src/tests/pypeline_tests/inst/stateless_caller_sim_state_design.py`.
 - **Workaround:** put each instance in its own `@MAIN` and connect them with wires (`self_check_factory_main_test.py` does this for two FIFO lanes).
 
-### 16. [#392][i392]: in native simulation, `~` of a one-bit wire written from a comparison is always true
+### 16. TBD: native simulation keeps the Python values of a struct built with `_replace()` or `_make()`
 
-- **Front ends:** Python, native simulation only. The generated hardware is correct.
-- **What happens:** with `q: Wire[uint1_t]` written from a comparison (`q = t >= 2`), `if ~q:` is taken in every cycle of native simulation. The wire holds the comparison's Python `bool`, and `~True` is `-2`, which is truthy. In hardware `~q` is the one-bit NOT, so native and HDL simulation disagree from the first cycle in which the comparison is true. The issue's design prints `q` from the third cycle in GHDL and never natively.
-- **Also:** a list of plain ints written to an array wire stays plain ints. With `lanes_w: Wire[uint8_t[2]]` written as `lanes_w = [1, 2]`, `array_to_uint_le(lanes_w)` packs each element at its own bit length: 5 natively, `0x0201` = 513 in GHDL. A testbench writing fields of a struct wire the same way sees the same widths.
-- **Where to look (suspected, not traced):** `pypeline._sim_wire_write` stores the value as given, so a Python `bool` stays a `bool`. Casting a write to the wire's type, the way a typed local gets its type through `_TypedAnnAssignRewriter`, would make `~` the one-bit NOT.
-- **Reproduce:** the design and both runs are in the issue. `python3 src/tests/pypeline_tests/run_all.py --category known_issues -t native_invert_compare_wire_known_issue -j 1` (XFAIL while the bug is present) runs both designs natively and asserts the hardware's answers (`inst/native_invert_compare_wire_test.py`).
-- **Workaround:** test `q == 0` instead of `~q`, or assign the value to a typed local first (`c: uint1_t = t >= 2`, then `q = c`; `lanes: uint8_t[2] = [1, 2]`), or cast it (`uint8_t(x)`).
+- **Front ends:** Python, native simulation only. Elaboration rejects `_replace` in a hardware function (`'base' is not a module in call 'base._replace'`), so only code that runs in native simulation alone builds such a value: sim-only MAINs, `@sim_input` functions and testbench helpers. A hardware MAIN that reads the value in native simulation sees it as built.
+- **What happens:** `@struct`'s constructor casts each field to its declared type. `NamedTuple._replace` and `_make` build the struct without it, so the fields keep the Python values they were given, and native simulation stores a struct value as given on a wire, in a typed local and in a `Reg`. For a struct with a `uint8_t` field `a` and a `uint8_t[2]` field `lanes`, `w = base._replace(a=300, lanes=[1, 2])` gives `w.a == 300` (`~w.a == -301`) and `array_to_uint_le(w.lanes) == 5`. The hardware holds 44 and packs `0x0201` (513), as native simulation does for `pair_t(a=300, lanes=[1, 2])`.
+- **Where to look:** `struct()` in `src/pypeline.py` replaces `__new__` with `_typed_new`, which types the fields. Python 3.8's `_replace` builds its result with `_make`, and `_make` calls `tuple.__new__` directly, so neither reaches `_typed_new`. `_sim_cast_deep` returns a struct value unchanged, and `_GlobalWireRewriter._cast_to_wire_type` does not wrap a struct-typed write at all. One fix is a `_make` on each `@struct` class that goes through `_typed_new`, which also covers `_replace`. `_sim_lens_set` builds every struct field write with `_replace`, so that fix re-types every field on every field write: measure the native simulation cost on a wire-heavy design such as `pdw_tb`.
+- **Reproduce:** `python3 src/tests/pypeline_tests/run_all.py --category known_issues -t native_struct_replace_cast_known_issue -j 1` (XFAIL while the bug is present). `src/tests/pypeline_tests/inst/native_struct_replace_cast_test.py` asserts the hardware's values for a wire, a typed local and a `Reg`.
+- **Workaround:** build the struct with its constructor (`pair_t(a=..., lanes=...)`), or write the field (`w.a = 300`), which native simulation casts to the field's type. WireGuard needs no workaround: its sources call neither `_replace` nor `_make`.
 
 ## Invalid HDL, crashes and misleading errors
 
@@ -681,9 +680,9 @@ Within each group, bugs that affect both front ends come first, problems in the 
 ### 40. [#400][i400]: separately generated tops cannot safely share a design because module names collide
 
 - **Front ends:** both (generated-entity naming is shared). Seen with Python.
-- **What happens:** this is a feature request prompted by a real integration failure. WireGuard builds its ChaCha20-Poly1305 encrypt and decrypt cores as separate `--soc` netlists, then instantiates both in one SoC. The two files define 419 of the same module names; 169 of those names have different bodies. Verilator reports `MODDUP`, JanusHDL rejects the second definition, and synthesis cannot accept both definitions in one design. Suppressing Verilator's warning is unsafe because it keeps only one body, silently making the other core use module text from the wrong build. The reported benches still pass, but functional equivalence of the colliding bodies has not been checked.
+- **What happens:** this is a feature request prompted by a real integration failure. WireGuard builds its ChaCha20-Poly1305 encrypt and decrypt cores as separate `--soc` netlists, then instantiates both in one SoC. The two files define 419 of the same module names; 169 of those names have different bodies, and those differ only in the numbers GHDL gives its nets (`\:3609.read_pipe`): with those numbers normalized, all 419 bodies are identical (a text comparison of the two netlists WireGuard tracks, not a formal proof). Verilator reports `MODDUP` and keeps one body, Yosys `read_verilog` stops with "Re-definition of module" unless given `-overwrite`, and JanusHDL 0.21.0 takes the duplicates with a warning where an earlier version rejected the second definition (as WireGuard reports in [wireguard-fpga#59](https://github.com/chili-chips/wireguard-fpga/issues/59)). Suppressing Verilator's warning is not safe in general: it keeps only one body, so a design whose same-named bodies really differ would silently make one core use module text from the wrong build. Nothing in the build guarantees that two tops' bodies stay identical.
 - **Where to look:** `VHDL.GET_ENTITY_NAME` names timing-specific implementations, while `EmissionNames` supplies Pypeline's descriptive bases; `WRITE_LOGIC_ENTITY`, `WRITE_LOGIC_TOP` and `WRITE_MULTIMAIN_TOP` emit those names. A build-level namespace must remain deterministic and must be included consistently in declarations, references, filenames, synthesis top selection and cache identity. See [entity identity and reuse](VHDL_DESIGN.md#entity-identity-and-reuse) and [Pypeline source-based naming](VHDL_DESIGN.md#pypeline-source-based-naming).
-- **Reproduce:** build WireGuard's `chacha20poly1305_encrypt` and `chacha20poly1305_decrypt` `--soc` targets separately as described in the issue, then compare their Verilog module declarations or read both files into Verilator, JanusHDL or a synthesis project. The reported counts use PipelineC `84685d25` and Yosys 0.70. This inventory update does not independently reproduce them, and there is no known-issue test yet.
+- **Reproduce:** build WireGuard's `chacha20poly1305_encrypt` and `chacha20poly1305_decrypt` `--soc` targets separately as described in the issue, then compare their Verilog module declarations or read both files into Verilator, JanusHDL or a synthesis project. The reported counts use PipelineC `84685d25` and Yosys 0.70; a text comparison of the netlists WireGuard tracks gives the same 419 and 169, and Verilator 5.015 and Yosys behave as described on two one-line modules of one name. There is no known-issue test yet.
 - **Workaround:** generate one shared top containing both cores, which changes the SoC architecture, or namespace every module in one netlist with a post-processing script, which is fragile.
 
 ### 41. [#76][i76]: no `switch` or `match` statement
@@ -843,7 +842,6 @@ Within each group, bugs that affect both front ends come first, problems in the 
 [i389]: https://github.com/JulianKemmerer/PipelineC/issues/389
 [i390]: https://github.com/JulianKemmerer/PipelineC/issues/390
 [i391]: https://github.com/JulianKemmerer/PipelineC/issues/391
-[i392]: https://github.com/JulianKemmerer/PipelineC/issues/392
 [i393]: https://github.com/JulianKemmerer/PipelineC/issues/393
 [i396]: https://github.com/JulianKemmerer/PipelineC/issues/396
 [i397]: https://github.com/JulianKemmerer/PipelineC/issues/397

@@ -61,15 +61,15 @@ SWEEP_FLOAT32_BLOCKED = {
 
 def get_tests() -> list:
     tests = []
-    # Native sim stores a wire's value uncast: `~q` of a Wire[uint1_t] written
-    # from a comparison is always truthy (the wire holds a Python bool; ~True
-    # is -2), unlike the hardware's one-bit NOT, and array_to_uint_le of a
-    # Wire[uint8_t[2]] written as [1, 2] packs to 5, not 0x0201. Issue #392.
+    # Native sim keeps the Python values of a struct built with _replace() or
+    # _make(): a uint8_t field set to 300 holds 300 (hardware: 44) and a
+    # uint8_t[2] field set to [1, 2] packs to 5 (hardware: 0x0201), on a wire,
+    # in a typed local and in a Reg. The constructor types them. Issue TBD.
     tests.append(
         Test(
-            name="native_invert_compare_wire_known_issue",
+            name="native_struct_replace_cast_known_issue",
             category="known_issues",
-            cmd=[INST_DIR / "native_invert_compare_wire_test.py"],
+            cmd=[INST_DIR / "native_struct_replace_cast_test.py"],
             expect_fail=True,
         )
     )
