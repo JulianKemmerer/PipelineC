@@ -1,19 +1,20 @@
-"""Known issue: the generated top level's global-wire connections come out in
-an order that depends on Python's string hashing.
+"""Regression test for issue #380: the generated top level's global-wire
+connections do not depend on Python's string hashing.
 
-VHDL.WRITE_MULTIMAIN_TOP gathers a shared wire's readers into sets
-(read_funcs, read_insts) and writes one block of connections per reader in
-set order. For a wire with several readers, the order of those blocks in
-top/top.vhd changes with PYTHONHASHSEED, so two builds of one design can write
-two different top.vhd files. The hardware is the same; any cache keyed by
-the file's text (synthesis logs) misses.
+VHDL.GLOBAL_WIRE_CONNECTIONS plans the connections from
+ParserState.global_wire_access, whose functions and instances are sorted, so a
+wire read by several instances gets one block of connections per reader in the
+same order on every run. This test builds a design (by default
+global_wire_nested_split_test.py: wires w and w2, each read by two functions)
+with PYTHONHASHSEED=0 and =1 and exits nonzero if the two top/top.vhd files
+differ, which would also miss every cache keyed by the file's text (synthesis
+logs).
 
-This test builds global_wire_nested_split_test.py (wires w and w2, each read
-by two functions) with PYTHONHASHSEED=0 and =1 and exits nonzero while the
-two top.vhd files differ. Registered in known_issues_tests.py with
-expect_fail=True.
+Registered in build_report_tests.py (two --no_synth builds), and in
+known_issues_tests.py with the design argument c_inst_array_order_design.c: the
+C front end's INST_ARRAY connections in VHDL.WRITE_MULTIMAIN_TOP still loop over
+unsorted sets (expect_fail while that bug is present).
 """
-
 import os
 import subprocess
 import sys
@@ -21,23 +22,24 @@ import tempfile
 
 INST_DIR = os.path.dirname(os.path.abspath(__file__))
 SRC_DIR = os.path.abspath(os.path.join(INST_DIR, "..", "..", ".."))
-DESIGN = os.path.join(INST_DIR, "global_wire_nested_split_test.py")
+DEFAULT_DESIGN = os.path.join(INST_DIR, "global_wire_nested_split_test.py")
 
 
-def _top_vhd(tmpdir, seed):
+def _top_vhd(design, tmpdir, seed):
     out_dir = os.path.join(tmpdir, f"seed_{seed}")
     env = dict(os.environ, PYTHONHASHSEED=str(seed))
     subprocess.run(
         [
             sys.executable,
             os.path.join(SRC_DIR, "pypelinec"),
-            DESIGN,
+            design,
             "--comb",
             "--no_synth",
             "--out_dir",
             out_dir,
         ],
         env=env,
+        cwd=tmpdir,  # the C parser writes its lextab.py / yacctab.py here
         check=True,
         stdout=subprocess.DEVNULL,
     )
@@ -46,8 +48,9 @@ def _top_vhd(tmpdir, seed):
 
 
 def main():
+    design = os.path.abspath(sys.argv[1]) if len(sys.argv) > 1 else DEFAULT_DESIGN
     with tempfile.TemporaryDirectory(prefix="top_level_reader_order_") as tmpdir:
-        tops = [_top_vhd(tmpdir, seed) for seed in (0, 1)]
+        tops = [_top_vhd(design, tmpdir, seed) for seed in (0, 1)]
     if tops[0] != tops[1]:
         print("top/top.vhd differs between PYTHONHASHSEED=0 and =1")
         sys.exit(1)

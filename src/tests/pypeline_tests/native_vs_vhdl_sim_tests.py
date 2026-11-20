@@ -170,17 +170,13 @@ COMB_TEST_FILES = [
     ("global_wire_read_write_test.py", INST_DIR, []),
     ("global_wire_split_driver_test.py", INST_DIR, []),
     ("global_wire_readback_test.py", INST_DIR, []),
-    # global_wire_nested_split_test.py is deliberately NOT here: under this
-    # exact combination (--comb --sim --cocotb --ghdl) elaboration raises
-    # "Global Output 'combined' has multiple writer functions with
-    # overlapping driven fields: 'combiner' drives (whole wire) and
-    # 'soft_cmp_prefix_n_leaves_8_level_5ca4ac95' drives (whole wire)" --
-    # an internal soft-compare submodule is being misidentified as a second
-    # writer of the global wire. It still builds fine under plain --comb
-    # (synth_tests.py) and passes native_sim. The same false-writer error
-    # used to break the plain --comb build too (the former
-    # global_wire_nested_split_known_issue); that build passes again, but this
-    # combination has not been re-checked.
+    # A writer reading its own wire back in a design with no shared wire
+    # (issue #384): the readback input needs global_wires_pkg all the same.
+    ("global_wire_unshared_readback_test.py", INST_DIR, []),
+    # Three writers at nested struct paths and a mixed-depth subtree claim, each
+    # region sourced from its owner (VHDL.BUILD_MULTI_WRITER_REGIONS) in real
+    # GHDL.
+    ("global_wire_nested_split_test.py", INST_DIR, []),
     ("global_wire_hier_writer_test.py", INST_DIR, []),
     ("global_wire_cond_driver_test.py", INST_DIR, []),
     ("global_wire_array_split_test.py", INST_DIR, []),

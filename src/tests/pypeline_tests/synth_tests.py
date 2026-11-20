@@ -67,6 +67,11 @@ SYNTH_TEST_FILES = [
     # leaves have ~190-byte generated entity names, which used to overflow the
     # 255-byte filename limit in DEVICE_MODELS' synthesis artifact names.
     ("self_check_stream_auto_fsm_test.py", INST_DIR, [], DM),
+    # Non---comb build (a --comb build measures nothing): AUTO_FSM's
+    # per-entity measurement in a design with no pins or shared wires, whose
+    # isolated measurement state must not be asked the design's
+    # global_wires_pkg question (SYN.GET_VHDL_FILES_TCL_TEXT_AND_TOP)
+    ("auto_fsm_no_pins_test.py", INST_DIR, [], DM),
     # MULTI_CYCLE path constraints are Vivado-only
     # (AUTO_MULTI_CYCLE.GET_MCP_PATH_CONSTRAINTS), so these need their Xilinx PART.
     ("stream_multi_cycle_test.py", INST_DIR, ["--comb"], VIVADO),

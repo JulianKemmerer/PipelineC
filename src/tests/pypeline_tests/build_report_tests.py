@@ -500,6 +500,16 @@ def get_tests() -> list:
             requires=["ghdl"],
         )
     )
+    # The top level's global-wire connections are the same under every
+    # PYTHONHASHSEED (VHDL.GLOBAL_WIRE_CONNECTIONS, issue #380): two --no_synth
+    # builds of one design with wires read by two functions, top.vhd compared.
+    tests.append(
+        Test(
+            name="top_level_reader_order_test",
+            category=DM,
+            cmd=[INST_DIR / "top_level_reader_order_test.py"],
+        )
+    )
     # Regression guard for the D1 fix (RAW_VHDL.SPLIT_KIND_1LL leaves -
     # MUX/AND/OR/XOR - expose real operation boundaries without pretending
     # their one logic level has an arbitrary interior): a serial 1LL-only gate

@@ -175,6 +175,19 @@ def get_tests() -> list:
             cmd=[INST_DIR / "global_wire_errors_test.py"],
         )
     )
+    # ParserState.global_wire_access, the table of who writes and reads each
+    # global wire (LOGIC.BUILD_GLOBAL_WIRE_ACCESS): a split wire with a helper
+    # writer, a readback writer and a two-instance reader, pins, a variable-
+    # index writer's prefix, a FIFO's MAIN, agreement with the per-function
+    # records, a C design's whole-wire uses, and the top level's connection
+    # plan (VHDL.GLOBAL_WIRE_CONNECTIONS) and package predicate built on it.
+    tests.append(
+        Test(
+            name="global_wire_access_test",
+            category="elab_introspect",
+            cmd=[INST_DIR / "global_wire_access_test.py"],
+        )
+    )
     # Global FIFOs, Fifo[T]: the FIFO MAIN (clock, protected name, no added
     # latency, handshake users), access records, an imported module's FIFO, and
     # every end/initializer/clock/AUTO_PIPELINE/name error.

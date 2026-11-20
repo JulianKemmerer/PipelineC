@@ -1357,12 +1357,16 @@ See also [VHDL_DESIGN.md](VHDL_DESIGN.md#top-level-clocks-and-records).
 ### Global wire records
 
 `VHDL.WRITE_GLOBAL_WIRES_VHDL_PACKAGE` writes `global_wires_pkg.pkg.vhd` when the design
-has a shared global or a crossing. For each function that needs them it declares
+has a shared global, a crossing, or a MAIN with a `global_to_module` or `module_to_global`
+record (`VHDL.NEEDS_GLOBAL_WIRES_VHDL_PACKAGE`; a Pypeline writer that reads its own wire
+back has the record's readback input even when no wire is shared). For each function that
+needs them it declares
 `<func>_global_to_module_t` and `<func>_module_to_global_t`:
 
 - one field per port of each crossing submodule, named `<crossing function>_<port>`:
   inputs and `CLOCK_ENABLE` in `module_to_global`, `return_output` in `global_to_module`;
-- one field per shared global the function writes or reads;
+- one field per shared global the function writes, and one per global it reads (a
+  Pypeline writer's readback input, `<wire>_PYPELINE_READBACK`, included);
 - one nested field per submodule instance that needs the records, named after the
   instance.
 

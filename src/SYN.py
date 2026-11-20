@@ -4246,9 +4246,6 @@ def GET_VHDL_FILES_TCL_TEXT_AND_TOP(
             SYN_OUTPUT_DIRECTORY + "/" + "clk_cross_entities" + VHDL.VHDL_FILE_EXT + " "
         )
 
-    needs_global_t = (
-        VHDL.NEEDS_GLOBAL_WIRES_VHDL_PACKAGE(parser_state) and not inst_name
-    )  # is multimain
     if inst_name:
         # Does inst need clk cross?
         Logic = parser_state.LogicInstLookupTable[inst_name]
@@ -4259,6 +4256,11 @@ def GET_VHDL_FILES_TCL_TEXT_AND_TOP(
             Logic, parser_state
         )  # , multimain_timing_params.TimingParamsLookupTable)
         needs_global_t = needs_global_to_module or needs_module_to_global
+    else:
+        # Multimain: the design's package. Only here, as an instance's parser
+        # state can be AUTO_FSM's isolated one, whose main_mhz names a root
+        # instance rather than a MAIN function
+        needs_global_t = VHDL.NEEDS_GLOBAL_WIRES_VHDL_PACKAGE(parser_state)
     if needs_global_t:
         # Clock crossing record
         files_txt += (

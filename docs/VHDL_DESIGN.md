@@ -48,7 +48,10 @@ A normal build emits:
 - `c_structs_pkg.pkg.vhd`, which declares translated structs, arrays, enums,
   and helper conversions;
 - `global_wires_pkg.pkg.vhd`, which declares the records connecting MAINs and
-  global wires;
+  global wires, when the design has a clock crossing, a shared global or a MAIN
+  with such a record (`NEEDS_GLOBAL_WIRES_VHDL_PACKAGE`, asked of the whole
+  design: a single-instance synthesis lists the package when that instance has
+  a record);
 - built-in support entities such as FIFO implementations when referenced;
 - one or more generated entities for each distinct logic/timing shape;
 - a final `top/top.vhd`; and
@@ -339,6 +342,21 @@ ready signals (flattening them to scalar ports is discussed in [#339](https://gi
 generated hash is intentionally not a stable
 API; testbenches should discover types from `c_structs_pkg` or bind through a
 small wrapper with scalar ports.
+
+The global wires between MAINs are planned, then rendered. `GLOBAL_WIRE_CONNECTIONS`
+reads `ParserState.global_wire_access`
+([LOGIC_DESIGN.md](LOGIC_DESIGN.md#3-parserstate--the-global-compiler-context)) and
+returns, for each shared wire in name order, the `TopAssignment`s of the "Directly
+connected global wires" section, and the zero feeds for the readback input of a writer of
+an unshared wire. A wire is driven by its writer instance's `module_to_global` field,
+by its input pin when nothing writes it, or region by region when several functions write
+disjoint fields (`BUILD_MULTI_WRITER_REGIONS`; a region nobody drives is zero). It feeds
+its Output port, the `global_to_module` field of each instance that reads it (sorted, so
+the file does not depend on string hashing) and each writer's readback input: zero in the
+regions that writer drives itself, the owner's live value in the others.
+`WRITE_MULTIMAIN_TOP` renders the plan and does the clock check below. The user clock
+wires and `MAIN_RESET_SOURCE_TEXT` find their one writer instance in the same table.
+Instance arrays, which only the C front end makes, keep their own wiring after it.
 
 The writer checks that a shared global's functions run on one clock ("Cannot have
 multiple clock domains for shared global"), except for async wires and the wires in

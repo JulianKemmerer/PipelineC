@@ -19,12 +19,10 @@ single whole-field struct write, while main_b claims individual nested leaves
 (w2.b.x) and a scalar field (w2.tag) -- regions at different depths of the
 same type tree ((w2.b.y is claimed by nobody and must read zero).
 
-Registered in native_sim_tests.py (--sim --comb --run all) and synth_tests.py
-(--comb), so the per-region VHDL is also proven through real synthesis. NOT
-in native_vs_vhdl_sim_tests.py: under --comb --sim --cocotb --ghdl this
-design currently trips an elaboration error misidentifying an internal
-soft-compare submodule as a second writer of `combined` -- see that file's
-own comment.
+Registered in native_sim_tests.py (--sim --comb --run all), in
+native_vs_vhdl_sim_tests.py (the native and cocotb+GHDL sims diff their
+sim_print(debug=True) output cycle by cycle) and in synth_tests.py (--comb), so
+the per-region VHDL is also proven through real synthesis.
 
 `sim_assert`/`sim_finish` are simulation-only built-ins invisible to real
 synthesis, so a design that only ever touches the split wires through them

@@ -7,8 +7,9 @@ it (in-process, no tool).
   from a reset pin (also as the start_port_name of a path with no start
   register), to a MAIN that resets with it is the reset's; a path
   inside one MAIN, into a MAIN without that reset, or from a source MAIN that
-  also drives data the reset MAIN reads, directly or through another MAIN's
-  wires, is not.
+  also drives data the reset MAIN reads, directly, through another MAIN's
+  wires, or by reading back a field of a wire the reset MAIN itself drives, is
+  not.
 - A scripted sweep (sweep_cross_main_test's harness) whose failing path is a
   reset's stops the reset MAIN's plan at once, never pipelines it, and names
   the reset in the timing failures; the same path not classified as a
@@ -73,11 +74,42 @@ def forwarder():
 """
 
 
-def _parse(dut_step):
+# A split wire: dut drives .b and may read .a, which rst_gen drives, back
+READBACK_DESIGN = """
+import sys
+sys.path.insert(0, {repo_root!r})
+from pypeline import *
+
+@struct
+class pair_t(NamedTuple):
+    a: uint8_t
+    b: uint8_t
+
+gen_rst: Wire[uint1_t] = make_reset()
+shared: Wire[pair_t]
+clk = make_clock(100.0)
+
+@MAIN(clk)
+def rst_gen():
+    t: Reg[uint8_t]
+    gen_rst = t == 3
+    shared.a = t
+    t += 1
+
+@MAIN(clk, reset=gen_rst, reset_registers="all")
+def dut() -> uint8_t:
+    n: Reg[uint8_t]
+    shared.b = n
+    n += {dut_step}
+    return n
+"""
+
+
+def _parse(dut_step, template=DESIGN):
     with tempfile.TemporaryDirectory(prefix="reset_sweep_path_test_") as tmpdir:
         path = os.path.join(tmpdir, "design.py")
         with open(path, "w") as f:
-            f.write(DESIGN.format(repo_root=os.path.abspath(REPO_ROOT), dut_step=dut_step))
+            f.write(template.format(repo_root=os.path.abspath(REPO_ROOT), dut_step=dut_step))
         with contextlib.redirect_stdout(io.StringIO()):
             state = PY_TO_LOGIC.PARSE_FILE(path)
     timing = AUTO_PIPELINE.GET_ZERO_ADDED_CLKS_TIMING_PARAMS_LOOKUP(state)
@@ -138,6 +170,17 @@ def test_source_data_through_another_main_is_not_classified():
     state, params, e = _parse("fwd_out")
     report = _report(f"{e['rst_gen']}/t_reg[0]", f"{e['dut']}/n_reg[3]")
     assert SWEEP.RESET_DISTRIBUTION_PATH(report, state, params) is None
+
+
+def test_source_data_read_back_through_a_split_wire_is_not_classified():
+    # dut drives shared.b and reads shared.a back from rst_gen, the MAIN driving
+    # the reset: the path could be that data's. Without the read it is the reset's.
+    report_for = lambda e: _report(f"{e['rst_gen']}/t_reg[0]", f"{e['dut']}/n_reg[3]")
+    state, params, e = _parse("1", READBACK_DESIGN)
+    assert SWEEP.RESET_DISTRIBUTION_PATH(report_for(e), state, params) == (
+        "gen_rst", "rst_gen", "dut")
+    state, params, e = _parse("shared.a", READBACK_DESIGN)
+    assert SWEEP.RESET_DISTRIBUTION_PATH(report_for(e), state, params) is None
 
 
 def _reset_path(delay):

@@ -6,6 +6,7 @@ import os
 import re
 import shutil
 import sys
+from typing import NamedTuple, Optional
 
 import C_TO_LOGIC
 import LOGIC
@@ -425,6 +426,183 @@ def BUILD_MULTI_WRITER_REGIONS(base_c_type, writer_to_driven_paths, parser_state
     return regions
 
 
+def GLOBAL_WIRE_INST_FIELD_TEXT(func_inst, field, parser_state):
+    """`<MAIN>.<instance path>.<field>`: where `field` (a global wire, or a
+    writer's readback input) sits in the module_to_global / global_to_module
+    record of the function instance `func_inst`, after that record's name."""
+    text = LOGIC.RECURSIVE_FIND_MAIN_FUNC_FROM_INST(func_inst, parser_state)
+    for tok in func_inst.split(LOGIC.SUBMODULE_MARKER)[1:]:
+        text += "." + WIRE_TO_VHDL_NAME(tok)
+    return text + "." + field
+
+
+class TopAssignment(NamedTuple):
+    """One concurrent assignment of the top level's global wire connections:
+    `target <= source;`, or zeros of `c_type` when `source` is None."""
+
+    target: str  # The VHDL name assigned
+    source: Optional[str]  # The VHDL expression that drives it; None: zeros
+    c_type: str  # The C type of the target, for zeros
+
+
+class GlobalWireConnection(NamedTuple):
+    """The top level's connections of one shared global wire
+    (GLOBAL_WIRE_CONNECTIONS)."""
+
+    wire: str
+    insts: tuple  # Sorted instances of its writers and readers: one clock, unless async or checked per leaf
+    assignments: tuple  # TopAssignments in emission order: its Output port, each reader, each readback input
+
+
+def GLOBAL_WIRE_CONNECTIONS(parser_state):
+    """Plan the top level's global wire section from
+    ParserState.global_wire_access (LOGIC.GLOBAL_WIRE_WRITERS / _READERS).
+    Returns ([GlobalWireConnection of each shared wire, sorted by name],
+    [TopAssignment zeroing the readback input of each writer of an unshared
+    wire]).
+
+    A shared wire (LOGIC.GLOBAL_VAR_IS_SHARED, not an instance array's) is
+    driven by its writer instance's module_to_global field, by its Input pin
+    when nothing writes it, or, with several writer functions, region by
+    region (BUILD_MULTI_WRITER_REGIONS), a region nobody drives being zero. It
+    drives its Output port if it is one, the global_to_module field of each
+    instance that reads it (sorted) and each writer's readback input: zero in
+    the regions the writer drives itself, the owner's live value in the others
+    (flattened-leaf semantics for a writer reading foreign leaves).
+
+    A wire only its one writer uses has no shared record field, but a writer
+    that reads it back still has the readback input in its global_to_module
+    record: all zeros, as no other writer exists and the writer's own regions
+    read zero."""
+    shared = set()
+    for var_name in parser_state.global_vars:
+        part_of_inst_array = (var_name in parser_state.inst_array_dict.keys()) or (
+            var_name in parser_state.inst_array_dict.values()
+        )
+        if LOGIC.GLOBAL_VAR_IS_SHARED(var_name, parser_state) and not part_of_inst_array:
+            shared.add(var_name)
+
+    connections = []
+    for var_name in sorted(shared):
+        var_info = parser_state.global_vars[var_name]
+        writers = LOGIC.GLOBAL_WIRE_WRITERS(parser_state, var_name)
+        writer_inst = {}  # writer function -> its one instance
+        for use in writers:
+            if len(use.insts) > 1:
+                raise Exception(
+                    f"More than one instance trying to write to global {var_name}: {list(use.insts)}!"
+                )
+            writer_inst[use.func] = use.insts[0]
+
+        def inst_text(func_inst, field=var_name):
+            return GLOBAL_WIRE_INST_FIELD_TEXT(func_inst, field, parser_state)
+
+        # regions: None for one writer or none (byte-identical to the original
+        # single-writer emission); else BUILD_MULTI_WRITER_REGIONS' list of
+        # (vhdl_suffix, region_c_type, owner_func_or_None) covering the wire's
+        # whole type tree. Several writer functions of one compound global are
+        # legal iff each one's driven leaf paths are pairwise disjoint, which
+        # PY_TO_LOGIC's wire rules have already checked; C never has them.
+        regions = None
+        writer_write_text = {}  # writer function -> "module_to_global.<inst path>"
+        write_text = None  # the whole wire's driver, without regions
+        if len(writers) > 1:
+            for use in writers:
+                writer_write_text[use.func] = "module_to_global." + inst_text(
+                    writer_inst[use.func]
+                )
+            regions = BUILD_MULTI_WRITER_REGIONS(
+                var_info.type_name,
+                {use.func: set(use.driven) for use in writers},
+                parser_state,
+            )
+        elif len(writers) == 1:
+            write_text = "module_to_global." + inst_text(writer_inst[writers[0].func])
+        elif var_name in parser_state.input_wires:
+            # No write side driving this global wire: last chance is a top
+            # level input
+            write_text = var_name
+        else:
+            raise Exception(
+                f"Looks like variable {var_name} is never written? Maybe missing a #pragma MAIN somewhere?"
+            )
+
+        def drive(target, zero_owner=None):
+            """The assignments of the whole wire's `target` from its writers:
+            one per region of a split wire (zero where nobody, or `zero_owner`,
+            drives it), else one."""
+            if regions is None:
+                return [TopAssignment(target, write_text, var_info.type_name)]
+            return [
+                TopAssignment(
+                    target + suffix,
+                    writer_write_text[owner] + suffix
+                    if owner is not None and owner != zero_owner
+                    else None,
+                    region_type,
+                )
+                for suffix, region_type, owner in regions
+            ]
+
+        assignments = []
+        # One reader of the wire might be an output port
+        if var_name in parser_state.output_wires:
+            assignments += drive(var_name)
+        read_insts = sorted(
+            {
+                inst
+                for use in LOGIC.GLOBAL_WIRE_READERS(parser_state, var_name)
+                for inst in use.insts
+            }
+        )
+        for read_inst in read_insts:
+            assignments += drive("global_to_module." + inst_text(read_inst))
+        # Writers that read their own wire back
+        for use in writers:
+            if use.readback is None:
+                continue
+            rb_text = "global_to_module." + inst_text(writer_inst[use.func], use.readback)
+            if regions is None:
+                assignments.append(TopAssignment(rb_text, None, var_info.type_name))
+            else:
+                assignments += drive(rb_text, zero_owner=use.func)
+        connections.append(
+            GlobalWireConnection(
+                var_name,
+                tuple(sorted(set(writer_inst.values()) | set(read_insts))),
+                tuple(assignments),
+            )
+        )
+
+    unshared_feeds = []
+    for var_name, var_info in parser_state.global_vars.items():
+        if var_name in shared:
+            continue
+        for use in parser_state.global_wire_access.get(var_name, {}).values():
+            if use.readback is None:
+                continue
+            for func_inst in use.insts:
+                unshared_feeds.append(
+                    TopAssignment(
+                        "global_to_module."
+                        + GLOBAL_WIRE_INST_FIELD_TEXT(
+                            func_inst, use.readback, parser_state
+                        ),
+                        None,
+                        var_info.type_name,
+                    )
+                )
+    return connections, unshared_feeds
+
+
+def TOP_ASSIGNMENT_TEXT(assignment, parser_state):
+    """The VHDL line of a TopAssignment."""
+    source = assignment.source
+    if source is None:
+        source = C_TYPE_STR_TO_VHDL_NULL_STR(assignment.c_type, parser_state)
+    return f"{assignment.target} <= {source};\n"
+
+
 def MAIN_RESET_SOURCE_TEXT(main_func, parser_state):
     """The top-level std_logic a MAIN instance's RESET port maps to: its
     reset pin's bit, or the bit its reset Wire's one writer instance drives
@@ -432,20 +610,18 @@ def MAIN_RESET_SOURCE_TEXT(main_func, parser_state):
     key = parser_state.main_resets[main_func].source
     if key in parser_state.input_wires:
         return key + "(0)"
-    writers = sorted(
-        func
-        for func, logic in parser_state.FuncLogicLookupTable.items()
-        if key in logic.write_only_global_wires
-        and func in parser_state.FuncToInstances
+    insts = sorted(
+        inst
+        for use in LOGIC.GLOBAL_WIRE_WRITERS(parser_state, key)
+        for inst in use.insts
     )
-    insts = sorted(i for w in writers for i in parser_state.FuncToInstances[w])
     if len(insts) != 1:
         raise Exception(f"Reset wire {key} needs one writer instance, has {insts}")
-    toks = insts[0].split(LOGIC.SUBMODULE_MARKER)
-    text = "module_to_global." + toks[0]
-    for tok in toks[1:]:
-        text += "." + WIRE_TO_VHDL_NAME(tok)
-    return text + "." + key + "(0)"
+    return (
+        "module_to_global."
+        + GLOBAL_WIRE_INST_FIELD_TEXT(insts[0], key, parser_state)
+        + "(0)"
+    )
 
 
 def WRITE_MULTIMAIN_TOP(parser_state, multimain_timing_params, is_final_top=False):
@@ -735,41 +911,25 @@ begin
                     f"User defined clock wire {clk_var_name} should not be marked as clock crossing! Use simple global wires instead."
                 )
             # Get info on write side (no read side)
-            var_info = parser_state.global_vars[clk_var_name]
-            write_funcs = set()
-            for func_name in var_info.used_in_funcs:
-                func_logic = parser_state.FuncLogicLookupTable[func_name]
-                if clk_var_name in func_logic.state_regs:
-                    write_funcs.add(func_name)
-                if clk_var_name in func_logic.write_only_global_wires:
-                    write_funcs.add(func_name)
-            if len(write_funcs) > 1:
+            writers = LOGIC.GLOBAL_WIRE_WRITERS(parser_state, clk_var_name)
+            if len(writers) > 1:
                 raise Exception(
-                    f"More than one function trying to write to global {clk_var_name}: {write_funcs}!"
+                    f"More than one function trying to write to global {clk_var_name}: {[use.func for use in writers]}!"
                 )
-            if len(write_funcs) > 0:
-                write_func = list(write_funcs)[0]
-                write_insts = parser_state.FuncToInstances[write_func]
+            if len(writers) > 0:
+                write_insts = writers[0].insts
                 if len(write_insts) > 1:
                     raise Exception(
-                        f"More than one instance trying to write to global {clk_var_name}: {write_insts}!"
+                        f"More than one instance trying to write to global {clk_var_name}: {list(write_insts)}!"
                     )
-                write_func_inst = list(write_insts)[0]
                 # Assemble driver write wire text
-                write_func_inst_toks = write_func_inst.split(
-                    LOGIC.SUBMODULE_MARKER
+                write_text = (
+                    "module_to_global."
+                    + GLOBAL_WIRE_INST_FIELD_TEXT(
+                        write_insts[0], clk_var_name, parser_state
+                    )
+                    + "(0)"
                 )
-                # Start with main func then apply hier instances
-                write_text = LOGIC.RECURSIVE_FIND_MAIN_FUNC_FROM_INST(
-                    write_func_inst, parser_state
-                )
-                for write_func_inst_tok in write_func_inst_toks[
-                    1 : len(write_func_inst_toks)
-                ]:
-                    write_func_inst_str = WIRE_TO_VHDL_NAME(write_func_inst_tok)
-                    write_text += "." + write_func_inst_str
-                write_text += "." + clk_var_name + "(0)"
-                write_text = "module_to_global." + write_text
             else:
                 # No write side found, last chance is if a top level input
                 if clk_var_name in parser_state.input_wires:
@@ -1379,211 +1539,36 @@ begin
 
     # Connections for normal global regs used in multiple funcs
     # (excluded special instance array multi driver vars etc)
-    shared_global_vars = set()
-    for var_name, var_info in parser_state.global_vars.items():
-        part_of_inst_array = (var_name in parser_state.inst_array_dict.keys()) or (
-            var_name in parser_state.inst_array_dict.values()
-        )
-        if LOGIC.GLOBAL_VAR_IS_SHARED(var_name, parser_state) and not part_of_inst_array:
-            shared_global_vars.add(var_name)
-    if len(shared_global_vars) > 0:
+    connections, unshared_feeds = GLOBAL_WIRE_CONNECTIONS(parser_state)
+    if len(connections) > 0:
         text += """
 -- Directly connected global wires
 """
-    # shared_global_vars is a set; stable ordering keeps byte-identical top
-    # VHDL for identical logic/timing parameters across Python processes.
-    for var_name in sorted(shared_global_vars):
-        var_info = parser_state.global_vars[var_name]
-        # Global var with one or more reader wires
-        # Get info on this var
-        # Find the one write func
-        write_funcs = set()
-        for func_name in var_info.used_in_funcs:
-            func_logic = parser_state.FuncLogicLookupTable[func_name]
-            if var_name in func_logic.state_regs:
-                write_funcs.add(func_name)
-            if var_name in func_logic.write_only_global_wires:
-                write_funcs.add(func_name)
-
-        def _inst_text(func_inst, vname=var_name):
-            # Start with main func then apply hier instances, ending at vname --
-            # e.g. "main_a.some_sub_inst.main_ab_out" -- shared by write-,
-            # read-, and readback-side text assembly below.
-            toks = func_inst.split(LOGIC.SUBMODULE_MARKER)
-            t = LOGIC.RECURSIVE_FIND_MAIN_FUNC_FROM_INST(func_inst, parser_state)
-            for tok in toks[1:]:
-                t += "." + WIRE_TO_VHDL_NAME(tok)
-            return t + "." + vname
-
-        rw_func_insts = set()
-        # multi_writer_regions: None for the single-writer/no-writer path (byte-
-        # identical to the original single-writer emission below); else the
-        # BUILD_MULTI_WRITER_REGIONS list of (vhdl_suffix, region_c_type,
-        # owner_func_or_None) covering the wire's whole type tree -- arbitrary
-        # struct/array nesting, one region per maximal single-owner subtree,
-        # owner None meaning "no writer claims this subtree -> zero-fill".
-        multi_writer_regions = None
-        writer_write_text = {}  # writer func name -> "module_to_global.<inst path>"
-        if len(write_funcs) > 1:
-            # Multiple writer functions of one compound global: legal iff each
-            # writer's driven leaf paths (recorded by Pypeline's elaborator in
-            # global_wire_driven_paths; absent/empty for legacy C-frontend Logic
-            # objects, which never support this) are pairwise disjoint --
-            # PY_TO_LOGIC.py's post-elaboration validation
-            # (_check_no_overlapping_driven_paths) already guarantees this by the
-            # time we get here.
-            writer_to_driven_paths = {}
-            for write_func in write_funcs:
-                write_insts = parser_state.FuncToInstances[write_func]
-                if len(write_insts) > 1:
-                    raise Exception(
-                        f"More than one instance trying to write to global {var_name}: {write_insts}!"
-                    )
-                write_func_inst = list(write_insts)[0]
-                rw_func_insts.add(write_func_inst)
-                writer_write_text[write_func] = "module_to_global." + _inst_text(
-                    write_func_inst
-                )
-                func_logic = parser_state.FuncLogicLookupTable[write_func]
-                writer_to_driven_paths[write_func] = getattr(
-                    func_logic, "global_wire_driven_paths", {}
-                ).get(var_name, set())
-            multi_writer_regions = BUILD_MULTI_WRITER_REGIONS(
-                var_info.type_name, writer_to_driven_paths, parser_state
+    for connection in connections:
+        # The functions of a shared global run on one clock, unless it is an
+        # async wire or the front end checked its clocks leaf by leaf
+        clk_names = {
+            CLK_EXT_STR(
+                LOGIC.RECURSIVE_FIND_MAIN_FUNC_FROM_INST(inst, parser_state),
+                parser_state,
             )
-            write_text = None  # unused in the multi-writer path below
-        elif len(write_funcs) > 0:
-            write_func = list(write_funcs)[0]
-
-            # Find the one write inst
-            write_insts = parser_state.FuncToInstances[write_func]
-            if len(write_insts) > 1:
-                raise Exception(
-                    f"More than one instance trying to write to global {var_name}: {write_insts}!"
-                )
-            write_func_inst = list(write_insts)[0]
-            rw_func_insts.add(write_func_inst)
-            write_text = "module_to_global." + _inst_text(write_func_inst)
-        else:
-            # If not write side driving this global wire then last chance
-            # is it being a top level input
-            if var_name in parser_state.input_wires:
-                write_text = var_name
-            else:
-                raise Exception(
-                    f"Looks like variable {var_name} is never written? Maybe missing a #pragma MAIN somewhere?"
-                )
-
-        # One reader of the wire might be an output port
-        if var_name in parser_state.output_wires:
-            if multi_writer_regions is not None:
-                for suffix, region_type, owner in multi_writer_regions:
-                    if owner is not None:
-                        text += f"{var_name}{suffix} <= {writer_write_text[owner]}{suffix};\n"
-                    else:
-                        text += f"{var_name}{suffix} <= {C_TYPE_STR_TO_VHDL_NULL_STR(region_type, parser_state)};\n"
-            else:
-                text += var_name + " <= " + write_text + ";\n"
-
-        # Find the many read funcs
-        read_funcs = set()
-        for func_name in var_info.used_in_funcs:
-            func_logic = parser_state.FuncLogicLookupTable[func_name]
-            if var_name in func_logic.read_only_global_wires:
-                read_funcs.add(func_name)
-
-        # Find the many read insts
-        read_insts = set()
-        for read_func_name in read_funcs:
-            if read_func_name in parser_state.FuncToInstances:
-                read_func_insts = parser_state.FuncToInstances[read_func_name]
-                read_insts |= read_func_insts
-
-        # Find main funcs for all insts
-        # Find clock names for all main funcs, can only be one clock
-        rw_func_insts |= read_insts
-        rw_clk_names = set()
-        for rw_func_inst in rw_func_insts:
-            rw_main_func = LOGIC.RECURSIVE_FIND_MAIN_FUNC_FROM_INST(
-                rw_func_inst, parser_state
+            for inst in connection.insts
+        }
+        if (
+            len(clk_names) > 1
+            and connection.wire not in parser_state.async_wires
+            and connection.wire not in parser_state.wire_clocks_checked
+        ):
+            raise Exception(
+                f"Cannot have multiple clock domains for shared global {connection.wire}! {sorted(clk_names)} {list(connection.insts)}"
             )
-            rw_clk_name = CLK_EXT_STR(rw_main_func, parser_state)
-            rw_clk_names.add(rw_clk_name)
-            if (
-                len(rw_clk_names) > 1
-                and var_name not in parser_state.async_wires
-                and var_name not in getattr(parser_state, "wire_clocks_checked", ())
-            ):
-                raise Exception(
-                    f"Cannot have multiple clock domains for shared global {var_name}! {rw_clk_names} {rw_func_insts}"
-                )
-
-        # Write lines connecting write side to many read sides
-        for read_func_inst in read_insts:
-            read_text = "global_to_module." + _inst_text(read_func_inst)
-            if multi_writer_regions is not None:
-                for suffix, region_type, owner in multi_writer_regions:
-                    if owner is not None:
-                        text += f"{read_text}{suffix} <= {writer_write_text[owner]}{suffix};\n"
-                    else:
-                        text += f"{read_text}{suffix} <= {C_TYPE_STR_TO_VHDL_NULL_STR(region_type, parser_state)};\n"
-            else:
-                text += f"{read_text} <= {write_text};\n"
-
-        # Feed writer functions that also read back their own wire
-        # (readback_global_wires): their <var>_PYPELINE_READBACK global_to_module input
-        # gets zeros in the regions THAT writer itself drives (its own
-        # read-before-write must return zero) and the owning writer's live value
-        # in regions other writers drive -- flattened-leaf semantics for a
-        # writer reading foreign leaves. Single-writer wires: whole-wire zeros
-        # (there are no foreign writers).
-        for write_func in sorted(write_funcs):
-            func_logic = parser_state.FuncLogicLookupTable[write_func]
-            rb_field = getattr(func_logic, "readback_global_wires", {}).get(var_name)
-            if rb_field is None:
-                continue
-            write_func_inst = list(parser_state.FuncToInstances[write_func])[0]
-            rb_text = "global_to_module." + _inst_text(write_func_inst, rb_field)
-            if multi_writer_regions is not None:
-                for suffix, region_type, owner in multi_writer_regions:
-                    if owner is not None and owner != write_func:
-                        text += f"{rb_text}{suffix} <= {writer_write_text[owner]}{suffix};\n"
-                    else:
-                        text += f"{rb_text}{suffix} <= {C_TYPE_STR_TO_VHDL_NULL_STR(region_type, parser_state)};\n"
-            else:
-                text += f"{rb_text} <= {C_TYPE_STR_TO_VHDL_NULL_STR(var_info.type_name, parser_state)};\n"
-
+        for assignment in connection.assignments:
+            text += TOP_ASSIGNMENT_TEXT(assignment, parser_state)
         text += "\n"
-
-    # Readback feeds for UNSHARED wires: a global wire used ONLY by its single
-    # writer function (which also reads it back) has GLOBAL_VAR_IS_SHARED False,
-    # so the direct-connect loop above skipped it -- but the writer's entity
-    # still has a <var>_PYPELINE_READBACK global_to_module input that must be driven
-    # (all zeros: no other writers exist, and own regions read zero by
-    # definition).
-    for var_name, var_info in parser_state.global_vars.items():
-        if var_name in shared_global_vars:
-            continue
-        for func_name in var_info.used_in_funcs:
-            if func_name not in parser_state.FuncLogicLookupTable:
-                continue
-            func_logic = parser_state.FuncLogicLookupTable[func_name]
-            rb_field = getattr(func_logic, "readback_global_wires", {}).get(var_name)
-            if rb_field is None:
-                continue
-            if func_name not in parser_state.FuncToInstances:
-                continue
-            for func_inst in parser_state.FuncToInstances[func_name]:
-                toks = func_inst.split(LOGIC.SUBMODULE_MARKER)
-                t = LOGIC.RECURSIVE_FIND_MAIN_FUNC_FROM_INST(
-                    func_inst, parser_state
-                )
-                for tok in toks[1:]:
-                    t += "." + WIRE_TO_VHDL_NAME(tok)
-                text += (
-                    f"global_to_module.{t}.{rb_field} <= "
-                    f"{C_TYPE_STR_TO_VHDL_NULL_STR(var_info.type_name, parser_state)};\n"
-                )
+    # Readback feeds for UNSHARED wires: the writer's entity still has a
+    # <var>_PYPELINE_READBACK global_to_module input that must be driven
+    for assignment in unshared_feeds:
+        text += TOP_ASSIGNMENT_TEXT(assignment, parser_state)
 
     # WRITE SIDE connections for instance array special multi driver global wires, etc
     write_inst_array_vars = set()
@@ -3441,15 +3426,25 @@ port map
 
 
 def NEEDS_GLOBAL_WIRES_VHDL_PACKAGE(parser_state):
-    # Do nothing if no clock crossings or no shared globals
-    found_multi_use_global = False
-    for global_var_name, var_info in parser_state.global_vars.items():
+    """Whether the design has global_wires_pkg: it has a clock crossing or a
+    shared global, or some MAIN has a global_to_module / module_to_global record
+    (LOGIC.LOGIC_NEEDS_GLOBAL_TO_MODULE: a writer that reads its own wire back
+    has the readback input even when no wire is shared), which the top level
+    and the entities' ports use. Asked of the multi-MAIN design only: its
+    main_mhz names MAIN functions (an AUTO_FSM measurement state's names a root
+    instance)."""
+    if len(parser_state.clk_cross_var_info) > 0:
+        return True
+    for global_var_name in parser_state.global_vars:
         if LOGIC.GLOBAL_VAR_IS_SHARED(global_var_name, parser_state):
-            found_multi_use_global = True
-            break
-    if not found_multi_use_global and len(parser_state.clk_cross_var_info) <= 0:
-        return False
-    return True
+            return True
+    for main_func in parser_state.main_mhz:
+        main_logic = parser_state.FuncLogicLookupTable[main_func]
+        if LOGIC.LOGIC_NEEDS_GLOBAL_TO_MODULE(
+            main_logic, parser_state
+        ) or LOGIC.LOGIC_NEEDS_MODULE_TO_GLOBAL(main_logic, parser_state):
+            return True
+    return False
 
 
 def WRITE_GLOBAL_WIRES_VHDL_PACKAGE(parser_state):

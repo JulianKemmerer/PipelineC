@@ -148,14 +148,18 @@ def get_tests() -> list:
             expect_fail=True,
         )
     )
-    # The top level's connection blocks for a wire's readers come out in set
-    # order (VHDL.WRITE_MULTIMAIN_TOP), so top.vhd changes with PYTHONHASHSEED.
-    # Issue #380.
+    # The C front end's INST_ARRAY connections in the top level
+    # (VHDL.WRITE_MULTIMAIN_TOP) loop over unsorted sets, so top.vhd changes
+    # with PYTHONHASHSEED: two --no_synth builds, top.vhd compared. Issue #403
+    # (the C part of #380).
     tests.append(
         Test(
-            name="top_level_reader_order_known_issue",
+            name="c_inst_array_order_known_issue",
             category="known_issues",
-            cmd=[INST_DIR / "top_level_reader_order_test.py"],
+            cmd=[
+                INST_DIR / "top_level_reader_order_test.py",
+                INST_DIR / "c_inst_array_order_design.c",
+            ],
             expect_fail=True,
         )
     )
@@ -315,20 +319,6 @@ def get_tests() -> list:
             name="stateless_caller_sim_state_known_issue",
             category="known_issues",
             cmd=[PYPELINE_SIM_DEBUG, INST_DIR / "stateless_caller_sim_state_design.py",
-                 "--sim", "--comb", "--run", "all"],
-            needs_out_dir=True,
-            expect_fail=True,
-            requires=["ghdl"],
-        )
-    )
-    # A global wire read back by its writer, with no shared wire in the
-    # design: global_wires_pkg is not written but top.vhd and the MAIN's ports
-    # use its types, so GHDL rejects the VHDL. Issue #384.
-    tests.append(
-        Test(
-            name="global_wire_unshared_readback_known_issue",
-            category="known_issues",
-            cmd=[PYPELINE_SIM_DEBUG, INST_DIR / "global_wire_unshared_readback_design.py",
                  "--sim", "--comb", "--run", "all"],
             needs_out_dir=True,
             expect_fail=True,

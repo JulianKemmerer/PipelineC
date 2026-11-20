@@ -564,36 +564,30 @@ def _links(ps, types):
     reads (whole wires for C), and one per clock crossing (write MAIN -> read
     MAIN). Endpoints are instance names, or "pin:<name>" for a top-level pin.
 
-    Writers and readers follow VHDL.WRITE_MULTIMAIN_TOP's "Directly connected
-    global wires": a writer has the wire in write_only_global_wires (or as a
-    state reg) and drives global_wire_driven_paths; a reader has it in
-    read_only_global_wires, or reads it back through readback_global_wires,
-    at its global_wire_read_paths. A reader path links to each writer whose
-    driven paths overlap it. A link has the interface role of its data
+    Writers and readers are the uses in ParserState.global_wire_access, the
+    table VHDL.GLOBAL_WIRE_CONNECTIONS connects the top level from: a writer
+    writes GlobalWireUse.write_paths(); a reader reads the wire, or reads it
+    back (readback), at its read_paths. A reader path links to each writer
+    whose written paths overlap it. A link has the interface role of its data
     (_Types.path_role), left out when plain: fb for an @interface's
     Feedback data."""
     decls = getattr(ps, "pypeline_wire_decls", {})
     links = set()
     for var in sorted(ps.global_vars):
         info = ps.global_vars[var]
-        writers = {}  # instance -> driven paths
+        writers = {}  # instance -> written paths
         readers = {}  # instance -> read paths
-        for func in sorted(info.used_in_funcs):
-            logic = ps.FuncLogicLookupTable.get(func)
-            insts = ps.FuncToInstances.get(func)
-            if logic is None or not insts:
-                continue
-            reads = getattr(logic, "global_wire_read_paths", {}).get(var) or {(): None}
-            if var in logic.write_only_global_wires or var in logic.state_regs:
-                driven = getattr(logic, "global_wire_driven_paths", {}).get(var) or {()}
-                for inst in insts:
-                    writers[inst] = driven
-                if var in getattr(logic, "readback_global_wires", {}):
-                    for inst in insts:
-                        readers[inst] = set(reads)
-            elif var in logic.read_only_global_wires:
-                for inst in insts:
-                    readers[inst] = set(reads)
+        for use in ps.global_wire_access.get(var, {}).values():
+            reads = set(use.read_paths) or {()}
+            if use.writes:
+                for inst in use.insts:
+                    writers[inst] = use.write_paths()
+                if use.readback is not None:
+                    for inst in use.insts:
+                        readers[inst] = reads
+            elif use.reads:
+                for inst in use.insts:
+                    readers[inst] = reads
         if var in ps.input_wires and not writers:
             writers["pin:" + var] = {()}
         if var in ps.output_wires:
@@ -604,10 +598,10 @@ def _links(ps, types):
                 for writer in sorted(writers):
                     if writer == reader:
                         continue
-                    for driven_path in sorted(writers[writer], key=repr):
-                        if not PY_TO_LOGIC._path_overlaps(read_path, driven_path):
+                    for written_path in sorted(writers[writer], key=repr):
+                        if not LOGIC.GLOBAL_WIRE_PATHS_OVERLAP(read_path, written_path):
                             continue
-                        path = max(read_path, driven_path, key=len)
+                        path = max(read_path, written_path, key=len)
                         links.add(
                             (
                                 writer,
@@ -845,9 +839,7 @@ def _graph(logic, ps, types):
     regs = logic.state_regs
     reads = logic.read_only_global_wires
     writes = logic.write_only_global_wires
-    readback_of = {
-        rb: var for var, rb in getattr(logic, "readback_global_wires", {}).items()
-    }
+    readback_of = {rb: var for var, rb in logic.readback_global_wires.items()}
     drives = logic.wire_drives
     marker = LOGIC.SUBMODULE_MARKER
 
@@ -987,7 +979,8 @@ def _graph(logic, ps, types):
                     t=logic.wire_to_c_type.get(name),
                 )
             elif kind == "gr":
-                reads = getattr(logic, "global_wire_read_paths", {}).get(name)
+                use = ps.global_wire_access.get(name, {}).get(logic.func_name)
+                reads = list(use.read_paths) if use is not None else []
                 add_node(
                     node_id,
                     kind="wire_read",
@@ -995,12 +988,13 @@ def _graph(logic, ps, types):
                     role=_parts_role(types, ps, name, reads or [()]),
                 )
             elif kind == "gw":
-                # The fields it drives: the elaborated value also passes the
+                # The fields it writes: the elaborated value also passes the
                 # rest through from its read-back, which no hardware drives
-                driven = getattr(logic, "global_wire_driven_paths", {}).get(name)
-                info = {"role": _parts_role(types, ps, name, driven or [()])}
-                if driven and () not in driven:
-                    info["driven"] = sorted(([*p] for p in driven), key=repr)
+                use = ps.global_wire_access.get(name, {}).get(logic.func_name)
+                paths = use.write_paths() if use is not None else {()}
+                info = {"role": _parts_role(types, ps, name, paths)}
+                if () not in paths:
+                    info["driven"] = sorted(([*p] for p in paths), key=repr)
                 add_node(node_id, kind="wire_write", name=name, **info)
             elif kind == "c":
                 add_node(

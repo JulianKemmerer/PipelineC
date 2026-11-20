@@ -8,13 +8,13 @@ main_a drives w.x and reads w.y (driven by main_b): the sim_assert inside
 main_a is the proof, in both native sim and real GHDL simulation, that the
 foreign leaf carries main_b's value. Mechanically this exercises the
 <name>_PYPELINE_READBACK input wire (PY_TO_LOGIC._declare_global_write_wire)
-and VHDL.py's readback feed: the top level drives the readback record field
+and VHDL.py's readback feed (GLOBAL_WIRE_CONNECTIONS): the top level drives the readback record field
 with zeros in main_a's own region (.x) and main_b's live value in .y.
 
 priv is the UNSHARED variant: written AND read only by its single writer
 function, used by nobody else -- GLOBAL_VAR_IS_SHARED is False so its
-readback input is fed all zeros by the dedicated unshared feed pass in
-VHDL.py (read-before-write zero, write-then-read new value, exactly like a
+readback input is fed all zeros by GLOBAL_WIRE_CONNECTIONS' unshared feeds
+(read-before-write zero, write-then-read new value, exactly like a
 local variable).
 
 Registered in native_vs_vhdl_sim_tests.py, which runs the native (--sim --comb)

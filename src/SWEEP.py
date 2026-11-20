@@ -6386,8 +6386,10 @@ def RESET_DISTRIBUTION_PATH(path_report, parser_state, params):
     tool reports as `start_port_name`) or in the one MAIN that
     drives that reset Wire while no other global wire it drives reaches the
     reset MAIN, directly or through any other MAIN (each taken as passing
-    every wire it reads to every wire it writes, as its logic may do in the
-    same cycle). A reset takes no pipeline registers (each register it resets
+    every wire it reads, a writer's read-back of its own wire included, to
+    every wire it writes, as its logic may do in the same cycle). The wires
+    each MAIN writes and reads come from ParserState.global_wire_access. A
+    reset takes no pipeline registers (each register it resets
     sees it in the same cycle), so the sweep reports such a path instead of
     pipelining its MAINs. None for any other path, including one the source
     MAIN's other wires could carry."""
@@ -6407,12 +6409,16 @@ def RESET_DISTRIBUTION_PATH(path_report, parser_state, params):
                 return main_inst
         return None
 
-    def wires(main_inst, attr):
-        found = set()
-        for func, insts in parser_state.FuncToInstances.items():
-            if any(i.split(LOGIC.SUBMODULE_MARKER)[0] == main_inst for i in insts):
-                found.update(getattr(parser_state.FuncLogicLookupTable[func], attr))
-        return found
+    # The global wires the functions under each MAIN write, and read (a writer
+    # that reads its own wire back reads it too)
+    writes_of, reads_of = {}, {}
+    for wire, uses in parser_state.global_wire_access.items():
+        for use in uses.values():
+            for main in use.mains:
+                if use.writes:
+                    writes_of.setdefault(main, set()).add(wire)
+                if use.reads or use.readback is not None:
+                    reads_of.setdefault(main, set()).add(wire)
 
     reset_main = main_of(end)
     if reset_main not in main_resets:
@@ -6424,16 +6430,16 @@ def RESET_DISTRIBUTION_PATH(path_report, parser_state, params):
         if start_main is None and re.match(pin + r"($|[^a-z0-9_]|_ibuf)", start.lower()):
             return reset, None, reset_main
         return None
-    drivers = wires(start_main, "write_only_global_wires") if start_main else set()
+    drivers = writes_of.get(start_main, set()) if start_main else set()
     if start_main is None or start_main == reset_main or reset not in drivers:
         return None
-    reads = {m: wires(m, "read_only_global_wires") for m in parser_state.main_mhz}
+    reads = {m: reads_of.get(m, set()) for m in parser_state.main_mhz}
     carried = frontier = drivers - {reset}
     while frontier:
         reached = set()
         for main_inst in parser_state.main_mhz:
             if main_inst not in (start_main, reset_main) and reads[main_inst] & frontier:
-                reached |= wires(main_inst, "write_only_global_wires")
+                reached |= writes_of.get(main_inst, set())
         frontier = reached - carried
         carried = carried | frontier
     if carried & (reads[reset_main] - {reset}):

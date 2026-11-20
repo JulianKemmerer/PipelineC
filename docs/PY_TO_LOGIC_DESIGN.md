@@ -2578,8 +2578,28 @@ Each function also records where its source touches each global wire:
 
 A variable index records its constant prefix (`w.arr[i].x` → `("arr",)`). Unlike
 `global_wire_driven_paths`, these hold both directions with source lines.
-[Global instances and FIFOs](#global-instances-instf-fifot) find their users from them;
-phase 2's crossing check will use the lines.
+
+These per-function records are the front end's output. What reads them is one table,
+`ParserState.global_wire_access` (`LOGIC.BUILD_GLOBAL_WIRE_ACCESS`): wire →
+{function name: `GlobalWireUse`}, over the functions in the wire's `used_in_funcs` that
+the Logic table holds. A `GlobalWireUse` copies, for one function and wire, its sorted
+instances and the MAINs above them (`FuncToInstances`), whether it writes the wire
+(`write_only_global_wires`, or a state register for C), whether it reads the wire itself
+(`read_only_global_wires`), its `readback` input wire, its `driven` paths, the `dynamic`
+flag, and the `write_locs` and `read_paths` of its source. `write_paths()` is every path
+its source writes: the driven paths, plus the constant prefix of each variable-index write.
+`LOGIC.GLOBAL_WIRE_WRITERS` and `GLOBAL_WIRE_READERS` list the uses of a wire that write
+or read it; a writer that reads its own wire back is not a reader of the wire itself.
+
+`PARSE_FILE` builds the table once, after trimming and before `_assign_clocks`, and
+`_add_late_mains` rebuilds it for the MAINs it adds, so every check from `_assign_clocks`
+on reads one answer to "who writes and reads this wire, and on which MAINs".
+`_elaborate_live_roots` builds it for the native pipelined simulation's parser state. The
+global instance and FIFO users, the clock assignment, the crossing check, the reset
+checks and the global-wire rules below all read it, as do the top-level VHDL and the
+diagram. The per-function records stay on `Logic` for what is one function's own
+contract: its record ports, its purity and its timing alignment.
+[Global instances and FIFOs](#global-instances-instf-fifot) find their users from it.
 
 ### Constraints
 
@@ -2620,6 +2640,7 @@ phase 2's crossing check will use the lines.
 | Alias chain | `logic.wire_aliases_over_time[name]` |
 | Final connection | `_connect_final_state_wires` → `wire_driven_by[name] = final_alias` |
 | Source accesses | `logic.global_wire_read_paths[name]`, `logic.global_wire_write_locs[name]` |
+| Who writes and reads a wire | `parser_state.global_wire_access[name]` (`GlobalWireUse` per function) |
 
 `Wire` is exported from `pypeline` as `_WireType`; `Wire[T]` uses `__class_getitem__`
 to produce a typed descriptor, mirroring the `Reg` / `Feedback` pattern exactly.
@@ -2773,7 +2794,7 @@ users through the wire ([Clock assignment](#clock-assignment-_assign_clocks)). S
 
 `PARSE_FILE` calls it right after `_assign_clocks`, and so after trimming, before the
 crossing check and the global-wire rule checks. The users of a declaration are the
-functions, other than its own MAIN, whose access records
+functions, other than its own MAIN, whose uses in `global_wire_access`
 ([Access records](#access-records)) touch its wire. Paths are compared in the VHDL-safe
 tokens the records hold (`_sanitize_ref_tok`: a port `out` is recorded as `out_v`), and
 `_global_inst_py_names` maps them back for messages. `decl.check_users` raises an
@@ -2784,7 +2805,7 @@ tokens the records hold (`_sanitize_ref_tok`: a port `out` is recorded as `out_v
   port), with a list of the inputs (`_global_inst_input_paths`); users whose MAINs (the
   first element of each of their instance paths) and the instance's own MAIN are on more
   than one `(main_mhz, main_clk_group)`.
-- `Fifo`, for each end `E`, whose users are those overlapping `(E,)` (`_path_overlaps`: one
+- `Fifo`, for each end `E`, whose users are those overlapping `(E,)` (`LOGIC.GLOBAL_WIRE_PATHS_OVERLAP`: one
   path contains the other): no user; more than one user; a user with more than one
   instance; a user driving the half the FIFO drives (`wr.ready`, `rd.stream`), a whole end
   or the whole wire. It returns `{end: (user, MAIN, 'file:line')}` for `wr` and `rd`.
@@ -4974,10 +4995,10 @@ agreement with `pypeline._clock_conflict`, and each `syn_mhz` goes into
 - **Nodes** are MAINs and plain wires. A plain wire is a declared global that is not
   `ASYNC` and not the wire of a declaration with `joins_clocks` False (a global FIFO). An
   `Inst[f]`'s wire is plain, so its `<key>_INST` MAIN joins its users.
-- **Edges** join a plain wire to every MAIN with an instance of a function in its
-  `VariableInfo.used_in_funcs`, writers and readers of any leaf alike. A function's MAINs
-  come from `FuncToInstances` (`_func_mains`), so a wire used one call deep reaches the
-  MAIN above it.
+- **Edges** join a plain wire to every MAIN with an instance of a function that uses it
+  (`global_wire_access`), writers and readers of any leaf alike. A function's MAINs
+  come from `FuncToInstances` (`GlobalWireUse.mains`), so a wire used one call deep reaches
+  the MAIN above it.
 - **Sources** are the MAINs with a clock and the wires with a clock marker. A
   stated-clock wire reached from another clock passes nothing on; the crossing check
   reports it.
@@ -5005,10 +5026,11 @@ each wire in `pypeline_wire_decls`:
   (kind `ASYNC pin`, write clock None). A pin with a clock marker must be read on that
   clock. Any other pin must be read on one clock.
 - **Any other wire:** for each writer (with one instance; the wire rules report the
-  rest), its clock must be the wire's stated clock if it has one. Each path it drives
-  (`global_wire_driven_paths`; the written paths, or the whole wire, for a
-  dynamic-index write) is compared with every read path that overlaps it
-  (`global_wire_read_paths`, `_path_overlaps`) on every reader instance. A reader on
+  rest), its clock must be the wire's stated clock if it has one. Each path it writes
+  (`GlobalWireUse.write_paths()`: the driven paths, with the constant prefix of a
+  dynamic-index write, or the whole wire) is compared with every read path that overlaps
+  it (`GlobalWireUse.read_paths`, `LOGIC.GLOBAL_WIRE_PATHS_OVERLAP`) on every reader
+  instance. A reader on
   another clock is a row for an `ASYNC` wire (kind `ASYNC wire`, the longer of the two
   paths as its label) and otherwise the error:
 

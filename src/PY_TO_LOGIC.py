@@ -6940,7 +6940,7 @@ class GlobalInstDecl:
         names = _global_inst_py_names(ports, bindings)
         for user, (writes, _reads) in users.items():
             for path, loc in sorted(writes.items(), key=str):
-                hit = next((d for d in driven if _path_overlaps(path, d)), None)
+                hit = next((d for d in driven if LOGIC.GLOBAL_WIRE_PATHS_OVERLAP(path, d)), None)
                 if hit is not None:
                     inputs = ", ".join(
                         f"'{self.label(p, names)}'"
@@ -6955,8 +6955,7 @@ class GlobalInstDecl:
                     )
         seen = {}  # clock -> (what, MAIN): the first user found on it
         for user in users:
-            instances = parser_state.FuncToInstances.get(user, ())
-            for main in sorted({i.split(LOGIC.SUBMODULE_MARKER)[0] for i in instances}):
+            for main in parser_state.global_wire_access[self.key][user].mains:
                 what = f"'{user}' ({_first_access_loc(users[user])})"
                 seen.setdefault(_main_clock(parser_state, main), (what, main))
         seen.setdefault(
@@ -7015,7 +7014,7 @@ class GlobalFifoDecl(GlobalInstDecl):
             end_users = {}  # func -> ({path: loc} written, {path: loc} read)
             for fname, records in users.items():
                 accesses = [
-                    {p: loc for p, loc in r.items() if _path_overlaps(p, (end,))}
+                    {p: loc for p, loc in r.items() if LOGIC.GLOBAL_WIRE_PATHS_OVERLAP(p, (end,))}
                     for r in records
                 ]
                 if any(accesses):
@@ -7037,7 +7036,7 @@ class GlobalFifoDecl(GlobalInstDecl):
                 )
             ((user, accesses),) = end_users.items()
             loc = _first_access_loc(accesses)
-            instances = parser_state.FuncToInstances.get(user, set())
+            instances = parser_state.global_wire_access[self.key][user].insts
             if len(instances) != 1:
                 raise ElaborationError(
                     f"{where} is used by '{user}' ({loc}), which has "
@@ -7045,7 +7044,7 @@ class GlobalFifoDecl(GlobalInstDecl):
                     f"exactly 1): {sorted(instances)}"
                 )
             for path, write_loc in sorted(accesses[0].items(), key=str):
-                if any(_path_overlaps(path, d) for d in driven if d[0] == end):
+                if any(LOGIC.GLOBAL_WIRE_PATHS_OVERLAP(path, d) for d in driven if d[0] == end):
                     raise ElaborationError(
                         f"{where}: '{user}' drives '{self.label(path)}' "
                         f"({_access_loc_str(write_loc)}), but the FIFO drives "
@@ -7678,8 +7677,8 @@ def _add_late_mains(parser_state, late_mains):
     its order: the instance walk from the new MAINs, the AUTO_PIPELINE and
     pipeline_latency checks (only of the new functions, before trimming:
     trimming leaves stale AUTO_PIPELINE tags behind), trimming of the new
-    MAINs and new AUTO_FSM measurement roots, the dangling-logic check and
-    the @wires check."""
+    MAINs and new AUTO_FSM measurement roots, the dangling-logic check, the
+    @wires check and the rebuild of ParserState.global_wire_access."""
     import AUTO_FSM
 
     table = parser_state.FuncLogicLookupTable
@@ -7705,12 +7704,8 @@ def _add_late_mains(parser_state, late_mains):
     for fname in set(table) - before:
         LOGIC.FIND_DANGLING_LOGIC(table[fname])
     _validate_wires_funcs(parser_state)
-
-
-def _path_overlaps(path, prefix):
-    """True if one of two field paths contains the other (() is the whole wire)."""
-    n = min(len(path), len(prefix))
-    return path[:n] == prefix[:n]
+    # The new MAINs use global wires too
+    parser_state.global_wire_access = LOGIC.BUILD_GLOBAL_WIRE_ACCESS(parser_state)
 
 
 def _access_loc_str(loc):
@@ -7833,8 +7828,8 @@ def _check_global_insts(parser_state):
     global FIFO's MAIN.
 
     The users of a declaration are the functions, other than its own MAIN,
-    whose source accesses (Logic.global_wire_read_paths /
-    global_wire_write_locs) touch its wire. decl.check_users checks them:
+    whose source accesses (GlobalWireUse.read_paths / write_locs, from
+    ParserState.global_wire_access) touch its wire. decl.check_users checks them:
     for an Inst[f], no user drives a leaf the instance drives and all run on
     one clock; for a Fifo[T], the end rules of GlobalFifoDecl.check_users.
     Each user that both drives and reads one interface port gets the kind's
@@ -7857,29 +7852,22 @@ def _check_global_insts(parser_state):
     if not decls:
         return
     table = parser_state.FuncLogicLookupTable
+    access = parser_state.global_wire_access
     handshakes = {}  # user func -> (declaration, port label) it both drives and reads
     late_mains = []
     for key in sorted(decls):
         decl = decls[key]
         users = {}  # func -> ({path: loc} written, {path: loc} read)
-        for fname in sorted(table):
+        for fname, use in access.get(key, {}).items():
             if fname == decl.main_name:
                 continue
-            logic = table[fname]
-            accesses = [
-                dict(records.get(key, {}))
-                for records in (
-                    logic.global_wire_write_locs,
-                    logic.global_wire_read_paths,
-                )
-            ]
+            accesses = [dict(use.write_locs), dict(use.read_paths)]
             if any(accesses):
                 users[fname] = accesses
         hardware = decl.hardware()
         ends = decl.check_users(parser_state, users, hardware)
-        func_mains = _func_mains(parser_state)
         decl.user_mains = sorted(
-            {m for user in users for m in func_mains.get(user, ())} - {decl.main_name}
+            {m for user in users for m in access[key][user].mains} - {decl.main_name}
         )
         _module, ports, bindings = hardware
         names = _global_inst_py_names(ports, bindings)
@@ -7887,8 +7875,8 @@ def _check_global_insts(parser_state):
             if p.interface is None or p.arg_t is None or p.ret_t is None:
                 continue
             for user, (writes, reads) in users.items():
-                if any(_path_overlaps(w, path) for w in writes) and any(
-                    _path_overlaps(r, path) for r in reads
+                if any(LOGIC.GLOBAL_WIRE_PATHS_OVERLAP(w, path) for w in writes) and any(
+                    LOGIC.GLOBAL_WIRE_PATHS_OVERLAP(r, path) for r in reads
                 ):
                     handshakes.setdefault(user, (decl, decl.label(path, names)))
         late_mains += decl.realize(parser_state, hardware, ends)
@@ -7923,24 +7911,12 @@ def _print_clock_message_once(text):
         print(text, flush=True)
 
 
-def _func_mains(parser_state):
-    """func name -> the MAINs (sorted) whose hierarchy holds an instance of it."""
-    return {
-        func: sorted({inst.split(LOGIC.SUBMODULE_MARKER)[0] for inst in insts})
-        for func, insts in parser_state.FuncToInstances.items()
-    }
-
-
 def _wire_access_loc(parser_state, func, wire):
     """'file.py:line' of `func`'s first access of the global wire `wire`."""
-    logic = parser_state.FuncLogicLookupTable.get(func)
-    if logic is None:
+    use = parser_state.global_wire_access.get(wire, {}).get(func)
+    if use is None or not (use.write_locs or use.read_paths):
         return "?"
-    writes = logic.global_wire_write_locs.get(wire, {})
-    reads = logic.global_wire_read_paths.get(wire, {})
-    if not writes and not reads:
-        return "?"
-    return _first_access_loc((writes, reads))
+    return _first_access_loc((use.write_locs, use.read_paths))
 
 
 def _wire_label(parser_state, wire, path=()):
@@ -7977,7 +7953,8 @@ def _assign_clocks(parser_state):
     Before that, the design's clocks are checked for agreement
     (pypeline._clock_conflict) and each clock's syn_mhz is recorded in
     pypeline_clock_syn_mhz. Replaces LOGIC.INFER_CLOCK_DOMAINS for Pypeline:
-    a function's MAINs come from FuncToInstances, so a wire used one call
+    a wire's users and their MAINs come from ParserState.global_wire_access
+    (GlobalWireUse.mains, from FuncToInstances), so a wire used one call
     deep reaches the MAIN above it. Runs after trimming and before
     _check_global_insts."""
     wire_decls = parser_state.pypeline_wire_decls
@@ -8005,7 +7982,7 @@ def _assign_clocks(parser_state):
         for decl in parser_state.pypeline_global_insts.values()
         if decl.joins_clocks
     }
-    func_mains = _func_mains(parser_state)
+    access = parser_state.global_wire_access
 
     def joins(wire):
         decl = parser_state.pypeline_global_insts.get(wire)
@@ -8021,9 +7998,9 @@ def _assign_clocks(parser_state):
         if not joins(wire):
             continue
         users = [
-            (main, func)
-            for func in sorted(parser_state.global_vars[wire].used_in_funcs)
-            for main in func_mains.get(func, ())
+            (main, use.func)
+            for use in access.get(wire, {}).values()
+            for main in use.mains
         ]
         wire_users[wire] = users
         for main, func in users:
@@ -8134,10 +8111,10 @@ def _assign_clocks(parser_state):
     # A bare MAIN left on the default clock that shares crossings with clocks
     for main in unreached:
         others = set()
-        for wire, var_info in sorted(parser_state.global_vars.items()):
+        for wire in sorted(parser_state.global_vars):
             if wire not in wire_decls or joins(wire):
                 continue
-            users = {m for f in var_info.used_in_funcs for m in func_mains.get(f, ())}
+            users = {m for use in access.get(wire, {}).values() for m in use.mains}
             if main in users:
                 others |= {
                     _main_clock(parser_state, m) for m in users - {main}
@@ -8167,7 +8144,7 @@ def _check_clock_crossings(parser_state):
     a crossing, and list the crossings (ParserState.pypeline_clock_crossings).
 
     For each leaf a function writes, every instance of every function reading
-    an overlapping path (the access records) must run on the writer's clock,
+    an overlapping path (ParserState.global_wire_access) must run on the writer's clock,
     unless the wire is an async wire, whose cross-clock reads become rows.
     A pin's readers must share one clock, or be on its stated clock
     (Input[T, clk]); an ASYNC pin may be read on any clock. A wire with a
@@ -8178,8 +8155,7 @@ def _check_clock_crossings(parser_state):
     clock check for it (a split wire's leaves may be on different clocks).
 
     Runs after _check_global_insts, so every MAIN has its clock."""
-    table = parser_state.FuncLogicLookupTable
-    func_mains = _func_mains(parser_state)
+    access = parser_state.global_wire_access
     rows = {}  # (name, write clock, read clock) -> CrossingRow
 
     def clock_of(main):
@@ -8188,12 +8164,10 @@ def _check_clock_crossings(parser_state):
     def readers(wire):
         """[(func, path, loc, MAIN)] of every read instance of `wire`."""
         out = []
-        for func in sorted(table):
-            for path, loc in sorted(
-                table[func].global_wire_read_paths.get(wire, {}).items(), key=str
-            ):
-                for main in func_mains.get(func, ()):
-                    out.append((func, path, loc, main))
+        for use in access.get(wire, {}).values():
+            for path, loc in sorted(use.read_paths.items(), key=str):
+                for main in use.mains:
+                    out.append((use.func, path, loc, main))
         return out
 
     for wire in sorted(parser_state.pypeline_wire_decls):
@@ -8238,18 +8212,13 @@ def _check_clock_crossings(parser_state):
             continue
         crossed = False
         reads = readers(wire)
-        for writer in sorted(table):
-            logic = table[writer]
-            if wire not in logic.write_only_global_wires:
-                continue
-            mains = func_mains.get(writer, [])
-            if len(mains) != 1 or len(parser_state.FuncToInstances[writer]) != 1:
+        for use in LOGIC.GLOBAL_WIRE_WRITERS(parser_state, wire):
+            writer = use.func
+            if len(use.mains) != 1 or len(use.insts) != 1:
                 continue  # the global-wire rules report a writer with several instances
-            wclk = clock_of(mains[0])
-            locs = logic.global_wire_write_locs.get(wire, {})
-            paths = set(logic.global_wire_driven_paths.get(wire, set()))
-            if wire in logic.global_wire_dynamic_index_writes or not paths:
-                paths |= set(locs) or {()}
+            wclk = clock_of(use.mains[0])
+            locs = use.write_locs
+            paths = use.write_paths()
             wloc = _first_access_loc((locs, {})) if locs else "?"
             if ann.clock is not None and wclk != ann.clock.identity:
                 raise ElaborationError(
@@ -8260,7 +8229,7 @@ def _check_clock_crossings(parser_state):
                 )
             for dpath in sorted(paths, key=str):
                 for func, rpath, rloc, main in reads:
-                    if not _path_overlaps(dpath, rpath):
+                    if not LOGIC.GLOBAL_WIRE_PATHS_OVERLAP(dpath, rpath):
                         continue
                     rclk = clock_of(main)
                     if rclk == wclk:
@@ -8330,7 +8299,7 @@ def _reset_regs_below(parser_state, main, mode):
     """[(func, register)] of the state registers marked `mode` ("reset":
     Reg[T, RESET]) in the functions instanced below the MAIN `main`."""
     found = []
-    for func, mains in sorted(_func_mains(parser_state).items()):
+    for func, mains in sorted(LOGIC.FUNC_MAINS(parser_state).items()):
         if main not in mains:
             continue
         logic = parser_state.FuncLogicLookupTable.get(func)
@@ -8389,7 +8358,7 @@ def _assign_resets(parser_state):
     for decl in parser_state.pypeline_global_insts.values():
         for main in decl.main_names:
             decl_mains[main] = decl
-    func_mains = _func_mains(parser_state)
+    access = parser_state.global_wire_access
     table = parser_state.FuncLogicLookupTable
 
     parser_state.main_resets = {}
@@ -8443,10 +8412,9 @@ def _assign_resets(parser_state):
 
     # A MAIN is not reset by logic below it
     for key, mains in users.items():
-        for func in sorted(table):
-            if key not in table[func].write_only_global_wires:
-                continue
-            for main in func_mains.get(func, ()):
+        for use in LOGIC.GLOBAL_WIRE_WRITERS(parser_state, key):
+            func = use.func
+            for main in use.mains:
                 if main in mains:
                     raise ElaborationError(
                         f"MAIN '{main}' is reset by {reset_desc(key)}, which "
@@ -8488,9 +8456,9 @@ def _assign_resets(parser_state):
             seen = {}  # clock -> what is on it
             for main in users[key]:
                 seen.setdefault(_main_clock(parser_state, main), f"MAIN '{main}' (reset)")
-            for func in sorted(table):
-                if key in table[func].global_wire_read_paths:
-                    for main in func_mains.get(func, ()):
+            for func, use in access.get(key, {}).items():
+                if use.read_paths:
+                    for main in use.mains:
                         seen.setdefault(
                             _main_clock(parser_state, main),
                             f"{func}() at {_wire_access_loc(parser_state, func, key)}",
@@ -8515,10 +8483,9 @@ def _assign_resets(parser_state):
                     f"      s0 = {rdecl.bare_name}_in"
                 )
             continue
-        for func in sorted(table):
-            if key not in table[func].write_only_global_wires:
-                continue
-            for wmain in func_mains.get(func, ()):
+        for use in LOGIC.GLOBAL_WIRE_WRITERS(parser_state, key):
+            func = use.func
+            for wmain in use.mains:
                 wclk = _main_clock(parser_state, wmain)
                 for main in users[key]:
                     rclk = _main_clock(parser_state, main)
@@ -8537,11 +8504,12 @@ def _assign_resets(parser_state):
     for key in sorted(resets):
         if key in users:
             continue
-        if any(key in table[f].global_wire_read_paths for f in table):
+        if any(use.read_paths for use in access.get(key, {}).values()):
             continue
         rdecl = resets[key]
         if rdecl.kind == "Input":
             parser_state.global_vars.pop(key, None)
+            parser_state.global_wire_access.pop(key, None)
             parser_state.input_wires.discard(key)
             parser_state.pypeline_wire_decls.pop(key, None)
             del resets[key]
@@ -8555,6 +8523,7 @@ def _assign_resets(parser_state):
             )
 
     # Raw VHDL that keeps its state under "all"
+    func_mains = LOGIC.FUNC_MAINS(parser_state)
     for func in sorted(table):
         logic = table[func]
         if logic.vhdl_module_text is None or logic.vhdl_reset is not None:
@@ -9642,6 +9611,7 @@ def _elaborate_live_roots(roots):
         parser_state.main_syn_mhz[logic.func_name] = None
         parser_state.main_clk_group[logic.func_name] = None
     _build_inst_lookup(parser_state)
+    parser_state.global_wire_access = LOGIC.BUILD_GLOBAL_WIRE_ACCESS(parser_state)
     _validate_auto_pipeline_constraints(parser_state)
     _validate_pipeline_latencies(parser_state)
     return parser_state
@@ -10012,6 +9982,10 @@ def _PARSE_FILE_ONCE(py_file, run_syn_initial_hooks=False, resolved_part=None):
     # @wires promises zero delay; check it against the trimmed logic
     _validate_wires_funcs(parser_state)
 
+    # ── Who writes and reads each global wire, once: the table every check
+    # below, the top level and the diagram read ──
+    parser_state.global_wire_access = LOGIC.BUILD_GLOBAL_WIRE_ACCESS(parser_state)
+
     # ── Give every MAIN its clock: named, inferred through plain wires, or the
     # default clock (_assign_clocks) ──
     _assign_clocks(parser_state)
@@ -10032,11 +10006,8 @@ def _PARSE_FILE_ONCE(py_file, run_syn_initial_hooks=False, resolved_part=None):
     for wire_name in parser_state.global_vars:
         if wire_name in parser_state.clk_cross_var_info:
             continue  # an async FIFO's crossing: the back end's, not a wire
-        writers = [
-            fname
-            for fname, logic in parser_state.FuncLogicLookupTable.items()
-            if wire_name in logic.write_only_global_wires
-        ]
+        writer_uses = LOGIC.GLOBAL_WIRE_WRITERS(parser_state, wire_name)
+        writers = [use.func for use in writer_uses]
         if wire_name in parser_state.input_wires:
             # Input[T]: globally read-only — no function may write it.
             # (_declare_global_write_wire already errors at elaboration time, but
@@ -10058,30 +10029,23 @@ def _PARSE_FILE_ONCE(py_file, run_syn_initial_hooks=False, resolved_part=None):
                     f"Global {kind} '{wire_name}' must be written by at least 1 "
                     f"function, got 0"
                 )
-            for writer in writers:
-                instances = parser_state.FuncToInstances.get(writer, set())
-                if len(instances) != 1:
+            for use in writer_uses:
+                if len(use.insts) != 1:
                     raise ElaborationError(
-                        f"Global {kind} '{wire_name}' is written by '{writer}', which "
-                        f"has {len(instances)} instance(s) in the hierarchy (must be "
-                        f"exactly 1): {instances}"
+                        f"Global {kind} '{wire_name}' is written by '{use.func}', which "
+                        f"has {len(use.insts)} instance(s) in the hierarchy (must be "
+                        f"exactly 1): {list(use.insts)}"
                     )
             if len(writers) > 1:
-                for writer in writers:
-                    writer_logic = parser_state.FuncLogicLookupTable[writer]
-                    if wire_name in writer_logic.global_wire_dynamic_index_writes:
+                for use in writer_uses:
+                    if use.dynamic:
                         raise ElaborationError(
                             f"Global {kind} '{wire_name}' is written by more than one "
-                            f"function ({writers}) and '{writer}' writes it through a "
+                            f"function ({writers}) and '{use.func}' writes it through a "
                             f"variable array index -- variable-index writes are not "
                             f"supported when a wire has multiple writer functions"
                         )
-                writer_paths = {
-                    writer: parser_state.FuncLogicLookupTable[
-                        writer
-                    ].global_wire_driven_paths.get(wire_name, set())
-                    for writer in writers
-                }
+                writer_paths = {use.func: set(use.driven) for use in writer_uses}
                 conflict = _check_no_overlapping_driven_paths(writer_paths)
                 if conflict is not None:
                     (writer_a, path_a), (writer_b, path_b) = conflict
@@ -10191,9 +10155,6 @@ def _check_no_overlapping_driven_paths(writer_paths):
     else ((writer_a, path_a), (writer_b, path_b)) for one offending pair.
     """
 
-    def _is_prefix(a, b):
-        return a == b[: len(a)] if len(a) <= len(b) else False
-
     items = [(writer, path) for writer, paths in writer_paths.items() for path in paths]
     for i in range(len(items)):
         writer_a, path_a = items[i]
@@ -10201,7 +10162,7 @@ def _check_no_overlapping_driven_paths(writer_paths):
             writer_b, path_b = items[j]
             if writer_a == writer_b:
                 continue
-            if _is_prefix(path_a, path_b) or _is_prefix(path_b, path_a):
+            if LOGIC.GLOBAL_WIRE_PATHS_OVERLAP(path_a, path_b):
                 return (writer_a, path_a), (writer_b, path_b)
     return None
 
@@ -10289,11 +10250,7 @@ class _SimPipelineGraph:
                 f"writes. Simulate the generated hardware instead (--cocotb --ghdl)."
             )
         for wire in self.logic.write_only_global_wires:
-            writers = [
-                name
-                for name, other in state.FuncLogicLookupTable.items()
-                if wire in other.write_only_global_wires
-            ]
+            writers = [use.func for use in LOGIC.GLOBAL_WIRE_WRITERS(state, wire)]
             if len(writers) > 1:
                 raise RuntimeError(
                     f"pipeline_latency: native sim of '{self.logic.func_name}' "

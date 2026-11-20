@@ -7510,9 +7510,13 @@ def GET_PARSER_STATE_CACHE(c_filename):
         try:
             with open(filepath, "rb") as input:
                 parser_state = pickle.load(input)
-                return parser_state
         except Exception:
             return None
+        # A state pickled before ParserState.global_wire_access existed lacks
+        # it: the table is derived, so that cache is a miss
+        if not hasattr(parser_state, "global_wire_access"):
+            return None
+        return parser_state
     return None
 
 
@@ -7922,6 +7926,9 @@ def PARSE_FILE(c_filename):
                 f = open(outpath, "w")
                 f.write(func_logic.c_code_text)
                 f.close()
+
+        # Who writes and reads each global wire, for the back end
+        parser_state.global_wire_access = LOGIC.BUILD_GLOBAL_WIRE_ACCESS(parser_state)
 
         # Write cache
         print("Writing cache of parsed information to file...", flush=True)

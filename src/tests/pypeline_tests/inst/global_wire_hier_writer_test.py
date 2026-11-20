@@ -7,7 +7,7 @@ sit at different hierarchy depths.
 
 The write function is leaf_writer (the Logic that has w in
 write_only_global_wires); validation counts it as the single-instance writer,
-and VHDL.py's _inst_text assembles the full hierarchical record path
+and VHDL.py's GLOBAL_WIRE_INST_FIELD_TEXT assembles the full hierarchical record path
 (module_to_global.main_a.<mid inst>.<leaf_writer inst>.w.x) with the
 global_to_module/module_to_global record ports threaded down through mid's
 entity automatically (LOGIC_NEEDS_* recursion).

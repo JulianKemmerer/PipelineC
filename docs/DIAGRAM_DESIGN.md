@@ -240,28 +240,30 @@ MAIN can be wiring there and not in a `--no_synth` build.
 
 ### Wire links
 
-The writer and reader rules follow `VHDL.WRITE_MULTIMAIN_TOP`'s "Directly connected
-global wires" section. For each global wire, over its `used_in_funcs`:
+The writers and readers are the uses in `ParserState.global_wire_access`, the table
+`VHDL.GLOBAL_WIRE_CONNECTIONS` plans the top level's connections from
+([LOGIC_DESIGN.md](LOGIC_DESIGN.md#3-parserstate--the-global-compiler-context)). For each
+global wire, over its uses:
 
-- a **writer** is each instance of a function with the wire in
-  `write_only_global_wires` (or as a state reg, C), driving the paths in
-  `global_wire_driven_paths` (the whole wire when empty);
-- a **reader** is each instance of a function with the wire in
-  `read_only_global_wires`, or a writer that reads it back
-  (`readback_global_wires`), reading the paths in `global_wire_read_paths` (the
-  whole wire when empty, as in C);
+- a **writer** is each instance of a function that writes the wire (`GlobalWireUse.writes`:
+  the wire in `write_only_global_wires`, or a state reg for C), writing the paths of
+  `write_paths()`: its driven paths plus the constant prefix of each variable-index
+  write (the whole wire for C);
+- a **reader** is each instance of a function that reads the wire itself, or a writer
+  that reads it back (`readback`), reading the paths in `read_paths` (the whole wire
+  when empty, as in C);
 - an Input with no writer is a `pin:` writer; an Output is a `pin:` reader.
 
-A reader path links to each other writer whose driven paths overlap it
-(`PY_TO_LOGIC._path_overlaps`); the link carries the longer of the two paths, so a
+A reader path links to each other writer whose written paths overlap it
+(`LOGIC.GLOBAL_WIRE_PATHS_OVERLAP`); the link carries the longer of the two paths, so a
 stream's `.stream.data` and `.ready` run in opposite directions, and the role of the
 data at that path (`_Types.path_role`): a `.wire_t`'s `ready` is feedback data. Each
 `clk_cross_var_info` entry adds write-MAIN → read-MAIN links with `crossing: true`:
 C clock crossings, and the internal crossing between an async FIFO's two side MAINs.
 
-`_assign_clocks`, `_check_global_insts`, `_check_clock_crossings` and
-`VHDL.WRITE_MULTIMAIN_TOP` compute the same writers and readers each for itself;
-see the [PY_TO_LOGIC review](code_reviews/complexity_review/PY_TO_LOGIC_COMPLEXITY_REVIEW.md).
+A function's graph draws each global wire it reads or writes as a stub. The stub takes
+its role from the function's own paths in the same table, and a write stub lists the
+fields it writes (`driven`) unless it writes the whole wire.
 
 ### Which functions are drawn
 

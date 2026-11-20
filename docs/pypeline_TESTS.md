@@ -1053,18 +1053,35 @@ cycle diff:
 | `global_wire_dynamic_index_write_test` | one dynamic element driven, the others zero |
 
 The remaining global wire tests:
-- `global_wire_nested_split_test` runs in `synth_tests.py` (`--comb`) and native sim.
-  It is not in the cycle diff; see the comment in `native_vs_vhdl_sim_tests.py`.
-  `top_level_reader_order_test.py` (`known_issues`) builds it with two
-  `PYTHONHASHSEED`s: its `top.vhd` orders the readers' connection blocks by set order
-  ([#380](https://github.com/JulianKemmerer/PipelineC/issues/380)).
+- `global_wire_nested_split_test` runs in `synth_tests.py` (`--comb`), native sim and
+  the cycle diff (`global_wire_nested_split_test_comb`).
+  `top_level_reader_order_test.py` (`build_report_device_models`, two `--no_synth`
+  builds) builds it with two `PYTHONHASHSEED`s and compares the `top.vhd`: the readers'
+  connection blocks come out in the same order (`VHDL.GLOBAL_WIRE_CONNECTIONS`
+  plans them from sorted tables). `c_inst_array_order_known_issue` (`known_issues`)
+  runs the same script on `inst/c_inst_array_order_design.c`, whose C `INST_ARRAY`
+  connections still come out in hash order (XFAIL while that bug is present).
 - `global_wire_errors_test` (`elab_introspect`) covers the ownership, direction,
   overlap and dynamic-index errors.
-- `global_wire_unshared_readback_known_issue` (`known_issues`, needs GHDL) is the
-  cycle diff of `global_wire_unshared_readback_design.py`: a readback in a design
-  with no shared wire, where `global_wires_pkg` is not written but `top.vhd` uses
-  its types, so GHDL rejects the VHDL
-  ([#384](https://github.com/JulianKemmerer/PipelineC/issues/384)).
+- `global_wire_unshared_readback_test_comb` (`native_vs_vhdl_sim`, needs GHDL) is the
+  cycle diff of `global_wire_unshared_readback_test.py`: a readback in a design with
+  no shared wire. `global_wires_pkg` is written for it, because a MAIN's
+  `global_to_module` record has the readback input
+  (`VHDL.NEEDS_GLOBAL_WIRES_VHDL_PACKAGE`). `global_wire_readback_test` is the same
+  readback beside a shared wire.
+- `auto_fsm_no_pins_test` (`synth_device_models`, not `--comb`, about 30 s) builds an
+  AUTO_FSM in a design with no pins and no shared wire. Its per-entity measurement
+  synthesizes from AUTO_FSM's isolated parser state, whose `main_mhz` names a root
+  instance, and `SYN.GET_VHDL_FILES_TCL_TEXT_AND_TOP` asks only the whole design the
+  package question. A pin counts as shared, so designs with pins never reach that
+  question.
+- `global_wire_access_test` (`elab_introspect`) asserts `ParserState.global_wire_access`,
+  the table of who writes and reads each global wire: a split wire's writers (one a
+  helper below its MAIN), a writer's readback, a reader with two instances, pins, a
+  variable-index writer's prefix, a FIFO's MAIN, its agreement with the per-function
+  records, and a C design's whole-wire uses. It also asserts the top level's connection
+  plan (`VHDL.GLOBAL_WIRE_CONNECTIONS`): each region from its owner, readers sorted,
+  the readback input's zeros and the unshared feed, and the package predicate.
 - `native_invert_compare_wire_test` (`native_sim`, native sim only): every write to a
   wire is cast to the wire's type. Each test runs a small design through
   `pypeline_sim.py` and asserts the hardware's answer:

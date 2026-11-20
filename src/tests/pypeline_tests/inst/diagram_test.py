@@ -79,6 +79,37 @@ _GRAPH_SRC = textwrap.dedent(
 ).format(repo=REPO_SRC)
 
 
+# A writer of one wire that drives a field and also writes an array field through
+# a variable index (the index's constant prefix is the path it writes)
+_VAR_INDEX_SRC = textwrap.dedent(
+    """
+    import sys
+    sys.path.insert(0, {repo!r})
+    from pypeline import MAIN, NamedTuple, Output, Reg, Wire, struct, uint8_t
+
+    @struct
+    class mixed_t(NamedTuple):
+        flag: uint8_t
+        vals: uint8_t[4]
+
+    m: Wire[mixed_t]
+    sink_pin: Output[uint8_t]
+
+    @MAIN
+    def var_writer():
+        n: Reg[uint8_t]
+        idx: uint8_t = n & 3
+        m.flag = n
+        m.vals[idx] = n
+        n += 1
+
+    @MAIN
+    def var_reader():
+        sink_pin = m.flag + m.vals[0]
+    """
+).format(repo=REPO_SRC)
+
+
 def _embedded(html):
     start = html.index('id="design">') + len('id="design">')
     return json.loads(html[start : html.index("</script>", start)])
@@ -102,6 +133,16 @@ def _graph_design():
     path = os.path.join(tempfile.mkdtemp(prefix="diagram_test_src_"), "graph_design.py")
     with open(path, "w") as f:
         f.write(_GRAPH_SRC)
+    return _page(path)[0]
+
+
+@functools.lru_cache(maxsize=None)
+def _var_index_design():
+    path = os.path.join(
+        tempfile.mkdtemp(prefix="diagram_test_src_"), "var_index_design.py"
+    )
+    with open(path, "w") as f:
+        f.write(_VAR_INDEX_SRC)
     return _page(path)[0]
 
 
@@ -170,6 +211,21 @@ def test_wire_links_follow_field_direction():
     assert [(l["src"], l["dst"], l["async"]) for l in async_link] == [
         ("eth_rx", "forward", True)
     ], async_link
+
+
+def test_variable_index_writes_link_their_readers():
+    data = _var_index_design()
+    links = {
+        (l["src"], l["dst"], l["name"]) for l in data["links"] if l["wire"] == "m"
+    }
+    # The field write and the variable-index write both reach the reader: a
+    # writer's paths are the ones its source writes (GlobalWireUse.write_paths)
+    assert ("var_writer", "var_reader", "m.flag") in links, links
+    assert ("var_writer", "var_reader", "m.vals[0]") in links, links
+    # The writer's wire stub names the fields it writes, the indexed one by its prefix
+    nodes, _edges = _graph(data, "var_writer")
+    stubs = [n for n in nodes.values() if n["kind"] == "wire_write" and n["name"] == "m"]
+    assert len(stubs) == 1 and sorted(stubs[0]["driven"]) == [["flag"], ["vals"]], stubs
 
 
 def test_wires_main_is_marked_wiring():

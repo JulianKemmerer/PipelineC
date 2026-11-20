@@ -12,7 +12,7 @@ import re
 import sys
 from collections import OrderedDict
 from dataclasses import dataclass
-from typing import Any, Optional
+from typing import Any, NamedTuple, Optional
 
 from utilities import FIND_REGEX_MATCHES
 
@@ -2655,6 +2655,106 @@ def LOGIC_NEEDS_CLOCK_ENABLE(logic, parser_state):
     return needs
 
 
+def GLOBAL_WIRE_PATHS_OVERLAP(path, prefix):
+    """True if one of two global wire field paths contains the other. A path is
+    struct field names and constant array indices, root to leaf; () is the whole
+    wire."""
+    n = min(len(path), len(prefix))
+    return path[:n] == prefix[:n]
+
+
+def FUNC_MAINS(parser_state):
+    """func name -> the MAINs (sorted) whose hierarchy holds an instance of it."""
+    return {
+        func: sorted({inst.split(SUBMODULE_MARKER)[0] for inst in insts})
+        for func, insts in parser_state.FuncToInstances.items()
+    }
+
+
+class GlobalWireUse(NamedTuple):
+    """One function's use of one global wire: an entry of
+    ParserState.global_wire_access, copied from the function's Logic records by
+    BUILD_GLOBAL_WIRE_ACCESS. The fields are read-only."""
+
+    func: str  # The function's name
+    insts: tuple  # Sorted instance names of the function, () if it has none
+    mains: tuple  # Sorted MAINs above those instances
+    writes: bool  # In write_only_global_wires, or a global state reg (C)
+    reads: bool  # The wire itself is in read_only_global_wires
+    readback: Optional[str]  # readback_global_wires entry: the input wire a writer reads its own wire through
+    driven: frozenset  # global_wire_driven_paths: the regions a split wire gives this writer
+    dynamic: bool  # Writes through a variable array index (global_wire_dynamic_index_writes)
+    write_locs: dict  # global_wire_write_locs: written path -> (src_file, line)
+    read_paths: dict  # global_wire_read_paths: read path -> (src_file, line)
+
+    def write_paths(self):
+        """Every path this function's source writes: its driven paths, plus the
+        constant prefix of each variable-index write (which driven does not
+        hold). () when a C function, which records no paths, writes the whole
+        wire."""
+        paths = set(self.driven)
+        if self.dynamic or not paths:
+            paths |= set(self.write_locs) or {()}
+        return paths
+
+
+def BUILD_GLOBAL_WIRE_ACCESS(parser_state):
+    """ParserState.global_wire_access: wire -> {function name: GlobalWireUse}
+    over the functions of the wire's used_in_funcs in the Logic table (sorted).
+    The one place the per-function access records (write_only_global_wires,
+    read_only_global_wires, state_regs, readback_global_wires,
+    global_wire_driven_paths, global_wire_dynamic_index_writes,
+    global_wire_write_locs, global_wire_read_paths) and FuncToInstances are
+    combined into who writes and reads which wire. A function whose records do
+    not name the wire (a C function the hacky pre-parse listed) is a use with
+    writes, reads and readback all false."""
+    func_mains = FUNC_MAINS(parser_state)
+    table = parser_state.FuncLogicLookupTable
+    access = {}
+    for wire in sorted(parser_state.global_vars):
+        uses = {}
+        for func in sorted(parser_state.global_vars[wire].used_in_funcs):
+            logic = table.get(func)
+            if logic is None:
+                continue
+            uses[func] = GlobalWireUse(
+                func=func,
+                insts=tuple(sorted(parser_state.FuncToInstances.get(func, ()))),
+                mains=tuple(func_mains.get(func, ())),
+                writes=wire in logic.write_only_global_wires
+                or wire in logic.state_regs,
+                reads=wire in logic.read_only_global_wires,
+                readback=logic.readback_global_wires.get(wire),
+                driven=frozenset(logic.global_wire_driven_paths.get(wire, ())),
+                dynamic=wire in logic.global_wire_dynamic_index_writes,
+                write_locs=dict(logic.global_wire_write_locs.get(wire, {})),
+                read_paths=dict(logic.global_wire_read_paths.get(wire, {})),
+            )
+        if uses:
+            access[wire] = uses
+    return access
+
+
+def GLOBAL_WIRE_WRITERS(parser_state, wire):
+    """The uses of `wire` that write it, sorted by function name."""
+    return [
+        use
+        for use in parser_state.global_wire_access.get(wire, {}).values()
+        if use.writes
+    ]
+
+
+def GLOBAL_WIRE_READERS(parser_state, wire):
+    """The uses of `wire` that read the wire itself, sorted by function name.
+    A writer that reads its own wire back (GlobalWireUse.readback) is not one:
+    its read comes from the top level's feed for its readback input."""
+    return [
+        use
+        for use in parser_state.global_wire_access.get(wire, {}).values()
+        if use.reads
+    ]
+
+
 def GLOBAL_VAR_IS_SHARED(var_name, parser_state):
     if var_name in parser_state.output_wires:
         return True
@@ -3412,6 +3512,10 @@ class ParserState:
         # Pypeline global wires: name -> PY_TO_LOGIC WireDecl (its annotation,
         # with its ASYNC and clock markers, and where it was declared)
         self.pypeline_wire_decls = {}
+        # Global wire name -> {function name: GlobalWireUse}: who writes and reads
+        # each wire, built once after trimming (LOGIC.BUILD_GLOBAL_WIRE_ACCESS)
+        # and read by every front-end check, the top level and the diagram
+        self.global_wire_access = {}
         # Pypeline design files: absolute .py path -> module prefix of its
         # names (None for the top file), set once its imports are discovered
         self.file_to_module_prefix = {}
@@ -3573,6 +3677,7 @@ class ParserState:
         rv.async_wires = set(self.async_wires)
         rv.pypeline_global_insts = dict(self.pypeline_global_insts)
         rv.pypeline_wire_decls = dict(self.pypeline_wire_decls)
+        rv.global_wire_access = dict(self.global_wire_access)
         rv.file_to_module_prefix = dict(self.file_to_module_prefix)
         rv.pypeline_file_imports = set(self.pypeline_file_imports)
         rv.pypeline_clock_names = dict(self.pypeline_clock_names)

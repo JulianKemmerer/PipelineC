@@ -610,9 +610,8 @@ def get_tests() -> list:
     # cross-writer readback, 3-writer nested struct splits, hierarchy-buried
     # writers, conditionally (clock-enable style) driven fields, and
     # constant-index array element splits. Each also runs through real GHDL in
-    # native_vs_vhdl_sim_tests.py (except global_wire_nested_split_test.py --
-    # see that file) so native sim and hardware are held to the same golden
-    # behavior.
+    # native_vs_vhdl_sim_tests.py so native sim and hardware are held to the same
+    # golden behavior.
     for fname in [
         "global_wire_readback_test.py",
         "global_wire_nested_split_test.py",

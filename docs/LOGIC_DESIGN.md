@@ -145,6 +145,7 @@ parser_state.FuncToInstances            # func_name -> {inst_keys}
 parser_state.struct_to_field_type_dict  # struct_name -> {field: c_type_str}
 parser_state.enum_info_dict             # enum_ctype_name -> LOGIC.EnumInfo (member map + int_c_type)
 parser_state.global_vars                # name -> LOGIC.VariableInfo
+parser_state.global_wire_access         # wire -> {func name: LOGIC.GlobalWireUse}: who writes and reads it
 parser_state.func_name_to_calls         # func_name -> {called func names} (C front end)
 parser_state.func_names_to_called_from  # func_name -> {calling func names} (C front end)
 parser_state.part                       # FPGA part string or None
@@ -270,6 +271,20 @@ came from.
 - **Global wires.** `GLOBAL_VAR_IS_SHARED` (a top-level IO or clock wire, or a global
   used by more than one function), `LOGIC_NEEDS_GLOBAL_TO_MODULE` and `LOGIC_NEEDS_MODULE_TO_GLOBAL` decide whether a
   function gets the `global_to_module` / `module_to_global` records.
+- **Who writes and reads a wire.** `BUILD_GLOBAL_WIRE_ACCESS(parser_state)` combines
+  each function's access records (`write_only_global_wires`, `read_only_global_wires`,
+  `state_regs`, `readback_global_wires`, `global_wire_driven_paths`,
+  `global_wire_dynamic_index_writes`, `global_wire_write_locs`,
+  `global_wire_read_paths`) with `FuncToInstances` into
+  `ParserState.global_wire_access`: for each wire, a `GlobalWireUse` per function in its
+  `used_in_funcs` that the Logic table holds (its instances, the MAINs above them, whether
+  it writes, reads or reads back the wire, and the paths). Both front ends build it once
+  after trimming (the Python front end again after adding late MAINs), and the front-end
+  checks, the top level and the diagram read it instead of deriving writers and readers
+  each for themselves. `GLOBAL_WIRE_WRITERS` and `GLOBAL_WIRE_READERS` select the uses of
+  one wire, `GLOBAL_WIRE_PATHS_OVERLAP` compares two field paths, and `FUNC_MAINS` maps a
+  function to its MAINs. The C front end's parser-state cache holds the table, so a cache
+  written before it existed is a miss.
 - **Raw HDL.** `LOGIC_IS_RAW_HDL` says whether a `Logic` is emitted as hand-written VHDL
   (bit manipulation, memories, raw-HDL built-ins) instead of from its wire graph. For a
   built-in operator it asks `C_BUILT_IN_FUNC_IS_RAW_HDL`, which `FORCE_RAW_INT_CMP_FOR_QOR_BENCH`

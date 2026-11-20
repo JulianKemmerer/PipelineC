@@ -1191,7 +1191,9 @@ explicitly during the sweep:
   start register) or is in the one MAIN driving the reset `Wire`. A source MAIN
   whose other global wires reach the reset MAIN, directly or through other
   MAINs (each taken as passing every wire it reads to every wire it writes in
-  the same cycle), could be carrying that data instead, so such a path keeps
+  the same cycle; a MAIN that reads back a field of a wire it also drives reads that
+  wire, so data it takes from another MAIN's field of it counts), could be carrying that
+  data instead, so such a path keeps
   the normal feedback. The MAIN's iteration record carries the description
   as `reset_distribution`;
 - a failing path between registers of a MAIN with nothing cuttable that only
