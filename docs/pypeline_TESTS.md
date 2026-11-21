@@ -1768,6 +1768,32 @@ real-parse counterpart of the package-merge cases above.
   must analyze the package and the isolated `pick` (dynamic lane mux) file
   list.
 
+## Module prefix coverage
+
+`--module_prefix` renames the design units of the final files so the output of
+separate builds can share one project
+([VHDL_DESIGN.md](VHDL_DESIGN.md#namespaced-final-files)).
+
+- **`module_prefix_unit_test.py` (unit):** `VHDL.NAMESPACE_VHDL_FILES` on hand-built
+  files: units and every reference renamed, the top kept, comments and strings
+  untouched, case-insensitive matching with the case as written, only the listed
+  files left in the directory, and the refusals (a rename onto an existing name, a
+  missing top, two files with one name, a file name over 255 bytes, a prefix that is
+  not a VHDL identifier start). It also checks the Tcl path remap `SYN.MAP_LISTED_PATHS`.
+- **`module_prefix_build_test.py` (build_report_device_models, GHDL and Yosys, ~40 s):**
+  `module_prefix_design.py` built with `-D VARIANT=2` and `3` declares the same entity
+  (`scale_...`), `c_structs_pkg` and `global_wires_pkg` names with different text, so
+  the unprefixed pair is a real clash. The prefixed pair (`--comb --no_synth --verilog`)
+  must have every unit, file name and reference prefixed except the top; link in one
+  GHDL library, where a testbench instantiates both cores and each computes its own
+  variant (a link that took the other build's `scale` would read 13 where 12 is
+  expected); and be read by Yosys with no `-overwrite`. A rebuild without the flag
+  removes the copy, and a bad prefix is refused before the build. Builds with a Vivado
+  and a Quartus part (neither tool runs) check that `read_vhdl.tcl` and
+  `pipelinec_top.qip` list the copy. Reading the unprefixed
+  pair the same way fails: GHDL replaces the first `c_structs_pkg` with the second,
+  and Yosys stops with "Re-definition of module".
+
 ## Karatsuba leaf coverage
 
 `make_soft_mult_karatsuba`'s `leaf=` policy and the opt-in hybrid with inferred leaves

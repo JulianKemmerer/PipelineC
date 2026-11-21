@@ -170,6 +170,10 @@ MUX_DELAY_KEY_BY_WIDTH = None
 NUM_PROCESSES = None
 _NUM_PROCESSES_CFG = None
 CONVERT_FINAL_TOP_VERILOG = False  # Flag for final top level converison to verilog
+# Prefix for the design unit names of the final files (--module_prefix)
+MODULE_PREFIX = None
+# In the top's directory: the final files renamed by MODULE_PREFIX
+NAMESPACED_VHDL_DIR_NAME = "vhdl"
 WRITE_AXIS_XO_FILE = False
 PIN_CONSTRAINTS_FILE = None  # Pin constraints file to use
 
@@ -890,7 +894,6 @@ def CHECK_VHDL_FILES_CONSISTENCY(vhdl_files_texts):
     file_paths = vhdl_files_texts.split()
     defined_units = set()
     file_to_refs = {}
-    entity_def_re = re.compile(r"^\s*entity\s+(\w+)\s+is", re.IGNORECASE | re.MULTILINE)
     entity_ref_re = re.compile(r"entity\s+work\.(\w+)", re.IGNORECASE)
     for file_path in file_paths:
         try:
@@ -898,8 +901,9 @@ def CHECK_VHDL_FILES_CONSISTENCY(vhdl_files_texts):
                 text = vhd_f.read()
         except OSError:
             raise Exception(f"vhdl_files.txt references a missing file: {file_path}")
-        for m in entity_def_re.finditer(text):
-            defined_units.add(m.group(1).casefold())
+        for kind, name in VHDL.GET_DECLARED_UNITS(text):
+            if kind == "entity":
+                defined_units.add(name.casefold())
         refs = {m.group(1).casefold() for m in entity_ref_re.finditer(text)}
         if refs:
             file_to_refs[file_path] = refs
@@ -917,6 +921,13 @@ def CHECK_VHDL_FILES_CONSISTENCY(vhdl_files_texts):
             "Final VHDL file list is not self-consistent (stale/mixed entity "
             "references above) -- refusing to hand it to simulation/synthesis."
         )
+
+
+def MAP_LISTED_PATHS(text, path_map):
+    """text with each path that is a key of path_map replaced by its value.
+    Paths are whitespace separated, possibly inside braces (a Tcl list); all
+    other text and spacing stay as they were."""
+    return "".join(path_map.get(t, t) for t in re.split(r"([\s{}]+)", text))
 
 
 def WRITE_FINAL_FILES(multimain_timing_params, parser_state):
@@ -966,6 +977,23 @@ def WRITE_FINAL_FILES(multimain_timing_params, parser_state):
     vhdl_files_texts, top_entity_name = GET_VHDL_FILES_TCL_TEXT_AND_TOP(
         multimain_timing_params, parser_state, inst_name=None, is_final_top=is_final_top
     )
+    # With --module_prefix the final files are a renamed copy of these, in
+    # their own directory, and every list below names the copy
+    vhdl_path_map = {}
+    namespaced_dir = (
+        SYN_OUTPUT_DIRECTORY + "/" + TOP_LEVEL_MODULE + "/" + NAMESPACED_VHDL_DIR_NAME
+    )
+    if MODULE_PREFIX is not None:
+        listed_paths = vhdl_files_texts.split()
+        namespaced_paths = VHDL.NAMESPACE_VHDL_FILES(
+            listed_paths, MODULE_PREFIX, top_entity_name, namespaced_dir
+        )
+        vhdl_path_map = dict(zip(listed_paths, namespaced_paths))
+        vhdl_files_texts = "".join(path + " " for path in namespaced_paths)
+        print(f"VHDL files named with prefix {MODULE_PREFIX}:", namespaced_dir)
+    elif os.path.isdir(namespaced_dir):
+        # An earlier build of this directory's --module_prefix copy
+        shutil.rmtree(namespaced_dir)
     out_filename = "vhdl_files.txt"
     out_filepath = SYN_OUTPUT_DIRECTORY + "/" + out_filename
     out_text = vhdl_files_texts
@@ -998,6 +1026,7 @@ def WRITE_FINAL_FILES(multimain_timing_params, parser_state):
                 or line.startswith("add_files")
                 or line.startswith("set_property")
             ):
+                line = MAP_LISTED_PATHS(line, vhdl_path_map)
                 line = line.replace(SYN_OUTPUT_DIRECTORY, "$thisDir")
                 line = line.replace(VIVADO.VIVADO_DIR, "$vivadoDir")
                 line = line.replace("{", "[subst {").replace("}", "}]")

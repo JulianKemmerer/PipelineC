@@ -572,6 +572,17 @@ def get_tests() -> list:
             cmd=[INST_DIR / "generated_vhdl_stability_test.py"],
         )
     )
+    # --module_prefix's renamer (VHDL.NAMESPACE_VHDL_FILES) on hand-built VHDL
+    # files: units and references, comments and strings, case, clashes, stale
+    # files, file name limits, prefix syntax and the Tcl path remap. No design
+    # is built; module_prefix_build_test covers the whole flow.
+    tests.append(
+        Test(
+            name="module_prefix_unit_test",
+            category="unit",
+            cmd=[INST_DIR / "module_prefix_unit_test.py"],
+        )
+    )
     # DEVICE_MODELS sky130 STA diagnostics and fixed internal synthesis
     # recipes: component sums, endpoint semantics, structured arc traces,
     # and recipe-scoped cache/artifact identities. Uses tiny mapped-JSON

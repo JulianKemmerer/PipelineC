@@ -119,7 +119,7 @@ flowchart LR
 
 **Mutable state lacks one owner.** Parse registries, scoped operators, timing caches, candidate plans, source snapshots and simulation state have different valid lifetimes. Today their lifetime is often expressed as “clear this module global at the right point.” The confirmed ID-reuse bug is a concrete consequence.
 
-**Identity, presentation and physical evidence are mixed.** Entity/instance names encode semantic facts and later become timing-attribution keys. Renaming for readability can change compiler decisions. A correct refactor must retain stable logical identities and explicit emitted-name maps, not merely prettier names.
+**Identity, presentation and physical evidence are mixed.** Entity/instance names encode semantic facts and later become timing-attribution keys. Renaming for readability can change compiler decisions. A correct refactor must retain stable logical identities and explicit emitted-name maps, not merely prettier names. The same coupling is why `--module_prefix` renames a copy of the final files (`VHDL.NAMESPACE_VHDL_FILES`) rather than the names `GET_ENTITY_NAME` makes: those names are synthesis-cache identities, latency-memory digests and attribution keys.
 
 **Some abstractions already work well.** AUTO's shared graph/codegen base, the host serializer's shared leaf layout, typed physical placement records, MCP's shared endpoint-glob source and synthesis input manifests are useful foundations. Extend them before introducing parallel replacements.
 

@@ -1193,13 +1193,6 @@ def _var_ref_rd_func_name(output_c_type, base_c_type, ref_toks, covering_ref_tok
 # pypeline._NameInfo descriptions become VHDL identifiers here, once per
 # elaborated build (see docs/PY_TO_LOGIC_DESIGN.md#generated-vhdl-names).
 
-# VHDL strings (including doubled quotes), comments, extended identifiers,
-# character literals, and basic identifiers. Only the last alternative is
-# rewritten: diagnostics/string payloads and user comments stay verbatim.
-_VHDL_TOKEN = re.compile(
-    r'"(?:[^"\n]|"")*"|--[^\n]*|\\[^\\\n]*\\|\'[^\n]\'|[A-Za-z][A-Za-z0-9_]*'
-)
-
 
 class EmissionNames:
     """One immutable base mapping and an emission memo per elaborated build."""
@@ -1262,7 +1255,7 @@ class EmissionNames:
         return result
 
     def text(self, text):
-        return _VHDL_TOKEN.sub(
+        return VHDL.VHDL_TOKEN_RE.sub(
             lambda m: self.identifier(m[0]) if m[0][0].isalpha() else m[0], text
         )
 

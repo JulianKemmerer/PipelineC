@@ -25,7 +25,7 @@ CCN is a branch-count heuristic, not a defect count. File hash and reproducible 
 
 1. **Build-phase policy** — `NATIVE_SIM_SKIPS_BUILD`, `SIM_AT_COMB_STAGE`, `DO_COMB_STAGE_SIM`, `_DO_OPTIONAL_SIM` (110–207). Source extension, comb/no-synth modes, tool fallback and latency maps determine whether simulation sees source semantics or the final built circuit. This policy is also reflected in the driver and debug CLI.
 2. **Native support boundary** — `CHECK_PIPELINED_NATIVE_SIM_SUPPORTED` (297–364). It walks effects and rejects global-wire uses the native delayed-result model cannot represent. The runtime has a corresponding check. Missing a case produces plausible but cycle-wrong results.
-3. **Simulation file inventory** — `GET_SIM_FILES` (210–233). It recursively collects VHDL with a narrow legacy filename filter. MODELSIM and EDAPLAY call it, so stale sweep candidates and same-named entities can enter their inputs. Other backends consume the final manifest.
+3. **Simulation file inventory** — `GET_SIM_FILES` (210–233). It recursively collects VHDL with a narrow legacy filename filter. MODELSIM and EDAPLAY call it, so stale sweep candidates and same-named entities can enter their inputs. Any extra `.vhd` under the output directory enters too: it has to skip `<top>/vhdl/`, the `--module_prefix` copy of the final files, or the top and every unit would be declared twice. Other backends consume the final manifest.
 4. **Global selection** — `SIM_TOOL` and `SET_SIM_TOOL`. Selection persists at module scope; the default C case does not unconditionally restore the default after an earlier Python selection. Same-process usage needs a defined reset boundary.
 
 ## Duplication and simplification

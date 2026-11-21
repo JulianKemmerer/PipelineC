@@ -534,7 +534,16 @@ def SIMULATE_BUILT_HARDWARE(args, src_file, build_inputs) -> bool:
 def GET_SIM_FILES(latency=0):
     # Get all vhd files in syn output
     vhd_files = []
+    # The final top's --module_prefix copy declares the same units again
+    namespaced_dir = (
+        SYN.SYN_OUTPUT_DIRECTORY
+        + "/"
+        + SYN.TOP_LEVEL_MODULE
+        + "/"
+        + SYN.NAMESPACED_VHDL_DIR_NAME
+    )
     for root, dirs, filenames in os.walk(SYN.SYN_OUTPUT_DIRECTORY):
+        dirs[:] = [d for d in dirs if os.path.join(root, d) != namespaced_dir]
         for f in filenames:
             if f.endswith(".vhd"):
                 # print "f",f

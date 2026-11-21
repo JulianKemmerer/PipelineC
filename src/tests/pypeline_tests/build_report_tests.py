@@ -137,6 +137,23 @@ def get_tests() -> list:
             requires=["ghdl"],
         )
     )
+    # --module_prefix (#400): one source built as VARIANT 2 and 3 declares the
+    # same entity, c_structs_pkg and global_wires_pkg names with different
+    # text. Seven --comb --no_synth builds (six side by side, two of them
+    # with --verilog, then one rebuild; ~40 s): the prefixed pair links in
+    # one GHDL library, each core computing its own variant, and in one Yosys
+    # design; the unprefixed pair shows the clash; a Vivado-part and a
+    # Quartus-part build check their file lists; flag handling around the
+    # final files.
+    tests.append(
+        Test(
+            name="module_prefix_build_test",
+            category=DM,
+            cmd=[INST_DIR / "module_prefix_build_test.py"],
+            needs_out_dir=True,
+            requires=["yosys", "ghdl"],
+        )
+    )
     # Unreachable goal: under sky130 the sweep stops on the
     # prediction-independent plateau. (The wrapper's --syn_tool pyrtl mode,
     # which checks the empirical-floor stop instead, is kept for manual runs

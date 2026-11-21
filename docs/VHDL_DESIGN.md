@@ -29,6 +29,7 @@ STA.
   - [Generated VHDL is the same in every pass of a run](#generated-vhdl-is-the-same-in-every-pass-of-a-run)
 - [Entity identity and reuse](#entity-identity-and-reuse)
 - [Pypeline source-based naming](#pypeline-source-based-naming)
+- [Namespaced final files](#namespaced-final-files)
 - [Building a pipelined architecture](#building-a-pipelined-architecture)
 - [Type conversion on a mismatched connection](#type-conversion-on-a-mismatched-connection)
 - [Flat code and hierarchy](#flat-code-and-hierarchy)
@@ -58,6 +59,9 @@ A normal build emits:
 - `vhdl_files.txt`, the exact file list for the final artifact (packages
   first, then entity files parents-before-children, so it is not a compile
   order; consumers resolve the order themselves).
+- with `--module_prefix`, `<top>/vhdl/`, a renamed copy of that file set, which
+  `vhdl_files.txt` then lists in place of the originals
+  ([Namespaced final files](#namespaced-final-files)).
 
 Downstream simulation and synthesis should consume `vhdl_files.txt`, not a
 directory glob. Intermediate sweep candidates can coexist in the output
@@ -236,6 +240,54 @@ uncollapsed descriptions, timing variants and instance/wire mappings appear in
 `name_index.log`, also for `--no_synth`. Public main names and ports stay protected.
 See [Generated VHDL names](PY_TO_LOGIC_DESIGN.md#generated-vhdl-names) for concrete
 before/after examples and the complete tracing contract.
+
+## Namespaced final files
+
+Entity and package names are unique within one build only: every build declares
+`c_structs_pkg`, and two builds of one source can give an entity the same
+name and different text (a name carries only the timing hash, not the body).
+`--module_prefix PREFIX` (`SYN.MODULE_PREFIX`) makes the final file set one
+build's own, so the files of separate builds can share a project, a library
+and a Verilog design (the case of wireguard-fpga's separately built encrypt
+and decrypt cores, [#400](https://github.com/JulianKemmerer/PipelineC/issues/400)).
+
+- **Final files only.** `SYN.WRITE_FINAL_FILES` takes the file list of the final
+  top and passes it to `VHDL.NAMESPACE_VHDL_FILES`, which writes the renamed
+  files to `<out_dir>/<top>/vhdl/`. Everything before that, from
+  `GET_ENTITY_NAME` and the timing hashes to the synthesis inputs, the
+  `--syn_cache` identities, the latency-memory digests and the sweep's
+  attribution by name, sees the names as without the flag. That is deliberate: an
+  entity name is a cache identity and an attribution key, so a prefix applied
+  where names are made would re-synthesize every build once and give the sweep
+  new names to match. The renamed files are a pure rename of the same
+  hardware.
+- **What is renamed.** Every unit that a listed file declares
+  (`VHDL.GET_DECLARED_UNITS`: `entity X is` and `package X is`) except the
+  top entity: generated entities, `clk_cross_*` entities, `pipelinec_fifo_fwft`
+  and `pipelinec_async_fifo_fwft`, `c_structs_pkg` and `global_wires_pkg`. The
+  rewrite goes token by token with the lexer `VHDL.VHDL_TOKEN_RE`, which
+  `PY_TO_LOGIC.EmissionNames.text` also uses, so a declaration, an
+  `entity work.X`, a `use work.X.all`, an instance label that repeats an
+  entity name and the text of a raw `vhdl()` block all change together, while
+  comments, strings and extended identifiers do not. Names match without case
+  (VHDL is case-insensitive) and a renamed token keeps the case it was written in.
+- **Files.** A file's name gets the prefix as well, except the top's `<top>.vhd`,
+  so files of several builds can sit in one directory. The directory holds the
+  listed files and nothing else; a build without the flag removes a copy an
+  earlier build left. `SIM.GET_SIM_FILES`, which globs the output directory, skips it.
+- **Lists.** `vhdl_files.txt` and the Quartus `.qip` list the copy, and the Vivado
+  `read_vhdl.tcl` maps each listed path to it (`SYN.MAP_LISTED_PATHS`).
+  `--verilog` converts what `vhdl_files.txt` lists, so each Verilog module name has the
+  prefix and only the top module keeps its name.
+- **Refusals.** A prefix that cannot start a VHDL identifier is refused by the
+  driver before the build; a rename onto an identifier the files already hold, a
+  file name over 255 bytes, two files with one name, and a list that does not
+  declare the top are refused with the name concerned.
+
+`module_prefix_unit_test.py` checks the renamer on hand-built files;
+`module_prefix_build_test.py` links two prefixed builds of one source whose names
+clash in GHDL and Yosys (see
+[`pypeline_TESTS.md`](pypeline_TESTS.md#module-prefix-coverage)).
 
 ## Building a pipelined architecture
 

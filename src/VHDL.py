@@ -56,6 +56,130 @@ def WRITE_TEXT_IF_CHANGED(path, text):
         f.write(text)
 
 
+# VHDL strings (including doubled quotes), comments, extended identifiers,
+# character literals, and basic identifiers. A rewrite that changes only the
+# last alternative leaves diagnostics/string payloads and user comments
+# verbatim. Shared by PY_TO_LOGIC.EmissionNames and NAMESPACE_VHDL_FILES.
+VHDL_TOKEN_RE = re.compile(
+    r'"(?:[^"\n]|"")*"|--[^\n]*|\\[^\\\n]*\\|\'[^\n]\'|[A-Za-z][A-Za-z0-9_]*'
+)
+
+# The library design units a VHDL file declares: `entity X is` and
+# `package X is` (`package body X is` declares nothing new: `body` is not
+# followed by `is`)
+VHDL_UNIT_DECL_RE = re.compile(
+    r"^\s*(entity|package)\s+(\w+)\s+is\b", re.IGNORECASE | re.MULTILINE
+)
+
+# A name prefix that keeps `prefix + name` a basic identifier: starts with a
+# letter, no double or leading underscore (a trailing one joins it to the name)
+MODULE_PREFIX_RE = re.compile(r"[A-Za-z][A-Za-z0-9]*(?:_[A-Za-z0-9]+)*_?")
+
+# Longest file name the build's file systems accept, in bytes
+MAX_FILE_NAME_BYTES = 255
+
+
+def GET_DECLARED_UNITS(text):
+    """The (kind, name) of every entity and package VHDL text declares, with
+    kind lowercased."""
+    return [(m.group(1).lower(), m.group(2)) for m in VHDL_UNIT_DECL_RE.finditer(text)]
+
+
+def MODULE_PREFIX_ERROR(prefix):
+    """Why prefix cannot start a VHDL identifier, or None when it can."""
+    if MODULE_PREFIX_RE.fullmatch(prefix):
+        return None
+    return (
+        f"'{prefix}' cannot start a VHDL identifier: use a letter first, then "
+        "letters, digits and single underscores (for example enc_)"
+    )
+
+
+def NAMESPACE_VHDL_FILES(file_paths, prefix, top_name, dest_dir):
+    """Write the VHDL files into dest_dir with the name of every design unit
+    they declare, and every reference to it, starting with prefix.
+
+    Only the unit named top_name keeps its name (its file name too): it is
+    what a project instantiates. Everything else a build declares goes through
+    this one rename: generated entities, the clock crossing entities, the
+    built-in FIFOs and both packages, so the files of builds with different
+    prefixes can share one project and one library. The rename is token by
+    token (VHDL_TOKEN_RE): comments, strings and extended identifiers are
+    untouched, VHDL is case-insensitive so names match without case, and a
+    renamed token keeps the case it was written in.
+
+    Returns the new paths, in the order of file_paths. dest_dir ends up
+    holding exactly those files.
+    """
+    error = MODULE_PREFIX_ERROR(prefix)
+    if error:
+        raise Exception(error)
+    texts = []
+    units = set()
+    top_files = set()
+    for path in file_paths:
+        with open(path) as f:
+            text = f.read()
+        texts.append(text)
+        for _, name in GET_DECLARED_UNITS(text):
+            if name.casefold() == top_name.casefold():
+                top_files.add(path)
+            else:
+                units.add(name.casefold())
+
+    if not top_files:
+        raise Exception(
+            f"None of the final VHDL files declares the top entity {top_name}, "
+            "so --module_prefix cannot tell it from the other units"
+        )
+
+    # Every identifier the files hold, to refuse a rename onto one of them
+    seen = set()
+
+    def rename(match):
+        word = match.group(0)
+        if not word[0].isalpha():
+            return word
+        key = word.casefold()
+        seen.add(key)
+        return prefix + word if key in units else word
+
+    renamed = [VHDL_TOKEN_RE.sub(rename, text) for text in texts]
+    clashes = sorted(u for u in units if (prefix + u).casefold() in seen)
+    if clashes:
+        raise Exception(
+            f"--module_prefix {prefix} would rename {clashes[0]} onto a name "
+            f"the design already uses ({prefix + clashes[0]}); "
+            f"{len(clashes)} such names. Choose a different prefix."
+        )
+
+    os.makedirs(dest_dir, exist_ok=True)
+    new_paths = []
+    for path in file_paths:
+        base = os.path.basename(path)
+        new_base = base if path in top_files else prefix + base
+        if len(new_base.encode()) > MAX_FILE_NAME_BYTES:
+            raise Exception(
+                f"--module_prefix {prefix} makes the file name {new_base} longer "
+                f"than {MAX_FILE_NAME_BYTES} bytes. Use a shorter prefix."
+            )
+        new_paths.append(os.path.join(dest_dir, new_base))
+    if len(set(new_paths)) != len(new_paths):
+        raise Exception(
+            "Two of the final VHDL files share a file name, so they cannot "
+            f"go in one directory ({dest_dir})"
+        )
+    for new_path, text in zip(new_paths, renamed):
+        WRITE_TEXT_IF_CHANGED(new_path, text)
+    # The directory is this one list: drop files an earlier build left
+    keep = set(new_paths)
+    for name in os.listdir(dest_dir):
+        stale = os.path.join(dest_dir, name)
+        if os.path.isfile(stale) and stale not in keep:
+            os.remove(stale)
+    return new_paths
+
+
 def SOURCE_COMMENT(name, parser_state):
     names = getattr(parser_state, "pypeline_emission_names", None)
     if names is None:

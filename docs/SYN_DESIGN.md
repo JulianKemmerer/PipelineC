@@ -745,7 +745,12 @@ earlier run existed.
   invalidates every cached hash/latency in that table so the files are computed
   against current state, and runs `CHECK_VHDL_FILES_CONSISTENCY`: every
   `entity work.X` referenced inside a listed file must be defined by a listed
-  file.
+  file. With `--module_prefix` (`SYN.MODULE_PREFIX`) it first has
+  `VHDL.NAMESPACE_VHDL_FILES` write a renamed copy of the final file set to
+  `<top>/vhdl/`, and every list it writes (`vhdl_files.txt`, `read_vhdl.tcl`,
+  `pipelinec_top.qip`) names the copy; the build, its caches and its timing
+  attribution keep the names without a prefix
+  ([`VHDL_DESIGN.md`](VHDL_DESIGN.md#namespaced-final-files)).
 - **Final Verilog.** After a passing sweep, GHDL/Yosys conversion can still take
   substantial time. The conversion-start message and script path are flushed
   before the tools run, even when stdout is redirected. `sweep_history.json`

@@ -1209,7 +1209,8 @@ that build still synthesizes and sweeps the top you give it.
   [Simulating a testbench on built hardware](#simulating-a-testbench-on-built-hardware).
 - **Default and layout.** Without `--out_dir`, a new output directory is created inside
   the current one. `built_in/` holds the VHDL for built-in operators and muxes, `<top>/`
-  (named by `--top`) holds the final top level, and code from each source file goes in a
+  (named by `--top`) holds the final top level (and, with `--module_prefix`, the `vhdl/`
+  copy of the final files), and code from each source file goes in a
   directory named after that file's path. For example, code from
   `examples/pypeline/blink.py` goes in `examples/pypeline/blink.py/`. This layout may
   change ([#331](https://github.com/JulianKemmerer/PipelineC/discussions/331),
@@ -1277,6 +1278,7 @@ before; `--comb` simulation never builds. To simulate generated VHDL instead
 | `--xo_axis` | Write the packaging script for a Vitis AXI-Stream `.xo` IP |
 | `--pins FILE` | Supply the pin-constraint file used for the final implementation (see [Full bitstream builds](#full-bitstream-builds---pins)) |
 | `--top NAME` | Change the generated top-level module name from `top` |
+| `--module_prefix PREFIX` | Start the name of every VHDL entity and package of the final files with `PREFIX` (for example `enc_`), except the `--top` entity, so the output of separate builds can share one project (see [Two builds in one project](#two-builds-in-one-project)) |
 | `--rebuild` | Build even when `--out_dir` already holds the timing-met build of this top from identical inputs (by default that build is up to date and nothing runs; see [Output directories](#output-directories---out_dir)) |
 
 `--mux_delay_by_width` and `--no_mux_delay_by_width` force mux timing-cache keys to
@@ -1549,6 +1551,39 @@ source /home/user/pipelinec_output/read_vhdl.tcl;
 
 The [pico-ice](#pico-ice-example) and [Arty](#arty-example) examples are complete board
 projects built this way, with a Makefile and a Vivado batch script respectively.
+
+### Two builds in one project
+
+Names in the generated HDL are unique within one build only. Two builds can declare
+the same entity or package name (every build has a `c_structs_pkg`) with different
+contents, and a project that holds both then fails, or silently uses one build's text
+for both: Verilator keeps one of two same-named modules, Yosys stops with
+"Re-definition of module", and GHDL replaces the first `c_structs_pkg` with the second.
+Giving each build a prefix makes its names its own:
+
+```sh
+pypelinec core.py --top core_enc --module_prefix enc_ -D DESIGN=encrypt --verilog
+pypelinec core.py --top core_dec --module_prefix dec_ -D DESIGN=decrypt --verilog
+```
+
+* **What is renamed.** Every entity and package the final files declare, and every
+  reference to them, except the `--top` entity: generated entities, the clock-crossing
+  entities, the built-in FIFOs, `c_structs_pkg` and `global_wires_pkg` (`enc_c_structs_pkg`,
+  and so on). `--verilog` converts those files, so each Verilog module gets the prefix.
+  The top keeps its name, which is the one instance a project makes.
+* **Where.** The renamed files are written to `<out_dir>/<top>/vhdl/`, with the prefix on
+  their file names too, and `vhdl_files.txt`, `read_vhdl.tcl` and `pipelinec_top.qip` list
+  that directory. The build itself, its caches and its timing reports keep the names
+  without a prefix, so a prefix does not cost a re-synthesis.
+* **Choosing the prefix.** Start with a letter, then letters, digits and single
+  underscores (`enc_`). Choose one per build that is unique in your project, and keep
+  each build's `--top` name unique as well. A prefix that would rename a name onto
+  another name the design uses is refused.
+* **Hand-written wrappers.** VHDL that uses a build's types names its package with the
+  prefix (`use work.enc_c_structs_pkg.all;`). Type names keep no prefix, so a wrapper that
+  uses two builds' packages names a type that both declare through its package
+  (`work.enc_c_structs_pkg.<type>`): `use ... .all` of both hides a name they share. A
+  VHDL-only project can skip the prefix and compile each build into a library of its own.
 
 ### Full bitstream builds: `--pins`
 

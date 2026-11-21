@@ -6179,8 +6179,8 @@ declaration's symbol, module, enclosing scopes, file/line, parameters and nested
 field/type descriptions. `@struct`, `@enum`, `@interface` and hardware-function
 decorators capture these while the original Python objects and factory arguments are
 available. Rendering them into VHDL identifiers is this module's job:
-`EmissionNames` and `_VHDL_TOKEN` live in the "Generated VHDL names
-(emission)" section of `PY_TO_LOGIC.py`; source paths are shortened by
+`EmissionNames` lives in the "Generated VHDL names
+(emission)" section of `PY_TO_LOGIC.py` and rewrites text with the lexer `VHDL.VHDL_TOKEN_RE`; source paths are shortened by
 `utilities.DISPLAY_SOURCE`, which `VHDL.SOURCE_COMMENT` also uses. Derived interface records retain their interface origin and `fwd`, `fb` or
 `wire` role. Generated interface functions, cast/bytes helpers and AUTO_FSM functions
 retain the factory or user function that caused their generation, alongside the

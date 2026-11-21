@@ -24,6 +24,7 @@ import utilities
 
 # import CLANG_TO_LOGIC
 import SYN
+import VHDL
 import AUTO_PIPELINE
 import SWEEP
 import DIAGRAM
@@ -89,6 +90,16 @@ parser.add_argument(
     "--verilog",
     help="Use GHDL+Yosys to convert the final top level VHDL files to Verilog.",
     action="store_true",
+)
+parser.add_argument(
+    "--module_prefix",
+    type=str,
+    default=None,
+    help="Prefix the name of every generated VHDL entity, package and file of "
+    "the final output except the --top entity, in a copy listed by "
+    "vhdl_files.txt, so the output of separate builds can share one project. "
+    "Applies to the final files only, so a build's caches are unaffected. "
+    "Used literally, e.g. enc_.",
 )
 parser.add_argument(
     "--comb",
@@ -478,6 +489,10 @@ if args.full_hier_syn and args.no_hier_syn:
 if args.sweep and args.no_sweep:
     sys.exit("--sweep and --no_sweep are contradictory: --sweep asks the coarse sweep to measure every cut count one at a time, --no_sweep asks for zero sweep synthesis iterations -- pick one.")
 
+# A prefix that is not a legal VHDL identifier start fails here, not after the build
+if args.module_prefix is not None and VHDL.MODULE_PREFIX_ERROR(args.module_prefix):
+    sys.exit(f"--module_prefix: {VHDL.MODULE_PREFIX_ERROR(args.module_prefix)}")
+
 # Combine certain args
 if args.sim and args.comb:
     args.sim_comb = True
@@ -491,6 +506,8 @@ if args.sim_comb:
 SYN.TOP_LEVEL_MODULE = args.top
 # Flag for verilog conversion
 SYN.CONVERT_FINAL_TOP_VERILOG = args.verilog
+# Prefix for the names in the final output files
+SYN.MODULE_PREFIX = args.module_prefix
 # Pre-pipelining per-func synthesis mode
 SYN.HIER_SYN_MODE = (
     "full" if args.full_hier_syn else ("prim" if args.no_hier_syn else "leaf")
