@@ -1069,7 +1069,9 @@ run 120ns
 ```
 
 `--verilator` first converts the generated VHDL to Verilog with GHDL and Yosys
-(`--cxxrtl` converts it to C++ the same way), which drops `sim_print` output. Print
+(`--cxxrtl` converts it to C++ the same way), which drops `sim_print` output. The
+conversion drops `sim_finish()` too, so give Verilator a cycle count with `--run N`:
+`--run all` crashes ([#406](https://github.com/JulianKemmerer/PipelineC/issues/406)). Print
 top-level ports from your own C++ driver instead, passed with `--main_cpp`, like
 [counter_verilator_main.cpp](../examples/pypeline/counter_verilator_main.cpp):
 

@@ -1,175 +1,737 @@
-# Pypeline HDL CPU Generator / Framework — v0.1 Planning & Spec
+# Pypeline CPU Planning
 
-## 1. Vision & Scope
+This is the plan for a RISC-V CPU and SoC library written in Pypeline
+([pypeline_guide.md](pypeline_guide.md)). It covers the scope, what Pypeline provides
+today and what it lacks, the design decisions that hold across the work, and the
+milestones in order. Each milestone names the issues that must be fixed before it
+starts. Keep the plan current: when a milestone lands, change its section to say what
+was built and where, and remove answered questions from
+[Open questions](#open-questions). The wider StreamSoC port this work feeds into is
+surveyed in [pypeline_stream_soc_gaps.md](pypeline_stream_soc_gaps.md).
 
-The goal of this work is to establish a clean, Python-native **CPU generator and SoC bring-up library** in **Pypeline HDL** (the Python frontend for PypelineC). Previously, building softcores in C-based PipelineC relied on shared C headers, preprocessor macros, and manual build glue. With Pypeline's compile-time arbitrary-Python elaboration, typed structs, `make_ram` primitives, and native Python simulation (`pypeline_sim.py`), we can unify hardware generation, memory mapping, firmware compilation, and verification into one cohesive Python workflow.
+Statements about current Pypeline behavior say how they were checked. Unless a row says
+otherwise, the checks ran against commit `b88f7600`. They used small designs built with
+`pypelinec --comb --no_synth`, plus `--sim`, `--sim --cocotb --ghdl` or
+`pypeline_sim_debug.py` (the native-versus-GHDL cycle diff) where a row says so, and
+the GCC toolchain described under
+[What Pypeline provides today](#what-pypeline-provides-today).
 
-To avoid getting lost in full-featured SoC complexity on day one, **v0.1 is strictly scoped to a minimal, end-to-end working baseline** whose abstractions scale cleanly toward multi-cycle, auto-pipelined, and multi-clock-domain systems (such as porting the legacy PipelineC **StreamSoC**).
+## Table of Contents
 
-### Guiding Implementation Principle: Library First, Targeted Pre-CPU Compiler Fixes
+- [Goal and scope](#goal-and-scope)
+- [What Pypeline provides today](#what-pypeline-provides-today)
+- [Gaps and how the plan handles them](#gaps-and-how-the-plan-handles-them)
+- [Architecture](#architecture)
+  - [Layers](#layers)
+  - [Address map](#address-map)
+  - [Where the code goes](#where-the-code-goes)
+- [Milestones](#milestones)
+- [M0: Audit](#m0-audit)
+- [M1: Single-cycle RV32I core, firmware build and ISA tests](#m1-single-cycle-rv32i-core-firmware-build-and-isa-tests)
+  - [Run-once values](#run-once-values)
+  - [Core](#core)
+  - [Simulation-control device](#simulation-control-device)
+  - [Firmware build and RAM contents](#firmware-build-and-ram-contents)
+  - [ISA tests](#isa-tests)
+  - [M1 exit criteria](#m1-exit-criteria)
+- [M2: Machine-mode traps and CSRs](#m2-machine-mode-traps-and-csrs)
+- [M3: Memory-mapped control and status registers](#m3-memory-mapped-control-and-status-registers)
+  - [Memory map](#memory-map)
+  - [Struct layout shared with C](#struct-layout-shared-with-c)
+  - [C header](#c-header)
+  - [M3 exit criteria](#m3-exit-criteria)
+- [M4: Console and UART](#m4-console-and-uart)
+- [M5: Table-driven decoder and ISA extensions](#m5-table-driven-decoder-and-isa-extensions)
+- [M6: Hardware bring-up](#m6-hardware-bring-up)
+- [Deferred](#deferred)
+- [Open questions](#open-questions)
 
-* **Stay within existing Pypeline constructs by default:** Pypeline's existing elaboration model already supports arbitrary Python execution at compile time. Most v0.1 CPU generator features (table-driven decoding, memory map assembly, firmware orchestration, RAM initialization) should live in pure user-space Python library code.
-* **Close high-leverage compiler gaps up front when justified:** Where a small compiler or tooling gap would force awkward workarounds across the entire CPU/MMIO library (for example, `@initial` feeding `make_ram(init=...)`, compile-time `getattr` on hardware structs, or C header export from `pypeline_host.py`), we will evaluate and consider closing those gaps *first* in M0 before writing the CPU framework.
+## Goal and scope
 
-### v0.1 Hard Constraints
+The goal is a CPU generator and SoC bring-up library in Pypeline. The core, the memory
+map, the firmware build, the C header the firmware compiles against, the tests and the
+board top levels all live in one Python flow. That flow replaces what the C front end's
+CPUs needed:
 
-* **Clocking:** Single clock domain.
-* **Execution Model:** Single-cycle CPU.
-* **Memory:** All on-chip memory (small combinational-read LUTRAMs) with **separate IMEM and DMEM** (Harvard architecture).
-* **ISA Target:** **RISC-V RV32I**, **little-endian** (minimal ISA configurability in v0.1; switchable endianness and other ISAs deferred).
-* **MMIO Struct Fields:** **Byte-multiple fields only** in v0.1 (no sub-byte fields; e.g., store narrow values like a 4-bit field inside a `uint8`, and pack bit flags manually into bytes/words rather than using `u1` arrays).
-* **Target Platforms:**
-  1. **Native Python Simulation** (`pypeline_sim.py`)
-  2. **pico-ice** (Lattice iCE40, 12 MHz input clock, GHDL + Yosys + `nextpnr-ice40`)
-  3. **Arty** (Xilinx Artix-7, 100 MHz input clock, Vivado or OpenXC7)
+- the preprocessor-macro cores in `include/risc-v/`;
+- `bin2vhdl.py` and the generated `*_mem_init.h` files;
+- a `link.ld` and a `mem_map.h` kept in step by hand (both carry
+  "TODO how to share variables?");
+- a separate `make hex` run before every hardware build.
 
----
+The first milestones build a small but complete system. Their abstractions are chosen to
+extend later to multi-cycle and pipelined cores, bus fabrics, and a port of StreamSoC
+(`examples/stream_soc/`).
 
-## 2. Existing Pypeline Capabilities & Pre-CPU Gap Triage
+Principles:
 
-### Ready to Use Today
+- **Library first.** The core, decoder, memory map and firmware build are library code in
+  `include/pypeline/`: Pypeline hardware plus host Python. A compiler change enters the
+  plan only when a milestone's design needs it and no clean library workaround exists. It
+  then goes through the [issues inventory](issues_inventory.md) like any other change.
+  M1 needs one: [run-once values](#run-once-values), which replace the synthesis form
+  of `@initial`. Compile-time `getattr` on hardware structs is not needed
+  ([Gaps](#gaps-and-how-the-plan-handles-them) says why).
+- **Fix blocking bugs first.** Where a known bug sits on a milestone's path, the
+  milestone lists it under "Before it starts", and the bug is fixed before the
+  milestone begins rather than worked around in library code.
+- **One firmware binary everywhere.** The same ELF runs in native simulation, in GHDL and
+  on each board. Simulation hooks sit behind MMIO addresses that the hardware implements
+  too.
+- **Standard tools.** The RISC-V GCC toolchain and the official
+  [riscv-tests](https://github.com/riscv-software-src/riscv-tests) suite. No custom
+  assembler or ISA model.
+- **Each milestone passes its own tests and updates its docs** before the next one starts.
+  A later milestone can then be deferred without reworking an earlier one.
 
-* **Memories & Register Files:** `make_ram` already supports multi-port shapes like `ports=("r", "r", "w")` (register file), `byte_write_enables=True` (DMEM byte lanes), and `init=...` (reading firmware payloads in Python, replacing legacy `bin2vhdl.py` and `*_mem_init.h` headers).
-* **Core Hardware Primitives:** `Reg[T]` (blocking read-after-write semantics), `Wire[T]`, `Feedback[T]`, `Input[T]`/`Output[T]`, `PART()`, `param()`, module-level conditional `import`, and factory-generated `@MAIN`s (recently closed since the older gaps doc was written).
-* **Dynamic Structs & Byte Serialization:** `struct(NamedTuple(name, fields))` (already used in `ram.py` and `interface.py`) can assemble composite register-map structs dynamically from device field lists; `make_type_to_bytes` / `make_type_from_bytes` plus variable array indexing provide byte-addressed struct views.
-* **Type Walking for Export:** `host_export` and `src/pypeline_host.py` already walk Pypeline types/leaves to emit Python host modules. Pypeline's byte layout (packed, each leaf rounded up to whole bytes) matches `riscv32-unknown-elf-gcc -fpack-struct=1` for byte-multiple fields.
-* **Debug Printing:** `sim_print` works in native simulation (note: `--verilator` drops `sim_print` output, reinforcing the value of a real MMIO console).
+Constraints until a milestone lifts them:
 
-### Pre-CPU Compiler & Tooling Gaps to Verify / Close First (M0)
+| Topic | Choice |
+|---|---|
+| Clocks | One clock domain |
+| Execution | Single-cycle: one instruction per clock. Multi-cycle and pipelined cores, the legacy FSM core among them, are [deferred](#deferred) |
+| Memory | On-chip, separate instruction and data memories (Harvard), combinational read |
+| ISA | RV32I, little-endian, machine mode only. M1 has no CSRs or traps: FENCE is a no-op, and ECALL and EBREAK halt. [M2](#m2-machine-mode-traps-and-csrs) adds the machine-mode CSRs and traps that the riscv-tests `p` environment uses. [M5](#m5-table-driven-decoder-and-isa-extensions) adds extensions. No interrupts |
+| MMIO structs | Fields of 1, 2, 4 or 8 bytes at naturally aligned offsets ([Struct layout shared with C](#struct-layout-shared-with-c)) |
+| Targets | Native Python simulation and cocotb + GHDL. Arty A7 (Artix-7, Vivado) is the first board. pico-ice (iCE40 UP5K, GHDL + Yosys + nextpnr) runs a small blink firmware only ([M6](#m6-hardware-bring-up)) |
 
-Because `pypeline_stream_soc_gaps.md` is partially outdated (e.g., factory-generated `@MAIN`s from Gap 3 have already landed), treat the items below as an **M0 verification checklist** against current Pypeline. Any confirmed blocker with high library-ergonomics leverage is a candidate to close *before* starting the CPU generator implementation:
+## What Pypeline provides today
 
-| Candidate Gap | Why It Matters for CPU / MMIO Library | Current Status / Evaluation Plan |
+| CPU need | Pypeline today | Checked by |
 |---|---|---|
-| **`@initial` producing values for `make_ram(init=...)`** *(High-priority pre-CPU candidate)* | `@initial` is the cleanest, most natural place to run side-effecting build steps like invoking `gcc` to generate firmware images (rather than running `gcc` during bare module import). Currently `@initial` executes *after* module import, too late for `make_ram(init=...)`. | Investigate allowing `@initial` (or a deferred init hook) to compute and supply `make_ram(init=...)` payloads. Fall back to module-level Python only if compiler changes are too invasive. |
-| **Compile-time `getattr(regs, "field_name")` on hardware structs** *(High-priority pre-CPU candidate)* | Generic `MemoryMap` / register-handshake helpers need to access named fields of hardware structs inside elaboration loops without falling back to `exec`-based source-text generation. Note the distinction: **compile-time string** field selection only requires lowering `getattr(hw_struct, "foo")` to `hw_struct.foo` with its static type (no tagged union needed). True **runtime** dynamic selection across heterogeneously typed fields would require a tagged union / max-width bitcast, which MMIO avoids by operating on byte arrays via `make_type_to_bytes` / `make_type_from_bytes`. | Verify if still rejected in current Pypeline. If so, evaluate closing compile-time `getattr` (and a functional field-update equivalent) before building the `MemoryMap` library. |
-| **C Header Export in `pypeline_host.py`** (Gap 9) | Required from day one so C firmware structs, constants, and base addresses never drift from Pypeline hardware definitions. | Add a C output backend alongside the existing Python leaf-walker in `src/pypeline_host.py` / `host_export`. |
-| **Remaining Gap 3 pieces** (factory global wires/ports/FIFOs) | Factory-generated `@MAIN`s are understood to be closed, which already unlocks reusable CPU/SoC factories. | Verify in M0 what else from Gap 3 is already supported (factory `Wire`/`Input`/`Output`/`Fifo`) vs. still needs hand-written top-level declarations. |
-| **Small language bugs** (Gap 11) | Conditional `Input`/`Output`/`Wire` inside a module-level `if` previously dropped ports silently; reversed bit slices (`x[0:7]`) had a hardware/sim bug. | Verify against current Pypeline. Workarounds exist (conditional module `import` for board variants; `uint_to_array_le` + reverse + `array_to_uint_le` if bit-reversal is needed). |
-| **Simulation speed at scale** (Gap 7) | Native `pypeline_sim.py` runs ~1.2M cycles in ~3 s (raw) / ~15 s (strict) on a small design; fine for v0.1 tests, slow for multi-million-cycle full-SoC runs. | Use `pypeline_sim.py` for v0.1 (`riscv-tests` and console demos); keep console/halt MMIO-based so it also works cleanly with a Verilator/CXXRTL C++ driver later. |
+| PC and control state | `Reg[T]`: blocking read-after-write within a cycle | guide |
+| Register file with two combinational reads and one write | `make_ram(uint32_t, 32, ports=("r", "r", "w"), read_latency=0)`. Write-back is computed after the reads, so the write port is driven through a [`Feedback[T]`](pypeline_guide.md#feedback-wires-feedbackt) of `ram.p2_in_t` | A design reads `x[k]` and `x[k-1]` each cycle, where `x[k-1]` was written the cycle before. Native simulation and cocotb + GHDL printed the same values |
+| IMEM ROM, DMEM with byte lanes | `make_ram(..., ports=("r",), init=...)`; `make_ram(..., ports=("rw",), byte_write_enables=True)`, whose `wr_en` is then a `uint1_t[4]` | guide ([RAMs](pypeline_guide.md#rams-make_ram--make_stream_ram)) |
+| All three memories in one `@MAIN` | An IMEM ROM, a byte-enable DMEM and the register file, each with its own contents, called from one `@MAIN` | `pypeline_sim_debug.py`: native simulation and GHDL printed the same values on every cycle except the `sim_finish()` cycle ([#361](https://github.com/JulianKemmerer/PipelineC/issues/361)) |
+| RAM contents from Python | `init=` takes a list or a dict. `make_ram` checks and converts it when called. The contents are part of the RAM's identity: different contents make a different entity | `include/pypeline/ram.py` |
+| Resets | `make_reset()`, `make_clock(..., reset=)`, and `reset_registers="all"` or `Reg[T, RESET]`. Through a reset, a RAM keeps its contents, its in-flight requests are cancelled, and the write at the reset edge does not happen | guide ([Resets](pypeline_guide.md#resets)) |
+| Per-build choices (firmware, memory sizes, tracing) | `param()` and `-D` | guide ([Build Parameters](pypeline_guide.md#build-parameters-param-and--d)) |
+| `@MAIN`s made by factories | `MAIN(fn, name=)` | guide ([MAINs made in code](pypeline_guide.md#mains-made-in-code-mainfn-name)) |
+| Shared instances and FIFOs | `Inst[f]`, `Fifo[T]`, declared at module level | guide ([`Inst[f]`](pypeline_guide.md#instf--global-instances)) |
+| Byte views of structs | `make_type_to_bytes`/`make_type_from_bytes`, `byte_length`, arrays indexed by a hardware value | guide |
+| Structs built from field lists | `struct(NamedTuple(name, fields))` | `ram.py`, `interface.py` |
+| Type export for host software | `host_export`. `src/pypeline_host.py`'s `generate()` is pure and can run during import | source |
+| Simulation control from hardware | `sim_print`, `sim_assert`, `sim_finish`, in both native simulation and generated VHDL | guide |
+| Testbench processes in Python | Simulation-only `@MAIN`s over `@sim_input`/`@sim_output` | guide |
+| Board starting points | `examples/pypeline/pico_ice`: an icepll PLL in `top.sv`, and `pll_locked` through two registers into the clock's reset. `examples/pypeline/arty`: an MMCM in `board.vhd`, with the same reset pattern. Board modules `board.arty.clocks`, `part35t`, `part100t` and the VGA PMOD modules | examples |
+| Waveforms | `--wave` | guide |
 
----
+**Toolchain.** riscv-gnu-toolchain configured with `--with-arch=rv32i --with-abi=ilp32`
+builds an RV32I libgcc, which rv32i firmware needs: `*`, `/` and `%` call `__mulsi3`,
+`__divsi3` and their relatives. GCC 12.1 configured that way links them with
+`-nostdlib ... -lgcc`. The toolchain's default install prefix, `/opt/riscv`, is often not
+on `PATH`; the legacy Makefiles say `export PATH=$PATH:/opt/riscv/bin`.
 
-## 3. Foundational Design Pillars (v0.1)
+## Gaps and how the plan handles them
 
-### 3.1 Functional Single-Cycle Core & Table-Driven Decoder
-
-* **Functional Datapath Separation:** Clearly separate explicit state (`Reg[T]` for `pc`, `make_ram` for register file and memories) from pure combinational functions (`decode`, `imm_gen`, `alu`, `branch_eval`, `load_store_align`). Keeping the datapath functional keeps the single-cycle core clean today and prepares it for Pypeline's automatic pipelining (`AUTO_PIPELINE`) when evolving to multi-cycle/pipelined cores later.
-* **Compact Python-Generated Decoder:** Rather than maintaining a monolithic hand-written `if/elif` decode tree, declare instructions as a Python data structure (bitmask/match patterns and control outputs) and let plain Python elaboration emit compact Pypeline decode logic.
-* **Minimal ISA Configurability (v0.1):** Focus strictly on RV32I (little-endian) first. Keep obvious, compiler-supported knobs easy to introduce later (e.g., RV32E 16-register mode for tight iCE40 area budgets, optional M/C extensions, or switchable endianness).
-
-### 3.2 Harvard Memory Architecture, RAM Defaults & Read-Only Sections
-
-Starting with **separate IMEM and DMEM** avoids structural hazards in a single-cycle design (allowing simultaneous instruction fetch and data load/store in one cycle).
-
-* **IMEM (Instruction Memory):** Read-only at runtime in v0.1, initialized directly from the compiled firmware image. Holds `.text`.
-* **DMEM (Data Memory):** Read/write on-chip RAM. Holds `.rodata`, `.data`, `.bss`, and the stack.
-* **Critical Harvard Detail (`.rodata` & `.data`):** Because GCC places string literals (`"Hello\n"`), `const` tables, and switch jump tables in `.rodata` and reads them with data load instructions (`lw`/`lb`), **DMEM must be initialized with `.rodata` and `.data`**—not just IMEM with `.text`.
-  * *v0.1 Approach:* Extract **two** initialization payloads from the compiled ELF (`imem` from `.text`; `dmem` from `.rodata` + `.data`) in Python and pass them directly to `make_ram(init=...)`. Zero `.bss` in `crt0.S` (or via RAM zero-init).
-* **Hardware Inference Defaults (Artix-7 Proven Style):**
-  * **Byte Enables:** Use the proven Artix-7 inference style (`make_ram(..., byte_write_enables=True)`) as the default without adding platform-specific workarounds in v0.1.
-  * **Memory Initialization:** Use the proven Artix-7 VHDL initialization pattern (`make_ram(init=...)`), which is expected to carry over cleanly to iCE40 as well—no extra platform-specific init paths in v0.1.
-
-### 3.3 Layered MMIO Architecture: ISA-Native Protocol, Address Windows & Struct Mapping
-
-* **ISA-Native MMIO Protocol as the Base Layer:**
-  * Inside the core, the ISA spec dictates register counts and operand shapes. At the core's memory boundary, the ISA dictates the **base native MMIO protocol**—essentially raw RAM control signals (address width, data width, read/write enables, byte strobes). For RV32I, this is a 32-bit little-endian address/data interface with 4-bit byte write-enables, combinational read, and registered write.
-  * Standard bus fabrics (**AXI**, **AXI-Lite**, Pypeline's **shared resource bus**) are **not** built into v0.1. Instead, they will sit cleanly *on top* of this base layer via thin protocol adapters. When another ISA (`OtherISA`) is added in the future with a different native memory shape, only a thin `OtherISA`-to-AXI (or shared bus) adapter is needed to reuse the bus and peripheral ecosystem.
-* **Address Windows & Bridges:**
-  * Model regions of the address space as composable **address windows** (e.g., DMEM window, local MMIO register window).
-  * In v0.1, all windows are local single-cycle windows. Later, attaching an AXI-Lite bridge, Pypeline's shared resource bus, or a multi-cycle peripheral simply registers a bus-backed window (introducing `valid`/`ready` or stall semantics on that region) without changing the core's local MMIO model.
-* **`MemoryMap` & Register Map Builder (Inspired by `amaranth-soc` / LiteX / legacy `mm_regs_t`):**
-  * Compose per-device register definitions and typed Pypeline `struct`s into a single address map (`mem_map.add("leds", LedRegs, addr=0x2000_0000)` or auto-aligned placement), enforcing alignment and checking for overlaps before `.freeze()`.
-  * **Byte-Multiple Struct Policy (v0.1):** Mapped structs must use byte-multiple fields only (no sub-byte fields or `u1` arrays; pack flags into `uint8`/`uint32` manually and widen narrow values like `uint4` into `uint8`). This ensures a clean 1:1 match between Pypeline's whole-byte leaf packing and `gcc -fpack-struct=1`.
-  * Leverage `struct(NamedTuple(...))`, `make_type_to_bytes`/`make_type_from_bytes`, and—ideally—fixed compile-time `getattr` (falling back to `exec` source generation only if needed) to automatically emit address decode logic and byte-accessible struct MMIO (`STRUCT_MM_ENTRY_NEW`-style behavior).
-* **First Accelerator Pattern (MMIO-Mapped Combinational Compute):**
-  * Skip custom RISC-V instructions for v0.1.
-  * Demonstrate hardware acceleration by wiring combinational logic directly between mapped MMIO input/output struct fields (firmware writes operands to MMIO registers and immediately reads the computed result). This naturally scales to auto-pipelined multi-cycle accelerators later.
-
-### 3.4 Automated Software Build & C Artifact Generation
-
-Users should not need to manually maintain Makefiles or run `gcc`/`objcopy` in separate build steps. Ideally, firmware compilation runs cleanly inside an `@initial` block (pending the M0 `@initial` -> `make_ram(init=...)` gap check) or another dedicated elaboration hook so bare module imports stay clean.
-
-From the frozen `MemoryMap` and Pypeline struct definitions, the framework automatically generates:
-
-1. **C Hardware Header (`mmio.h`):** Extend the existing leaf-walk infrastructure in `src/pypeline_host.py` / `host_export` with a C backend emitting packed struct typedefs (matching `-fpack-struct=1` for byte-multiple fields), constants, base address `#define`s, and typed `volatile` pointer helpers for reading/writing mapped structs.
-2. **Linker Script (`regions.ld`):** Populates `IMEM` and `DMEM` origins/sizes directly from the Python constants (solving legacy StreamSoC's manual size duplication in `link.ld`), placing `.text` in `IMEM` and `.rodata`/`.data`/`.bss`/stack in `DMEM`, and exporting `_stack_top`, `_bss_start`, `_bss_end`.
-3. **Minimal Startup Stub (`crt0.S`):** Sets `sp`, zeroes `.bss`, jumps to `main()`, and writes to the `HALT` MMIO register on return.
-4. **Compiler Driver:** Invokes `riscv32-unknown-elf-gcc -march=rv32i -mabi=ilp32 -fpack-struct=1 -nostdlib`, extracts separate IMEM and DMEM binary images, and passes them into `make_ram(init=...)`.
-
-### 3.5 Unified Console (`putchar` over UART + Simulation Console + Halt)
-
-Make `putchar()` / string printing a flagship v0.1 application—especially valuable for live bring-up on `pico-ice` and for simulator-independent output (since `--verilator` drops `sim_print`).
-
-* Define a standard **Console / Control MMIO block** at a fixed address window:
-  * `TX_DATA` (write): Transmits one byte.
-  * `TX_STATUS` (read): Ready/busy flag (always ready in sim; reflects UART TX busy on FPGA).
-  * `HALT` / `TOHOST` (write): Signals program exit + pass/fail status code.
-* **In `pypeline_sim.py`:** Intercept writes to `TX_DATA` to print characters directly to Python `stdout`, and intercept writes to `HALT`/`TOHOST` to stop simulation cleanly with an exit status.
-* **On FPGA (`pico-ice` / `Arty`):** Bind the exact same MMIO address to a minimal UART TX peripheral (e.g., USB-UART on `pico-ice`). Identical firmware binaries run across simulation and hardware.
-
-### 3.6 Board Integration & Top-Level IO
-
-* **Build on Existing Pypeline Board Support:** Audit and build upon Pypeline's existing board definitions (`board.arty.part100t`, fixed PMOD modules, and any `pico-ice` mappings) rather than starting from scratch.
-* **Work Within Current Port/IP Constraints:**
-  * Avoid conditional port declarations inside module-level `if` blocks (until Gap 11 is verified fixed); select board/pin modules via conditional `import`.
-  * Since Pypeline does not yet have built-in PLL/clock-gen instantiation or `FUNC_BLACKBOX` support (Gap 10), v0.1 will run off the raw board clock where practical (e.g., 12 MHz on `pico-ice`) or use a minimal board-level clock wrapper / `board.vhd` port hookup on `Arty` (100 MHz).
-* **Optional External Board Definitions:** Importing pinouts from `amaranth-boards` or `litex-boards` (note: LiteX is Migen-based) is appealing only if kept **zero- or minimal-dependency** (e.g., lightweight declarative Python dicts or an offline extractor script, without pulling heavy package trees into Pypeline).
-
-### 3.7 Verification Strategy (Golden Reference)
-
-* **No Custom Python Assembler:** Skip building a bespoke Python assembler; rely on standard RISC-V toolchains.
-* **Standard `riscv-tests` Suite:** Use the official `riscv-tests` (`rv32ui-p-*`) suite as the golden reference. Build a Python test runner that loads each compiled test into IMEM/DMEM, executes it in `pypeline_sim.py`, watches the `tohost` / `HALT` MMIO address, and reports pass/fail per test. This becomes the permanent regression suite as the core evolves.
-
----
-
-## 4. Pre-Implementation Audit & Gap Triage (M0)
-
-Before locking down library syntax and APIs, perform three focused checks inside the existing repo:
-
-1. **Legacy PipelineC C-Macro Generator Patterns:** Thoroughly examine how the old PipelineC CPU/SoC macros and generators were structured so we preserve what worked well and replace the hacky boilerplate cleanly in Python. Key files to inspect:
-   * `include/risc-v/risc-v.h` (decode, RV32I execute, write-back, next-PC)
-   * `fsm_riscv_decl.h`, `mem_decl.h`, `reg_file.h` (core FSM, IMEM/DMEM byte-lane wrappers, register file)
-   * `include/risc-v/mem_map.h`, `cpu/mem_map.h`, `cpu/hardware/devices.c` (`MM_ENTRIES`, `mm_regs_t`, `STRUCT_MM_ENTRY_NEW`, `MM_STREAM`, `HANDSHAKE_MM_READ`/`_WRITE`)
-2. **Existing Pypeline Infrastructure:**
-   * Inspect `src/pypeline_host.py` and `host_export` to plan the C header export backend (Gap 9).
-   * Inspect existing Pypeline board mapping modules (`board/arty*`, `pico-ice` support) to determine the cleanest top-level IO extension pattern.
-3. **Verify & Close Targeted Pre-CPU Compiler Gaps:**
-   * Check current status of Gap 3 (confirm factory `@MAIN`s and check factory wires/ports/FIFOs) and Gap 11 bugs.
-   * Assess and—if small and clean—implement `@initial` -> `make_ram(init=...)` value passing and compile-time `getattr(hw_struct, "field_name")` before writing the `MemoryMap` and firmware runner APIs.
-
----
-
-## 5. v0.1 Vertical Slice & Milestones
-
-| Milestone | Deliverable | Exit Criteria |
+| Gap | Status | Plan |
 |---|---|---|
-| **M0: Audit, Gap Verification & C Export** | Audit legacy PipelineC CPU/MMIO macros + Pypeline board mappings; verify current gap status; evaluate/close targeted pre-CPU gaps (`@initial` -> `make_ram(init=...)`, compile-time `getattr`); add C header export backend alongside `pypeline_host.py` (Gap 9). | A test byte-multiple Pypeline struct exports a valid packed C header matching `-fpack-struct=1`; firmware-init hook and struct-field access strategy are locked in. |
-| **M1: Core + Decoder + `riscv-tests`** | Functional RV32I single-cycle core (little-endian), Python table-driven decoder, Artix-7-style `make_ram` IMEM/DMEM, `tohost`/halt sim hook. | Core passes `rv32ui-p-*` base integer tests in `pypeline_sim.py` (excluding system/fence ops not in v0.1). |
-| **M2: `MemoryMap` + Automated C Flow** | `MemoryMap` builder with address windows, byte-multiple typed struct-to-MMIO mapping, automated firmware build emitting `regions.ld`, `crt0.S`, `mmio.h`, and feeding `make_ram(init=...)`. | Standalone C firmware builds automatically inside the Pypeline flow (zero manual Make/gcc), reads/writes a mapped struct, and passes in `pypeline_sim.py`. |
-| **M3: Console + First Accelerator** | Unified Console MMIO (`TX_DATA`, `TX_STATUS`, `HALT`) + minimal C `putchar()`/`puts()`, plus a combinational compute unit wired between mapped MMIO struct fields. | C firmware prints `"Hello from Pypeline CPU!\n"` and results from the combinational MMIO compute block directly to `stdout` in simulation. |
-| **M4: Hardware Bring-Up (`pico-ice` & `Arty`)** | Board top-level integration (clock, reset, LEDs, UART TX) using Pypeline's board mapping support. | Exact same **Blinky + UART Hello + MMIO Struct Compute** demo runs identically in simulation, on `pico-ice` (via USB-UART), and on `Arty`. |
+| Work done once per run, before elaboration | The design is imported several times per build, and module-level code runs on every import. A synthesis `@initial` runs once per build, but after the first import, when `make_ram(init=)` has already run; its return value is dropped, and re-imports get fresh module globals. So it can only cause side effects, never supply hardware. No example uses it: only the hooks tests (`inst/hooks_design.py`) do | M1 replaces it with [run-once values](#run-once-values) |
+| Selecting a hardware struct field by string | In a hardware body, `getattr(regs, "led")` and `setattr(o, "led", v)` both fail: "only supported with compile-time constant arguments" | Not needed: the memory map maps each device's structs whole, through bytes. Add compile-time `getattr` only when a design needs it |
+| C header export | `pypeline_host.py` writes a Python module only | [M3](#m3-memory-mapped-control-and-status-registers) adds a C header generator next to `generate()`. It runs during import, because gcc needs the header before the RAM contents exist |
+| Packed C structs for MMIO | Pypeline's byte layout matches `-fpack-struct=1`, but packing changes how GCC accesses fields. With GCC 12.1 (`-march=rv32i -O2`, with or without `-mstrict-align`), a `uint32_t` field write through a pointer to a packed struct becomes four `lbu` + `sb` pairs. A write through a constant address stays one `sw`. A register with side effects, such as a UART TX, would see four byte writes and four reads | Mapped structs keep natural alignment, so the plain C layout equals Pypeline's. The header uses no packing and checks every offset with `_Static_assert` ([Struct layout shared with C](#struct-layout-shared-with-c)) |
+| Struct constants from a Python table | A `for` loop over a module-level list of `(mask, match, ctrl_t(...))` rows fails at `c = ctrl` with "Cannot emit non-int Python value as hardware". It is one of the forms of [#402](https://github.com/JulianKemmerer/PipelineC/issues/402), whose inventory entry and reproducer include it. A typed local in the loop, `k: ctrl_t = ctrl`, elaborates | Fix #402 before [M5](#m5-table-driven-decoder-and-isa-extensions) |
+| A wire or port declared inside a module-level `if` | Bug, [#404](https://github.com/JulianKemmerer/PipelineC/issues/404): an `Output[T]` gets no port, and the `@MAIN`'s write to it is dropped with no error. A `Wire[T]` read by another `@MAIN` stops the build with "Unknown name". Native simulation treats both as wires | Fix before [M6](#m6-hardware-bring-up), whose board tops choose pins. Until then, choose variants by conditional `import` |
+| Reversed bit slice `x[0:7]` | Bug, [#405](https://github.com/JulianKemmerer/PipelineC/issues/405): built as `x[7:0]`; native simulation raises | The CPU needs no reversed slice |
+| Bit index from a hardware value, `x[i]` | Not supported ([#362](https://github.com/JulianKemmerer/PipelineC/issues/362)) | Load and store byte lanes index a `uint_to_array_le` array instead |
+| `sim_print` on the `sim_finish()` cycle | Missing from VHDL simulation output ([#361](https://github.com/JulianKemmerer/PipelineC/issues/361)); the memory checks above show it too | Print the result, then finish one cycle later |
+| `sim_print` of a value of 2³¹ or more | Overflows in GHDL ([#360](https://github.com/JulianKemmerer/PipelineC/issues/360)). MMIO addresses start at `0x8000_0000` | Print addresses and data with `hex()`, which does not overflow |
+| Native-simulation state behind a stateless caller | Two stateful instances that only a stateless caller tells apart share one native-simulation state ([#382](https://github.com/JulianKemmerer/PipelineC/issues/382)). Two `make_stream_fifo` FIFOs in one `@MAIN` hit it. The three memories in one `@MAIN` (above) do not | M4's console has a TX and an RX FIFO: fix #382 before [M4](#m4-console-and-uart) |
+| Memories on iCE40 | The UP5K has no distributed RAM: its block RAMs (EBR) and SPRAM read on a clock edge. It has 5,280 LUT4s and 5,280 flip-flops. Combinational-read memories therefore become flip-flops or logic: a 2 KiB DMEM alone is 16,384 bits. A constant IMEM is a ROM that synthesis reduces to logic, so a short program whose memory is mostly zeros may fit | Arty is the first board. [M6](#m6-hardware-bring-up) tries pico-ice with a blink firmware and the smallest memories that hold it. A registered-read core is [deferred](#deferred) |
+| Wires, ports, instances and FIFOs made by library code | Not supported. A `@MAIN` that a library factory makes cannot reach the design's wires | The core factory takes its MMIO devices as hardware-function arguments, and the design module owns the pins |
+| Native simulation speed | Not measured for a CPU | M1 measures cycles per second on the ISA tests, which are short programs |
+| Verilator and CXXRTL simulation | The conversion they run drops `sim_print` and `sim_finish()` ([Other HDL simulators](README.md#other-hdl-simulators)), and `--verilator --run all` crashes ([#406](https://github.com/JulianKemmerer/PipelineC/issues/406)) | Not used by these milestones: tests run in native simulation and cocotb + GHDL, and the console is an MMIO device ([M4](#m4-console-and-uart)) |
 
----
+## Architecture
 
-## 6. Explicitly Deferred (Post-v0.1 Roadmap)
+### Layers
 
-Keeping these out of v0.1 protects momentum while ensuring v0.1 abstractions line up cleanly with the broader StreamSoC roadmap (`pypeline_stream_soc_gaps.md`):
+1. **The core** executes one instruction per clock. It talks to memory through the
+   **ISA-native port**:
+   - a 32-bit address;
+   - 32-bit write data;
+   - four byte write enables;
+   - a read enable;
+   - combinational read data.
 
-* **Shared Resource Bus & AXI / AXI-Lite Adapters (Gap 2):** Layered on top of the ISA-native MMIO protocol via `MemoryMap` address windows—first on a single clock, reusing whatever factory-`@MAIN`/wiring capabilities are available.
-* **Remaining Module-Level Factory Gaps (Remaining parts of Gap 3):** Factory-generated `@MAIN`s have already landed; any remaining pieces needed for zero-boilerplate multi-host buses (such as `INST_ARRAY`-style automatic per-writer port allocation or factory global wires/FIFOs, if still open) are deferred until Gap 2 concretely scopes them.
-* **Sub-Byte Struct Fields & Bitfield Packing:** Automatic bitfield packing/unpacking (e.g., `u1` flag arrays or packed sub-byte registers) in `MemoryMap` and `mmio.h`.
-* **Multi-Cycle & Auto-Pipelined Execution:** Transitioning from single-cycle to multi-cycle FSM / auto-pipelined CPU execution and pipelined accelerators.
-* **Multi-Clock Domains, PLL Generation & Vendor IP (`FUNC_BLACKBOX`, Gap 10):** Formal clock-gen instantiation in board packages, CDC bridges, and external vendor IP (DDR3 MIG, TEMAC) needed for the full StreamSoC port.
-* **Whole-SoC Verification at Scale (Gap 7):** `@sim_model` vendor IP models (AXI DDR3, Ethernet) and Verilator/CXXRTL C++ testbench integration for multi-million-cycle runs.
-* **Custom RISC-V Instructions (CFU) & Other ISAs:** Wiring Pypeline functions into `custom-0` opcodes, adding M/C extensions, switchable endianness, and native-MMIO-to-AXI adapters for non-RISC-V ISAs.
-* **Functions Shared by Hardware & Software (Gap 6):** Generating C from combinational Pypeline functions (e.g., FFT/power helpers) so hardware and C firmware don't drift.
-* **MicroPython Support (Gap 1):** Requires substantially larger memory (~256 KiB flash / 16 KiB RAM floor, or off-chip DDR3 instruction fetch) and ideally RV32IMC; `uctypes` struct layouts can reuse the same `pypeline_host.py` leaf walker later.
-* **Interactive Host Memory Access:** UART/JTAG host-to-MMIO bridge allowing PC-side Python scripts to read/write live FPGA registers by `MemoryMap` name.
+   Every memory and device sees this port.
+2. **Address decode** splits the port into windows. Instruction fetch has its own IMEM
+   port. Data accesses go to DMEM or to the MMIO window.
+3. **Devices** in the MMIO window each own their registers: a hardware function plus the
+   structs it maps. The [memory map](#memory-map) places devices and builds the decode.
+4. **Later layers**, outside these milestones:
+   - AXI-Lite, Pypeline's shared resource bus and multi-cycle devices attach as windows,
+     through adapters on the native port.
+   - A device that cannot answer within the cycle adds a stall to its window; the core's
+     port keeps its shape.
+   - Another ISA reuses the devices through an adapter from its own native port.
 
----
+### Address map
 
-## 7. Open Questions to Resolve in M0
+The default comes from the legacy cores, whose `include/risc-v/mem_decl.h` decodes single
+address bits:
 
-1. **`@initial` -> `make_ram(init=...)` Feasibility:** Can `@initial` be extended (or paired with a deferred callable on `make_ram(init=...)`) so `gcc` runs cleanly during elaboration instead of at bare module import time?
-2. **Compile-Time `getattr` vs. Source Generation (`exec`) for `MemoryMap`:** Confirm whether adding compile-time `getattr(hw_struct, "field_name")` (and a matching functional update) is straightforward enough to close in M0, or whether v0.1 `MemoryMap` helpers should follow the existing `exec` pattern from `interface_func.py` / `stream.py`.
+| Window | Base | Selected by | Holds |
+|---|---|---|---|
+| IMEM | `0x0000_0000` | instruction fetch only | `.text` |
+| DMEM | `0x4000_0000` | address bit 30 | `.rodata`, `.data`, `.bss`, stack |
+| MMIO | `0x8000_0000` | address bit 31 | devices, starting with M1's simulation-control device |
+
+- Sizes are Python constants (parameters). They set both the `make_ram` sizes and the
+  generated linker script.
+- `.rodata` lives in DMEM because, in a Harvard design, loads cannot read IMEM. GCC puts
+  string literals, `const` tables and switch jump tables there and reads them with loads.
+  The legacy `link.ld` already places `.rodata` in its RAM section.
+- A data access outside DMEM and MMIO, or a misaligned one, sets `mem_out_of_range`, as
+  the legacy core does. From M2, it traps instead.
+
+### Where the code goes
+
+- `include/pypeline/riscv/`: everything RISC-V:
+  - the core factory, the decoders and the extension plugins;
+  - the firmware build: the GCC driver, and the generators of the linker script,
+    `crt0.S` and the firmware Makefile;
+  - riscv-tests, copied into the repository: `isa/rv32ui/`, `isa/rv32um/`,
+    `isa/macros/scalar/test_macros.h`, the `p` environment and `encoding.h` from
+    riscv-test-env, both BSD licenses, and the upstream commits they came from;
+  - the replacement test environment from M1.
+- `include/pypeline/cpu/`: the parts no ISA owns:
+  - the ELF loader;
+  - the simulation-control device;
+  - from M3, `cpu/mmio`: the memory map builder and its register and console devices.
+- `include/pypeline/uart/`, from M4: the UART MAC. It is not CPU-specific, so it sits
+  beside `vga/` and `axi/`.
+- `examples/pypeline/riscv/`: top-level designs and demo firmware; from M6, the board
+  wrappers and Makefiles.
+- Tests: fixtures in `src/tests/pypeline_tests/inst/`, registered as
+  [Adding a test](pypeline_TESTS.md#adding-a-test) describes. `Test.requires=` is a
+  `shutil.which` check today, which misses a toolchain that is off `PATH`. M1 lets a
+  test ask the firmware helper's toolchain lookup instead. Without a toolchain the test
+  reports a skip, not a pass.
+- Docs:
+  - Library code has no `*_DESIGN.md`. Each user-visible feature gets a guide section
+    when it lands.
+  - The example gets a README, and the [README](../README.md) feature table gets a row.
+  - Run-once values change `src/pypeline.py` and the hook flow, so M1 updates the guide's
+    [`@initial` / `@final`](pypeline_guide.md#initial--final--startend-of-run-hooks)
+    section, `pypeline_DESIGN.md`'s decorator and state tables, and
+    [hook coverage](pypeline_TESTS.md#initial--final-hook-coverage).
+  - M3's C header generator extends `src/pypeline_host.py`, so M3 updates
+    [One walk, three consumers](pypeline_DESIGN.md#one-walk-three-consumers).
+
+## Milestones
+
+| Milestone | Delivers | Before it starts | Done when |
+|---|---|---|---|
+| [M0](#m0-audit) | Audit of the legacy CPUs and of Pypeline; decisions; bugs filed | — | The open questions are answered and the bugs found have GitHub issues |
+| [M1](#m1-single-cycle-rv32i-core-firmware-build-and-isa-tests) | Run-once values; single-cycle RV32I core ported from the legacy core; firmware built during import; resets; `rv32ui` with a replacement test environment | Nothing to fix; workarounds for #360, #361 and #362 | `rv32ui` passes in native simulation and GHDL; a C demo builds with no manual step |
+| [M2](#m2-machine-mode-traps-and-csrs) | Machine-mode CSRs, ECALL, EBREAK, MRET and exception traps | Nothing known | `rv32ui` passes with the unmodified riscv-tests `p` environment |
+| [M3](#m3-memory-mapped-control-and-status-registers) | Memory map with struct registers for LEDs, buttons and a cycle counter; C header export | Nothing known | Firmware reads and writes every field of the mapped structs, checked field by field |
+| [M4](#m4-console-and-uart) | Console MMIO device and UART | Fix [#382](https://github.com/JulianKemmerer/PipelineC/issues/382) | "Hello" prints in native simulation and GHDL; an echo test passes |
+| [M5](#m5-table-driven-decoder-and-isa-extensions) | Table-driven decoder; extension plugins, starting with M | Fix [#402](https://github.com/JulianKemmerer/PipelineC/issues/402), including its table form | The table decoder matches M1's decoder; `rv32um` passes |
+| [M6](#m6-hardware-bring-up) | Arty bring-up, then a pico-ice blink | Fix the dropped conditional declaration, [#404](https://github.com/JulianKemmerer/PipelineC/issues/404) | The same firmware runs in simulation and on Arty; blink runs on pico-ice, or its utilization is recorded |
+
+## M0: Audit
+
+The status tables above record the part of the audit already done. The two bugs that
+the [StreamSoC survey](pypeline_stream_soc_gaps.md) found
+([#404](https://github.com/JulianKemmerer/PipelineC/issues/404) and
+[#405](https://github.com/JulianKemmerer/PipelineC/issues/405)), and a Verilator crash
+found while rechecking it ([#406](https://github.com/JulianKemmerer/PipelineC/issues/406)),
+are in the [issues inventory](issues_inventory.md) with `known_issues_tests.py`
+reproducers. #402's entry and reproducer include the table form.
+What remains:
+
+1. **Read the legacy sources.** For each piece, record whether it ports as is, is
+   redesigned, or is dropped.
+
+   | Source | What it holds |
+   |---|---|
+   | `include/risc-v/risc-v.h` | Opcodes, `decode()` (an if/else tree with an optional M extension), `execute()`, `select_reg_wr_data()`, `select_next_pc()`. No FENCE, ECALL, EBREAK or CSRs |
+   | `examples/risc-v/risc-v_decl.h` | The single-cycle core: PC, IMEM, decode, a register file through `#pragma FEEDBACK`, execute, DMEM, write-back |
+   | `include/risc-v/mem_decl.h`, `include/risc-v/reg_file.h` | IMEM and DMEM wrappers in 0- and 1-cycle forms, address-bit decode, byte lanes, `mem_out_of_range`; the register file |
+   | `include/risc-v/mem_map.h` | `STRUCT_MM_ENTRY_NEW` (a struct mapped whole through bytes), `MM_STREAM`, `HANDSHAKE_MM_READ`/`_WRITE` |
+   | `examples/risc-v/risc-v.c`, `examples/pico-ice/ice_makefile_pipelinec/risc-v/single_cycle_risc-v_top.c` | Single-cycle tops: the memory-map module, LEDs, debug outputs |
+   | `examples/pico-ice/ice_makefile_pipelinec/risc-v/firmware/`, `examples/risc-v/gcc_test/` | Makefile (`make hex`), `link.ld`, `bootstrap.S`, `bin2vhdl.py`, demo programs |
+   | `examples/risc-v/cocotb/test_top.py` | The cocotb harness: it stops on `halt` and fails on `unknown_op` or `mem_out_of_range` |
+   | `examples/stream_soc/cpu/` | StreamSoC's CPU top, `mem_map.h` and `devices.c` (`my_mem_map_module`), input to M3's design |
+
+   `include/risc-v/fsm_riscv_decl.h`, the multi-cycle FSM core of the pico-ice demo
+   `examples/pico-ice/ice_makefile_pipelinec/risc-v/risc-v_top.c`, is not ported in these
+   milestones ([Deferred](#deferred)).
+
+   The C idioms map to Pypeline like this:
+
+   | C front end | Pypeline |
+   |---|---|
+   | `#pragma FEEDBACK` | `Feedback[T]` |
+   | `printf` traces | `sim_print` behind a parameter |
+   | the `riscv_name` macro instance | a factory call |
+   | `*_mem_init.h` | `init=` |
+
+2. **Run spikes outside the repository** before M1 settles its APIs:
+   - build one `rv32ui` test with the replacement environment and the generated linker
+     script, and load its ELF into IMEM and DMEM images;
+   - count how many times a typical build imports the design, and time one firmware
+     compile, to confirm that compiling once per run needs no cache across runs;
+   - list the CSRs and trap causes that riscv-tests' `env/p/riscv_test.h` uses, from its
+     source, as input to M2;
+   - measure the elaboration time of the ported `decode()`; no CPU-sized function has
+     been elaborated yet.
+3. **Answer the [open questions](#open-questions).**
+
+M0 is done when this plan records each decision and every bug it finds has a GitHub
+issue, an inventory entry and a reproducer.
+
+## M1: Single-cycle RV32I core, firmware build and ISA tests
+
+M1 adds run-once values, ports the legacy single-cycle core, adds what the ISA tests
+need, and builds the firmware with no manual step.
+
+**Before it starts:** nothing to fix. M1 works around [#361](https://github.com/JulianKemmerer/PipelineC/issues/361)
+(finish a cycle after the last print), [#360](https://github.com/JulianKemmerer/PipelineC/issues/360)
+(print with `hex()`) and [#362](https://github.com/JulianKemmerer/PipelineC/issues/362)
+(byte lanes through an array).
+
+### Run-once values
+
+The firmware must be compiled before `make_ram` runs, which is during import. A build
+imports the design several times (AUTO_PIPELINE re-parses it), so module-level code that
+calls gcc would compile once per import. If a C file changed during the build, the
+passes could then see different images, and so different RAM entity names. The
+synthesis `@initial` was meant for "do this once at the start", but it runs after the
+first import and its result reaches no hardware.
+
+M1 replaces it with a run-once value (the name is a proposal, see
+[Open questions](#open-questions)):
+
+```python
+from pypeline import once
+
+@once
+def build_firmware(sources: tuple, imem_words: int, dmem_words: int):
+    ...  # compile, link, load: runs on the first call of the run only
+
+fw = build_firmware(("main.c",), IMEM_WORDS, DMEM_WORDS)
+```
+
+- **Semantics.** The first call in a run executes the function. Later calls with the
+  same arguments return the stored result without running it: later in the same import,
+  and in every re-import of the design during the run. One run is one `pypelinec`
+  process: a build, a native simulation, or a build followed by its simulation.
+- **Key.** The defining file and the qualified name of the function, plus its
+  arguments: a pure function of the source, as the
+  [naming rules](../AGENTS.md#names-caches-and-determinism) require. Arguments are
+  limited to plain values (strings, numbers, booleans, `None`, paths, and tuples and
+  frozensets of those). Anything else is an error, since its only identity would be
+  `id()` or `repr()`.
+- **Results** are plain data too (numbers, strings, bytes, and lists, tuples, dicts and
+  dataclasses of those). A type, a hardware function or any other object from one import
+  would be stale in the next, so returning one is an error.
+- **Storage.** A table in `src/pypeline.py`, which re-imports do not reload, declared
+  next to `_hook_registry`. Native simulation never imports `PY_TO_LOGIC`, so the table
+  cannot live there. This is how `param()` values already survive re-imports. An
+  in-process caller that runs several designs, such as a test, clears it between runs.
+- **Consistency.** Every pass of a build sees the same result, even if a file the
+  function reads changes during the build. `FREEZE_DESIGN_SOURCES` gives the design's
+  `.py` files the same guarantee. A change takes effect on the next run.
+- **No cache across runs.** Each run compiles again. A cache across runs would need a
+  key covering every header gcc reads, the toolchain version and the generated files,
+  plus atomic renames for concurrent builds. M0 measures whether one compile per run is
+  cheap enough, as expected for small firmware.
+- **What happens to the hooks.** Synthesis `@initial` is removed: `@initial(syn=True)`
+  is an error that points to `@once`, and the bare `@initial` means simulation only. The
+  simulation hooks (`@initial(sim=True)`, `@final(sim=True)`) stay as they are: the PDW
+  and WireGuard testbenches use them. `hooks_design.py` and its tests change with it.
+
+The firmware helper uses `once` internally, so a design just calls `firmware.build(...)`.
+
+### Core
+
+A factory in `include/pypeline/riscv/` returns the core as a hardware function. It takes:
+
+- the memory sizes;
+- the IMEM and DMEM contents;
+- the MMIO hardware function, which answers the native port for the MMIO window. M1
+  passes the simulation-control device.
+
+The datapath stays split into pure functions around explicit state:
+
+- `decode`;
+- immediate generation;
+- `execute`;
+- load and store alignment;
+- the write-back select;
+- the next-PC select.
+
+A multi-cycle or pipelined core can then recombine these functions without rewriting
+them.
+
+- **PC:** a `Reg[uint32_t]`, reset to the reset vector `0x0000_0000`.
+- **IMEM:** a ROM, `make_ram(uint32_t, IMEM_WORDS, ports=("r",), read_latency=0, init=imem)`.
+- **Decode:** the legacy `decode()` if/elif tree, plus FENCE as a no-op and ECALL/EBREAK
+  as halt. An unknown encoding sets `unknown_op`.
+- **Register file:** the two-read, one-write RAM from
+  [What Pypeline provides today](#what-pypeline-provides-today), with its write port driven
+  through `Feedback`. `x0` reads as zero through a mux and is never written. It
+  therefore does not depend on RAM contents, which have no reset.
+- **DMEM:** `make_ram(uint32_t, DMEM_WORDS, ports=("rw",), read_latency=0,
+  byte_write_enables=True, init=dmem)`. Loads select and sign-extend lanes from a
+  `uint_to_array_le` array.
+- **Reset:** the core's `@MAIN` uses `reset_registers="all"`. The PC, the status flags and
+  the device registers reset; IMEM, DMEM and the register file keep their contents.
+  - After a reset during a run, the startup code zeroes `.bss` again, but `.data` keeps
+    the values the program last wrote. Only reloading the FPGA restores it.
+  - M1 documents this behavior. Restoring `.data` needs a copy from a readable image
+    ([Deferred](#deferred)).
+- **Halt:** a clock enable around the core's call stops a halted core.
+- **Debug outputs:** `pc`, `unknown_op`, `mem_out_of_range`, `halt` and the exit code.
+  Per-instruction trace prints sit behind `param("RISCV_TRACE", False)` and print with
+  `hex()`.
+
+### Simulation-control device
+
+The device is one register at the MMIO base, `TOHOST`. It follows the `riscv-tests`
+convention: writing 1 means pass, and writing `(n << 1) | 1` means test `n` failed. The
+startup code writes `(main's return value << 1) | 1`, so a return of 0 passes. A write to
+`TOHOST + 4`, the upper half of the `p` environment's 64-bit `tohost`, is accepted and
+ignored (used from M2).
+
+On a write, the device:
+
+- prints the result with `sim_print`;
+- fails a `sim_assert` on a failure code;
+- calls `sim_finish()` one cycle later ([#361](https://github.com/JulianKemmerer/PipelineC/issues/361)).
+
+These are hardware statements, so the same pass/fail check works in native simulation and
+in GHDL. On a board, the write sets `halt`.
+
+### Firmware build and RAM contents
+
+A helper runs during import, once per run ([Run-once values](#run-once-values)):
+
+```python
+fw = firmware.build(sources=("main.c",), imem=IMEM, dmem=DMEM)  # compile, link, load
+core = make_rv32i_core(imem_init=fw.imem_words, dmem_init=fw.dmem_words, mmio=mm)
+```
+
+The names are proposals.
+
+- **Compile:** the helper calls gcc directly:
+  `riscv32-unknown-elf-gcc -march=rv32i -mabi=ilp32 -O2 -nostdlib -nostartfiles
+  -T <generated .ld> crt0.S <sources> -lgcc`, with no `-fpack-struct`. It looks for the
+  toolchain on `PATH`, then in `/opt/riscv/bin`, unless a parameter names its location.
+  It builds in a fresh temporary directory outside the source tree.
+- **Generated linker script and `crt0.S`:** both come from the address map constants.
+  - The linker script puts `.text` in IMEM and `.rodata`, `.data`, `.bss` and the stack in
+    DMEM. It exports `__stack_top`, `__bss_start` and `__bss_end`. From M2 it also places
+    the `p` environment's `.tohost` section at `TOHOST`, as `NOLOAD`, so the ELF has no
+    segment in the MMIO window.
+  - `crt0.S` sets `sp`, zeroes `.bss`, calls `main`, and writes the result to `TOHOST`.
+- **Generated Makefile:** with `project_dir=`, the helper also writes a `Makefile`, the
+  linker script and `crt0.S` (and from M3 the C header) into that directory. The
+  Makefile runs the same gcc command, so the firmware can be rebuilt, disassembled and
+  debugged by hand. The build itself never runs `make`.
+- **Load:** the [ELF loader](#where-the-code-goes) reads the loadable segments with
+  Python's `struct` module (no objcopy or `pyelftools` step). It splits them by address
+  into the IMEM and DMEM word lists. A segment outside both windows, or one that does not
+  fit, is an error that names the segment.
+- **Choosing the firmware per run:** `param("FIRMWARE", ...)` names an ELF to load
+  instead of building the default sources, so one design runs any program:
+  `pypelinec top.py --sim --comb --run 200000 -D FIRMWARE=add.elf`. A project with its own
+  build passes its ELF this way. Running an existing Makefile from the helper is not
+  supported.
+- **Hardware identity:** the contents are part of each RAM's entity name. To the build
+  cache, new firmware is a new design.
+
+### ISA tests
+
+- **Sources:** the `rv32ui` tests from the riscv-tests copy, built against a replacement
+  environment. The standard `p` environment needs CSRs, `ecall` and `mret`, which arrive
+  in M2. The replacement is a `riscv_test.h` that defines:
+  - `RVTEST_CODE_BEGIN` and `RVTEST_CODE_END` without trap setup;
+  - `RVTEST_PASS` and `RVTEST_FAIL` as stores to `TOHOST`;
+  - the data-section macros.
+
+  Other small cores take this approach; picorv32's `tests/riscv_test.h` is one example.
+  The replacement stays after M2, for cores built without traps.
+- **Excluded tests:**
+  - `fence_i`, which writes instructions through data stores. A Harvard IMEM cannot take
+    those writes.
+  - `ma_data`, where present, which tests misaligned accesses.
+- **Native run:** a registered test builds each ISA test with the firmware helper and
+  runs it in native simulation with `-D FIRMWARE=`, in parallel, reporting pass or fail
+  per test. A cycle cap catches a hung test.
+- **GHDL run:** the same tests run in cocotb + GHDL. If the full GHDL set is too slow for
+  the default run, a named subset is registered, and the full set is documented as an
+  opt-in command. M1 records both run times.
+
+### M1 exit criteria
+
+- **ISA tests:** every `rv32ui` test except the exclusions passes in native simulation,
+  and in cocotb + GHDL (the full set or the registered subset).
+- **C demo:** a demo ported from the pico-ice `main.c`, without its UART, builds during
+  import with no manual step. It runs a counter and some arithmetic and returns a
+  checksum. It passes in native simulation and in GHDL, and `native_vs_vhdl_sim`
+  compares its trace cycle by cycle.
+- **Run-once values:** in-process tests show that a build calls a run-once function once
+  however many times it parses the design, that different arguments call it again, and
+  that a new run calls it again. A file that the function reads and that changes between
+  two parses of one run does not change the result. Unsupported arguments and results
+  are rejected. The hook tests cover the removed synthesis `@initial`.
+- **Reset:** a reset pulsed mid-run, from a `@sim_input`-driven reset pin, restarts the
+  program from the reset vector.
+- **Synthesis and docs:** a synthesis test of the core top passes with `device_models`,
+  the default tool for tests. The guide sections, the example README and the README
+  feature table describe the core and run-once values.
+
+Risks: no CPU-sized design has been elaborated yet, and native simulation speed is
+unmeasured.
+
+## M2: Machine-mode traps and CSRs
+
+M2 runs the ISA tests with riscv-tests' own `p` environment, unmodified. The trap logic
+goes into the core as one unit, so M5 can make it the first plugin.
+
+**Before it starts:** nothing known.
+
+What the `p` environment needs, to be confirmed against the copied
+`env/p/riscv_test.h` by M0's spike:
+
+- **CSR instructions:** `csrrw`, `csrrs`, `csrrc` and their immediate forms.
+- **CSRs:** `mstatus`, `mtvec` (direct mode), `mepc`, `mcause` and `mhartid` (reads 0).
+  `mie` reads as zero and ignores writes: there are no interrupts, and the environment
+  writes it before it points `mtvec` past the access, so a trap there would loop.
+- **Traps:** ECALL (cause 11) and EBREAK (cause 3) save the PC in `mepc`, set `mcause`
+  and jump to `mtvec`. An unknown encoding or CSR traps as an illegal instruction
+  (cause 2), which the environment's `satp` and PMP probes rely on: they point `mtvec`
+  at the next instruction first. `unknown_op` stays as a debug output.
+- **MRET:** jumps to `mepc`. The environment enters the test through it.
+- **`tohost`:** the trap handler writes the test number to the `.tohost` section, which
+  the generated linker script places at M1's `TOHOST`. Pass and fail codes are M1's.
+
+Misaligned accesses trap too (causes 4 and 6) instead of setting `mem_out_of_range`.
+Interrupts, timers and counters stay [deferred](#deferred).
+
+M2 is done when:
+
+- `rv32ui` passes with the unmodified `p` environment in native simulation and GHDL, and
+  still passes with M1's replacement environment;
+- the `rv32mi` tests that need only the CSRs above pass, and the plan lists the others
+  with the reason each is excluded;
+- a C demo installs a trap handler, takes an ECALL and returns from it with `mret`;
+- the core's synthesis result is recorded against M1's, since the CSR read mux and the
+  trap path can lengthen the critical path;
+- the guide section describes the CSRs and trap causes the core implements.
+
+## M3: Memory-mapped control and status registers
+
+**Before it starts:** nothing known.
+
+### Memory map
+
+A builder collects devices and places them in the MMIO window. It checks alignment and
+overlaps, then freezes into address constants plus one hardware function: the core
+factory's MMIO argument.
+
+```python
+mm = MemoryMap(base=MMIO_BASE)
+mm.add("sim", sim_ctrl_device)              # M1's TOHOST keeps its address
+mm.add("leds", ctrl_t=leds_ctrl_t)          # the CPU writes, the design reads
+mm.add("board", status_t=board_status_t)    # the design drives, the CPU reads
+mm.freeze()
+```
+
+- **Control struct:** a register that the CPU writes with byte enables and the design
+  reads.
+- **Status struct:** a value that the design drives and the CPU reads.
+- **Mapping:** each struct maps whole, through `make_type_to_bytes`/`make_type_from_bytes`
+  and a word index, as the legacy `STRUCT_MM_ENTRY_NEW` does. No generic code names a
+  field.
+- **Per-device structs:** the legacy cores use one `mm_regs_t` holding every device's
+  registers. Here each device has its own structs. The map then never selects a field by
+  string, and each device can bring its own hardware.
+
+### Struct layout shared with C
+
+Pypeline's struct-to-bytes layout is packed. The plain `ilp32` C layout equals it exactly
+when all of the following hold:
+
+- Each leaf takes 1, 2, 4 or 8 bytes in Pypeline. A `uint4_t` takes 1 byte and is a
+  `uint8_t` in C; a `uint24_t` does not qualify.
+- Each leaf's offset is a multiple of its size.
+- Each struct's size, nested structs included, is a multiple of its largest leaf.
+- A mapped struct's size is a multiple of 4.
+
+`mm.add` checks these rules. On a violation it names the field and suggests an explicit
+padding field. The header then needs no packing, so GCC accesses each field at its full
+width.
+
+### C header
+
+A generator next to `generate()` in `src/pypeline_host.py` walks the same leaves and
+writes `mmio.h`, which contains:
+
+- typedefs that use `stdint.h` types;
+- the window and device base addresses;
+- `volatile` struct pointers;
+- `_Static_assert`s on `sizeof` and on every `offsetof`.
+
+The firmware helper calls the generator during import and compiles against the header. The
+build also writes the header to `<out_dir>/host/`, and `project_dir=` gets a copy.
+
+**Demo:**
+
+- LEDs, through a control struct.
+- Buttons, switches and a cycle counter, through a status struct.
+- A combinational compute block between a control struct (the operands) and a status
+  struct (the result). This shows the first accelerator pattern: the firmware writes
+  operands, and the next instruction reads the result.
+
+### M3 exit criteria
+
+- **Field coverage:** firmware writes and reads every field of a test set of structs with
+  byte, halfword and word accesses. The set covers 8-, 16- and 32-bit fields, an array and
+  a nested struct. Native simulation checks the hardware values against Python's.
+- **Header unit test:** the header's offsets match Pypeline's leaf offsets, and `mm.add`
+  rejects a misaligned struct with an error that names the field.
+- **Blinky:** the blinky firmware drives the LED register in simulation.
+- **Docs:** a guide section, and [One walk, three consumers](pypeline_DESIGN.md#one-walk-three-consumers)
+  updated for the fourth consumer of the leaf walk.
+
+## M4: Console and UART
+
+**Before it starts:** fix [#382](https://github.com/JulianKemmerer/PipelineC/issues/382).
+The console device calls two `make_stream_fifo` FIFOs, TX and RX, from one `@MAIN`, which
+is the shape in which native simulation gives both FIFOs one state. Giving each FIFO its
+own `@MAIN` would avoid it, at the cost of wiring that the fix makes unnecessary.
+
+- **UART MAC:** a port of `include/uart/uart_mac.h` (TX and RX, with the baud divisor
+  derived from the clock rate) to Pypeline streams, buffered with `make_stream_fifo`.
+- **Console device:** four registers:
+
+  | Register | Access |
+  |---|---|
+  | `TX_DATA` | A write pushes a byte |
+  | `TX_STATUS` | The space left |
+  | `RX_DATA` | A read pops a byte |
+  | `RX_STATUS` | Whether a byte is waiting |
+
+  A single-cycle core drives an address every cycle. The device therefore pops RX only in
+  a cycle where the core performs a load from `RX_DATA` (its read enable), never on the
+  address alone.
+- **Simulation console:** `sim_print` adds its own newline, so one print per character
+  does not work. The device collects TX bytes into a `char_t[N]` line buffer and prints
+  it with `sim_print` at each newline. Console output then appears the same way in native
+  simulation and in GHDL.
+- **Firmware library:** `putchar`, `puts`, `getchar`, and decimal and hex number output,
+  without `printf`.
+- **Stimulus:** a simulation-only `@MAIN` over `@sim_input` feeds RX bytes.
+
+M4 is done when:
+
+- "Hello from Pypeline CPU!" prints in native simulation and GHDL;
+- an echo test passes with RX stimulus, and `native_vs_vhdl_sim` compares it cycle by
+  cycle;
+- a UART TX-to-RX loopback at a small baud divisor passes in simulation;
+- the UART block has a synthesis test.
+
+## M5: Table-driven decoder and ISA extensions
+
+**Before it starts:** fix [#402](https://github.com/JulianKemmerer/PipelineC/issues/402),
+including the table form in its reproducer. The decoder's rows hold control-struct
+constants, so `c = ctrl` from a module-level table must elaborate. The typed-local
+workaround (`k: ctrl_t = ctrl`) works, but the table should read the way the guide says
+module-level constants work.
+
+- **Decoder table:** each instruction is a Python row of name, mask, match and control
+  values. A compile-time loop over the rows builds `decode()`. Traces use the same table
+  to name instructions.
+- **Control struct:** built with `struct(NamedTuple(...))` from the field lists of the
+  enabled plugins.
+- **Plugins:** a plugin is a Python object that contributes rows, control fields and an
+  execute function. It can also bring state or MMIO devices. The core factory takes a
+  list of plugins. RV32I itself is the first one, and M2's CSRs and traps the second.
+- **First extension, M:** `mul`, `mulh*`, `div*` and `rem*`, checked with `rv32um`
+  through the `p` environment. In a single-cycle core these instructions are
+  combinational and set the clock rate. M5 measures that; a multi-cycle execute stays
+  deferred.
+- **Second candidate:** a custom-0 instruction that wraps a Pypeline function (CFU
+  style).
+
+M5 is done when:
+
+- the table decoder matches M1's decoder on every RV32I encoding class, checked through
+  `sim_call` with an exhaustive sweep of the opcode and funct fields plus random words;
+- `rv32ui` and the M2 `rv32mi` set pass with the table decoder;
+- `rv32um` passes with the M plugin;
+- elaboration time and synthesis results are recorded against M1's decoder, and M5
+  decides whether M1's decoder stays.
+
+## M6: Hardware bring-up
+
+**Before it starts:** fix [#404](https://github.com/JulianKemmerer/PipelineC/issues/404), a wire or port
+declared inside a module-level `if` being dropped. Board tops choose pins per board, and a dropped
+pin shows up only on the board. Watch Vivado's log for `TIMING LOOPS!`
+([#318](https://github.com/JulianKemmerer/PipelineC/issues/318): Vivado removes logic it
+treats as a timing loop, cause unknown).
+
+- **Arty first:** the single-cycle core, with memories in LUT RAM. The A7-35T has
+  400 Kbit of distributed RAM. The board top reuses `examples/pypeline/arty`'s
+  `board.vhd` (an MMCM) and its Vivado Makefile.
+- **pico-ice second, blink only:** the same single-cycle core with a blink firmware and
+  the smallest IMEM and DMEM that hold it. IMEM is a constant ROM that synthesis reduces
+  to logic, so its zero words cost nothing. DMEM and the register file (31 × 32 bits)
+  become flip-flops. The top reuses `examples/pypeline/pico_ice`'s `top.sv` (an icepll
+  PLL) and Makefile. If it does not fit, M6 records the utilization; the registered-read
+  core it would need is deferred.
+- **Clock and reset:** the CPU `@MAIN` runs on the PLL clock, under the reset made from
+  `pll_locked`, with `reset_registers="all"`.
+- **Pins:**
+  - LEDs from M3's control registers;
+  - buttons and switches into its status registers;
+  - on Arty, UART TX and RX from M4, on the USB-UART pins from Digilent's master `.xdc`;
+  - `halt` and the pass/fail code shown on LEDs.
+
+M6 is done when:
+
+- the same firmware (blinky, UART hello, MMIO compute) runs in simulation and on Arty;
+- blink runs on pico-ice, or the plan records its utilization and what would make it
+  fit;
+- each board top has a registered synthesis test: Vivado for Arty and open tools for
+  pico-ice, as `example_arty_top` and `example_pico_ice_top` do;
+- the example README lists the hardware checks to run by hand.
+
+## Deferred
+
+- Multi-cycle and pipelined cores, multi-cycle devices with stalls, and the cores whose
+  memories read on a clock edge: the legacy FSM core
+  (`include/risc-v/fsm_riscv_decl.h`) and a registered-read core for iCE40.
+- Interrupts, timers and counters (`mtime`, `mcycle`, Zicntr), and privilege modes
+  below machine mode.
+- Restoring `.data` on reset, writable IMEM (`fence.i`, a bootloader), and loading firmware
+  at run time.
+- AXI-Lite and the shared resource bus as windows on the native port. Per-writer port
+  allocation (`INST_ARRAY`) and library-made wires, instances and FIFOs, scoped by what
+  the bus needs.
+- Sub-byte register fields and bitfield packing in the memory map and the header.
+- Multiple clock domains, PLLs generated by the build, and the vendor IP the StreamSoC
+  port needs (DDR3, Ethernet).
+- Whole-SoC verification at scale: `@sim_model`s of vendor IP, and Verilator or CXXRTL
+  drivers.
+- Other ISAs and switchable endianness, through an adapter from their native port.
+- C generated from combinational Pypeline functions, so firmware and hardware share code.
+- MicroPython. It needs much more memory and ideally RV32IMC; `uctypes` layouts could
+  come from the same leaf walk.
+- A UART or JTAG bridge, so host Python reads and writes registers by memory-map name.
+- Compile-time `getattr` on hardware structs, until a design needs it.
+
+## Open questions
+
+1. **Run-once values (M1).** Is `@once` the right name? And should synthesis `@final`
+   go along with synthesis `@initial`? It has no users either, but unlike `@initial` it
+   is not replaced by run-once values: it runs after the final VHDL is written, which a
+   post-build step (a report, copying outputs) could use. Recommendation: remove both
+   synthesis forms, keeping `@initial`/`@final` as simulation hooks, because the
+   synthesis forms carry their own state (`_syn_hook_snapshot`) and a documented
+   stale-`.latency` caveat. A script around `pypelinec` covers post-build steps.

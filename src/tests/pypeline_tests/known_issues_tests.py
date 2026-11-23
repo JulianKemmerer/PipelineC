@@ -75,9 +75,10 @@ def get_tests() -> list:
     )
     # A module-level struct or array constant, typed by its class or an
     # annotation, used directly in a hardware function does not elaborate:
-    # passing K.lanes to a function, writing K or T to a port, or indexing T
-    # with a signal each stop the build. A typed local (`t: uint8_t[2] = T`)
-    # works. Native simulation runs the design. Issue #402.
+    # passing K.lanes to a function, writing K or T to a port, indexing T
+    # with a signal, or assigning a struct taken from a module-level table by
+    # a loop each stop the build. A typed local (`t: uint8_t[2] = T`) works.
+    # Native simulation runs the design. Issue #402.
     tests.append(
         Test(
             name="module_compound_const_known_issue",
@@ -335,6 +336,47 @@ def get_tests() -> list:
             cmd=[INST_DIR / "scoped_operator_registration_test.py"],
             needs_out_dir=True,
             expect_fail=True,
+        )
+    )
+    # An Output[T] declared inside a module-level `if` that ran gets no port
+    # and the MAIN's write to it is dropped, with no error; native sim treats
+    # it as a wire. In process: fails while led is missing from
+    # output_wires, passes if it is a port or PARSE_FILE refuses it by name.
+    # Issue #404.
+    tests.append(
+        Test(
+            name="conditional_global_decl_known_issue",
+            category="known_issues",
+            cmd=[INST_DIR / "conditional_global_decl_test.py"],
+            expect_fail=True,
+        )
+    )
+    # x[0:7] (low index first) is accepted: the VHDL reads x(7 downto 0),
+    # unreversed, and native sim raises "negative shift count". The cycle diff
+    # fails while native sim raises and GHDL's sim_assert (y == 0x80) fails;
+    # it passes once both reverse. Issue #405.
+    tests.append(
+        Test(
+            name="reversed_bit_slice_known_issue",
+            category="known_issues",
+            cmd=[PYPELINE_SIM_DEBUG, INST_DIR / "reversed_bit_slice_design.py",
+                 "--sim", "--comb", "--run", "all"],
+            needs_out_dir=True,
+            expect_fail=True,
+            requires=["ghdl"],
+        )
+    )
+    # --sim --comb --verilator --run all stops with a TypeError in
+    # VERILATOR.DO_SIM (args.run is "all"), and the Verilator model ignores
+    # sim_finish(). Fails while the crash is present; passes when the run
+    # exits 0 by the cycle after sim_finish(). About 40 s. Issue #406.
+    tests.append(
+        Test(
+            name="verilator_run_all_known_issue",
+            category="known_issues",
+            cmd=[INST_DIR / "verilator_run_all_test.py"],
+            expect_fail=True,
+            requires=["ghdl", "yosys", "verilator"],
         )
     )
     # (operator_library_predicate_never_fires_known_issue was here while

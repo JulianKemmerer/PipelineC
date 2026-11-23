@@ -1397,6 +1397,12 @@ Every case fails on the tree before the fix. Two wrong fixes are caught as well.
 Treating every nested import as taken fails "both choices" and "untaken". Treating a
 from-import as taken when its module is merely in `sys.modules` fails "untaken".
 
+Declarations have no such rule yet. `conditional_global_decl_known_issue`
+(`known_issues`, in process) parses an `Output[T]` declared inside a module-level `if`
+that ran, which gets no port. It fails while `led` is missing from
+`ParserState.output_wires`, and passes if the port exists or `PARSE_FILE` refuses the
+declaration by name (see the [issues inventory](issues_inventory.md)).
+
 ## Design parameter coverage
 
 `param()` and `-D NAME=VALUE` (see
