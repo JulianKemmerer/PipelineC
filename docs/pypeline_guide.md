@@ -5333,7 +5333,8 @@ function is declared [`@pipeline_latency(ram.latency)`](#fixed-user-pipelines). 
 means for your code:
 
 - **Pure caller** (no `Reg`/`Feedback`): the compiler delays your other signals to meet the
-  RAM's outputs. `ram(...).p0.rd_data + x` adds the `x` from `ram.latency` clocks ago.
+  RAM's outputs. With `o = ram(...)`, `o.p0.rd_data + x` adds the `x` from `ram.latency`
+  clocks ago.
 - **Stateful caller**: you get the RAM's physical outputs in the current clock. `rd_data`
   answers the request made `ram.latency` clocks earlier, and the piped-through `addr`/`valid`
   fields tell you which request that was.

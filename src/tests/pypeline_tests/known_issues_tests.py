@@ -379,6 +379,34 @@ def get_tests() -> list:
             requires=["ghdl", "yosys", "verilator"],
         )
     )
+    # Bit-slice assignment (x[hi:lo] = v) elaborates, and GHDL holds the
+    # design's sim_asserts, but native sim raises "'SimVal' object does not
+    # support item assignment". Fails while native sim raises; passes once it
+    # stores the bits and the sim_asserts hold. Native sim only. Issue #408.
+    tests.append(
+        Test(
+            name="native_bit_store_known_issue",
+            category="known_issues",
+            cmd=[PYPELINEC, INST_DIR / "native_bit_store_design.py",
+                 "--sim", "--comb", "--run", "all"],
+            needs_out_dir=True,
+            expect_fail=True,
+        )
+    )
+    # Pypeline's hex() of a negative intN_t prints "-1" natively and "FF" in
+    # VHDL sim. The cycle diff fails while the two print different text and
+    # passes once they agree. Issue #409.
+    tests.append(
+        Test(
+            name="hex_negative_known_issue",
+            category="known_issues",
+            cmd=[PYPELINE_SIM_DEBUG, INST_DIR / "hex_negative_design.py",
+                 "--sim", "--comb", "--run", "all"],
+            needs_out_dir=True,
+            expect_fail=True,
+            requires=["ghdl"],
+        )
+    )
     # (operator_library_predicate_never_fires_known_issue was here while
     # SYN._IS_PYPELINE_OPERATOR_LIBRARY_CODE, meant to put operator-library
     # delays in the name-keyed cache/delay, never fired (#364). The predicate

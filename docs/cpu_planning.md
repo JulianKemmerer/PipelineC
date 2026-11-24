@@ -10,10 +10,10 @@ was built and where, and remove answered questions from
 surveyed in [pypeline_stream_soc_gaps.md](pypeline_stream_soc_gaps.md).
 
 Statements about current Pypeline behavior say how they were checked. Unless a row says
-otherwise, the checks ran against commit `b88f7600`. They used small designs built with
-`pypelinec --comb --no_synth`, plus `--sim`, `--sim --cocotb --ghdl` or
-`pypeline_sim_debug.py` (the native-versus-GHDL cycle diff) where a row says so, and
-the GCC toolchain described under
+otherwise, the checks ran against commit `b88f7600`, and [M0](#m0-audit)'s against
+`dbfab002`. They used small designs built with `pypelinec --comb --no_synth`, plus
+`--sim`, `--sim --cocotb --ghdl` or `pypeline_sim_debug.py` (the native-versus-GHDL
+cycle diff) where a row says so, and the GCC toolchain described under
 [What Pypeline provides today](#what-pypeline-provides-today).
 
 ## Table of Contents
@@ -27,6 +27,9 @@ the GCC toolchain described under
   - [Where the code goes](#where-the-code-goes)
 - [Milestones](#milestones)
 - [M0: Audit](#m0-audit)
+  - [Bugs](#bugs)
+  - [Legacy sources](#legacy-sources)
+  - [Spikes](#spikes)
 - [M1: Single-cycle RV32I core, firmware build and ISA tests](#m1-single-cycle-rv32i-core-firmware-build-and-isa-tests)
   - [Core](#core)
   - [Simulation-control device](#simulation-control-device)
@@ -133,11 +136,14 @@ on `PATH`; the legacy Makefiles say `export PATH=$PATH:/opt/riscv/bin`.
 | Reversed bit slice `x[0:7]` | Bug, [#405](https://github.com/JulianKemmerer/PipelineC/issues/405): built as `x[7:0]`; native simulation raises | The CPU needs no reversed slice |
 | Bit index from a hardware value, `x[i]` | Not supported ([#362](https://github.com/JulianKemmerer/PipelineC/issues/362)) | Load and store byte lanes index a `uint_to_array_le` array instead |
 | `sim_print` on the `sim_finish()` cycle | Missing from VHDL simulation output ([#361](https://github.com/JulianKemmerer/PipelineC/issues/361)); the memory checks above show it too | Print the result, then finish one cycle later |
-| `sim_print` of a value of 2³¹ or more | Overflows in GHDL ([#360](https://github.com/JulianKemmerer/PipelineC/issues/360)). MMIO addresses start at `0x8000_0000` | Print addresses and data with `hex()`, which does not overflow |
+| `sim_print` of a value of 2³¹ or more | Overflows in GHDL ([#360](https://github.com/JulianKemmerer/PipelineC/issues/360)). MMIO addresses start at `0x8000_0000` | Print addresses and data with Pypeline's `hex()` (`from pypeline import hex`), which does not overflow |
+| `hex()` of a negative signed value | Bug, [#409](https://github.com/JulianKemmerer/PipelineC/issues/409): native simulation prints `-0000800` where VHDL simulation prints `FFFFF800`, so the cycle diff reports a mismatch. Found by M0 | Traces print unsigned values: `hex(uint32_t(imm))` |
+| Bit-slice assignment `x[hi:lo] = v` | Bug, [#408](https://github.com/JulianKemmerer/PipelineC/issues/408): elaborates, but native simulation raises `TypeError`. A single-bit store, `x[i] = v`, stops elaboration ([#362](https://github.com/JulianKemmerer/PipelineC/issues/362)). Both found by M0 | `bit_assign(x, v, lo)` or `concat`, which both simulations run: JALR clears bit 0 with `bit_assign(target, uint1_t(0), 0)` |
+| Reading a field of a call's result, `f(x).y` | Elaboration stops with an internal error ([#71](https://github.com/JulianKemmerer/PipelineC/issues/71)) | Bind the result to a local first: `o = ram(...)`, then `o.p0.rd_data` |
 | Native-simulation state behind a stateless caller | Two stateful instances that only a stateless caller tells apart share one native-simulation state ([#382](https://github.com/JulianKemmerer/PipelineC/issues/382)). Two `make_stream_fifo` FIFOs in one `@MAIN` hit it. The three memories in one `@MAIN` (above) do not | M4's console has a TX and an RX FIFO: fix #382 before [M4](#m4-console-and-uart) |
 | Memories on iCE40 | The UP5K has no distributed RAM: its block RAMs (EBR) and SPRAM read on a clock edge. It has 5,280 LUT4s and 5,280 flip-flops. Combinational-read memories therefore become flip-flops or logic: a 2 KiB DMEM alone is 16,384 bits. A constant IMEM is a ROM that synthesis reduces to logic, so a short program whose memory is mostly zeros may fit | Arty is the first board. [M6](#m6-hardware-bring-up) tries pico-ice with a blink firmware and the smallest memories that hold it. A registered-read core is [deferred](#deferred) |
 | Wires, ports, instances and FIFOs made by library code | Not supported. A `@MAIN` that a library factory makes cannot reach the design's wires | The core factory takes its MMIO devices as hardware-function arguments, and the design module owns the pins |
-| Native simulation speed | Not measured for a CPU | M1 measures cycles per second on the ISA tests, which are short programs |
+| Native simulation speed | Measured only for M0's decode spike: `decode` and `execute` fed from three ROMs, with a 20-field `sim_print` each cycle, ran 2,290 cycles at 499 cycles per second | M1 measures cycles per second on the ISA tests, which are short programs |
 | Verilator and CXXRTL simulation | The conversion they run drops `sim_print` and `sim_finish()` ([Other HDL simulators](README.md#other-hdl-simulators)), and `--verilator --run all` crashes ([#406](https://github.com/JulianKemmerer/PipelineC/issues/406)) | Not used by these milestones: tests run in native simulation and cocotb + GHDL, and the console is an MMIO device ([M4](#m4-console-and-uart)) |
 
 ## Architecture
@@ -217,8 +223,8 @@ address bits:
 
 | Milestone | Delivers | Before it starts | Done when |
 |---|---|---|---|
-| [M0](#m0-audit) | Audit of the legacy CPUs and of Pypeline; decisions; bugs filed | — | The open questions are answered and the bugs found have GitHub issues |
-| [M1](#m1-single-cycle-rv32i-core-firmware-build-and-isa-tests) | Single-cycle RV32I core ported from the legacy core; firmware built during import; resets; `rv32ui` with a replacement test environment | Nothing to fix; workarounds for #360, #361 and #362 | `rv32ui` passes in native simulation and GHDL; a C demo builds with no manual step |
+| [M0](#m0-audit) | Audit of the legacy CPUs and of Pypeline; decisions; bugs filed | — | Done |
+| [M1](#m1-single-cycle-rv32i-core-firmware-build-and-isa-tests) | Single-cycle RV32I core ported from the legacy core; firmware built during import; resets; `rv32ui` with a replacement test environment | Nothing to fix; workarounds for #71, #360, #361, #362, #408 and #409 | `rv32ui` passes in native simulation and GHDL; a C demo builds with no manual step |
 | [M2](#m2-machine-mode-traps-and-csrs) | Machine-mode CSRs, ECALL, EBREAK, MRET and exception traps | Nothing known | `rv32ui` passes with the unmodified riscv-tests `p` environment |
 | [M3](#m3-memory-mapped-control-and-status-registers) | Memory map with struct registers for LEDs, buttons and a cycle counter; C header export | Nothing known | Firmware reads and writes every field of the mapped structs, checked field by field |
 | [M4](#m4-console-and-uart) | Console MMIO device and UART | Fix [#382](https://github.com/JulianKemmerer/PipelineC/issues/382) | "Hello" prints in native simulation and GHDL; an echo test passes |
@@ -227,55 +233,101 @@ address bits:
 
 ## M0: Audit
 
-The status tables above record the part of the audit already done. The two bugs that
-the [StreamSoC survey](pypeline_stream_soc_gaps.md) found
-([#404](https://github.com/JulianKemmerer/PipelineC/issues/404) and
-[#405](https://github.com/JulianKemmerer/PipelineC/issues/405)), and a Verilator crash
-found while rechecking it ([#406](https://github.com/JulianKemmerer/PipelineC/issues/406)),
-are in the [issues inventory](issues_inventory.md) with `known_issues_tests.py`
-reproducers. #402's entry and reproducer include the table form.
-What remains:
+M0 is done. It ran on commit `dbfab002` with the toolchain described under
+[What Pypeline provides today](#what-pypeline-provides-today), riscv-tests `3df703cd`
+and riscv-test-env `6de71edb`; M1 copies the tests from those commits. Its spikes ran
+outside the repository, and M1 rebuilds in the library what it keeps from them. The
+findings that change the plan are folded into the sections they change: the
+[gaps table](#gaps-and-how-the-plan-handles-them),
+[Firmware build and RAM contents](#firmware-build-and-ram-contents) and
+[M2](#m2-machine-mode-traps-and-csrs)'s CSR list.
 
-1. **Read the legacy sources.** For each piece, record whether it ports as is, is
-   redesigned, or is dropped.
+### Bugs
 
-   | Source | What it holds |
-   |---|---|
-   | `include/risc-v/risc-v.h` | Opcodes, `decode()` (an if/else tree with an optional M extension), `execute()`, `select_reg_wr_data()`, `select_next_pc()`. No FENCE, ECALL, EBREAK or CSRs |
-   | `examples/risc-v/risc-v_decl.h` | The single-cycle core: PC, IMEM, decode, a register file through `#pragma FEEDBACK`, execute, DMEM, write-back |
-   | `include/risc-v/mem_decl.h`, `include/risc-v/reg_file.h` | IMEM and DMEM wrappers in 0- and 1-cycle forms, address-bit decode, byte lanes, `mem_out_of_range`; the register file |
-   | `include/risc-v/mem_map.h` | `STRUCT_MM_ENTRY_NEW` (a struct mapped whole through bytes), `MM_STREAM`, `HANDSHAKE_MM_READ`/`_WRITE` |
-   | `examples/risc-v/risc-v.c`, `examples/pico-ice/ice_makefile_pipelinec/risc-v/single_cycle_risc-v_top.c` | Single-cycle tops: the memory-map module, LEDs, debug outputs |
-   | `examples/pico-ice/ice_makefile_pipelinec/risc-v/firmware/`, `examples/risc-v/gcc_test/` | Makefile (`make hex`), `link.ld`, `bootstrap.S`, `bin2vhdl.py`, demo programs |
-   | `examples/risc-v/cocotb/test_top.py` | The cocotb harness: it stops on `halt` and fails on `unknown_op` or `mem_out_of_range` |
-   | `examples/stream_soc/cpu/` | StreamSoC's CPU top, `mem_map.h` and `devices.c` (`my_mem_map_module`), input to M3's design |
+Every bug has an entry in the [issues inventory](issues_inventory.md) and a
+`known_issues_tests.py` reproducer, unless the row says otherwise.
 
-   `include/risc-v/fsm_riscv_decl.h`, the multi-cycle FSM core of the pico-ice demo
-   `examples/pico-ice/ice_makefile_pipelinec/risc-v/risc-v_top.c`, is not ported in these
-   milestones ([Deferred](#deferred)).
+| Bug | Found by | Issue |
+|---|---|---|
+| A wire or port declared inside a module-level `if` is dropped | The [StreamSoC survey](pypeline_stream_soc_gaps.md) | [#404](https://github.com/JulianKemmerer/PipelineC/issues/404) |
+| A reversed bit slice `x[0:7]` is built as `x[7:0]` | The StreamSoC survey | [#405](https://github.com/JulianKemmerer/PipelineC/issues/405) |
+| `--verilator --run all` crashes | Rechecking the survey | [#406](https://github.com/JulianKemmerer/PipelineC/issues/406) |
+| A struct constant from a module-level table does not elaborate | The decoder-table check | Part of [#402](https://github.com/JulianKemmerer/PipelineC/issues/402), whose reproducer has the table form |
+| Bit-slice assignment raises in native simulation | The `decode()` port | [#408](https://github.com/JulianKemmerer/PipelineC/issues/408) |
+| `hex()` of a negative signed value prints differently in native and VHDL simulation | The `decode()` port | [#409](https://github.com/JulianKemmerer/PipelineC/issues/409) |
+| A single-bit store, `x[i] = v`, stops elaboration with an internal error | The `decode()` port | A new form of [#362](https://github.com/JulianKemmerer/PipelineC/issues/362), added to the issue and its inventory entry; like #362's other forms, no registered reproducer |
+| Reading a field of a call's result, `f(x).y`, stops elaboration | The `decode()` testbench | Already [#71](https://github.com/JulianKemmerer/PipelineC/issues/71) |
 
-   The C idioms map to Pypeline like this:
+Each has a workaround in the gaps table. #402 and #404 are fixed before M5 and M6.
 
-   | C front end | Pypeline |
-   |---|---|
-   | `#pragma FEEDBACK` | `Feedback[T]` |
-   | `printf` traces | `sim_print` behind a parameter |
-   | the `riscv_name` macro instance | a factory call |
-   | `*_mem_init.h` | `init=` |
+### Legacy sources
 
-2. **Run spikes outside the repository** before M1 settles its APIs:
-   - build one `rv32ui` test with the replacement environment and the generated linker
-     script, and load its ELF into IMEM and DMEM images;
-   - count how many times a typical build imports the design, and time one firmware
-     compile, to measure the cost per design import;
-   - list the CSRs and trap causes that riscv-tests' `env/p/riscv_test.h` uses, from its
-     source, as input to M2;
-   - measure the elaboration time of the ported `decode()`; no CPU-sized function has
-     been elaborated yet.
-3. **Answer the [open questions](#open-questions).**
+| Source | Decision | Notes |
+|---|---|---|
+| `include/risc-v/risc-v.h`: opcode and funct constants | Port as is | Module-level integers |
+| `risc-v.h`: `decode()` | Port | One `if`/`elif` tree, as in C. The per-instruction `printf`s become M1's `RISCV_TRACE` prints. Dropped: `print_rs1_read`/`print_rs2_read`, which only steer those prints, and `is_rv32i`/`is_rv32_mul`/`is_rv32_div`, autopipeline split flags that M5's plugins replace. Each chain of `int13_uint1_12(...)` immediate helpers becomes one `concat`. Added for M1: FENCE as a no-op, ECALL and EBREAK as halt |
+| `risc-v.h`: `execute()` | Port | JALR's `int32_uint1_0(result, 0)` becomes `bit_assign` (bit-slice assignment fails in native simulation). The M extension's `execute_rv32_mul` and `execute_rv32_div` move to M5's M plugin |
+| `risc-v.h`: `select_reg_wr_data()`, `select_next_pc()` | Port | Legacy load handling is split three ways: `decode()` sets byte enables, the DMEM wrapper shifts and truncates, and `select_reg_wr_data()` sign-extends. M1 joins them in the load and store alignment function |
+| `examples/risc-v/risc-v_decl.h` | Redesigned as M1's core factory | Same datapath. The macro instance (`riscv_name` and `#define`d sizes and contents) becomes factory arguments, and `#pragma FEEDBACK` becomes `Feedback[T]`. Its `halt` and `return_value` outputs are declared but never assigned; M1's halt comes from ECALL, EBREAK and the `TOHOST` write |
+| `include/risc-v/reg_file.h` | Port | The same three-port RAM and `x0` write gate. M1 adds the `x0` read mux, so `x0` does not depend on the RAM's initial contents |
+| `include/risc-v/mem_decl.h`, 0-cycle IMEM and DMEM | Redesigned | The raw-VHDL RAMs become `make_ram(read_latency=0)`, with `byte_write_enables=True` for DMEM. A store outside DMEM and MMIO, or to an unmapped MMIO address, sets `mem_out_of_range` but still drives the DMEM write at `addr >> 2` (from the code). M1 enables the write only in the DMEM window. The legacy check flags a misaligned access only when it spills past its word; M1 flags any misaligned access |
+| `mem_decl.h`, 1-cycle and handshake variants | Deferred | They belong to the registered-read and FSM cores |
+| `include/risc-v/mem_map.h`: `STRUCT_MM_ENTRY_NEW` | Redesigned in M3 | Each device's structs are mapped whole through bytes, instead of one `mm_regs_t` for every device |
+| `mem_map.h`: `MM_STREAM`, `HANDSHAKE_MM_READ`/`_WRITE` and the C `mm_handshake_*` macros | Dropped | M4's console FIFOs replace the valid-flag handshake |
+| `mem_map.h`: `STRUCT_MM_ENTRY_NEWEST`, `BYTES4_MM_WRITE_LOGIC`, `MM_SHARED_AXI_TO_FROM_HOST` | Dropped or deferred | `NEWEST` is a word-indexed form of the same mapping, which M3 builds its own way. The AXI windows are deferred |
+| `examples/risc-v/risc-v.c`, `examples/pico-ice/ice_makefile_pipelinec/risc-v/single_cycle_risc-v_top.c` | Redesigned in M3 and M6 | Their memory-map modules write fields (`o.outputs`, `mem_map_outputs`) that the current headers do not declare, so they probably do not build. From the code; not built |
+| Firmware: the `Makefile`, `link.ld`, `bootstrap.S` and `bin2vhdl.py` in `examples/pico-ice/.../firmware/` and `examples/risc-v/gcc_test/` | Dropped | The firmware helper replaces them. The legacy build uses `-O3 -mstrict-align -lm` without `-nostdlib`. `bootstrap.S` sets `sp`, calls `main` and has nothing after the call. `.bss` sits inside `.data`, so objcopy writes its zeros, and `.data` has a load address in ROM that nothing uses |
+| Demo programs | The pico-ice `main.c` is ported | M1 ports it without its UART, which M4 adds. The `gcc_test` demos (FFT, frame buffer, I2S, game of life) use StreamSoC devices and are not ported |
+| `examples/risc-v/cocotb/test_top.py` | Dropped | The simulation-control device's `sim_assert` and `sim_finish()` replace its checks. It reads `halt` and `main_return`, which the single-cycle core does not drive |
+| `examples/stream_soc/cpu/` | Input to M3 | Its FSM core is deferred. Its single `mm_regs_t` and its `MM_ENTRIES` table of `REGS` and `SHARED_AXI` windows become M3's per-device builder, without the AXI windows. It compiles with `-fpack-struct=1`, which M3's natural alignment replaces |
 
-M0 is done when this plan records each decision and every bug it finds has a GitHub
-issue, an inventory entry and a reproducer.
+`include/risc-v/fsm_riscv_decl.h`, the multi-cycle FSM core of the pico-ice demo
+`examples/pico-ice/ice_makefile_pipelinec/risc-v/risc-v_top.c`, is not ported in these
+milestones ([Deferred](#deferred)).
+
+The C idioms map to Pypeline like this:
+
+| C front end | Pypeline |
+|---|---|
+| `#pragma FEEDBACK` | `Feedback[T]` |
+| `printf` traces | `sim_print` behind a parameter |
+| the `riscv_name` macro instance | a factory call |
+| `*_mem_init.h` | `init=` |
+| `int13_uint1_12(x, b)`-style bit assembly | `concat` |
+| `x(hi, lo)` | `x[hi:lo]` |
+
+### Spikes
+
+**Firmware build.**
+
+- **ISA tests:** all 42 `rv32ui` tests build with the replacement environment and a
+  generated linker script. The largest, `ld_st`, takes 936 words of IMEM (3,744 bytes), so
+  the ISA tests need 4 KiB of IMEM. Their data is at most 20 words, except `ma_data`
+  (96 words), which is excluded anyway.
+- **Pass and fail stores:** the store to `tohost` assembles to an `auipc` that wraps from
+  IMEM at `0x0` to the MMIO window at `0x8000_0000`. The RV32 linker accepts this.
+- **ELF loader:** a loader using only `struct` matched objcopy's bytes for every loaded
+  section of the 42 ELFs, and left nothing else non-zero.
+- **Compile time:** 17 to 33 ms per ISA test, except 132 ms for the first. A C demo (a
+  counter, libgcc division, a `const` table and a string; 132 words of IMEM, 15 of DMEM)
+  takes 59 ms (median of 10).
+- **Compiles per run:** an elaboration-only, native or cocotb run imports the design
+  once, and a pipelined build whose design reads `.latency` imports it twice. M1's core
+  is combinational, so a run compiles its firmware once or twice, at that cost.
+
+**`decode()` and `execute()`.**
+
+- **Elaboration:** the ported `decode()` elaborates in 1 s with `--comb --no_synth` (2.9 s
+  for the whole command). `decode()` with `execute()` takes 2 s (5.2 s).
+- **Against objdump:** in native simulation, `decode()` gave objdump's fields for all
+  10,425 instruction words of the 42 ELFs, the C demo and one `p`-environment test (45
+  mnemonics, CSR instructions, ECALL and MRET among them).
+- **Native against GHDL:** `pypeline_sim_debug.py` fed 2,289 distinct instruction words,
+  with pseudo-random register values, through both functions. Every decoded field and
+  every result agreed. The cycle diff reported mismatches only on negative immediates,
+  until they were printed as unsigned values (the `hex()` bug).
+
+**CSRs and traps.** M2 lists what riscv-test-env's `env/p/riscv_test.h` uses.
 
 ## M1: Single-cycle RV32I core, firmware build and ISA tests
 
@@ -364,12 +416,16 @@ The names are proposals.
   `riscv32-unknown-elf-gcc -march=rv32i -mabi=ilp32 -O2 -nostdlib -nostartfiles
   -T <generated .ld> crt0.S <sources> -lgcc`, with no `-fpack-struct`. It looks for the
   toolchain on `PATH`, then in `/opt/riscv/bin`, unless a parameter names its location.
-  It builds in a fresh temporary directory outside the source tree.
+  It builds in a fresh temporary directory outside the source tree. From M2 it passes
+  `-march=rv32i_zicsr`. GCC 12.1 also accepts CSR instructions under `-march=rv32i`,
+  but that depends on the toolchain's ISA-spec default.
 - **Generated linker script and `crt0.S`:** both come from the address map constants.
-  - The linker script puts `.text` in IMEM and `.rodata`, `.data`, `.bss` and the stack in
-    DMEM. It exports `__stack_top`, `__bss_start` and `__bss_end`. From M2 it also places
-    the `p` environment's `.tohost` section at `TOHOST`, as `NOLOAD`, so the ELF has no
-    segment in the MMIO window.
+  - The linker script puts `.text`, with `.text.init` first, in IMEM. It puts `.rodata`,
+    `.data`, `.bss` and the stack in DMEM. It exports `__stack_top`, `__bss_start` and
+    `__bss_end`, and defines `tohost` at `TOHOST` for the replacement test environment.
+  - From M2 it places the `p` environment's `.tohost` section at `TOHOST` instead, as
+    `NOLOAD`. `NOLOAD` still gives the ELF a segment in the MMIO window, with no file
+    bytes, which the loader skips.
   - `crt0.S` sets `sp`, zeroes `.bss`, calls `main`, and writes the result to `TOHOST`.
 - **Generated Makefile:** with `project_dir=`, the helper also writes a `Makefile`, the
   linker script and `crt0.S` (and from M3 the C header) into that directory. The
@@ -378,9 +434,10 @@ The names are proposals.
   files, so each is replaced through a temporary file and a rename, and only when its
   content changed.
 - **Load:** the [ELF loader](#where-the-code-goes) reads the loadable segments with
-  Python's `struct` module (no objcopy or `pyelftools` step). It splits them by address
-  into the IMEM and DMEM word lists. A segment outside both windows, or one that does not
-  fit, is an error that names the segment.
+  Python's `struct` module (no objcopy or `pyelftools` step). It places them by virtual
+  address into the IMEM and DMEM word lists. A segment with no file bytes outside both
+  windows, such as `.tohost`, is skipped. Any other segment outside both windows, or one
+  that does not fit, is an error that names the segment.
 - **Choosing the firmware per run:** `param("FIRMWARE", ...)` names an ELF to load
   instead of building the default sources, so one design runs any program:
   `pypelinec top.py --sim --comb --run 200000 -D FIRMWARE=add.elf`. A project with its own
@@ -392,6 +449,9 @@ The names are proposals.
   dependency file, and an ELF named by `-D FIRMWARE`. So a repeat build and a testbench
   on built hardware notice edited firmware without `--rebuild`
   ([Code that runs during design import](pypeline_guide.md#code-that-runs-during-design-import)).
+  The `-MD` file also lists the toolchain's own headers (`stdint.h` and newlib's), so a
+  toolchain change that changes them builds again too. Any other toolchain change needs
+  `--rebuild`.
 
 ### ISA tests
 
@@ -403,7 +463,8 @@ The names are proposals.
   - the data-section macros.
 
   Other small cores take this approach; picorv32's `tests/riscv_test.h` is one example.
-  The replacement stays after M2, for cores built without traps.
+  The replacement stays after M2, for cores built without traps. M0 built all 42
+  `rv32ui` tests with such a replacement.
 - **Excluded tests:**
   - `fence_i`, which writes instructions through data stores. A Harvard IMEM cannot take
     those writes.
@@ -433,8 +494,9 @@ The names are proposals.
   the default tool for tests. The guide sections, the example README and the README
   feature table describe the core and firmware workflow.
 
-Risks: no CPU-sized design has been elaborated yet, and native simulation speed is
-unmeasured.
+Risks: M0 elaborated only `decode()` and `execute()` (2 s), and measured native
+simulation speed only for them (499 cycles per second). The whole core is larger on both
+counts.
 
 ## M2: Machine-mode traps and CSRs
 
@@ -443,20 +505,35 @@ goes into the core as one unit, so M5 can make it the first plugin.
 
 **Before it starts:** nothing known.
 
-What the `p` environment needs, to be confirmed against the copied
-`env/p/riscv_test.h` by M0's spike:
+What the `p` environment needs, from riscv-test-env `6de71edb`'s `env/p/riscv_test.h`
+and M0's disassembly of `rv32ui` `add` built with it:
 
-- **CSR instructions:** `csrrw`, `csrrs`, `csrrc` and their immediate forms.
-- **CSRs:** `mstatus`, `mtvec` (direct mode), `mepc`, `mcause` and `mhartid` (reads 0).
-  `mie` reads as zero and ignores writes: there are no interrupts, and the environment
-  writes it before it points `mtvec` past the access, so a trap there would loop.
+- **Instructions:** the environment uses `csrrs` (as `csrr`), `csrrw` (`csrw`), `csrrwi`
+  (`csrwi`), ECALL, MRET and FENCE. The core also implements `csrrc` and the other
+  immediate forms, which the `rv32mi` tests use.
+- **What must not trap,** from the order of the accesses:
+  1. `mhartid` is read before `mtvec` is first written, so it reads 0 without trapping.
+  2. Each probe then points `mtvec` past itself, so these may trap as illegal
+     instructions: `mnstatus` (CSR `0x744`, from Smrnmi), `satp`, `pmpaddr0` and
+     `pmpcfg0`, `medeleg` and `mideleg`.
+  3. `mie` is written while `mtvec` still points at the write, so a trap there would
+     loop. `mie` reads as zero and ignores writes: there are no interrupts.
+  4. Once `mtvec` points at the trap vector, the writes to `mstatus` and `mepc`, a second
+     `mhartid` read and MRET must not trap.
+- **CSRs:** `mstatus`, `mtvec` (direct mode), `mepc`, `mcause`, `mhartid` and `mie`, as
+  above. The environment writes 0 to `mstatus` before MRET. In a machine-only core,
+  `mstatus.MPP` still reads as machine mode, so MRET stays in machine mode and the
+  test's ECALLs are cause 11.
 - **Traps:** ECALL (cause 11) and EBREAK (cause 3) save the PC in `mepc`, set `mcause`
   and jump to `mtvec`. An unknown encoding or CSR traps as an illegal instruction
-  (cause 2), which the environment's `satp` and PMP probes rely on: they point `mtvec`
-  at the next instruction first. `unknown_op` stays as a debug output.
+  (cause 2). `unknown_op` stays as a debug output.
+- **Trap vector:** it reads `mcause`. Causes 8, 9 and 11, ECALL from each privilege
+  mode, write the result to `tohost`. Any other cause writes a fail code
+  (`TESTNUM | 1337`).
 - **MRET:** jumps to `mepc`. The environment enters the test through it.
-- **`tohost`:** the trap handler writes the test number to the `.tohost` section, which
-  the generated linker script places at M1's `TOHOST`. Pass and fail codes are M1's.
+- **`tohost`:** the trap handler writes the pass or fail code that the test left in
+  `TESTNUM` (`gp`) to `tohost`, then 0 to `tohost + 4`, and repeats. The generated linker
+  script places the `.tohost` section at M1's `TOHOST`. Pass and fail codes are M1's.
 
 Misaligned accesses trap too (causes 4 and 6) instead of setting `mem_out_of_range`.
 Interrupts, timers and counters stay [deferred](#deferred).
