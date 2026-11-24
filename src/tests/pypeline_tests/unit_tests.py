@@ -408,7 +408,8 @@ def get_tests() -> list:
     # import-time safe) and with the stdlib distutils unavailable (Python 3.12),
     # a .py build needs no C preprocessor (#363), and a build with no synthesis
     # tool for its part falls back to --comb --no_synth (re-elaborating a design
-    # that read a start_latency= .latency).
+    # that read a start_latency= .latency). Explicit --no_synth writes the
+    # final VHDL list with or without that tool (#407).
     tests.append(
         Test(
             name="src_module_import_test",

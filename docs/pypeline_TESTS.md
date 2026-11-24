@@ -885,7 +885,7 @@ build input each fail a check.
   `pypeline_sim.py --wave` must write the same bytes.
 - `waves_native_fst` (native_sim, needs `vcd2fst` and `fst2vcd`): the same checks on the
   `.fst`, read back through `fst2vcd`, and no leftover VCD.
-- `waves_elab` (elab): the fixture elaborates, and its top level has only the clock,
+- `waves_elab` (elab): the fixture elaborates, and its public `top/top.vhd` has only the clock,
   `rst`, `count` and the return port.
 - `waves_ghdl` (build_report_device_models, needs `ghdl` and `cocotb-config`): `--cocotb
   --ghdl --wave` with `.vcd`, `.fst` and `.ghw` passes GHDL its `--vcd=`/`--fst=`/`--wave=`

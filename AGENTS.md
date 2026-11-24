@@ -156,8 +156,9 @@ For test-runner commands, see [Testing](#testing).
   who relies on it (the tests, the guides, downstream scripts that parse its console
   line) and the evidence that it can't be kept. A limit that only exists because a
   first attempt failed for those designs is a bug to find, not a scope decision.
-- **Price what every run pays.** A step added to a path every run takes (the
-  up-to-date check, a testbench replay, a cache lookup) is measured on the largest
+- **Price what every run pays.** A step added to a path every run takes, or a skip
+  removed from one (the up-to-date check, a testbench replay, a cache lookup, the
+  final files of a `--no_synth` build), is measured on the largest
   design the task names, next to the cheapest alternative that meets the
   requirement, including any the task's brief suggests. Put both numbers in the plan.
   Elaborating the design in the up-to-date check took WireGuard's check from 2 s to
@@ -321,7 +322,11 @@ python3 src/tests/pypeline_tests/run_all.py --category known_issues -t NAME -j 1
 
 - **Test what changed.** A narrow fix needs its reproducer, its new regression test,
   the categories whose code paths it touches (for example `elab`,
-  `elab_introspect`, `native_sim`, `unit`) and the affected example's own test. A full
+  `elab_introspect`, `native_sim`, `unit`) and the affected example's own test. When
+  the report comes from a downstream script (a CI lint that reads `vhdl_files.txt`,
+  say), also run that script's command from frozen copies before and after the fix.
+  A regression test on a small example proves the mechanism, not that the consumer
+  works. A full
   default `run_all.py` starts hours of vendor synthesis first; run it only for broad
   compiler or backend changes. A change to shared planner or sweep policy (behavior
   that applies to every design of a kind) also needs that policy's broader categories.
@@ -340,6 +345,11 @@ python3 src/tests/pypeline_tests/run_all.py --category known_issues -t NAME -j 1
   already assert the property (the
   [test inventory](docs/code_reviews/tests_review/TEST_INVENTORY.md), a grep of
   `test_*` names) and extend or cite them. Say what each new test adds.
+- **Find the trigger in the code, not the report.** A report names one setup; the
+  condition the code branches on can be wider. #407 was reported on a machine with
+  Vivado, but the skipped writer depended on a flag only the no-tool fallback set,
+  so every `--no_synth` build with any tool lost its file list, PyRTL included.
+  State that condition in the fix's docs and tests.
 - **Pick the test by the bug's failure mode.** An elaboration failure can use a
   plain design registered in `elab_tests.py`. A GHDL or synthesis rejection needs
   an invocation that actually runs that tool. Silent bugs need assertions on the
@@ -411,6 +421,8 @@ python3 src/tests/pypeline_tests/run_all.py --category known_issues -t NAME -j 1
   that describes code you changed. When you change CLI flags, configuration
   variables, generated output paths or function names, grep all of `docs/` and
   `README.md` and update every occurrence, including flag tables and artifact lists.
+  Rewrite only what the change makes false or incomplete. A command or example that
+  still works stays as it is, so the docs keep one spelling of it.
 - **Keep the READMEs current.** The top-level [`README.md`](README.md) (including its
   Pypeline-versus-PipelineC feature table) and [`docs/README.md`](docs/README.md) are
   user docs like the rest. When a change adds, removes or limits a user-visible feature,
@@ -430,7 +442,9 @@ python3 src/tests/pypeline_tests/run_all.py --category known_issues -t NAME -j 1
   coupling, a misleading name or comment, state with no clear owner, a rule
   duplicated elsewhere. Put it in the section that covers it, name the functions and
   the commit or tree it describes, give the evidence, and label a suspected problem
-  as suspected. A finding is reference material, not a session log.
+  as suspected. Write what stays true after your change: "in `<commit>`, X did Y"
+  about the bug you just fixed is a change record, even with a hash. A finding is
+  reference material, not a session log.
 - **Reference, not a logbook.** Docs describe what the code does now, in the present
   tense. No dated entries, no "recently added" or "now supports", no session
   write-ups. `git log` is the change record. A reason worth keeping goes in the file's

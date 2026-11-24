@@ -108,7 +108,8 @@ parser.add_argument(
 )
 parser.add_argument(
     "--no_synth",
-    help="Like --comb, except do not run synthesis. Just output final combinatorial logic HDL.",
+    help="Write the final VHDL and vhdl_files.txt without whole-design synthesis "
+    "or timing-driven pipelining. Explicit fixed latencies are honored.",
     action="store_true",
 )
 parser.add_argument(
@@ -629,10 +630,10 @@ print("Writing output files before adding pipelining...", flush=True)
 AUTO_PIPELINE.WRITE_0_ADDED_CLKS_INIT_FILES(parser_state)
 parser_state = SWEEP.APPLY_LATENCY_MEMORY(parser_state, src_file, latency_hints)
 
-# If no synth tools installed, switch over to --comb --no_synth mode for user with warning...
+# With no synthesis tool for the part, warn if the build requested synthesis.
 SYN.PART_SET_TOOL(parser_state.part, allow_fail=True)
 if SYN.SYN_TOOL is None:
-    if not args.no_synth or not args.comb:
+    if not args.no_synth:
         print(
             "WARNING: No synthesis tool install detected based on PART. Skipping synthesis and auto-pipelining."
         )
@@ -641,7 +642,7 @@ if SYN.SYN_TOOL is None:
     parser_state = AUTO_PIPELINE.SWITCH_TO_FIXED_ONLY_BUILD(parser_state, src_file)
 
 if args.comb or args.no_synth:
-    comb_timing_params = AUTO_PIPELINE.WRITE_COMB_FINAL_FILES(parser_state, args.comb)
+    comb_timing_params = AUTO_PIPELINE.WRITE_COMB_FINAL_FILES(parser_state)
     # A build that synthesizes writes its diagram after the sweep instead
     if args.no_synth:
         DIAGRAM.WRITE_DIAGRAM(parser_state, comb_timing_params, src_file)
@@ -676,10 +677,5 @@ if not args.no_synth:
         args.sim, parser_state, args, multimain_timing_params, source_file=src_file
     )
 
-import AUTO_COMB_OPT
-
-# A --no_synth build with no fixed latencies never calls SYN.WRITE_FINAL_FILES,
-# which otherwise writes the generated sources
-AUTO_COMB_OPT.DUMP_GENERATED_SOURCE(parser_state, SYN.SYN_OUTPUT_DIRECTORY)
 SYN.WRITE_NAME_INDEX_LOG(parser_state)
 print("Done.", flush=True)

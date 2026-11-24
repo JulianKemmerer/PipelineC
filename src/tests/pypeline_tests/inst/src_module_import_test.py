@@ -16,12 +16,15 @@
     --comb --no_synth, with a warning, and re-elaborates a design that read a
     start_latency= .latency (served by the synthesizing first parse) so the
     read becomes 0.
+  - Explicit --no_synth writes the same final VHDL list with Vivado present
+    or absent, without the automatic fallback warning (#407).
 
 Run standalone: python3 src_module_import_test.py
 """
 
 import glob
 import os
+from pathlib import Path
 import subprocess
 import sys
 import tempfile
@@ -121,6 +124,26 @@ def test_c_build_without_cpp_names_cpp():
         assert "'cpp' C preprocessor is not installed!" in p.stdout, p.stdout[-3000:]
 
 
+def _xc7_build(design, out_dir, env, *options):
+    return subprocess.run(
+        [
+            sys.executable,
+            PIPELINEC,
+            design,
+            "--part",
+            "xc7a35tcpg236-1",
+            "--out_dir",
+            out_dir,
+            *options,
+        ],
+        cwd=os.path.dirname(out_dir),
+        env=env,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.STDOUT,
+        text=True,
+    )
+
+
 def _no_syn_tool_build(design):
     # PATH holds only python3 (no Vivado on it) and XILINX_VIVADO names a missing
     # install, so the xc7 part's tool is not installed on any machine
@@ -128,19 +151,45 @@ def _no_syn_tool_build(design):
         env = _no_cpp_env(tmp)
         env["XILINX_VIVADO"] = os.path.join(tmp, "no_vivado")
         out_dir = os.path.join(tmp, "out")
-        p = subprocess.run(
-            [sys.executable, PIPELINEC, design, "--part", "xc7a35tcpg236-1", "--out_dir", out_dir],
-            cwd=tmp,
-            env=env,
-            stdout=subprocess.PIPE,
-            stderr=subprocess.STDOUT,
-            text=True,
-        )
+        p = _xc7_build(design, out_dir, env)
         wrote_vhdl = os.path.isfile(os.path.join(out_dir, "vhdl_files.txt"))
     return p, wrote_vhdl
 
 
+# The warning for a build that requested synthesis but could only write HDL
 _NO_SYN_TOOL_WARNING = "WARNING: No synthesis tool install detected based on PART."
+
+
+def test_no_synth_final_files_with_and_without_vivado():
+    design = Path(REPO_ROOT) / "examples" / "pypeline" / "counter.py"
+    top = "counter_dut"
+    with tempfile.TemporaryDirectory() as tmp:
+        root = Path(tmp)
+        env = _no_cpp_env(tmp)
+        # Finalization queries the version to write read_vhdl.tcl. A synthesis
+        # invocation would fail, and no machine-local Vivado is visible on PATH.
+        vivado = root / "installed" / "bin" / "vivado"
+        vivado.parent.mkdir(parents=True)
+        vivado.write_text('#!/bin/sh\n[ "$*" = "-version" ] && echo "Vivado v2022.2"\n')
+        vivado.chmod(0o755)
+
+        manifests = {}
+        for install in ("installed", "missing"):
+            env["XILINX_VIVADO"] = str(root / install)
+            out_dir = root / ("out_" + install)
+            p = _xc7_build(design, out_dir, env, "--no_synth", "--top", top)
+            assert p.returncode == 0, p.stdout
+            assert ("Using VIVADO synthesizing" in p.stdout) == (
+                install == "installed"
+            ), p.stdout
+            manifest = out_dir / "vhdl_files.txt"
+            assert manifest.is_file(), p.stdout
+            files = [Path(entry) for entry in manifest.read_text().split()]
+            assert out_dir / top / (top + ".vhd") in files, files
+            assert all(path.is_file() for path in files), files
+            assert _NO_SYN_TOOL_WARNING not in p.stdout, p.stdout
+            manifests[install] = [path.relative_to(out_dir) for path in files]
+        assert manifests["installed"] == manifests["missing"], manifests
 
 
 def test_no_syn_tool_falls_back_to_comb_no_synth():

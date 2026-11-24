@@ -885,7 +885,7 @@ observation, `fit_status` is `unknown`.
 | `--part PARTSTR` | target that FPGA part instead of `PART(...)` in the source; setting both differently is an error |
 | `-j N` / `--jobs N` | cap synthesis runs in flight and AUTO_FSM search workers (default `config/num_processes.cfg`). Really a memory knob -- see §4 |
 | `--comb` | no pipelining; one synthesis run reporting combinational fmax per clock |
-| `--no_synth` | like `--comb`, without synthesis: just write the combinational HDL |
+| `--no_synth` | write the final top and its VHDL file list, honoring fixed latencies and skipping whole-design synthesis |
 | `--full_hier_syn` | synthesize every hierarchy level for path delays; opaque `vhdl()` text starts at zero estimated delay |
 | `--no_hier_syn` | Collect geometry from required primitive operators; opaque `vhdl()` text starts at zero. Skip combinational frontier measurements and hierarchical fallback. AUTO_MCP endpoint evidence and AUTO_FSM calibration remain independent consumers. Usable stored measurements can still replace estimates (§6). |
 | `--no_stored_measurements` | estimate delays and areas as if no earlier run existed: don't use an earlier synthesis of the same exact inputs from the output directory or the `--syn_cache` store in place of an estimate (§6) |
@@ -933,9 +933,9 @@ in the module whose feature it serves. In order, it:
 3. settles part and tool with `RESOLVE_BUILD_TARGET` (§2) and writes the
    zero-added-latency files (`AUTO_PIPELINE.WRITE_0_ADDED_CLKS_INIT_FILES`). It then
    applies the latency memory (`SWEEP.APPLY_LATENCY_MEMORY`, sweep builds only);
-4. with no synthesis tool for the part, continues as `--comb --no_synth`, with a
-   warning. `AUTO_PIPELINE.SWITCH_TO_FIXED_ONLY_BUILD` re-elaborates a design that
-   already read a `start_latency=` or a starting latency;
+4. with no synthesis tool for the part, continues as `--comb --no_synth` and warns
+   if synthesis was requested. `AUTO_PIPELINE.SWITCH_TO_FIXED_ONLY_BUILD`
+   re-elaborates a design that already read a `start_latency=` or a starting latency;
 5. for `--comb` or `--no_synth`, writes the final files with any fixed
    `AUTO_PIPELINE(latency=)` call sites (`AUTO_PIPELINE.WRITE_COMB_FINAL_FILES`).
    A `--no_synth` build then writes its design diagram (`DIAGRAM.WRITE_DIAGRAM`,
@@ -952,13 +952,13 @@ in the module whose feature it serves. In order, it:
    bitstream step leaves no record, and runs the requested simulation
    (`SIM.DO_OPTIONAL_SIM`, see
    [`SIM_DESIGN.md`](SIM_DESIGN.md));
-7. writes the generated sources (`AUTO_COMB_OPT.DUMP_GENERATED_SOURCE`, needed by a
-   `--no_synth` build without fixed latencies, which writes no final files) and
-   `name_index.log` (§7).
+7. writes `name_index.log` (§7).
 
 `src_module_import_test.py` (unit) runs the fallback of step 4 in an environment with
 no tools: a plain build falls back with the warning, and a design that read a
-`start_latency=` `.latency` is re-elaborated so the read becomes 0.
+`start_latency=` `.latency` is re-elaborated so the read becomes 0. It also checks
+that an explicit `--no_synth` build of the counter example emits the same final
+file list with Vivado present or absent.
 
 ## 9. Operator QoR benchmark
 

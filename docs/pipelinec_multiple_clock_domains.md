@@ -200,7 +200,7 @@ directly (shared globals) or through one generated `clk_cross_<var>` entity per 
 | wiring MAIN | a small `FUNC_WIRES` MAIN that a library macro declares to connect globals, usually without a frequency so that inference places it |
 | user clock | a `uint1_t` global named as a clock with `CLK_MHZ` ([User clocks](#user-clocks-clk_mhz-and-clk_mhz_group)) |
 | synchronizer | registers in the receiving domain that sample an asynchronous signal (the `CDC` macros, the pointer registers inside the async FIFOs) |
-| synthesis top, final top | `top/top_<hash>.vhd`, written for PipelineC's own timing runs with IO registers, and `top/top.vhd`, written by `SYN.WRITE_FINAL_FILES` at the end of a build without them. A `--no_synth` build without fixed `AUTO_PIPELINE` latencies skips `WRITE_FINAL_FILES` and leaves only the synthesis top |
+| synthesis top, final top | `top/top_<hash>.vhd`, written for PipelineC's own timing runs with IO registers, and `top/top.vhd`, written by `SYN.WRITE_FINAL_FILES` without those registers. A `--no_synth` build lists the final top in `vhdl_files.txt` |
 
 ## 2. Declaring clock domains
 

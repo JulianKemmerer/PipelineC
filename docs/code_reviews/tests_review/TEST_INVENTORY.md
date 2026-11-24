@@ -2781,11 +2781,13 @@ Python entry registered; module auto-discovery. Registration(s): `unit:src_modul
 
 | Declaration | Purpose / execution note |
 |---|---|
-| [test_every_src_module_imports_first](../../../src/tests/pypeline_tests/inst/src_module_import_test.py#L49) | Every src module imports first. |
-| [test_python_build_without_cpp](../../../src/tests/pypeline_tests/inst/src_module_import_test.py#L65) | Python build without cpp. |
-| [test_c_build_without_cpp_names_cpp](../../../src/tests/pypeline_tests/inst/src_module_import_test.py#L81) | C build without cpp names cpp. |
-| [test_no_syn_tool_falls_back_to_comb_no_synth](../../../src/tests/pypeline_tests/inst/src_module_import_test.py#L118) | No syn tool falls back to comb no synth. |
-| [test_no_syn_tool_fallback_re_elaborates_start_latency](../../../src/tests/pypeline_tests/inst/src_module_import_test.py#L126) | No syn tool fallback re elaborates start latency. |
+| [test_every_src_module_imports_first](../../../src/tests/pypeline_tests/inst/src_module_import_test.py#L54) | Every src module imports first. |
+| [test_src_modules_import_without_distutils](../../../src/tests/pypeline_tests/inst/src_module_import_test.py#L70) | Every src module imports with the stdlib `distutils` unavailable. |
+| [test_python_build_without_cpp](../../../src/tests/pypeline_tests/inst/src_module_import_test.py#L96) | Python build without cpp. |
+| [test_c_build_without_cpp_names_cpp](../../../src/tests/pypeline_tests/inst/src_module_import_test.py#L112) | C build without cpp names cpp. |
+| [test_no_synth_final_files_with_and_without_vivado](../../../src/tests/pypeline_tests/inst/src_module_import_test.py#L163) | Two bare `--no_synth --top` builds of the counter example, one with a stub Vivado that answers only `-version` and one with none: both list the named final top in `vhdl_files.txt`, every listed file exists, the lists match, and neither prints the no-tool warning (#407). |
+| [test_no_syn_tool_falls_back_to_comb_no_synth](../../../src/tests/pypeline_tests/inst/src_module_import_test.py#L195) | No syn tool falls back to comb no synth. |
+| [test_no_syn_tool_fallback_re_elaborates_start_latency](../../../src/tests/pypeline_tests/inst/src_module_import_test.py#L203) | No syn tool fallback re elaborates start latency. |
 
 ### inst/stream_auto_fsm_test.py
 

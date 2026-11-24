@@ -960,9 +960,11 @@ def WRITE_FINAL_FILES(multimain_timing_params, parser_state):
 
     # Ensure every entity the final file list will reference exists on disk
     # under its freshly-computed (content-aware) name: pass ALL insts as
-    # eligible; already-written entities are skipped by name dedup +
-    # skip-if-exists inside (sound now that entity hashes cover descendant
-    # func names, so same filename => same rendered content).
+    # eligible. Entities this process already wrote through
+    # WRITE_ALL_NON_ZERO_CLK_VHDL_FILES are skipped (name dedup plus
+    # _NON_ZERO_CLK_FILES_WRITTEN; entity hashes cover descendant func names,
+    # so same filename => same rendered content). Files WRITE_ALL_ZERO_CLK_VHDL
+    # wrote are not in that set, so they are rendered again.
     AUTO_PIPELINE.WRITE_ALL_NON_ZERO_CLK_VHDL_FILES(
         multimain_timing_params.TimingParamsLookupTable,
         parser_state,

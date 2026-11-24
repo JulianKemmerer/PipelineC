@@ -352,8 +352,10 @@ Every hardware function becomes a human-readable VHDL-2008 entity. The top-level
 [clock and IO ports](#top-level-ports-and-clocks); packages hold the struct, enum and
 global wire types. `vhdl_files.txt` lists the files, alongside tool-specific helpers like
 Vivado's `read_vhdl.tcl` (see [Generated files and reports](#generated-files-and-reports)).
-With `--comb --no_synth` the build stops here, with the design exactly as written: no
-synthesis tool needed. How: [VHDL_DESIGN.md](VHDL_DESIGN.md).
+With `--no_synth` (or `--comb --no_synth`) the build stops here and writes the top-level
+VHDL and `vhdl_files.txt`, whether or not a synthesis tool for the part is installed.
+The design is as written, plus the registers of any fixed `latency=`: no timing sweep
+runs. How: [VHDL_DESIGN.md](VHDL_DESIGN.md#artifact-layers).
 
 ### Measures timing with a synthesis tool
 
@@ -1268,7 +1270,7 @@ before; `--comb` simulation never builds. To simulate generated VHDL instead
 |---|---|
 | *(no mode flag)* | Run the planned timing-driven pipeline sweep for each eligible `@MAIN` with a clock goal |
 | `--comb` | Keep the design combinational and run one timing characterization per clock |
-| `--no_synth` | Generate combinational HDL without invoking a synthesis backend |
+| `--no_synth` | Write the final VHDL and `vhdl_files.txt`. Skip whole-design synthesis and timing-driven pipelining. |
 | `--full_hier_syn` | Measure every hierarchy level individually instead of estimating its delay. Opaque `vhdl()` text still starts at zero. |
 | `--no_hier_syn` | Estimate hierarchy delays from primitive measurements and disable hierarchical fallback. Automatic multi-cycle and FSM decisions still receive required measurements. |
 | `--no_stored_measurements` | Estimate hierarchy delays and areas even when this `--out_dir` or the `--syn_cache` store holds an earlier synthesis of the same exact inputs (by default such a measurement replaces the estimate) |

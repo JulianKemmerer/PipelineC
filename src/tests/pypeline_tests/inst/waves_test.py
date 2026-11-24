@@ -581,12 +581,9 @@ def native_fst(out_dir):
 
 
 def elab(out_dir):
-    import glob
-
     proc = run([sys.executable, PYPELINEC, DESIGN, "--no_synth", "--out_dir", out_dir])
     assert proc.returncode == 0, f"pypelinec exited {proc.returncode}"
-    (top_vhd,) = glob.glob(os.path.join(out_dir, "top", "top*.vhd"))
-    with open(top_vhd) as f:
+    with open(os.path.join(out_dir, "top", "top.vhd")) as f:
         lines = f.read().splitlines()
     port_lines = lines[lines.index("port(") + 1 :]
     port_lines = port_lines[: [line.strip() for line in port_lines].index(");")]
