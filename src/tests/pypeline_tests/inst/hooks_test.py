@@ -6,11 +6,11 @@ Runs hooks_design.py once per HOOKS_TEST_MODE design parameter and checks its EV
 - sim @final hooks all run after the last @sim_output, after sim_finish(), a
   --run N cutoff, or an error, and the error that ended the run is still the
   one raised
-- syn-only hooks never run in a simulation
+- synthesis hook requests are rejected
 - sim_finish() inside a hook, a hook with parameters, and sim=False/syn=False
   are errors
 
-hooks_order_test.py covers the pypelinec driver flows (syn hooks, cocotb+GHDL).
+hooks_order_test.py covers the pypelinec driver flows (builds and cocotb+GHDL).
 """
 
 import sys, os
@@ -24,8 +24,8 @@ import pypeline_sim
 from pypeline import final, initial
 
 DESIGN = os.path.join(os.path.dirname(os.path.abspath(__file__)), "hooks_design.py")
-SIM_INITIALS = {"both_initial", "sim_initial_a", "sim_initial_b"}
-SIM_FINALS = {"both_final", "sim_final"}
+SIM_INITIALS = {"bare_initial", "sim_initial_a", "sim_initial_b"}
+SIM_FINALS = {"bare_final", "sim_final"}
 
 
 def _run(mode, num_cycles):
@@ -48,7 +48,6 @@ def _check_order(events, n_outputs):
     middle = events[n : -len(SIM_FINALS)]
     assert set(middle) <= {"sim_input", "sim_output"}, events
     assert middle.count("sim_output") == n_outputs, events
-    assert not any(e.startswith("syn_") for e in events), events
 
 
 # The counter's sim_finish() cycle: NUM_CYCLES (5) counting cycles after the
@@ -101,6 +100,13 @@ def test_decorator_errors():
         assert "no arguments" in str(e), e
     else:
         raise AssertionError("hook with a parameter was accepted")
+    for decorator in (initial, final):
+        try:
+            decorator(syn=True)
+        except ValueError as e:
+            assert "only in simulation" in str(e), e
+        else:
+            raise AssertionError("syn=True was accepted")
     try:
 
         @final(sim=False, syn=False)

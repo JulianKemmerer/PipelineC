@@ -3,17 +3,14 @@
 a pypelinec subprocess and checks where its "HOOK: <name>" markers land in the
 output, relative to the driver's own progress lines.
 
-  --variant native_comb       --sim --comb: no build, so no syn hooks
+  --variant native_comb       --sim --comb: native simulation only
   --variant native_pipelined  --sim (sky130 build, then native sim)
   --variant vhdl_comb         --sim --comb --cocotb --ghdl
-  --variant no_synth          --no_synth: syn hooks only
+  --variant no_synth          --no_synth: build only
   --variant call_from_hw      a MAIN calling a hook fails elaboration
 
-Checked for the build variants: syn @initial hooks run once, after the design
-import and before elaboration; syn @final hooks run once (a --comb build writes
-its final files twice), after the final VHDL is written and before any sim
-hook. For the sim variants: sim @initial hooks before the first clock, sim
-@final hooks after the last.
+Build-only runs produce no hook events. On simulation runs the initial and
+final markers surround the clocks exactly once.
 """
 
 import argparse, os, subprocess, sys
@@ -33,10 +30,8 @@ VARIANT_ARGS = {
     "no_synth": ["--no_synth"],
     "call_from_hw": ["--no_synth"],
 }
-SIM_INITIALS = ["both_initial", "sim_initial_a", "sim_initial_b"]
-SIM_FINALS = ["both_final", "sim_final"]
-SYN_INITIALS = ["both_initial", "syn_initial"]
-SYN_FINALS = ["both_final", "syn_final"]
+SIM_INITIALS = ["bare_initial", "sim_initial_a", "sim_initial_b"]
+SIM_FINALS = ["bare_final", "sim_final"]
 
 
 def _run(variant, out_dir):
@@ -66,27 +61,6 @@ def _hook_positions(lines):
     ]
 
 
-def _check_syn(lines, hooks):
-    """Split off and check the syn hooks; returns the remaining (sim) hooks."""
-    parse = _index(lines, lambda l: l.startswith("PY_TO_LOGIC parsing:"))
-    elab = _index(lines, lambda l: "elaborating func:" in l)
-    # --no_synth writes its final (zero added clocks) VHDL under this banner
-    # and prints no "Output VHDL files:" line
-    written = _index(
-        lines,
-        lambda l: l.startswith("Output VHDL files:")
-        or l.startswith("Writing global wire definitions"),
-    )
-    syn_init = hooks[: len(SYN_INITIALS)]
-    assert sorted(n for _, n in syn_init) == sorted(SYN_INITIALS), hooks
-    assert all(parse < i < elab for i, _ in syn_init), (parse, elab, syn_init)
-    rest = hooks[len(SYN_INITIALS) :]
-    syn_final = rest[: len(SYN_FINALS)]
-    assert sorted(n for _, n in syn_final) == sorted(SYN_FINALS), hooks
-    assert all(i > written for i, _ in syn_final), (written, syn_final)
-    return rest[len(SYN_FINALS) :]
-
-
 def _check_sim(lines, hooks):
     first_clk = _index(lines, lambda l: l.startswith("Clock:"))
     last_clk = _index(lines, lambda l: l.startswith("Clock:"), last=True)
@@ -112,12 +86,10 @@ def main():
         return
     assert rc == 0, f"pypelinec exited {rc}"
     hooks = _hook_positions(lines)
-    if args.variant == "native_comb":
-        _check_sim(lines, hooks)
-    elif args.variant == "no_synth":
-        assert _check_syn(lines, hooks) == [], hooks
+    if args.variant == "no_synth":
+        assert not hooks, hooks
     else:
-        _check_sim(lines, _check_syn(lines, hooks))
+        _check_sim(lines, hooks)
     print(f"hooks_order_test {args.variant}: passed")
 
 

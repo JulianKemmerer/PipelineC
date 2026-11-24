@@ -2117,13 +2117,13 @@ class FuncElaborator:
         return safe
 
     def _reject_hook_call(self, callee, call_node):
-        """@initial/@final hooks are run by the tools at the start/end of a run,
-        never called from hardware."""
+        """@initial/@final hooks are run by the tools at the start/end of a
+        simulation, never called from hardware."""
         if getattr(callee, "_is_pypeline_hook", False):
             raise ElaborationError(
                 f"In '{self.func_name}': '{callee.__name__}()' is an "
                 f"@initial/@final hook -- hooks are plain Python the tools run "
-                f"once at the start/end of a simulation or build, and cannot be "
+                f"once at the start/end of a simulation, and cannot be "
                 f"called from hardware code.",
                 call_node,
             )
@@ -5781,11 +5781,7 @@ class FuncElaborator:
 
             generated = AUTO_COMB_OPT.BUILD_FUNC(func, self.parser_state, self)
             logic = self._elaborate_live_func(generated.__name__, generated)
-            entities = getattr(self.parser_state, "pypeline_comb_opt_tag_entities", None)
-            if entities is None:
-                entities = {}
-                self.parser_state.pypeline_comb_opt_tag_entities = entities
-            entities[func.canonical_key] = logic.func_name
+            self.parser_state.pypeline_comb_opt_tag_entities[func.canonical_key] = logic.func_name
             return logic
 
         # Strip any @hw_func / _sim_type_wrap wrapper so we analyse the original source.
@@ -9305,7 +9301,8 @@ _modules_before_first_parse = None
 # every such read return the bytes first read. Only re-read sources are
 # frozen: the design's files and include/pypeline. The compiler's own modules,
 # Python's stdlib/site-packages and generated output-directory source load
-# normally.
+# normally. Other files the import reads are hashed when it declares them
+# (pypeline.depends_on), never frozen: a subprocess such as gcc reads them too.
 _frozen_sources = {}  # absolute path -> bytes first read
 _freeze_output_dir = None
 _freeze_skipped_roots = ()
@@ -9371,11 +9368,15 @@ def FREEZE_DESIGN_SOURCES(output_dir):
 
 
 def DESIGN_SOURCE_HASHES():
-    """{path: sha256} of every design source this build read (frozen)."""
-    return {
-        path: hashlib.sha256(data).hexdigest()
-        for path, data in sorted(_frozen_sources.items())
+    """{path: sha256} of every design source this build read: the frozen Python
+    sources, and the other files the design's import declared with
+    pypeline.depends_on (hashed as first declared, but not frozen)."""
+    hashes = {
+        path: hashlib.sha256(data).hexdigest() for path, data in _frozen_sources.items()
     }
+    for path, (sha, _size) in _pypeline_mod.DECLARED_FILES().items():
+        hashes.setdefault(path, sha)
+    return dict(sorted(hashes.items()))
 
 
 def WRITE_SOURCE_PROVENANCE():
@@ -9383,12 +9384,21 @@ def WRITE_SOURCE_PROVENANCE():
         return
     sources = {}
     hashes = DESIGN_SOURCE_HASHES()
-    for path, data in sorted(_frozen_sources.items()):
+    for path, data in _frozen_sources.items():
         try:
             drift = open(path, "rb").read() != data
         except OSError:
             drift = True
         sources[path] = dict(sha256=hashes[path], bytes=len(data), disk_drift=drift)
+    for path, (sha, size) in _pypeline_mod.DECLARED_FILES().items():
+        if path in sources:
+            continue
+        try:
+            drift = hashlib.sha256(open(path, "rb").read()).hexdigest() != sha
+        except OSError:
+            drift = True
+        sources[path] = dict(sha256=sha, bytes=size, disk_drift=drift, declared=True)
+    sources = dict(sorted(sources.items()))
     os.makedirs(_freeze_output_dir, exist_ok=True)
     with open(os.path.join(_freeze_output_dir, "source_provenance.json"), "w") as f:
         json.dump(
@@ -9610,7 +9620,7 @@ def _elaborate_live_roots(roots):
     return parser_state
 
 
-def PARSE_FILE(py_file, run_syn_initial_hooks=False, resolved_part=None):
+def PARSE_FILE(py_file, resolved_part=None):
     """Import and elaborate a Pypeline design file (_PARSE_FILE_ONCE), again
     until its AUTO objects resolve with the goal tables this parse's instances
     give (AUTO.AUTO_GOAL_TABLES): an object used at a clock goal gets that
@@ -9619,15 +9629,13 @@ def PARSE_FILE(py_file, run_syn_initial_hooks=False, resolved_part=None):
     are each used at one goal parses once. Then an AUTO_PIPELINE used at
     several goals whose .latency was read is an error.
 
-    run_syn_initial_hooks and resolved_part: see _PARSE_FILE_ONCE (the hooks
-    run on the first parse only).
+    resolved_part carries the selected target into re-parses.
     """
     import AUTO
 
     seen = []
     while True:
-        parser_state = _PARSE_FILE_ONCE(py_file, run_syn_initial_hooks, resolved_part)
-        run_syn_initial_hooks = False
+        parser_state = _PARSE_FILE_ONCE(py_file, resolved_part)
         installed = _pypeline_mod.AUTO_GOAL_TABLES()
         tables = AUTO.AUTO_GOAL_TABLES(
             parser_state, _pypeline_mod.AUTO_CONSTRUCTED(), installed[1]
@@ -9656,14 +9664,9 @@ def PARSE_FILE(py_file, run_syn_initial_hooks=False, resolved_part=None):
     return parser_state
 
 
-def _PARSE_FILE_ONCE(py_file, run_syn_initial_hooks=False, resolved_part=None):
+def _PARSE_FILE_ONCE(py_file, resolved_part=None):
     """Import and elaborate a Pypeline design file once (see PARSE_FILE).
 
-    run_syn_initial_hooks: run the design's @initial(syn) hooks right after the
-    import, before elaboration, and keep them as pypeline._syn_hook_snapshot
-    for the matching @final(syn) hooks. Only a build's first parse
-    (PARSE_FILE_FOR_BUILD) passes True -- re-parses (pin-and-confirm passes,
-    the no-synth-tool re-elaboration) must not re-run them.
     resolved_part carries the driver's reconciled target into internal re-parses
     before elaboration validates compiler-owned schedules and placements.
     """
@@ -9753,10 +9756,6 @@ def _PARSE_FILE_ONCE(py_file, run_syn_initial_hooks=False, resolved_part=None):
         )
     )
     pypeline.PRINT_DESIGN_PARAM_BANNER_ONCE()
-
-    if run_syn_initial_hooks:
-        pypeline._syn_hook_snapshot = pypeline.SNAPSHOT_HOOKS()
-        pypeline.RUN_INITIAL_HOOKS("syn", pypeline._syn_hook_snapshot)
 
     module_globals = vars(module)
     parser_state = _new_parser_state(module_globals)
@@ -10089,10 +10088,9 @@ def PARSE_FILE_FOR_BUILD(py_file, out_dir):
     """A pypelinec build's first parse of a .py design.
 
     Later AUTO_PIPELINE passes re-parse the design, so its sources are frozen
-    first (FREEZE_DESIGN_SOURCES). This parse runs the design's @initial(syn)
-    hooks after its import, before elaboration; a -D error ends the build with
-    one line. Then every struct the design serializes to bytes, registered
-    while it was imported (pypeline._host_register, called from
+    first (FREEZE_DESIGN_SOURCES). A -D error ends the build with one line.
+    Then every struct the design serializes to bytes, registered while it was
+    imported (pypeline._host_register, called from
     make_type_to_bytes/make_type_from_bytes), goes into the standalone Python
     module a host program copies to a machine with no Pypeline checkout.
     Nothing is written if the design puts no struct on a wire. Non-fatal on
@@ -10103,7 +10101,7 @@ def PARSE_FILE_FOR_BUILD(py_file, out_dir):
     """
     FREEZE_DESIGN_SOURCES(out_dir)
     try:
-        parser_state = PARSE_FILE(py_file, run_syn_initial_hooks=True)
+        parser_state = PARSE_FILE(py_file)
     except _pypeline_mod.DesignParamError as e:
         sys.exit(f"ERROR: {e}")
     try:
@@ -10117,22 +10115,6 @@ def PARSE_FILE_FOR_BUILD(py_file, out_dir):
         )
     return parser_state
 
-
-# Whether this build's @final(syn) hooks have run (RUN_SYN_FINAL_HOOKS)
-_syn_final_hooks_ran = False
-
-
-def RUN_SYN_FINAL_HOOKS():
-    """The design's @final(syn) hooks, once, right after the build's final VHDL
-    is first written (a --comb build writes it again after its synthesizing
-    step). Run from the snapshot @initial(syn) ran from, so both see one import
-    of the design (see PARSE_FILE's run_syn_initial_hooks). No snapshot means
-    no Pypeline design was parsed for this build (a C design): nothing runs."""
-    global _syn_final_hooks_ran
-    if _syn_final_hooks_ran or _pypeline_mod._syn_hook_snapshot is None:
-        return
-    _syn_final_hooks_ran = True
-    _pypeline_mod.RUN_FINAL_HOOKS("syn", _pypeline_mod._syn_hook_snapshot)
 
 def _check_no_overlapping_driven_paths(writer_paths):
     """writer_paths: {writer_func_name: set(path_tuple)}, one entry per writer of a

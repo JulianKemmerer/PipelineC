@@ -661,14 +661,15 @@ if not args.no_synth:
     # generation are skipped and the exit code is non zero
     if SWEEP.PRINT_TIMING_FAILURES(parser_state, multimain_timing_params):
         sys.exit(1)
+    if SYN.PIN_CONSTRAINTS_FILE:
+        SYN.GENERATE_FINAL_BITSTREAM(parser_state, multimain_timing_params)
+
     # What native simulation of another top, and the next build's up-to-date
-    # check, take from this build
+    # check, take from this build; written after the bitstream, so a failed
+    # bitstream step leaves no up-to-date record
     SIM.WRITE_BUILT_HARDWARE(
         parser_state, multimain_timing_params, src_file, build_inputs
     )
-
-    if SYN.PIN_CONSTRAINTS_FILE:
-        SYN.GENERATE_FINAL_BITSTREAM(parser_state, multimain_timing_params)
 
     # Start simulation on final VHDL
     SIM.DO_OPTIONAL_SIM(

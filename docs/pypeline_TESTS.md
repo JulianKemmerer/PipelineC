@@ -794,7 +794,15 @@ any rate, so these tests check the rate itself.
   build, naming what changed. `-j`, `--out_dir`, `--syn_cache`, `--syn_cache_prune`,
   simulation options (`--run`, `--cocotb`, `--wave`, `--wave_signals`), `-D` order and
   other environment variables don't. A `--sim` or
-  `--rebuild` run, another top and a C top are never up to date.
+  `--rebuild` run, another top and a C top are never up to date. A file declared with
+  `depends_on` joins `DESIGN_SOURCE_HASHES` and makes the run build once edited; one
+  edited between two declarations warns once and keeps its first hash.
+- `depends_on_test` (build_report_device_models) builds a ROM whose words come from a
+  file the design declares with `depends_on`. The record and `source_provenance.json`
+  list the file; the same build again is up to date; a native testbench of the build
+  reads the built word, then refuses to run once the file changed; the next build names
+  the file as changed and the ROM VHDL holds the new word; a missing file stops the
+  import, naming it.
 - `built_hardware_sim_test.py` (build_report_device_models): one sky130 build of
   `built_hardware_top_design.py`, whose real ports keep all of
   `built_hardware_core_design.py` (an AUTO_PIPELINE region, an AUTO_FSM, and an
@@ -1503,19 +1511,20 @@ Subprocess runs pass it as `-D HOOKS_TEST_MODE=...`, and `hooks_test` installs i
   - sim finals run after the last `@sim_output` for a `sim_finish()` end, a `--run N`
     cutoff, a mid-run assert, and a failing final hook — in the last two the original
     error is still the one raised;
-  - syn-only hooks never run;
+  - requests for synthesis hooks are rejected;
   - `sim_finish()` inside a hook, a hook with a parameter, and `sim=False, syn=False`
     are errors.
 - **`inst/hooks_order_test.py --variant V`** runs `pypelinec` as a subprocess. It checks
   where the `HOOK:` lines land relative to the driver's own output: `PY_TO_LOGIC
   parsing:`, `elaborating func:`, the final-files lines and `Clock:`.
-  - `hooks_order_native_comb` (`native_sim`): no syn hooks.
-  - `hooks_order_no_synth` (`elab`): syn hooks only, once each.
+  - `hooks_order_native_comb` (`native_sim`): simulation hooks surround the clocks.
+  - `hooks_order_no_synth` (`elab`): a build produces no hook events.
   - `hooks_order_call_from_hw` (`elab`): a MAIN calling a hook is an `ElaborationError`.
   - `hooks_order_native_pipelined` (`build_report_device_models`): sky130 build, then
     native sim.
   - `hooks_order_vhdl_comb` (`build_report_device_models`): cocotb+GHDL, where the
-    `--comb` build writes its final files twice and syn `@final` must still run once.
+    `--comb` build writes its final files twice and the simulation hooks still run once
+    each.
 
 ## RAM coverage
 

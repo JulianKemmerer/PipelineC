@@ -27,6 +27,11 @@ CCN is a branch-count heuristic, not a defect count. File hash and reproducible 
 2. **Trim, wire collapse and common instances** — `TRIM_COLLAPSE_FUNC_DEFS_RECURSIVE` (2945–3283). Recursion, dead-wire removal, fixed-point rewiring, typed comparisons, clock enables, tag-sensitive identity and global instance renaming happen together. Only one duplicate group is collapsed per iteration, requiring repeated whole-graph scans. Common-instance legality must include observable effects and all hardware-affecting metadata, not just equal inputs.
 3. **Implicit operation/type semantics** — `C_BUILT_IN_FUNC_IS_RAW_HDL` (1842–2062), `BUILD_C_BUILT_IN_SUBMODULE_FUNC_LOGIC` and the name/type predicates. Despite the C names, Python builds use these. Operator kind, constants, types and hierarchy are recovered from strings. A spelling or suffix change can alter dispatch and timing attribution. Unsupported built-ins must respect the Pypeline no-C-fallback guard.
 4. **Caches tied to mutable graphs** — trim completion and clock-enable queries are keyed by function name. Rebuilding the body under that name, as AUTO_FSM does, invalidates the answer even when the name is stable. Module-wide clearing works only when every entry point remembers it.
+   Measured cost of having no memo: `LOGIC_NEEDS_MODULE_TO_GLOBAL` and
+   `LOGIC_NEEDS_GLOBAL_TO_MODULE` recurse through every submodule on each call, and
+   `WIRE_DO_NOT_COLLAPSE` (trim) and the VHDL package and entity writers call them per
+   wire and per instance: 7.4 M and 3.5 M calls, 13 s and 4 s. Measured with cProfile on WireGuard's shared default profile (`chacha20poly1305_encrypt_decrypt_shared`, 256 bits, 80 MHz), first parse plus zero-added-clock render, working tree on `f0471102`: 100 s profiled, 68 s without the profiler.
+   A memo keyed by function name would need the invalidation this item describes.
 5. **Legacy code in the same representation** — `MERGE_COMB_LOGIC` (CCN 82), `MERGE_SEQ_LOGIC`, `INFER_CLOCK_DOMAINS`. These are C-front-end paths, not primary Pypeline hotspots. Do not spend the first refactor simplifying them just because they score highly.
 
 ## Duplication and simplification

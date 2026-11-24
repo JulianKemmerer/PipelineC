@@ -324,11 +324,11 @@ there is no shared source, so the C side has to be generated:
   [Struct layout shared with C](cpu_planning.md#struct-layout-shared-with-c)).
 - **Linker script values.** `link.ld` repeats the IMEM and DMEM sizes by hand ("TODO how to
   share variables?"). Generating them from the same Python constants fixes that too.
-- **Running the software build.** Module-level Python can run the compiler before the ROM
-  contents are read. A synthesis `@initial` hook runs too late for this, since it runs
-  after the first import and the ROM is built during import (still true at `b88f7600`).
-  The CPU plan builds firmware during import, once per run, through a proposed run-once
-  value ([Firmware build and RAM contents](cpu_planning.md#firmware-build-and-ram-contents)).
+- **Running the software build.** The CPU plan compiles firmware on each design import
+  in a private temporary directory and supplies the resulting RAM words before
+  elaboration. The helper declares its sources with `depends_on`, so editing them makes
+  the next build build again. See
+  [Firmware build and RAM contents](cpu_planning.md#firmware-build-and-ram-contents).
 
 ## 10. Board support and vendor IP
 

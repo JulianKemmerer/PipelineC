@@ -28,6 +28,13 @@ CCN is a branch-count heuristic, not a defect count. File hash and reproducible 
 3. **FSM emission** — emitter `generate` (6999–7557). Register allocation, input-storage reduction, rolling output packs, state encoding, operand selection, pipelined functional units and stream valid behavior are emitted together. Read-old/write-next ordering and the optional output register are cycle semantics, not formatting details.
 4. **Selector equivalence and mux factoring** — `_selection_chains`, operand-equivalence/factor plans, `_emit_operand_factor_plan`. Predicate exclusivity and cast preservation justify balanced selection and shared operands. An incorrect default for an out-of-range selector or loss of an intermediate cast changes hardware even when the scheduled arithmetic is unchanged.
 5. **Outer schedule/confirm loop** — `DO_SCHEDULE_PASSES` and timing attribution. A new FSM changes elaboration, its latency-derived surroundings and the pipeline sweep. Failure can come from arithmetic, control/mux fanout or an unrelated crossed MAIN. Changing the schedule based on the wrong path creates growth without progress. Two keys coexist (tree after `edfb902a`): per-call-site tables (`GET_TAGS`, schedules, source identities, provenance, rejections, elaborators) are keyed by the tag's `binding_key`, while the passthrough is named from `canonical_key`; they differ only when objects of one key are used at different clock goals, so single-goal tests do not catch a mix-up. `COLLECT_AUTO_FSM_KEYS` scans every function's Logic, including functions no MAIN reaches, while the budget comes from instance owners (`pypeline_auto_owner_mains`), so an unreached call site is scheduled unconstrained; narrowing the scan breaks `REPARSE` and `CHECK_SCHEDULES_APPLIED`, which expect a schedule for every elaborated call site.
+   Every parse prepares the candidates again (`_PREPARE_CANDIDATES`, the bootstrap
+   and each scheduled pass), and a new process cannot reuse them: AUTO_COMB_OPT's
+   plan cache `_PLANS` is process-local, unlike the persisted schedule searches.
+   WireGuard's shared default profile spent 11.9 s of its 31.5 s first parse there
+   (soft and split equivalents; the comb-opt search was 0.05 s), and
+   `built_hardware_core_design.py` 20.9 s of 22 s (the comb-opt search of one small
+   AUTO_FSM). Wall-clock timers, working tree on `f0471102`.
 
 ## Duplication and simplification
 

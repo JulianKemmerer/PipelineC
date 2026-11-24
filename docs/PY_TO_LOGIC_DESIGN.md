@@ -180,7 +180,7 @@ Python design files into PypelineC's internal `Logic()` graph representation. Fo
   - [Validation — `_validate_wires_funcs`](#validation--_validate_wires_funcs)
   - [Test coverage](#test-coverage-2)
 - [`@sim_output` / `@sim_input` Calls — Elaborator Skip](#sim_output--sim_input-calls--elaborator-skip)
-- [`@initial` / `@final` Hooks — Never Elaborated; Syn Hooks in the Driver](#initial--final-hooks--never-elaborated-syn-hooks-in-the-driver)
+- [`@initial` / `@final` Simulation Hooks](#initial--final-simulation-hooks)
 - [Predicting C/VHDL Output Names](#predicting-cvhdl-output-names)
   - [Generated VHDL names](#generated-vhdl-names)
   - [Source Location String](#source-location-string)
@@ -5520,6 +5520,16 @@ being called more than once per process:
   whose record a testbench simulation refuses once any of them changes
   ([Simulating built hardware](SIM_DESIGN.md#simulating-built-hardware)).
   Library callers of `PARSE_FILE` don't freeze anything.
+  Data files and other inputs a design's import reads (firmware sources, say) are not
+  frozen: a subprocess such as gcc reads them too. They must stay unchanged while a
+  build runs, since every import reads them again, and nothing runs only once per build
+  ([Code that runs during design import](pypeline_guide.md#code-that-runs-during-design-import)).
+  A file the import declares with `pypeline.depends_on` joins `DESIGN_SOURCE_HASHES()`
+  with the hash it was first declared with (`pypeline.DECLARED_FILES()`), and
+  `source_provenance.json` lists it marked `declared`. So the up-to-date check and a
+  testbench on built hardware notice when it changed between builds. A later import
+  that finds other contents prints a warning, and the record keeps the first hash, so
+  the next build builds again.
 
 ### AUTO objects at several clock goals: `PARSE_FILE` parses until the goal tables settle
 
@@ -5528,9 +5538,8 @@ After each parse, `AUTO.AUTO_GOAL_TABLES` computes from its instances which bind
 each AUTO_PIPELINE / AUTO_FSM object resolves to and which keys are split
 ([AUTO_DESIGN.md](AUTO_DESIGN.md#7-clock-goals-of-auto-objects)). When those differ
 from the tables the parse used (`pypeline.AUTO_GOAL_TABLES()`), they are installed and
-the design is parsed again; the hooks of `run_syn_initial_hooks` run on the first parse
-only. A design whose AUTO keys are each used at one goal yields empty tables and parses
-once. Two factory calls of one function at two goals take two more parses on a build's
+the design is parsed again. A design whose AUTO keys are each used at one goal yields
+empty tables and parses once. Two factory calls of one function at two goals take two more parses on a build's
 first parse (one telling objects apart by site, one by goal); later parses of the build
 start from the installed tables and parse once. A state the loop has already been
 through means the goals an object is used at depend on what it resolves to, and is an
@@ -6114,12 +6123,11 @@ Console Output" above.
 
 ---
 
-## `@initial` / `@final` Hooks — Never Elaborated; Syn Hooks in the Driver
+## `@initial` / `@final` Simulation Hooks
 
 `@initial`/`@final` functions (`pypeline.initial`/`pypeline.final`; user-facing reference in
 `pypeline_guide.md`, sim-side run loop in `pypeline_sim_DESIGN.md`) are host Python that
-the tools run once at the start/end of a simulation or a build. The elaborator sees them
-in three places:
+the simulator runs around its clock loop. The elaborator handles them in two places:
 
 - **Top-level sweep.** `PARSE_FILE` Step 5 excludes any top-level function whose live object
   carries `_is_pypeline_hook`, alongside the `_is_sim_output`/`_is_sim_input` exclusion
@@ -6129,39 +6137,9 @@ in three places:
   `ElaborationError` for a hook called as a bare statement (`_elab_stmt`) or as the whole
   RHS of an assignment (`_elab_assign`). The assignment check runs before
   `_try_eval_const(stmt.value)`, which would otherwise *run* the hook during elaboration.
-- **Syn `@initial` hooks run inside `PARSE_FILE`.** `PARSE_FILE(py_file,
-  run_syn_initial_hooks=False)`: with `True`, right after Step 1's `exec_module` (the hooks
-  only exist once the design is imported) and before any elaboration, it stores
-  `pypeline._syn_hook_snapshot = pypeline.SNAPSHOT_HOOKS()` and runs
-  `RUN_INITIAL_HOOKS("syn", <snapshot>)`. Only a build's first parse
-  (`PARSE_FILE_FOR_BUILD`) passes `True`. The
-  no-synth-tool re-elaboration and every pin-and-confirm re-parse keep the default, so the
-  hooks run once per `pypelinec` run.
-
-**Syn `@final` hooks run at the end of the build**, in `RUN_SYN_FINAL_HOOKS()`.
-It is called right after each final-files step:
-- `AUTO_PIPELINE.WRITE_COMB_FINAL_FILES`, the `--comb` / `--no_synth` final files. This
-  includes a `--no_synth` build whose zero-added-clocks files are already the final
-  VHDL;
-- `SWEEP.WRITE_SWEEP_RESULTS`, the pipelined build's final files.
-
-A once-guard (`_syn_final_hooks_ran`) makes the first call the only one that runs,
-because a `--comb` build without `--no_synth` writes its final files again after
-`DO_PIPELINED_BUILD`. A C build never set a snapshot, so nothing runs. So the hooks run after the final VHDL (and `--verilog`
-conversion) exists, and before the timing-failure exit, `GENERATE_FINAL_BITSTREAM` and any
-simulation of the built design. A build that fails before writing final files never
-reaches them.
-
-**Why a snapshot.** Every re-parse evicts the design's modules from `sys.modules` and
-re-imports them, and `PARSE_FILE` clears `pypeline._hook_registry` each time. By the time
-the final files exist, the live registry holds the last import's functions, whose module
-globals are fresh. Running syn finals from the snapshot taken at syn-initial time keeps
-them on the same module instance as the initials. The old function objects keep their
-`__globals__` alive after eviction, so state an initial set (a start time, an opened
-log) is still there for the final.
-Sim hooks do not use the snapshot. Native sim runs them from `run_sim`'s own import, and
-external simulators from the driver's latest parse, so sim initials and finals always
-share one import. Syn and sim hooks can see different imports.
+`PARSE_FILE` clears `pypeline._hook_registry` on every import. Native simulation runs
+the hooks from `run_sim`'s own import, and external simulators from the driver's latest
+parse, so a simulation's `@initial` and `@final` hooks always share one import.
 
 ---
 

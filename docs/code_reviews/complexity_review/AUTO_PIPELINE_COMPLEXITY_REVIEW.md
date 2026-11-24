@@ -27,6 +27,11 @@ CCN is a branch-count heuristic, not a defect count. File hash and reproducible 
 2. **Register lifetime calculation** — `PiplineHDLParams.__init__` (4895–5168). Per-stage reads/writes become inclusive register ranges. Inline VHDL expressions/functions, volatile globals and aligned global IO need special treatment because they do not all have ordinary named wires. Off-by-one start/end rules can alter latency while leaving combinational results correct.
 3. **Constrained regions** — `_ENFORCE_ONE_AUTO_PIPELINE_REGION` (4464–4580). Requested cuts are not realized cycles; retries reset a region, place cuts, remove non-deepening placements and recompute latency. Fixed constraints, caps, remembered floors and FSM-owned placements interact. Reusing a landscape after its timing table changes needs explicit validity rules.
 4. **Timing identity and reuse** — `TimingParams`, zero-clock caches, `CAPTURE_CONCRETE_PIPELINE`/`RESTORE_CONCRETE_PIPELINE`. Mutable slices, exact bit boundaries, IO flags and child latency influence both placement and entity names. Cache keys must describe physical implementation and must not retain a previous parse's Logic.
+   Every build renders the zero-added-clock files once, and their timing table costs
+   more than the VHDL text: `GET_ZERO_ADDED_CLKS_TIMING_PARAMS_LOOKUP` took 15.8 s of
+   the 48.5 s render (`GET_PIPELINE_MAP` 9.3 s, the recursive `GET_TOTAL_LATENCY`
+   9.0 s, `BUILD_HASH_EXT` 5.4 s over 2,885 instances), `WRITE_ALL_ZERO_CLK_VHDL`
+   18.2 s. Measured with cProfile on WireGuard's shared default profile (`chacha20poly1305_encrypt_decrypt_shared`, 256 bits, 80 MHz), first parse plus zero-added-clock render, working tree on `f0471102`: 100 s profiled, 68 s without the profiler.
 5. **Pin-and-confirm orchestration** — `DO_AUTO_PIPELINE_LATENCY_PASSES` and build entry points. Discovered latencies change Python-generated design structure, forcing re-elaboration. Pipeline, MCP, RAM and FSM selections must all refer to the same generation. Harvest, region groups and latency memory group by binding (`AUTO.AUTO_PIPELINE_BINDING`, tree after `edfb902a`), and `AutoPipelineRegion.key` holds that binding rather than the canonical key its name suggests.
 
 ## Duplication and simplification

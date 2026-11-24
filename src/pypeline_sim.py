@@ -341,7 +341,7 @@ def run_sim(
     # The @MAINs are collected: MAIN() refuses from here to the end of the run
     pypeline._sim_run_in_progress = True
     try:
-        pypeline.RUN_INITIAL_HOOKS("sim")
+        pypeline.RUN_INITIAL_HOOKS()
         t0 = time.perf_counter()
         run_all = num_cycles == RUN_ALL
         cycle_iter = itertools.count() if run_all else range(num_cycles)
@@ -391,7 +391,7 @@ def run_sim(
         pypeline._sim_converging = False
         pypeline._sim_reg_write_buffer = None
         try:
-            pypeline.RUN_FINAL_HOOKS("sim", pending_exc=pending_exc)
+            pypeline.RUN_FINAL_HOOKS(pending_exc=pending_exc)
         finally:
             pypeline._sim_run_in_progress = False
             if wave is not None:

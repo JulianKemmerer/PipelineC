@@ -46,7 +46,7 @@ FINISH_AT = 255 if MODE == "cutoff" else NUM_CYCLES - 1
 # Mutated in place only: @sim_input/@sim_output bodies run against a detached
 # copy of this module's globals
 EVENTS = []
-SIM_INITIALS = {"both_initial", "sim_initial_a", "sim_initial_b"}
+SIM_INITIALS = {"bare_initial", "sim_initial_a", "sim_initial_b"}
 
 
 def _event(name):
@@ -55,11 +55,11 @@ def _event(name):
 
 
 @initial
-def both_initial():
-    _event("both_initial")
+def bare_initial():
+    _event("bare_initial")
 
 
-@initial(sim=True)
+@initial(sim=True, syn=False)
 def sim_initial_a():
     _event("sim_initial_a")
 
@@ -71,14 +71,9 @@ def sim_initial_b():
         sim_finish()
 
 
-@initial(syn=True)
-def syn_initial():
-    _event("syn_initial")
-
-
 @final
-def both_final():
-    _event("both_final")
+def bare_final():
+    _event("bare_final")
 
 
 @final(sim=True)
@@ -86,11 +81,6 @@ def sim_final():
     _event("sim_final")
     if MODE == "final_raises":
         raise AssertionError("sim_final: deliberate hook failure")
-
-
-@final(syn=True)
-def syn_final():
-    _event("syn_final")
 
 
 @sim_input
@@ -131,6 +121,6 @@ def hooks_counter():
     if n == FINISH_AT:
         sim_finish()
     if CALL_FROM_HW:
-        both_final()
+        bare_final()
     count_out = n
     n += 1

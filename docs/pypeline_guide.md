@@ -138,6 +138,62 @@ vga_timing = make_vga_timing(VGA_640_480)  # factory: produces a timing generato
 Calling it with a resolution spec produces a hardware function (`vga_timing`) that
 generates VGA sync signals and pixel coordinates.
 
+### Code that runs during design import
+
+Module-level Python in a design (factory calls, `make_ram(init=...)`, `MAIN()`, `param()`,
+a helper that compiles firmware) runs on **every import** of the design, and one
+`pypelinec` run can import it several times. A build imports it again once it knows a
+pipeline's depth, so that hardware sized from `.latency` uses the built value. Native
+simulation imports it for its own run.
+
+**Import-time code must be repeatable.** Run again with the same inputs, it gives the
+same hardware and leaves nothing behind that breaks the next run of it. Running a
+compiler again is fine. These are not:
+
+- appending to a file, or counting across imports;
+- writing to a fixed shared path, which a build of the same design in another
+  `--out_dir` may be writing at the same time (use a private temporary directory);
+- results that depend on the time or on randomness;
+- changing state in modules that are not imported again (`pypeline`, the standard
+  library, installed packages).
+
+Keep the files an import reads unchanged while a build runs: each import reads them
+again, and a later pass that sees other contents builds other hardware. For a file
+declared with `depends_on` (below) the build then prints a warning, and the next build
+builds again.
+
+**Known limitation:** Pypeline has no mechanism to run import-time code once per build
+or to carry its result from one import to the next. For firmware, call the build helper
+on every import, right before passing its image to `make_ram(init=...)`; given the same
+sources it returns the same image. For an action that must happen exactly once, run it
+in the script that launches `pypelinec` and have the design read its output.
+
+**Declare the files the import reads.** A build records the Python files it imported,
+and a repeat build of the same top is up to date only while they are unchanged
+([Output directories](README.md#output-directories---out_dir)). Any other file the
+import reads (a ROM image, the C sources and headers a firmware helper compiles, an
+ELF named by a parameter) counts only once the import declares it with `depends_on`:
+
+```python
+from pathlib import Path
+from pypeline import depends_on
+
+words_file = depends_on(Path(__file__).with_name("rom_words.txt"))
+words = [int(w) for w in words_file.read_text().split()]
+rom = make_ram(uint8_t, 4, ports=("r",), read_latency=0, init=words)
+```
+
+`depends_on(path)` returns `path`, so it can wrap the read: `depends_on(p).read_text()`
+for a `Path`, `open(depends_on(p))` for a string. Once a declared file changes, the next
+build of that top builds again, and a testbench simulated on the earlier build refuses
+to run. Declare the inputs, not what the import generates: a firmware helper declares
+the sources it passes to gcc, not the ELF it writes to a temporary directory. A file the
+import reads without declaring it is not checked: after editing one, build with
+`--rebuild`.
+
+Use [simulation hooks](#initial--final--startend-of-run-hooks) for setup and checks that
+belong to a simulation.
+
 ### Combinational pixel function
 
 ```python
@@ -5304,6 +5360,10 @@ holds it. There is no per-port read enable. For a port that must stall on its ow
 
 ### Initial contents: `init=`
 
+The RAM factory consumes its initial words when the module is imported. A helper
+that reads data or compiles firmware here must follow the rules for
+[code that runs during design import](#code-that-runs-during-design-import).
+
 Pass plain Python values; `make_ram` generates the VHDL initializer.
 
 ```python
@@ -6758,9 +6818,10 @@ but is missing from VHDL simulation output ([#361](https://github.com/JulianKemm
 ### `@initial` / `@final` — start/end-of-run hooks
 
 `@initial` and `@final` mark plain Python functions the tools run **once** at the start or
-end of a simulation and/or a synthesis (hardware build) run. They replace the "first
-cycle?" flags and "all done?" checks a testbench would otherwise hand-roll inside its
-per-cycle `@sim_input`/`@sim_output` functions:
+end of a simulation. They replace the "first cycle?" flags and "all done?" checks a
+testbench would otherwise hand-roll inside its per-cycle `@sim_input`/`@sim_output`
+functions. They never run in a hardware build: hardware values such as RAM contents are
+prepared by [code that runs during design import](#code-that-runs-during-design-import).
 
 ```python
 from pypeline import final, initial, sim_finish, sim_output, sim_print
@@ -6784,34 +6845,26 @@ def finish_checks():                     # once, after the last cycle, however i
     sim_print("my_tb: all packets PASSED")
 ```
 
-| Form | Runs for |
-|---|---|
-| `@initial` / `@final` | both simulation and synthesis |
-| `@initial(sim=True)` / `@final(sim=True)` | simulation only |
-| `@initial(syn=True)` / `@final(syn=True)` | synthesis only |
+Bare `@initial` and `@final` have the same meaning as the explicit `sim=True` forms.
+Requesting `syn=True` raises an error. A script that calls `pypelinec` can run a
+post-build action after checking its exit status.
 
 **When they run:**
 
-- **Sim `@initial`** — once, after the design is loaded and reset, before the first clock
+- **`@initial`** — once, after the design is loaded and reset, before the first clock
   cycle (so before any `@sim_input`). This holds for every simulator: native (`--comb` or
   pipelined) and cocotb+GHDL/Verilator/CXXRTL, where it runs just before the simulator is
   launched.
-- **Sim `@final`** — once, after the last cycle's `@sim_output` calls, **however the
+- **`@final`** — once, after the last cycle's `@sim_output` calls, **however the
   simulation ended**: `sim_finish()`, `--run N` reaching N, or an error (a failed assert,
   the `--run all` safety cap). After an error, the original error is still the one reported
   (a `@final` hook's own error is printed but does not replace it), so a `@final` check is
   the natural place for "did the run actually finish?" — a run cut short fails there
   instead of exiting 0 with the end-of-run checks never reached. For an external
   simulator it runs after the simulator exits.
-- **Syn `@initial`** — once per `pypelinec` run, right after the design file is imported
-  and before it is elaborated.
-- **Syn `@final`** — once, right after the final VHDL is written and before any bitstream
-  generation (`--pins`) or simulation of the built design. A plain native
-  `--sim --comb` run builds nothing, so it runs no syn hooks.
 
 A design may have any number of hooks; they run in no particular order. A `--sim` build
-that is not `--comb` runs both: the syn hooks around its build, then the sim hooks around
-its simulation.
+that is not `--comb` runs them around its simulation, not around its build.
 
 **Rules:**
 
@@ -6827,16 +6880,8 @@ its simulation.
 - Share state with `@sim_input`/`@sim_output` functions through a mutable object mutated
   in place (a dict, a list, a scoreboard), not by rebinding a module-level name: those
   functions run against a detached copy of the module's globals.
-- A build re-imports the design several times. Syn `@final` hooks run from the same import
-  as the syn `@initial` hooks, and sim `@final` hooks from the same import as the sim
-  `@initial` hooks, so state each pair shares survives. Syn and sim hooks may see
-  **different** imports of the design, though — don't share state between them.
-- **A syn `@final` hook reading `.latency` gets stale values after a re-elaboration.** The
-  syn hooks run from the **first** import, so a `.latency` the hook reads (directly or
-  through a variable from that import) returns the bootstrap value: 0, or
-  `start_latency`. It does not see what the build re-elaborated with. Size hardware from
-  `.latency` in elaboration code, which every pass re-runs. For what was built, read
-  `sweep_history.json` (`latency_passes`, and each MAIN's `final` record) after the build.
+- A `--sim` build imports the design several times. Its `@final` hooks run from the same
+  import as its `@initial` hooks (the simulation's), so state the two share survives.
 
 ### `sim_print(..., debug=True)` — tagged prints
 
@@ -7095,7 +7140,7 @@ tracks the row.
 | Simulation | **`sim_print` on the `sim_finish()` cycle** | Missing in VHDL simulation | Native simulation prints the line; in GHDL the run ends before it is written. Print one cycle before finishing | [#361](https://github.com/JulianKemmerer/PipelineC/issues/361) |
 | Simulation | **`sim_wave` signals in HDL simulation** | Not supported | `sim_wave` and the stream perf probes record in native simulation only. Elaboration deletes them, so GHDL's `--wave` dump has the generated VHDL's own signals instead | — |
 | Simulation | **Records and arrays in GHDL's VCD and FST** | Not supported by GHDL | GHDL's VCD and FST writers skip records and arrays of vectors, which hold most Pypeline data. Write `--wave FILE.ghw`, GHDL's own format, which keeps every VHDL type, or record the native simulation | — |
-| Simulation | **`@initial`/`@final` under `sim_call`** | Not run | Hooks run in clocked simulation runs (`pypelinec --sim`, `pypeline_sim.py`) and `pypelinec` builds. A plain Python script that drives `sim_call` itself has no run start/end for the tools to hook — call its setup/teardown code directly | — |
+| Simulation | **`@initial`/`@final` under `sim_call`** | Not run | Hooks run in clocked simulation runs (`pypelinec --sim`, `pypeline_sim.py`) only. A plain Python script that drives `sim_call` itself has no run start/end for the tools to hook — call its setup/teardown code directly | — |
 
 Native simulation cannot detect restrictions that appear only after emitting VHDL, such
 as a reserved enum member, an underscore in a string literal, an array-length mismatch or

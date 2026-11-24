@@ -11,7 +11,12 @@ on records written the way WRITE_BUILT_HARDWARE writes them:
   --syn_cache_prune, simulation-only settings, -D order and other environment
   variables keep the build up to date;
 - test_only_a_plain_build_of_the_recorded_top_can_be_up_to_date: --sim,
-  --rebuild, another top and a C top.
+  --rebuild, another top and a C top;
+- test_declared_file_is_an_input: a file declared with pypeline.depends_on
+  joins PY_TO_LOGIC.DESIGN_SOURCE_HASHES, and editing it makes the build run;
+- test_file_changed_between_imports_keeps_first_contents: a later
+  declaration that finds other contents warns once and keeps the first hash,
+  so the next build runs.
 """
 
 import contextlib
@@ -26,8 +31,10 @@ from types import SimpleNamespace
 THIS_DIR = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, os.path.join(THIS_DIR, "..", "..", ".."))
 
+import PY_TO_LOGIC
 import SIM
 import SYN
+import pypeline
 
 DESIGN = """
 from pypeline import MAIN, uint16_t
@@ -67,15 +74,16 @@ def make_args(**overrides):
     return SimpleNamespace(**settings)
 
 
-def write_record(design, args):
+def write_record(design, args, declared=None):
     """A built_hardware.json for a build of design with args, as
-    WRITE_BUILT_HARDWARE writes it (the fields the up-to-date check reads)."""
+    WRITE_BUILT_HARDWARE writes it (the fields the up-to-date check reads).
+    declared: {path: sha256} of files the design declared (depends_on)."""
     with open(design, "rb") as f:
         sha = hashlib.sha256(f.read()).hexdigest()
     record = dict(
         version=SIM.BUILT_HARDWARE_VERSION,
         top=os.path.abspath(design),
-        sources={os.path.abspath(design): sha},
+        sources={os.path.abspath(design): sha, **(declared or {})},
         build_inputs=SIM.BUILD_INPUTS(args, design),
     )
     path = os.path.join(SYN.SYN_OUTPUT_DIRECTORY, SIM.BUILT_HARDWARE_FILE)
@@ -213,8 +221,67 @@ def test_only_a_plain_build_of_the_recorded_top_can_be_up_to_date():
     print("test_only_a_plain_build_of_the_recorded_top_can_be_up_to_date PASS")
 
 
+@contextlib.contextmanager
+def declared_files():
+    """A clean pypeline depends_on registry, restored afterwards."""
+    saved = (dict(pypeline._declared_files), set(pypeline._declared_files_changed))
+    pypeline._declared_files.clear()
+    pypeline._declared_files_changed.clear()
+    try:
+        yield
+    finally:
+        pypeline._declared_files.clear()
+        pypeline._declared_files.update(saved[0])
+        pypeline._declared_files_changed.clear()
+        pypeline._declared_files_changed.update(saved[1])
+
+
+def test_declared_file_is_an_input():
+    with tempfile.TemporaryDirectory() as tmp, declared_files():
+        data = os.path.join(tmp, "words.txt")
+        with open(data, "w") as f:
+            f.write("1 2 3 4")
+        assert pypeline.depends_on(data) == data, "depends_on returns its path"
+        sha = hashlib.sha256(b"1 2 3 4").hexdigest()
+        assert PY_TO_LOGIC.DESIGN_SOURCE_HASHES()[data] == sha
+        design = os.path.join(tmp, "design.py")
+        with open(design, "w") as f:
+            f.write(DESIGN)
+        SYN.SYN_OUTPUT_DIRECTORY = os.path.join(tmp, "out")
+        os.makedirs(SYN.SYN_OUTPUT_DIRECTORY)
+        write_record(design, make_args(), declared=PY_TO_LOGIC.DESIGN_SOURCE_HASHES())
+        assert is_current(design, make_args())[0], "an unchanged declared file"
+        with open(data, "w") as f:
+            f.write("6 2 3 4")
+        expect_build(design, make_args(), data)
+    print("test_declared_file_is_an_input PASS")
+
+
+def test_file_changed_between_imports_keeps_first_contents():
+    with tempfile.TemporaryDirectory() as tmp, declared_files():
+        data = os.path.join(tmp, "words.txt")
+        with open(data, "w") as f:
+            f.write("1 2 3 4")
+        pypeline.depends_on(data)
+        with open(data, "w") as f:
+            f.write("6 2 3 4")
+        printed = io.StringIO()
+        with contextlib.redirect_stdout(printed):
+            pypeline.depends_on(data)
+            pypeline.depends_on(data)
+        assert printed.getvalue().count("WARNING: ") == 1, printed.getvalue()
+        assert data in printed.getvalue()
+        first = hashlib.sha256(b"1 2 3 4").hexdigest()
+        assert pypeline.DECLARED_FILES()[data][0] == first
+        changed = SIM._changed_sources(PY_TO_LOGIC.DESIGN_SOURCE_HASHES())
+        assert changed == [data], changed
+    print("test_file_changed_between_imports_keeps_first_contents PASS")
+
+
 if __name__ == "__main__":
     test_identical_inputs_are_up_to_date()
     test_each_input_makes_the_build_run()
     test_operational_settings_are_not_inputs()
     test_only_a_plain_build_of_the_recorded_top_can_be_up_to_date()
+    test_declared_file_is_an_input()
+    test_file_changed_between_imports_keeps_first_contents()

@@ -4175,12 +4175,11 @@ def WRITE_SWEEP_RESULTS(parser_state, multimain_timing_params, src_file):
     driver's TIMING NOT MET exit, so failing builds get it too: the depth
     summary, over-capacity failures (an over-capacity final netlist fails the
     build even when its timing met), the final sweep_history.json (the
-    machine-readable verdict for the design as built), the final files and the
-    syn @final hooks, and the latency profile (what this build built for each
-    AUTO_PIPELINE / AUTO_MULTI_CYCLE, and the verified results remembered for
-    the next one)."""
+    machine-readable verdict for the design as built), the final files, and
+    the latency profile (what this build built for each AUTO_PIPELINE /
+    AUTO_MULTI_CYCLE, and the verified results remembered for the next
+    one)."""
     import pypeline
-    import PY_TO_LOGIC
 
     # Starting latencies only start the build's own sweep: a --sim import
     # after this uses the built values
@@ -4200,7 +4199,6 @@ def WRITE_SWEEP_RESULTS(parser_state, multimain_timing_params, src_file):
         parser_state, multimain_timing_params, build_complete=True
     )
     SYN.WRITE_FINAL_FILES(multimain_timing_params, parser_state)
-    PY_TO_LOGIC.RUN_SYN_FINAL_HOOKS()
     if src_file.endswith(".py") and pypeline.AUTO_PIPELINE_BUILD_MODE() == "sweep":
         RECORD_LATENCY_PROFILE(parser_state, multimain_timing_params, sweep_history, untimed)
 

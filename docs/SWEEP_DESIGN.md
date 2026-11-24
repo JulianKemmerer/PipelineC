@@ -753,7 +753,7 @@ iteration".
   (`build_complete: false`), so a build that dies later still leaves data.
   `WRITE_SWEEP_RESULTS` rewrites it at *Writing Results* (`build_complete: true`)
   before the driver's TIMING NOT MET exit, so failing builds get it too. The
-  final files, the syn `@final` hooks and `latency_profile.json` follow it there. A `--comb`
+  final files and `latency_profile.json` follow it there. A `--comb`
   characterization can also retain an observation without a verified goal verdict.
 
 Schema 3 retains the schema-2 final field names. `observations` records each

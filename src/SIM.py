@@ -94,7 +94,7 @@ def DO_OPTIONAL_SIM(
     ):
         pending_exc = None
         try:
-            pypeline.RUN_INITIAL_HOOKS("sim")
+            pypeline.RUN_INITIAL_HOOKS()
             _DO_OPTIONAL_SIM(
                 do_sim, parser_state, args, multimain_timing_params, source_file
             )
@@ -102,7 +102,7 @@ def DO_OPTIONAL_SIM(
             pending_exc = e
             raise
         finally:
-            pypeline.RUN_FINAL_HOOKS("sim", pending_exc=pending_exc)
+            pypeline.RUN_FINAL_HOOKS(pending_exc=pending_exc)
     else:
         _DO_OPTIONAL_SIM(
             do_sim, parser_state, args, multimain_timing_params, source_file
@@ -318,8 +318,9 @@ def _BUILD_INPUTS_DIFFERENCE(record, build_inputs):
 def BUILT_HARDWARE_IS_CURRENT(build_inputs, args) -> bool:
     """Called before any build. True when this run is a plain build (no --sim,
     no --rebuild) of the top whose timing-met build --out_dir already holds,
-    from equal BUILD_INPUTS and unchanged design sources: there is nothing to
-    do, and the run says so. When that record differs, the run says what
+    from equal BUILD_INPUTS and unchanged recorded sources (Python sources
+    and declared files, WRITE_BUILT_HARDWARE): there is nothing to do, and the
+    run says so. A file the import reads without declaring it is not checked. When that record differs, the run says what
     changed and the build follows (SIMULATE_BUILT_HARDWARE then removes it)."""
     if args.sim or args.rebuild or not build_inputs["top"].endswith(".py"):
         return False
@@ -347,7 +348,9 @@ def WRITE_BUILT_HARDWARE(parser_state, multimain_timing_params, src_file, build_
     """After a synthesizing build of a Pypeline design met timing: record in
     BUILT_HARDWARE_FILE everything native simulation takes from a build
     (NATIVE_SIM_HARDWARE), with the top it built, the hashes of the sources it
-    read, its design parameters and its BUILD_INPUTS, so another top (a
+    read (PY_TO_LOGIC.DESIGN_SOURCE_HASHES: its Python sources and the files
+    its import declared with pypeline.depends_on), its design parameters and
+    its BUILD_INPUTS, so another top (a
     testbench) can be simulated on this hardware without building
     (SIMULATE_BUILT_HARDWARE), and an identical later build of this top has
     nothing to do (BUILT_HARDWARE_IS_CURRENT)."""

@@ -158,7 +158,9 @@ a sweep timed on that removes pipeline stages the real design needs (see
     schedules reduced to the fields native simulation reads
     (`pypeline.AUTO_FSM_SIM_SCHEDULE_FIELDS`);
   - the top it built;
-  - `PY_TO_LOGIC.DESIGN_SOURCE_HASHES()` of every source the build read;
+  - `PY_TO_LOGIC.DESIGN_SOURCE_HASHES()` of every source the build read: the frozen
+    Python sources, and the files its import declared with `pypeline.depends_on`, as
+    first declared;
   - its design parameter values;
   - `PIPELINED_NATIVE_SIM_PROBLEMS`, so a later simulation refuses what this one would;
   - `goal_mode`: `"pnr"` or `"syn"`, whether the build took a MAIN's clock goal from its
@@ -183,16 +185,19 @@ a sweep timed on that removes pipeline stages the real design needs (see
       `PYTHONPATH`.
 - **Replacing it.** A record is only ever the last met build. `SIMULATE_BUILT_HARDWARE`
   removes it whenever a build follows, which also covers `--comb` and `--no_synth`
-  builds that rewrite the directory, and a build that misses timing writes none.
+  builds that rewrite the directory, and a build that misses timing writes none. The
+  driver writes it after any `--pins` bitstream step, so a failed bitstream leaves none.
 - **Up-to-date builds.** `BUILT_HARDWARE_IS_CURRENT` makes a plain build (no `--sim`, no
   `--rebuild`) of the recorded top do nothing when `_BUILD_INPUTS_DIFFERENCE` finds no
-  difference: equal build inputs, and every recorded source still has its hash. The run
+  difference: equal build inputs, and every recorded source (declared files included)
+  still has its hash. Nothing is parsed: the check hashes the recorded files and the
+  compiler's sources. The run
   prints `Up to date: ...` and the driver exits before writing anything. Otherwise it
   prints the first difference (`Building again: the --pipeline_min_effort setting
   changed ...`) and the build follows. Not part of the comparison, so `--rebuild` is the
   way to build again after changing them: the synthesis tool installation, files a
-  design reads with `open()`, installed Python packages, and other environment
-  variables.
+  design reads without declaring them with `depends_on`, installed Python packages, and
+  other environment variables.
 - **Simulating it.** `SIMULATE_BUILT_HARDWARE` runs when the record's top differs from
   the file given, `SIM_TOOL` is the native simulator and `--sim` was given (a `--comb`
   run has already exited). It:
@@ -473,7 +478,11 @@ two share `pypeline`, whose state the run uses.
   `--rebuild` builds; see
   [`pypeline_TESTS.md`](pypeline_TESTS.md).
 - `built_hardware_current_test.py` (unit): which build inputs make a recorded build current
-  (not `--wave` and `--wave_signals`, among other operational settings).
+  (not `--wave` and `--wave_signals`, among other operational settings), and that a file
+  declared with `depends_on` is one, with the hash it was first declared with.
+- `depends_on_test.py` (build_report, sky130): a ROM whose words come from a declared
+  file: the build records it, an unchanged file is up to date, an edited one builds again
+  into the hardware, and a testbench on the earlier build refuses it.
 - The `native_vs_vhdl_sim` category (`native_vs_vhdl_sim_tests.py`) runs designs through
   both the native simulator and cocotb + GHDL and diffs the cycle logs; see
   [`pypeline_TESTS.md`](pypeline_TESTS.md).

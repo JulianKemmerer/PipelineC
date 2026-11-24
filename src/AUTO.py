@@ -1586,7 +1586,7 @@ def _entity_key_for_callable(parser_state, func):
     """
     if (getattr(func, "_is_auto_comb_area_opt_pragma", False)
             or getattr(func, "_is_auto_comb_delay_opt_pragma", False)):
-        return getattr(parser_state, "pypeline_comb_opt_tag_entities", {}).get(func.canonical_key)
+        return parser_state.pypeline_comb_opt_tag_entities.get(func.canonical_key)
     for key, recorded in _entity_callables(parser_state).items():
         if recorded is func:
             return key

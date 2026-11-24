@@ -278,7 +278,7 @@ Synthesis timing and reported capacity do not establish routed timing or fit.
 | per-function delay measurement | `ADD_PATH_DELAY_TO_LOOKUP` (the pre-synthesis wave), `MEASURE_DELAYS` (re-measure named functions), `ESTIMATE_HIER_PATH_DELAYS` (no synthesis: pipeline-map estimates), `STORED_MEASUREMENT` (no synthesis: an earlier run of the same inputs, §6) | every build; the sweep's measured-delay fallback; `AUTO.TimingModel` reads the results |
 | one instance at a given latency | `RUN_INST_SYN_AND_UPDATE_CACHE` | the coarse sweep and hotspot mini-sweeps |
 | the whole multi-MAIN design | `SYN_TOOL.SYN_AND_REPORT_TIMING_MULTIMAIN`, always called through `SYN.RUN_MULTIMAIN_SYN` (which times it) | each planned-sweep iteration, the pin-and-confirm confirmation, `--comb` characterization |
-| the final bitstream | `GENERATE_FINAL_BITSTREAM`, dispatching to a backend `GENERATE_BITSTREAM` hook when present | `--pins` builds (after the design's `@final(syn)` hooks, which run right after the final VHDL is written -- see `PY_TO_LOGIC_DESIGN.md`) |
+| the final bitstream | `GENERATE_FINAL_BITSTREAM`, dispatching to a backend `GENERATE_BITSTREAM` hook when present | `--pins` builds after timing success |
 
 **Parallelism is a memory budget.** Per-function delay measurement and the
 coarse sweep run several synthesis jobs at once through a `ThreadPool` sized
@@ -929,8 +929,7 @@ in the module whose feature it serves. In order, it:
    (§6) and then the elapsed summary (§7);
 2. installs `--latency_hints` starting latencies (`SWEEP.INSTALL_LATENCY_HINTS`). It
    then parses the design with `C_TO_LOGIC.PARSE_FILE` or
-   `PY_TO_LOGIC.PARSE_FILE_FOR_BUILD` (sources frozen, `@initial(syn)` hooks, host
-   software types);
+   `PY_TO_LOGIC.PARSE_FILE_FOR_BUILD` (sources frozen, host software types);
 3. settles part and tool with `RESOLVE_BUILD_TARGET` (§2) and writes the
    zero-added-latency files (`AUTO_PIPELINE.WRITE_0_ADDED_CLKS_INIT_FILES`). It then
    applies the latency memory (`SWEEP.APPLY_LATENCY_MEMORY`, sweep builds only);
@@ -947,10 +946,11 @@ in the module whose feature it serves. In order, it:
    ([build entry points](AUTO_PIPELINE_DESIGN.md#4-build-entry-points)). Next,
    `SWEEP.WRITE_SWEEP_RESULTS` writes the sweep history, final files and latency
    profile, and `DIAGRAM.WRITE_DIAGRAM` the design diagram. The build exits non-zero if a timing goal was missed
-   (`SWEEP.PRINT_TIMING_FAILURES`). Otherwise it records the hardware, with the
-   run's build inputs, for native simulation and the next build's up-to-date check
-   (`SIM.WRITE_BUILT_HARDWARE`), generates the bitstream
-   (`--pins`) and runs the requested simulation (`SIM.DO_OPTIONAL_SIM`, see
+   (`SWEEP.PRINT_TIMING_FAILURES`). Otherwise it generates the bitstream (`--pins`),
+   then records the hardware, with the run's build inputs, for native simulation and
+   the next build's up-to-date check (`SIM.WRITE_BUILT_HARDWARE`), so a failed
+   bitstream step leaves no record, and runs the requested simulation
+   (`SIM.DO_OPTIONAL_SIM`, see
    [`SIM_DESIGN.md`](SIM_DESIGN.md));
 7. writes the generated sources (`AUTO_COMB_OPT.DUMP_GENERATED_SOURCE`, needed by a
    `--no_synth` build without fixed latencies, which writes no final files) and

@@ -364,9 +364,9 @@ def get_tests() -> list:
         )
     )
     # Up-to-date builds (SIM.BUILD_INPUTS, SIM.BUILT_HARDWARE_IS_CURRENT) on
-    # written records: which sources, -D values, settings, hint contents,
-    # compiler and environment knobs make a build run again, and which
-    # operational settings don't
+    # written records: which sources, files declared with depends_on, -D
+    # values, settings, hint contents, compiler and environment knobs make a
+    # build run again, and which operational settings don't
     tests.append(
         Test(
             name="built_hardware_current_test",

@@ -959,9 +959,7 @@ strict mode.
 A design's `@initial(sim=True)` / `@final(sim=True)` hooks run once before the first
 clock and once after the last, with every simulator (native or cocotb+GHDL, `--comb`
 or not). The final hooks run however the run ended, which makes them the place for
-end-of-run checks. `@initial(syn=True)` / `@final(syn=True)` hooks run once around a
-`pypelinec` build: after the design is imported, and right after the final VHDL is
-written (before any `--pins` bitstream step). See
+end-of-run checks. The bare decorators have the same simulation-only meaning. See
 [`@initial` / `@final`](pypeline_guide.md#initial--final--startend-of-run-hooks).
 
 `PYPELINE_SIM_SOFT_OPS` controls whether matcher-registered operators execute their
@@ -1150,12 +1148,15 @@ that build still synthesizes and sweeps the top you give it.
 - **Nothing changed, nothing runs.** The same build command on the same `--out_dir`
   again, after a build that met timing, prints `Up to date: ...` and does nothing: no
   elaboration, search or synthesis. It is the same build when the design sources the
-  build read, the `-D` values, the build options (not `-j`, `--out_dir`,
-  `--syn_cache` or simulation options), the compiler's own code and its
-  `PIPELINEC_*` / `PYPELINEC_*` / `PYPELINE_*` environment variables are all
-  unchanged. Anything else builds again, and the build first says what changed.
+  build read (its Python files, and the files its import declares with `depends_on`),
+  the `-D` values, the build options (not `-j`, `--out_dir`, `--syn_cache` or
+  simulation options), the compiler's own code and its `PIPELINEC_*` / `PYPELINEC_*` /
+  `PYPELINE_*` environment variables are all unchanged. Anything else builds again,
+  and the build first says what changed. A design that reads a ROM image, or compiles
+  firmware, while it is imported declares those files, so editing them builds again
+  ([Code that runs during design import](pypeline_guide.md#code-that-runs-during-design-import)).
   `--rebuild` builds anyway, for example after upgrading the synthesis tool or
-  changing a data file the design reads with `open()`, which the comparison does not
+  changing a file the design reads without declaring it, which the comparison does not
   cover. A `--sim` of that same top still builds; simulate a separate testbench file
   instead to skip the build
   ([Simulating a testbench on built hardware](#simulating-a-testbench-on-built-hardware)).
@@ -1242,7 +1243,8 @@ the depth it was built, while the design met timing anyway, gets a build warning
 latency memory does not remember it.
 
 The simulation stops with an error, instead of guessing, when:
-- a source file the build read has changed since (rebuild the top first);
+- a source file the build read, or a file its import declared with `depends_on`, has
+  changed since (rebuild the top first);
 - another version of the compiler built the hardware (rebuild the top first);
 - a design parameter both runs declare has a different value;
 - the testbench uses an AUTO_PIPELINE, AUTO_FSM, AUTO_MULTI_CYCLE or auto-pipelined RAM
@@ -1424,7 +1426,8 @@ Consume the explicit manifests and indexes instead of globbing generated directo
   what native simulation needs from the build: every MAIN latency, AUTO_PIPELINE depth,
   AUTO_MULTI_CYCLE count, AUTO_FSM schedule and RAM plan, the `.latency` values the
   design read for tags it never instantiated, the hashes of the sources the build
-  read, and the build's other inputs (options, `-D` values, compiler). A testbench
+  read (including the files its import declared with `depends_on`), and the build's
+  other inputs (options, `-D` values, compiler). A testbench
   simulated in this output directory runs on this hardware
   ([Simulating a testbench on built hardware](#simulating-a-testbench-on-built-hardware)),
   and the same build again is up to date

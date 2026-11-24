@@ -149,6 +149,20 @@ For test-runner commands, see [Testing](#testing).
 - **Land in phases.** Order a large change into phases that each pass their own
   tests and update their own docs, most valuable and least risky first, so a later
   phase can be deferred without reworking the earlier ones.
+- **Keep what already works.** A behavior the guides document or a test asserts (an
+  identical build is up to date, a testbench replay synthesizes nothing) is a
+  requirement unless the human drops it. If the design can't keep it for some
+  designs, the plan names it as a regression: what stops working, for which designs,
+  who relies on it (the tests, the guides, downstream scripts that parse its console
+  line) and the evidence that it can't be kept. A limit that only exists because a
+  first attempt failed for those designs is a bug to find, not a scope decision.
+- **Price what every run pays.** A step added to a path every run takes (the
+  up-to-date check, a testbench replay, a cache lookup) is measured on the largest
+  design the task names, next to the cheapest alternative that meets the
+  requirement, including any the task's brief suggests. Put both numbers in the plan.
+  Elaborating the design in the up-to-date check took WireGuard's check from 2 s to
+  68 s; declaring the files an import reads (`pypeline.depends_on`) catches the same
+  firmware edits and keeps it at 2 s.
 - Implement agreed designs faithfully. Don't add heuristic bounds, arbitrary floors or
   behavioral limits nobody asked for unless they're confirmed and tested.
 - If a simplification turns out unsafe during implementation, fix it and say so plainly.
@@ -167,6 +181,10 @@ For test-runner commands, see [Testing](#testing).
   can no longer run. Search `src/` and `docs/` for the old function and rule names and
   fix every comment and doc that cites them, in other modules too. Re-read the
   comments next to any code whose behavior you change.
+- **Edit comments, don't compress them.** When behavior changes, rewrite the sentences
+  it makes false and keep the rest: why a step is non-fatal, which re-imports clear a
+  registry, the cross-references. A one-line summary in place of an explanation
+  loses what the next reader needs.
 - **Check every consumer of a changed contract.** Before changing what a value
   means or when it may be read (a `.latency`, an identity hash, a cache key, a
   record format), find every reader in `src/`, `include/`, `examples/`, the tests and
@@ -207,6 +225,13 @@ For test-runner commands, see [Testing](#testing).
   computation reads, including entries other features fill (another call site's
   prepared candidates, say), and record what can't be listed in advance. Test the
   key by recording reads while the computation runs.
+- **Compare values taken at the same point.** A recorded value checked against a
+  fresh one must describe the same thing. The sources `SIM.WRITE_BUILT_HARDWARE`
+  records at the end of a build include modules that only later passes import, so
+  one first parse reads a subset of them. When a comparison (a cache key, a
+  signature, a record) fails for a whole class of designs, dump both sides and diff
+  them before narrowing the feature: the difference is the bug, and excluding the
+  class hides it.
 - **C front-end output is not byte-reproducible.** C instance names carry
   `id()`-derived suffixes, so an A/B comparison of C builds must normalize those
   suffixes and compare sorted lines.
@@ -324,6 +349,10 @@ python3 src/tests/pypeline_tests/run_all.py --category known_issues -t NAME -j 1
 - **Prove the test catches the bug.** Revert the fix by hand, confirm the test fails,
   then restore it. A test that passes either way tests nothing; the exact construction
   often decides whether the buggy path is reached.
+- **A failing existing test is evidence.** When your change makes an existing test
+  fail, find out why before editing the test. Don't delete it, or invert its
+  assertion to match the new behavior, unless the human agreed to drop that behavior,
+  and then say so in the report.
 - **Reuse a related test file when its execution mode and setup fit.** Each
   registration can pay its own elaboration, synthesis or GHDL start-up cost, but
   combining unrelated cases or cheap assertions with expensive integration builds
@@ -364,6 +393,11 @@ python3 src/tests/pypeline_tests/run_all.py --category known_issues -t NAME -j 1
   the relevant issue and reproducer and, when needed, the unchanged baseline: a
   similar symptom alone is not enough. Report the evidence and the issue reference;
   never hide a failure.
+- **Report regressions and added costs as such.** Say plainly when something that
+  worked before stops working or gets slower: a shortcut some designs lose, a check
+  that now elaborates the design, a replay that now imports the top. Give the
+  measured cost and who is affected. Don't present it as a limitation of the new
+  feature.
 - **Keep quality-of-results changes apart from efficiency changes.** If work to cut
   synthesis runs also changes placement or trim decisions, describe and verify each
   change on its own, and say which results support which.
@@ -391,7 +425,8 @@ python3 src/tests/pypeline_tests/run_all.py --category known_issues -t NAME -j 1
   only the checks you reran and the findings you revalidated.
 - **Add what you learn to the reviews.** The reviews in `docs/code_reviews/` are kept
   current by whoever works in the code. After a work session, add to the affected
-  module's review what made the code hard to work with and isn't there yet: a hidden
+  module's review what made the code hard to work with and isn't there yet (not what
+  you changed or fixed: that is `git log`): a hidden
   coupling, a misleading name or comment, state with no clear owner, a rule
   duplicated elsewhere. Put it in the section that covers it, name the functions and
   the commit or tree it describes, give the evidence, and label a suspected problem

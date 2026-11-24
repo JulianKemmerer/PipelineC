@@ -2963,7 +2963,7 @@ def RAM_PREPARE_TARGET(parser_state, src_file):
     """Resolve bootstrap geometry after CLI and source PART/tool reconciliation.
 
     Factory keys stay logical: a selected physical plan can be replayed by native
-    simulation without an installed synthesis tool. Hooks run only on first parse.
+    simulation without an installed synthesis tool.
     """
     import pypeline
     import SYN
@@ -3303,14 +3303,11 @@ def WRITE_COMB_FINAL_FILES(parser_state, comb):
     (BUILD_FIXED_AUTO_PIPELINE_TIMING_PARAMS, None when there are none:
     exactly the historical zero-clock files). A --no_synth build with no fixed
     call sites keeps the zero-added-clocks files WRITE_0_ADDED_CLKS_INIT_FILES
-    already wrote as its final VHDL. Then the syn @final hooks. Returns the
+    already wrote as its final VHDL. Returns the
     timing params (None: zero added clocks)."""
-    import PY_TO_LOGIC
-
     comb_timing_params = BUILD_FIXED_AUTO_PIPELINE_TIMING_PARAMS(parser_state)
     if comb or comb_timing_params is not None:
         SYN.WRITE_FINAL_FILES(comb_timing_params, parser_state)
-    PY_TO_LOGIC.RUN_SYN_FINAL_HOOKS()
     return comb_timing_params
 
 

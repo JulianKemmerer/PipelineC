@@ -470,9 +470,9 @@ DO_SWEEP_AND_AUTO_PIPELINE
 
 Builds that run no sweep (`--comb`, `--no_synth`, `--yosys_json`) use
 `BUILD_FIXED_AUTO_PIPELINE_TIMING_PARAMS` instead (§6). A `--comb` or `--no_synth`
-build writes its final files with it through `WRITE_COMB_FINAL_FILES`, then runs
-the syn `@final` hooks. A `--no_synth` build with no fixed call sites keeps the
-zero-added-clocks files as its final VHDL. With no synthesis tool for the part,
+build writes its final files with it through `WRITE_COMB_FINAL_FILES`. A `--no_synth`
+build with no fixed call sites keeps the zero-added-clocks files as its final VHDL. With
+no synthesis tool for the part,
 the driver continues as `--comb --no_synth`, and `SWITCH_TO_FIXED_ONLY_BUILD`
 switches the build mode to `"fixed_only"` and drops the starting latencies. It
 re-elaborates the design if its Python already read a `start_latency=` or a

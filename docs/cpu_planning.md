@@ -28,7 +28,6 @@ the GCC toolchain described under
 - [Milestones](#milestones)
 - [M0: Audit](#m0-audit)
 - [M1: Single-cycle RV32I core, firmware build and ISA tests](#m1-single-cycle-rv32i-core-firmware-build-and-isa-tests)
-  - [Run-once values](#run-once-values)
   - [Core](#core)
   - [Simulation-control device](#simulation-control-device)
   - [Firmware build and RAM contents](#firmware-build-and-ram-contents)
@@ -69,8 +68,7 @@ Principles:
   `include/pypeline/`: Pypeline hardware plus host Python. A compiler change enters the
   plan only when a milestone's design needs it and no clean library workaround exists. It
   then goes through the [issues inventory](issues_inventory.md) like any other change.
-  M1 needs one: [run-once values](#run-once-values), which replace the synthesis form
-  of `@initial`. Compile-time `getattr` on hardware structs is not needed
+  Compile-time `getattr` on hardware structs is not needed
   ([Gaps](#gaps-and-how-the-plan-handles-them) says why).
 - **Fix blocking bugs first.** Where a known bug sits on a milestone's path, the
   milestone lists it under "Before it starts", and the bug is fixed before the
@@ -126,7 +124,7 @@ on `PATH`; the legacy Makefiles say `export PATH=$PATH:/opt/riscv/bin`.
 
 | Gap | Status | Plan |
 |---|---|---|
-| Work done once per run, before elaboration | The design is imported several times per build, and module-level code runs on every import. A synthesis `@initial` runs once per build, but after the first import, when `make_ram(init=)` has already run; its return value is dropped, and re-imports get fresh module globals. So it can only cause side effects, never supply hardware. No example uses it: only the hooks tests (`inst/hooks_design.py`) do | M1 replaces it with [run-once values](#run-once-values) |
+| Preparing RAM contents | Module-level Python runs on every design import | M1 compiles firmware in a private temporary directory and passes its words to the RAM factories ([Firmware build and RAM contents](#firmware-build-and-ram-contents)) |
 | Selecting a hardware struct field by string | In a hardware body, `getattr(regs, "led")` and `setattr(o, "led", v)` both fail: "only supported with compile-time constant arguments" | Not needed: the memory map maps each device's structs whole, through bytes. Add compile-time `getattr` only when a design needs it |
 | C header export | `pypeline_host.py` writes a Python module only | [M3](#m3-memory-mapped-control-and-status-registers) adds a C header generator next to `generate()`. It runs during import, because gcc needs the header before the RAM contents exist |
 | Packed C structs for MMIO | Pypeline's byte layout matches `-fpack-struct=1`, but packing changes how GCC accesses fields. With GCC 12.1 (`-march=rv32i -O2`, with or without `-mstrict-align`), a `uint32_t` field write through a pointer to a packed struct becomes four `lbu` + `sb` pairs. A write through a constant address stays one `sw`. A register with side effects, such as a UART TX, would see four byte writes and four reads | Mapped structs keep natural alignment, so the plain C layout equals Pypeline's. The header uses no packing and checks every offset with `_Static_assert` ([Struct layout shared with C](#struct-layout-shared-with-c)) |
@@ -212,10 +210,6 @@ address bits:
   - Library code has no `*_DESIGN.md`. Each user-visible feature gets a guide section
     when it lands.
   - The example gets a README, and the [README](../README.md) feature table gets a row.
-  - Run-once values change `src/pypeline.py` and the hook flow, so M1 updates the guide's
-    [`@initial` / `@final`](pypeline_guide.md#initial--final--startend-of-run-hooks)
-    section, `pypeline_DESIGN.md`'s decorator and state tables, and
-    [hook coverage](pypeline_TESTS.md#initial--final-hook-coverage).
   - M3's C header generator extends `src/pypeline_host.py`, so M3 updates
     [One walk, three consumers](pypeline_DESIGN.md#one-walk-three-consumers).
 
@@ -224,7 +218,7 @@ address bits:
 | Milestone | Delivers | Before it starts | Done when |
 |---|---|---|---|
 | [M0](#m0-audit) | Audit of the legacy CPUs and of Pypeline; decisions; bugs filed | — | The open questions are answered and the bugs found have GitHub issues |
-| [M1](#m1-single-cycle-rv32i-core-firmware-build-and-isa-tests) | Run-once values; single-cycle RV32I core ported from the legacy core; firmware built during import; resets; `rv32ui` with a replacement test environment | Nothing to fix; workarounds for #360, #361 and #362 | `rv32ui` passes in native simulation and GHDL; a C demo builds with no manual step |
+| [M1](#m1-single-cycle-rv32i-core-firmware-build-and-isa-tests) | Single-cycle RV32I core ported from the legacy core; firmware built during import; resets; `rv32ui` with a replacement test environment | Nothing to fix; workarounds for #360, #361 and #362 | `rv32ui` passes in native simulation and GHDL; a C demo builds with no manual step |
 | [M2](#m2-machine-mode-traps-and-csrs) | Machine-mode CSRs, ECALL, EBREAK, MRET and exception traps | Nothing known | `rv32ui` passes with the unmodified riscv-tests `p` environment |
 | [M3](#m3-memory-mapped-control-and-status-registers) | Memory map with struct registers for LEDs, buttons and a cycle counter; C header export | Nothing known | Firmware reads and writes every field of the mapped structs, checked field by field |
 | [M4](#m4-console-and-uart) | Console MMIO device and UART | Fix [#382](https://github.com/JulianKemmerer/PipelineC/issues/382) | "Hello" prints in native simulation and GHDL; an echo test passes |
@@ -273,7 +267,7 @@ What remains:
    - build one `rv32ui` test with the replacement environment and the generated linker
      script, and load its ELF into IMEM and DMEM images;
    - count how many times a typical build imports the design, and time one firmware
-     compile, to confirm that compiling once per run needs no cache across runs;
+     compile, to measure the cost per design import;
    - list the CSRs and trap causes that riscv-tests' `env/p/riscv_test.h` uses, from its
      source, as input to M2;
    - measure the elaboration time of the ported `decode()`; no CPU-sized function has
@@ -285,66 +279,13 @@ issue, an inventory entry and a reproducer.
 
 ## M1: Single-cycle RV32I core, firmware build and ISA tests
 
-M1 adds run-once values, ports the legacy single-cycle core, adds what the ISA tests
+M1 ports the legacy single-cycle core, adds what the ISA tests
 need, and builds the firmware with no manual step.
 
 **Before it starts:** nothing to fix. M1 works around [#361](https://github.com/JulianKemmerer/PipelineC/issues/361)
 (finish a cycle after the last print), [#360](https://github.com/JulianKemmerer/PipelineC/issues/360)
 (print with `hex()`) and [#362](https://github.com/JulianKemmerer/PipelineC/issues/362)
 (byte lanes through an array).
-
-### Run-once values
-
-The firmware must be compiled before `make_ram` runs, which is during import. A build
-imports the design several times (AUTO_PIPELINE re-parses it), so module-level code that
-calls gcc would compile once per import. If a C file changed during the build, the
-passes could then see different images, and so different RAM entity names. The
-synthesis `@initial` was meant for "do this once at the start", but it runs after the
-first import and its result reaches no hardware.
-
-M1 replaces it with a run-once value (the name is a proposal, see
-[Open questions](#open-questions)):
-
-```python
-from pypeline import once
-
-@once
-def build_firmware(sources: tuple, imem_words: int, dmem_words: int):
-    ...  # compile, link, load: runs on the first call of the run only
-
-fw = build_firmware(("main.c",), IMEM_WORDS, DMEM_WORDS)
-```
-
-- **Semantics.** The first call in a run executes the function. Later calls with the
-  same arguments return the stored result without running it: later in the same import,
-  and in every re-import of the design during the run. One run is one `pypelinec`
-  process: a build, a native simulation, or a build followed by its simulation.
-- **Key.** The defining file and the qualified name of the function, plus its
-  arguments: a pure function of the source, as the
-  [naming rules](../AGENTS.md#names-caches-and-determinism) require. Arguments are
-  limited to plain values (strings, numbers, booleans, `None`, paths, and tuples and
-  frozensets of those). Anything else is an error, since its only identity would be
-  `id()` or `repr()`.
-- **Results** are plain data too (numbers, strings, bytes, and lists, tuples, dicts and
-  dataclasses of those). A type, a hardware function or any other object from one import
-  would be stale in the next, so returning one is an error.
-- **Storage.** A table in `src/pypeline.py`, which re-imports do not reload, declared
-  next to `_hook_registry`. Native simulation never imports `PY_TO_LOGIC`, so the table
-  cannot live there. This is how `param()` values already survive re-imports. An
-  in-process caller that runs several designs, such as a test, clears it between runs.
-- **Consistency.** Every pass of a build sees the same result, even if a file the
-  function reads changes during the build. `FREEZE_DESIGN_SOURCES` gives the design's
-  `.py` files the same guarantee. A change takes effect on the next run.
-- **No cache across runs.** Each run compiles again. A cache across runs would need a
-  key covering every header gcc reads, the toolchain version and the generated files,
-  plus atomic renames for concurrent builds. M0 measures whether one compile per run is
-  cheap enough, as expected for small firmware.
-- **What happens to the hooks.** Synthesis `@initial` is removed: `@initial(syn=True)`
-  is an error that points to `@once`, and the bare `@initial` means simulation only. The
-  simulation hooks (`@initial(sim=True)`, `@final(sim=True)`) stay as they are: the PDW
-  and WireGuard testbenches use them. `hooks_design.py` and its tests change with it.
-
-The firmware helper uses `once` internally, so a design just calls `firmware.build(...)`.
 
 ### Core
 
@@ -408,7 +349,9 @@ in GHDL. On a board, the write sets `halt`.
 
 ### Firmware build and RAM contents
 
-A helper runs during import, once per run ([Run-once values](#run-once-values)):
+Call an ordinary Python helper on each import, before constructing either RAM.
+Repeated calls with the same inputs produce identical IMEM and DMEM words. See
+[Code that runs during design import](pypeline_guide.md#code-that-runs-during-design-import).
 
 ```python
 fw = firmware.build(sources=("main.c",), imem=IMEM, dmem=DMEM)  # compile, link, load
@@ -431,7 +374,9 @@ The names are proposals.
 - **Generated Makefile:** with `project_dir=`, the helper also writes a `Makefile`, the
   linker script and `crt0.S` (and from M3 the C header) into that directory. The
   Makefile runs the same gcc command, so the firmware can be rebuilt, disassembled and
-  debugged by hand. The build itself never runs `make`.
+  debugged by hand. The build itself never runs `make`. Every import writes these
+  files, so each is replaced through a temporary file and a rename, and only when its
+  content changed.
 - **Load:** the [ELF loader](#where-the-code-goes) reads the loadable segments with
   Python's `struct` module (no objcopy or `pyelftools` step). It splits them by address
   into the IMEM and DMEM word lists. A segment outside both windows, or one that does not
@@ -442,7 +387,11 @@ The names are proposals.
   build passes its ELF this way. Running an existing Makefile from the helper is not
   supported.
 - **Hardware identity:** the contents are part of each RAM's entity name. To the build
-  cache, new firmware is a new design.
+  cache, new firmware is a new design. The helper declares what it reads with
+  `depends_on`: the C and assembly sources, the headers gcc lists in its `-MD`
+  dependency file, and an ELF named by `-D FIRMWARE`. So a repeat build and a testbench
+  on built hardware notice edited firmware without `--rebuild`
+  ([Code that runs during design import](pypeline_guide.md#code-that-runs-during-design-import)).
 
 ### ISA tests
 
@@ -474,16 +423,15 @@ The names are proposals.
   import with no manual step. It runs a counter and some arithmetic and returns a
   checksum. It passes in native simulation and in GHDL, and `native_vs_vhdl_sim`
   compares its trace cycle by cycle.
-- **Run-once values:** in-process tests show that a build calls a run-once function once
-  however many times it parses the design, that different arguments call it again, and
-  that a new run calls it again. A file that the function reads and that changes between
-  two parses of one run does not change the result. Unsupported arguments and results
-  are rejected. The hook tests cover the removed synthesis `@initial`.
+- **Firmware reproducibility:** compiling the same inputs on a second import yields the
+  same IMEM and DMEM words.
+- **Edited firmware:** after a build, editing `main.c` or a header it includes makes the
+  next build of the same top build again, naming the file.
 - **Reset:** a reset pulsed mid-run, from a `@sim_input`-driven reset pin, restarts the
   program from the reset vector.
 - **Synthesis and docs:** a synthesis test of the core top passes with `device_models`,
   the default tool for tests. The guide sections, the example README and the README
-  feature table describe the core and run-once values.
+  feature table describe the core and firmware workflow.
 
 Risks: no CPU-sized design has been elaborated yet, and native simulation speed is
 unmeasured.
@@ -728,10 +676,4 @@ M6 is done when:
 
 ## Open questions
 
-1. **Run-once values (M1).** Is `@once` the right name? And should synthesis `@final`
-   go along with synthesis `@initial`? It has no users either, but unlike `@initial` it
-   is not replaced by run-once values: it runs after the final VHDL is written, which a
-   post-build step (a report, copying outputs) could use. Recommendation: remove both
-   synthesis forms, keeping `@initial`/`@final` as simulation hooks, because the
-   synthesis forms carry their own state (`_syn_hook_snapshot`) and a documented
-   stale-`.latency` caveat. A script around `pypelinec` covers post-build steps.
+There are no outstanding design questions for M1.

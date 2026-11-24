@@ -3483,6 +3483,8 @@ class ParserState:
         # for the area objective, and for the delay objective.
         self.pypeline_comb_area_opt_candidates = {}
         self.pypeline_comb_delay_opt_candidates = {}
+        # AUTO combinational optimization tag -> elaborated entity.
+        self.pypeline_comb_opt_tag_entities = {}
 
         # Pragma info
         self.main_mhz = {}  # dict[main_inst_name]=mhz # Any inst name can be used
@@ -3633,6 +3635,7 @@ class ParserState:
         rv.pypeline_auto_owner_mains = dict(self.pypeline_auto_owner_mains)
         rv.pypeline_auto_fsm_soft_equiv = dict(self.pypeline_auto_fsm_soft_equiv)
         rv.pypeline_auto_fsm_split_equiv = dict(self.pypeline_auto_fsm_split_equiv)
+        rv.pypeline_comb_opt_tag_entities = dict(self.pypeline_comb_opt_tag_entities)
         rv.pypeline_comb_area_opt_candidates = dict(self.pypeline_comb_area_opt_candidates)
         rv.pypeline_comb_delay_opt_candidates = dict(
             self.pypeline_comb_delay_opt_candidates

@@ -313,7 +313,7 @@ came from.
 
 ### Owned FSM characterization state
 
-ParserState initializes and independently copies specialization, equivalent, pipeline-profile, transform, decode-proxy, source-identity, provenance, call-site tag, derived-delay and AUTO_COMB_OPT alternative tables. Fixed-latency constraints carry an optional plain-data FSM placement recipe, avoiding planner state hidden on live objects. A table created on first use (`getattr` with a default) makes behavior depend on call order.
+ParserState initializes and independently copies specialization, equivalent, pipeline-profile, transform, decode-proxy, source-identity, provenance, call-site tag, derived-delay and AUTO_COMB_OPT alternative and tag-to-entity tables. Fixed-latency constraints carry an optional plain-data FSM placement recipe, avoiding planner state hidden on live objects. A table created on first use (`getattr` with a default) makes behavior depend on call order.
 
 ### Name-keyed memos are per parse
 

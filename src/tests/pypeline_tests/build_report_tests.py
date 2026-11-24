@@ -115,6 +115,20 @@ def get_tests() -> list:
             needs_out_dir=True,
         )
     )
+    # A ROM whose words come from a data file the design declares with
+    # depends_on: the build records the file, the same build again is up to
+    # date, an edited word builds again into the hardware, a testbench on the
+    # earlier build refuses the edited file, and a missing file stops the
+    # import naming it. Two small sky130 builds, an up-to-date run, two native
+    # runs (one refused) and one failing run.
+    tests.append(
+        Test(
+            name="depends_on_test",
+            category=DM,
+            cmd=[INST_DIR / "depends_on_test.py"],
+            needs_out_dir=True,
+        )
+    )
     # The design diagram a build writes: MAIN and AUTO_PIPELINE latencies equal
     # built_hardware.json's, measured delays and zero-clock offsets are
     # recorded, the pipelined operators' latencies are recorded, a --no_synth
@@ -460,8 +474,7 @@ def get_tests() -> list:
         )
     )
     # @initial/@final hooks through a sky130 build + native sim, and a --comb
-    # build + cocotb+GHDL sim: syn hooks once each, before elaboration / after
-    # the final VHDL, sim hooks around the clock loop
+    # build + cocotb+GHDL sim: only simulation runs the hooks, around its clock loop
     tests.append(
         Test(
             name="hooks_order_native_pipelined",

@@ -64,7 +64,7 @@ def get_tests() -> list:
             needs_out_dir=True,
         )
     )
-    # @initial/@final(syn) hooks around a --no_synth build, and a MAIN calling
+    # A --no_synth build with simulation hooks, and a MAIN calling
     # a hook failing elaboration
     for variant in ("no_synth", "call_from_hw"):
         tests.append(

@@ -2691,31 +2691,25 @@ def sim_input(fn):
 
 
 # ─────────────────────────────────────────────
-# @initial / @final: start/end-of-run hooks for simulation and synthesis
+# @initial / @final: start/end-of-simulation hooks
 # ─────────────────────────────────────────────
 
-# (fn, when, sim, syn) per decorated hook, in registration order. Cleared with
+# (fn, when) per decorated simulation hook, in registration order. Cleared with
 # _main_registry on every design (re)import: PY_TO_LOGIC.PARSE_FILE and
 # pypeline_sim.import_design.
 _hook_registry: list = []
-# The syn hooks the pipelinec driver ran @initial from (set by PARSE_FILE's
-# run_syn_initial_hooks=True). Re-parses re-import the design into fresh module
-# globals; running syn @final hooks from this same list keeps them on the
-# initial hooks' module instance, so state shared between the two survives.
-_syn_hook_snapshot = None
 
 
 def _hook_decorator(when, fn, sim, syn):
-    if sim is None and syn is None:
-        sim = syn = True
-    sim, syn = bool(sim), bool(syn)
+    if syn:
+        raise ValueError(
+            f"@{when}(syn=True): hooks run only in simulation. Prepare hardware "
+            "values during design import; run post-build actions in the calling script."
+        )
+    if sim is False or (sim is None and syn is False):
+        raise ValueError(f"@{when}: disabling simulation means the hook never runs.")
 
     def register(f):
-        if not (sim or syn):
-            raise ValueError(
-                f"@{when} on {f.__name__!r}: sim=False and syn=False means the "
-                f"hook never runs -- enable at least one of sim/syn."
-            )
         try:
             required = [
                 p
@@ -2731,51 +2725,45 @@ def _hook_decorator(when, fn, sim, syn):
                 f"{[p.name for p in required]}."
             )
         f._is_pypeline_hook = True
-        _hook_registry.append((f, when, sim, syn))
+        _hook_registry.append((f, when))
         return f
 
     return register if fn is None else register(fn)
 
 
 def initial(fn=None, *, sim=None, syn=None):
-    """Run a plain Python function once at the start of a simulation and/or a
-    synthesis (hardware build) run.
+    """Run a plain Python function once at the start of a simulation.
 
-        @initial                  # both sim and syn
-        @initial(sim=True)        # simulation only
-        @initial(syn=True)        # synthesis only
+        @initial                  # the same as @initial(sim=True)
+        @initial(sim=True)
 
     The body is host Python, never hardware: it is not elaborated, and it
-    takes no arguments. Sim @initial hooks run once after the design is loaded
-    and reset, before the first clock cycle (so before any @sim_input), for
-    every simulator. Syn @initial hooks run once per pipelinec run, right after
-    the design is imported and before it is elaborated. Several hooks may
-    exist; they run in no particular order.
+    takes no arguments. Native simulation runs @initial hooks once after the
+    design is loaded and reset, before the first clock cycle (so before any
+    @sim_input). For an external simulator (cocotb + GHDL) they run before it
+    is launched. Several hooks may exist; they run in no particular order. Hooks never run in a
+    hardware build, so @initial(syn=True) raises ValueError: prepare hardware
+    values (RAM contents, say) during design import instead.
     """
     return _hook_decorator("initial", fn, sim, syn)
 
 
 def final(fn=None, *, sim=None, syn=None):
-    """Run a plain Python function once at the end of a simulation and/or a
-    synthesis (hardware build) run. Same forms as @initial.
+    """Run a plain Python function once at the end of a simulation. Same forms
+    as @initial.
 
-    Sim @final hooks run once after the last simulated cycle's @sim_output
-    calls, however the simulation ended: sim_finish(), --run N reaching N, or
-    an error (an assert, the --run all cap). On an error the original
-    exception is still the one raised. Syn @final hooks run once, right after
-    the final VHDL is written and before any bitstream generation.
+    Native simulation runs @final hooks once after the last simulated cycle's
+    @sim_output calls, however the simulation ended: sim_finish(), --run N
+    reaching N, or an error (an assert, the --run all cap). On an error the
+    original exception is still the one raised. After an external simulator
+    (cocotb + GHDL), they run once it exits. @final(syn=True) raises
+    ValueError: run post-build actions in the script that calls pypelinec.
     """
     return _hook_decorator("final", fn, sim, syn)
 
 
-def SNAPSHOT_HOOKS():
-    """A copy of the currently registered hooks (see _syn_hook_snapshot)."""
-    return list(_hook_registry)
-
-
-def _hook_fns(when, flow, hooks):
-    hooks = _hook_registry if hooks is None else hooks
-    return [fn for fn, w, sim, syn in hooks if w == when and (sim if flow == "sim" else syn)]
+def _hook_fns(when):
+    return [fn for fn, phase in _hook_registry if phase == when]
 
 
 def _call_hook(fn, when):
@@ -2789,14 +2777,14 @@ def _call_hook(fn, when):
         ) from None
 
 
-def RUN_INITIAL_HOOKS(flow, hooks=None):
-    """Run every @initial hook enabled for flow ("sim" or "syn")."""
-    for fn in _hook_fns("initial", flow, hooks):
+def RUN_INITIAL_HOOKS():
+    """Run every @initial hook of the simulation."""
+    for fn in _hook_fns("initial"):
         _call_hook(fn, "initial")
 
 
-def RUN_FINAL_HOOKS(flow, hooks=None, pending_exc=None):
-    """Run every @final hook enabled for flow ("sim" or "syn").
+def RUN_FINAL_HOOKS(pending_exc=None):
+    """Run every @final hook of the simulation.
 
     Every hook runs even if an earlier one raises. With pending_exc (the error
     that ended the run), hook errors are only printed so the original error is
@@ -2804,7 +2792,7 @@ def RUN_FINAL_HOOKS(flow, hooks=None, pending_exc=None):
     ran.
     """
     first_err = None
-    for fn in _hook_fns("final", flow, hooks):
+    for fn in _hook_fns("final"):
         try:
             _call_hook(fn, "final")
         except BaseException as e:
@@ -3342,6 +3330,63 @@ def DESIGN_PARAM_LIST_TEXT(design_file):
             out.append(f"      {decl.help}")
         out.append(f"      declared at {_param_short_site(decl.site)}")
     return "\n".join(out)
+
+
+# ─────────────────────────────────────────────
+# Files the design's import reads: depends_on()
+# ─────────────────────────────────────────────
+
+# Absolute path -> (sha256, size in bytes) of each file a design import declared
+# with depends_on, as first declared in this process. Kept across design
+# re-imports (it lives in this runtime module, like the parameter state above),
+# so a build records the contents its first import read. PY_TO_LOGIC's
+# DESIGN_SOURCE_HASHES adds these to the frozen Python sources.
+_declared_files: dict = {}
+# Declared paths whose contents differed at a later declaration in this
+# process, each warned about once (depends_on)
+_declared_files_changed: set = set()
+
+
+def depends_on(path):
+    """Declare a file other than Python source that the design reads while it
+    is imported: a ROM image, firmware sources, a data table. Returns path, so
+    it can wrap the read: ``depends_on(path).read_text()`` for a Path,
+    ``open(depends_on(path))`` for a string.
+
+    A build records the file's hash with its Python sources (in
+    built_hardware.json and source_provenance.json). Once the file changes,
+    the next build of the same top builds again, and a testbench that
+    simulates the hardware built earlier refuses to run until that top is
+    rebuilt. A file the import reads without declaring it is not checked:
+    after editing one, build with --rebuild.
+
+    Declare the inputs, not files the import generates: a firmware helper
+    declares the C sources and headers it passes to gcc, not the ELF it
+    writes to a temporary directory. Python sources are frozen for the whole
+    build; declared files are not, so keep them unchanged while a build runs
+    (a later import that finds other contents prints a warning, and the next
+    build builds again). A missing file raises the error open() raises.
+    """
+    full = _os.path.abspath(_os.fspath(path))
+    with open(full, "rb") as f:
+        data = f.read()
+    entry = (_hashlib.sha256(data).hexdigest(), len(data))
+    first = _declared_files.setdefault(full, entry)
+    if first != entry and full not in _declared_files_changed:
+        _declared_files_changed.add(full)
+        print(
+            f"WARNING: {full} changed while this run was importing the design "
+            "again; earlier imports read other contents. The next build of "
+            "this top builds again.",
+            flush=True,
+        )
+    return path
+
+
+def DECLARED_FILES():
+    """{absolute path: (sha256, size)} of every file declared with depends_on
+    in this process, as first declared."""
+    return dict(_declared_files)
 
 
 # ─────────────────────────────────────────────

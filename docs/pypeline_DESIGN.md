@@ -110,6 +110,7 @@ one paragraph per change.
   - [`wires(func)` — Just-Wires Synthesis Hint](#wiresfunc--just-wires-synthesis-hint)
   - [Registries](#registries)
 - [Design Parameters (`param()`, `-D`)](#design-parameters-param--d)
+- [Declared Files (`depends_on()`)](#declared-files-depends_on)
 - [Operator Registry](#operator-registry)
   - [Op String Values](#op-string-values)
   - [Global Registries](#global-registries)
@@ -1837,6 +1838,8 @@ flag). See
 | `_design_param_decls` | `dict[str, _ParamDecl]` | `param()` declarations of the current design import (reset per import) | `DESIGN_PARAM_LIST_TEXT` (`--list_params`), the parameter banner, `DESIGN_PARAM_REPORT` (`source_provenance.json`) |
 | `_design_param_values` | `dict[str, (value, source)]` | Each design parameter's value and its source (`-D`, `env:VAR`, `default`), resolved once per process | every later `param()` call: re-elaboration passes and simulation imports |
 | `_design_param_defines` | `dict[str, str \| True]` | The `-D` table (`SET_DESIGN_PARAMS`); every name is also installed in `builtins` | `param()`, the injected-global checks |
+| `_declared_files` | `dict[str, (str, int)]` | Absolute path → (sha256, size) of each file a design import declared with `depends_on`, as first declared in the process | `DECLARED_FILES()`: `PY_TO_LOGIC.DESIGN_SOURCE_HASHES` and `source_provenance.json` |
+| `_declared_files_changed` | `set[str]` | Declared paths a later declaration found changed, each warned about once | `depends_on` |
 
 `param()` and `-D NAME=VALUE` are described for users in
 [Build Parameters](pypeline_guide.md#build-parameters-param-and--d) and below in
@@ -1890,6 +1893,29 @@ injected constants in hardware bodies, provenance) is in
 `design_params_test.py` (unit) and `design_params_build_test.py`
 (build_report_device_models) cover it; see
 [pypeline_TESTS.md](pypeline_TESTS.md#design-parameter-coverage).
+
+---
+
+## Declared Files (`depends_on()`)
+
+The user-facing rule is in
+[Code that runs during design import](pypeline_guide.md#code-that-runs-during-design-import).
+`depends_on(path)` hashes the file and returns `path` unchanged. `_declared_files` keeps
+the hash and size each path had when first declared in the process. It lives in this
+runtime module, like the parameter state, so re-imports between passes keep it, and a
+build records what its first import read. A later declaration that finds other contents
+prints one warning per path and keeps the first entry. The record then no longer
+matches the file, so the next build builds again. A missing file raises what `open()`
+raises.
+
+`DECLARED_FILES()` is the read side: `PY_TO_LOGIC.DESIGN_SOURCE_HASHES` adds the
+declared files to the frozen Python sources, so `SIM.WRITE_BUILT_HARDWARE` records them,
+the up-to-date check re-hashes them and a testbench on built hardware refuses a changed
+one ([Simulating built hardware](SIM_DESIGN.md#simulating-built-hardware)). Declared
+files are never frozen: a subprocess such as gcc reads them too.
+
+`built_hardware_current_test.py` (unit) and `depends_on_test.py`
+(build_report_device_models) cover it.
 
 ---
 
@@ -2728,14 +2754,15 @@ shared `Logic.vhdl_module_text` field (also used by the C frontend's `__vhdl__("
 | `RESET` / `NO_RESET` | `Reg[T, ...]` markers: reset under any policy / never ([`Reg[T]`](#regt--_regtype)) |
 | `param(name, default, *, type, choices, help, env)` | Declares a build parameter and returns its value for this build: `-D NAME=VALUE`, else environment variable `env` (only when given and set), else `default` ([Design Parameters](#design-parameters-param--d)) |
 | `SET_DESIGN_PARAMS`, `PARSE_DESIGN_PARAM_DEFINES`, `CHECK_DESIGN_PARAM_USE`, `DESIGN_PARAM_REPORT`, `DESIGN_PARAM_LIST_TEXT`, `PRINT_DESIGN_PARAM_BANNER_ONCE` | Driver side of `param()`: install and parse the `-D` table, check how the design uses injected names after an import, and produce the `source_provenance.json` record, the `--list_params` text and the build banner |
+| `depends_on(path)` / `DECLARED_FILES()` | Declare a non-Python file the design's import reads, returning `path`; the files declared so far with their first hashes, which become build inputs ([Declared Files](#declared-files-depends_on)) |
 | `@sim_output` | Marks a function as simulation output-only; no-op during convergence passes; executes in final pass per cycle; under `@MAIN` it is a simulation-only MAIN |
 | `sim_print(fstring_or_str)` | printf-style console output — same once-per-cycle firing as `@sim_output`, but *also* elaborates to a real VHDL `write(output, ...)` statement (see `PY_TO_LOGIC_DESIGN.md`) |
 | `sim_wave(name, value)` / `sim_wave(value)` | A signal in the native simulation's waveform (`--wave`): records into `_sim_wave_recorder` in the final pass; marked `_is_sim_output`, so elaboration deletes it; one argument names it after its source text ([`sim_wave`](pypeline_sim_DESIGN.md#sim_wave--signals-in-the-simulations-waveform)) |
 | `sim_wave_enabled()` / `SET_SIM_WAVE_RECORDER(recorder)` | Whether a `sim_wave` call would record now (a library skips building names otherwise); install or remove the recorder (`SIM.START_NATIVE_WAVES` / `STOP_NATIVE_WAVES`) |
 | `sim_assert(cond, msg=None)` | simulation-only condition check — raises `AssertionError` in native sim, elaborates to VHDL `assert ... report ... severity failure;` (see `PY_TO_LOGIC_DESIGN.md`) |
 | `sim_finish()` | simulation-only stop signal — raises `SimFinish` in native sim (caught by `pypeline_sim.py`'s CLI run loop), elaborates to VHDL `std.env.finish;` (see `PY_TO_LOGIC_DESIGN.md`) |
-| `@initial` / `@final` (`sim=`, `syn=`) | Host-Python hooks run once at the start / end of a simulation and/or a `pypelinec` build (bare form = both); never elaborated, zero-argument; marks `_is_pypeline_hook`, appends `(fn, when, sim, syn)` to `_hook_registry` (see `pypeline_sim_DESIGN.md` and `PY_TO_LOGIC_DESIGN.md`) |
-| `RUN_INITIAL_HOOKS(flow, hooks=None)` / `RUN_FINAL_HOOKS(flow, hooks=None, pending_exc=None)` / `SNAPSHOT_HOOKS()` | Tool-side hook runners (`flow` = `"sim"`/`"syn"`): every final runs even if one raises; with `pending_exc` hook errors are printed so the original error propagates; `SNAPSHOT_HOOKS` copies the registry (`_syn_hook_snapshot`) |
+| `@initial` / `@final` (`sim=`) | Host-Python hooks run once at the start / end of a simulation (the bare form is `sim=True`; `syn=True` raises `ValueError`); never elaborated, zero-argument; marks `_is_pypeline_hook`, appends `(fn, when)` to `_hook_registry` (see `pypeline_sim_DESIGN.md` and `PY_TO_LOGIC_DESIGN.md`) |
+| `RUN_INITIAL_HOOKS()` / `RUN_FINAL_HOOKS(pending_exc=None)` | Simulator-side hook runners: every final runs even if one raises; with `pending_exc` hook errors are printed so the original error propagates |
 | `AUTO_PIPELINE(func, latency=, start_latency=, max_latency=)` | Callable tag: calls through it may be auto-pipelined inside register/feedback contexts; `.latency` reads the built register count; optional fixed / starting / maximum latency (equivalent to `#pragma AUTOPIPELINE [N]`) |
 | `SET_BUILT_HARDWARE_SOURCE(dir, unbuilt_reads)` / `BUILT_HARDWARE_SOURCE()` / `BuiltHardwareError` | Native simulation of a testbench on a top's built hardware: while a build directory is set, an AUTO tag or RAM that build never decided raises `BuiltHardwareError` when used, except a `.latency` read of a tag that build also read without building it, which returns the value it read ([Simulating another top's built hardware](pypeline_sim_DESIGN.md#simulating-another-tops-built-hardware)) |
 | `AUTO_COMB_AREA_OPT(func)` | Experimental area-first combinational callable; same types/bits, zero added cycles, `.func`, `.latency == 0`; composes with pipeline/MCP/FSM wrappers |
@@ -2797,7 +2824,7 @@ shared `Logic.vhdl_module_text` field (also used by the C frontend's `__vhdl__("
 | `_sim_reg_flush_buffer()` | Commit buffered register writes atomically — the simulated clock edge |
 | `_main_registry` | Module-level list of all registered `@MAIN` wrappers in registration order (`HARDWARE_MAINS()`: the hardware ones) |
 | `_sim_run_in_progress` | Module-level bool; `True` from a `pypeline_sim` run's `@initial(sim)` hooks to the end of its `@final(sim)` hooks; `MAIN()` refuses then |
-| `_hook_registry` / `_syn_hook_snapshot` | `@initial`/`@final` hooks of the current design import (cleared with `_main_registry`); the syn hooks the driver ran `@initial` from, reused for syn `@final` |
+| `_hook_registry` | Simulation hooks of the current design import, cleared with `_main_registry` |
 | `_part_registry` | Module-level str or None: FPGA part string (read by `PY_TO_LOGIC.PARSE_FILE`) |
 | `SIM_STRICT_ARITH` | Bool flag (default `True`): apply hardware type-promotion and masking on arithmetic |
 | `SIM_RAW_INTS` | Bool flag (default `False`): bypass all `SimVal` wrapping for maximum speed |
