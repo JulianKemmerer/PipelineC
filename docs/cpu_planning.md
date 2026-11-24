@@ -334,10 +334,19 @@ The C idioms map to Pypeline like this:
 M1 ports the legacy single-cycle core, adds what the ISA tests
 need, and builds the firmware with no manual step.
 
-**Before it starts:** nothing to fix. M1 works around [#361](https://github.com/JulianKemmerer/PipelineC/issues/361)
-(finish a cycle after the last print), [#360](https://github.com/JulianKemmerer/PipelineC/issues/360)
-(print with `hex()`) and [#362](https://github.com/JulianKemmerer/PipelineC/issues/362)
-(byte lanes through an array).
+**Before it starts:** nothing to fix. M1 works around:
+
+- [#361](https://github.com/JulianKemmerer/PipelineC/issues/361): finish a cycle after
+  the last print;
+- [#360](https://github.com/JulianKemmerer/PipelineC/issues/360): print with `hex()`;
+- [#409](https://github.com/JulianKemmerer/PipelineC/issues/409): print signed values as
+  unsigned, `hex(uint32_t(x))`;
+- [#362](https://github.com/JulianKemmerer/PipelineC/issues/362): byte lanes through an
+  array;
+- [#408](https://github.com/JulianKemmerer/PipelineC/issues/408): bit stores with
+  `bit_assign`;
+- [#71](https://github.com/JulianKemmerer/PipelineC/issues/71): bind a call's result to a
+  local before reading its fields.
 
 ### Core
 
