@@ -75,6 +75,8 @@ part of a wrong choice. `sim_input_output_elab_test` fails when no reader filter
 other readers one at a time, and none fails for the reverse mistake in a place that must
 see every MAIN.
 
+Bits of a leaf have no ref-token form (working tree based on `06a65bc7`, found while adding single-bit stores). An integer is recognized as the base of a bit select or store only before `_parse_ref_toks` runs: `_try_elab_bit_slice` takes a bare name or an attribute chain, and `_try_elab_bit_slice_assign` a bare name in `env`. Any other subscript of an integer becomes a ref token, and `_is_var_tok` counts every AST node as a variable array index, the `ast.Slice` of `x[3:0]` included. So `s.f[3:0] = v` reaches `_emit_var_ref_assign`, `a[1][0] = v` reaches `_write_ref`, and `x[i]` read with a hardware `i` reaches `_elab_ref_read`, and all three stop in `_array_elem_type` or `_array_first_dim` with `ValueError: substring not found` ([#362](https://github.com/JulianKemmerer/PipelineC/issues/362)). Nothing at the token layer checks that the type being indexed is an array. A check there (an index step into a scalar type) would turn every such case into one `ElaborationError`, and a bit-store-at-a-path form would need the leaf read, `bit_assign` and leaf write that `_try_elab_bit_slice_assign` does for a name.
+
 The `sim_print`/`sim_assert` message is an internal C-printf string with no single owner
 (working tree based on `ec3eee13`, found while making native and VHDL prints agree).
 `_build_sim_fmt_string` encodes it: it escapes literal `%` as `%%`, picks `%X`, `%c`, `%s`,

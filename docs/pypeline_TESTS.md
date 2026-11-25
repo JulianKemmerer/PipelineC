@@ -1235,13 +1235,15 @@ covered:
   (`reg_aug_assign_test`, `reg_bitwise_mask_test`, `reg_undefined_width_test`,
   `sim_loop_reg_state_test`), casts, widths and types (`call_arg_width_test`,
   `nested_truncate_test`, `struct_ctor_positional_test`, `cast_interface_test`,
-  `char_array_test`, `enum_test`, `bit_math_test`), the `sim_*` APIs (`sim_input_test`,
-  `sim_output_direct_wire_test`, `sim_only_main_test`, `sim_print_test`, `sim_assert_finish_test`,
+  `char_array_test`, `enum_test`, `bit_math_test`, `bit_store_test`), the `sim_*` APIs
+  (`sim_input_test`, `sim_output_direct_wire_test`, `sim_only_main_test`, `sim_print_test`,
+  `sim_assert_finish_test`,
   `sim_print_hex_signed_test`, `sim_print_decimal_test`, `sim_finish_print_test`,
   `sim_assert_fail_print_test`, `main_args_sim_test`);
 - elaboration-rule, error and API tests, whose designs are rejected or whose subject is a
   call form or a naming or clock rule (`interface_type_error_test`,
-  `global_wire_errors_test`, `wires_contract_test`, `multi_rate_sim_refusal_test`,
+  `bit_store_error_test`, `global_wire_errors_test`, `wires_contract_test`,
+  `multi_rate_sim_refusal_test`,
   `clock_domains_elab_test`, `clock_api_unit_test`, `global_inst_api_unit_test`,
   `factory_main_api_unit_test`, `factory_main_elab_test`, `global_inst_elab_test`,
   `global_fifo_elab_test`, `auto_fsm_owner_goal_test`); `reset_elab_test` covers their

@@ -446,7 +446,8 @@ Regression test: `src/tests/pypeline_tests/inst/struct_ctor_narrow_test.py`.
 
 An `ast.NodeTransformer` applied by `_build_reg_sim_func` to the function body AST.
 Rules 1–2 cast scalar writes, Rules 3–4 handle struct/array locals and registers, Rule 5
-lowers augmented assignment onto Rules 2/4, and Rule 6 tracks typed parameters like locals:
+lowers augmented assignment onto Rules 2/4, Rule 6 tracks typed parameters like locals, and
+Rule 7 turns a bit store into an integer into a rebinding:
 
 **Rule 1 — Annotated assignment** (`AnnAssign` with value, scalar int type):
 ```python
@@ -636,6 +637,43 @@ rule, `arr_param[i] = x` edited the caller's list in place, which could be a cal
 committed `Reg` value. `struct_param.field = x` raised `AttributeError`, and a scalar parameter
 write skipped the cast.
 
+**Rule 7 — Bit stores into an integer** (`Assign` with a `Subscript` target on a bare name
+that Rule 2 tracks — a typed local, a scalar `Reg`/`Feedback`, a parameter — or on an untyped
+local):
+
+```python
+x[15:8] = b    →    x = _sim_cast(_sim_bit_store(x, slice(15, 8), b), declared_type)
+x[3] = 0       →    x = _sim_cast(_sim_bit_store(x, 3, 0), declared_type)
+u[3:0] = b     →    u = _sim_bit_store(u, slice(3, 0), b)                 (untyped local)
+```
+
+A `SimVal` is an immutable `int`, so `x[15:8] = b` cannot change `x` in place: without this
+rule it raised `TypeError: 'SimVal' object does not support item assignment`. The rule
+synthesizes `x = _sim_bit_store(x, key, value)` and hands it to `visit_Assign`, so Rule 2 casts
+it for a typed name. `_bit_store_key_node` makes the key: the index expression of `x[i]`, or a
+`slice(hi, lo)` call for `x[hi:lo]` (an `ast.Slice` is only legal inside a subscript). An
+extended subscript (`x[a:b, c]`) is left alone. `_sim_bit_store(base, key, value)` reads the key
+as `SimVal.__getitem__` does (an int is one bit, a slice is high index first, so `x[0:7] = v`
+raises like the read does, [#405](https://github.com/JulianKemmerer/PipelineC/issues/405)),
+truncates the value to the slice's width, and keeps the base's ctype, normalizing a signed
+result with `_sim_cast`. Elaboration accepts only a value exactly as wide as the slice
+(`PY_TO_LOGIC._try_elab_bit_slice_assign`).
+
+An untyped local is a name that a plain `name = ...` (or a tuple/list target) earlier in the
+same function binds, and the function does not declare `global` or `nonlocal`. Its value is
+only known at run time, so `_sim_bit_store` stores into a non-integer value (a Python list or
+dict local) in place and returns it, which is what Python's own `x[key] = v` does. The set of
+untyped locals is per function (`visit_FunctionDef` saves and restores it): a nested `def`
+that stores into a list of the enclosing function must not rebind the name, which would make
+it local to the nested `def`. A `global` name is left out (`visit_Global`) so its store stays
+plain Python and does not, by itself, make the function exec-built. Chains rooted at a Rule 3
+compound name (`s.f[0] = v`, `a[1][3:0] = v`) go to Rule 4, which does not support a bit
+store, and elaboration rejects these forms too
+([#362](https://github.com/JulianKemmerer/PipelineC/issues/362)). A single bit reaches
+`_sim_lens_set`, which raises a `TypeError` naming the form (see below). A slice puts its
+`ast.Slice` node in Rule 4's path list, so the rewritten body fails to compile and
+`_build_reg_sim_func` runs the function unrewritten, where the store raises `TypeError`.
+
 ### `_sim_cast_deep(value, ctype)` — Typed Casting Through Arrays
 
 ```python
@@ -807,6 +845,13 @@ Each call returns a new top-level value; the rewritten `Assign` rebinds the root
 to it, matching the existing per-statement alias semantics the rest of the simulator already
 uses for hardware variables.
 
+An index step into an integer is a bit store into a field or element (`a[1][0] = v`), which
+neither layer supports ([#362](https://github.com/JulianKemmerer/PipelineC/issues/362)):
+`list(obj)` raises, and `_sim_lens_set` re-raises a `TypeError` that names the form and the
+workaround. `SimVal.__iter__ = None` is what makes `list(obj)` raise: without it, Python's
+iteration fallback calls `__getitem__(0)`, `__getitem__(1)`, ... and never stops, since a bit
+past the width reads 0.
+
 ---
 
 ## `_build_reg_sim_func` — AST Transformation at Decoration Time
@@ -948,6 +993,7 @@ to module-level `Wire[T]`/`Input[T]`/`Output[T]` names to call the sim wire stat
 | `module_alias.wire` (Attribute, Load) | `_sim_wire_read('wire')` |
 | `module_alias.wire = expr` (Attribute, Store, whole-wire) | `_sim_wire_write('wire', _sim_cast_deep(expr, <wire ctype>))` |
 | `wire.field = expr` / `wire[i] = expr` (any nesting, incl. `module_alias.wire.field = expr`) | `_sim_wire_lens_write('wire', [path...], _sim_cast_deep(expr, <leaf ctype>))` |
+| `wire[hi:lo] = expr` / `wire[i] = expr` on a scalar integer wire (incl. `module_alias.wire[hi:lo]`) | `_sim_wire_bit_store('wire', slice(hi, lo) or i, expr)` (Expr stmt, a whole-wire write) |
 | `wire += expr` (AugAssign, whole-wire) | `_sim_wire_write('wire', _sim_cast_deep(_sim_wire_read('wire') + expr, <wire ctype>))` |
 | `wire.field += expr` (AugAssign, field/index) | `_sim_wire_lens_write('wire', [path...], _sim_cast_deep(_sim_wire_lens_read('wire', [path...]) + expr, <leaf ctype>))` |
 
@@ -961,6 +1007,16 @@ not wrapped: `_sim_cast_deep` leaves structs as they are, because struct constru
 already types the scalar and array-of-scalar fields (see the `_replace()` limitation under
 Limitations). A wire whose ctype could not be resolved is not wrapped either.
 Under `SIM_RAW_INTS` `_sim_cast` is a no-op, so raw mode is unchanged.
+
+**A bit store into a scalar wire is a whole-wire write**, as elaboration builds it:
+`_try_elab_bit_slice_assign` stores into the function's own value of the wire and writes the
+whole wire. `_sim_wire_bit_store` takes this invocation's own value (the pipelined region's
+overlay, else `_sim_wire_current_or_zero`, so the writer is not recorded as a reader of its
+own wire), replaces the bits with `_sim_bit_store` (see
+[Rule 7](#_typedannassignrewriter--truncation-at-every-typed-assignment)) and calls
+`_sim_wire_write`, which claims the whole wire. A lens write cannot do this: an integer has
+no elements to claim, and its path would hold the slice. `_bit_store_key_node` builds the key
+for both rewriters.
 
 Module-level wire declarations (`wire: Wire[T]` with no value) are `AnnAssign` nodes with
 `value=None` and are left untouched.
@@ -2707,7 +2763,8 @@ When `SIM_RAW_INTS=True`, three decoration-time changes are made:
 
 `raw` mode limitation: bit-indexing on the *result of arithmetic* (`(a + b)[0]`) fails since
 the result is plain `int`. Bit-indexing on struct fields still works because `_RawField(int)`
-subclass has `__getitem__`.
+subclass has `__getitem__`. A bit store into a local (`x[7:0] = y`) raises `TypeError`, since
+it needs `_TypedAnnAssignRewriter`'s Rule 7; a bit store into a scalar wire still works.
 
 ---
 
@@ -2992,6 +3049,14 @@ calls in `for` and `while` loops, duplicate iterator values, nested loops, two l
 reaching one stateful call through a pure helper, and runtime-gated iterations. It runs as direct
 `sim_call` assertions, through the multi-MAIN runner in loose and raw modes, and through the
 strict `native_vs_vhdl_sim` GHDL comparison.
+
+`inst/bit_store_test.py` covers bit stores (Rule 7 and the scalar wire bit store). Its
+`@MAIN`s store into a typed, a signed and an untyped local, a parameter, a `Reg` and a wire,
+with slices, single bits and a constant `slice` object, and are compared against GHDL cycle by
+cycle (`native_vs_vhdl_sim`). Its `test_*` functions (`native_sim`) check that a list local
+is stored into in place, that a nested `def`'s store into a list of the enclosing function
+stays plain Python, and that a bit store into an array element is a `TypeError` naming the
+form (the iteration it replaces never ended).
 
 `@initial`/`@final` hooks are covered by `inst/hooks_test.py` (plain `python3`, `native_sim`),
 which runs `inst/hooks_design.py` through `pypeline_sim.run_sim` in-process once per

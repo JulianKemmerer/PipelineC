@@ -48,6 +48,10 @@ PLAIN_PYTHON_TEST_FILES = [
     "reg_undefined_width_test.py",
     "feedback_reeval_test.py",
     "reg_aug_assign_test.py",
+    # The bit-store rewrite (Rule 7) leaves a list local's subscript store
+    # as Python, and a bit store into an array element is a clear error;
+    # its @MAINs are the native_vs_vhdl_sim entry.
+    "bit_store_test.py",
     "bit_math_test.py",
     "vhdl_text_test.py",
     "fifo_test.py",

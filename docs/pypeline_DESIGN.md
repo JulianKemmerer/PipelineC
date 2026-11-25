@@ -2553,6 +2553,15 @@ v[hi:lo]  # extract bits hi down to lo inclusive → int
 Python's `int` has no `__getitem__`; `SimVal` adds it to match hardware bit-slice syntax.
 High index first, matching Verilog/VHDL convention.
 
+`SimVal` has no `__setitem__`: it is an immutable `int`, so a bit store `v[hi:lo] = x`
+must rebind `v`. Native simulation rewrites the store to `v = _sim_bit_store(v, key, x)`
+([Rule 7](pypeline_sim_DESIGN.md#_typedannassignrewriter--truncation-at-every-typed-assignment)),
+and `_sim_bit_store` reads the key the way `__getitem__` does.
+
+`SimVal.__iter__ = None` makes it not iterable, like `int`. A class with `__getitem__` and no
+`__iter__` is iterated by calling `__getitem__(0)`, `__getitem__(1)`, ... until `IndexError`,
+and a bit select past the width returns 0, so without it `list(v)` would never end.
+
 ### Operator Dispatch
 
 `SimVal.__neg__`, `__invert__`, `__rshift__`, `__lshift__`, `__lt__`, `__le__`, `__gt__`,

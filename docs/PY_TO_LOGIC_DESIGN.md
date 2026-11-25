@@ -4039,7 +4039,8 @@ that the base type is a scalar integer (not an array or struct).
 bit: uint1_t = x[15]   # extract bit 15 of uint32_t → uint1_t
 ```
 
-Elaborated as a `BIT_SELECT_<type>_<pos>` submodule instance.
+Elaborated as an instance of the bit slice `<type>_<pos>_<pos>` (`uint32_15_15`), a VHDL
+function in the caller's file (`_register_bit_manip_logic`, rendered as `__slice__`).
 
 ### Bit-Slice Read
 
@@ -4048,19 +4049,35 @@ lo_half: uint16_t = x[15:0]          # bare name — extract bits [15:0] → uin
 r_hi: uint4_t     = sig.pos.x[7:4]   # struct field access — also supported
 ```
 
-The slice bounds are evaluated via `_try_eval_const` (must be constants at elaboration time).
+`_bit_bounds` resolves the subscript for reads and stores alike: `x[i]` and `x[hi:lo]` with
+constant bounds (`_try_resolve_int_constant`), and `x[S]` with `S` a constant
+`slice(hi, lo)`. It takes the bounds high first whichever order they are written in, so
+`x[0:7]` is built as `x[7:0]` ([#405](https://github.com/JulianKemmerer/PipelineC/issues/405)),
+and it checks them against the base's width. A non-slice index that does not fold to a
+constant (a hardware value) returns `None`.
 Both bare names (`x[hi:lo]`) and attribute-chain expressions (`s.field[hi:lo]`) are handled
-by `_try_bit_slice`: the base is elaborated first to obtain its wire and scalar type, then
-the slice submodule is emitted. Elaborated as a `BIT_SLICE_<type>_<hi>_<lo>` submodule.
+by `_try_elab_bit_slice`: the base is elaborated first to obtain its wire and scalar type,
+then the slice submodule is emitted, `<type>_<hi>_<lo>` (`uint32_15_0`). A hardware index
+falls through to `_elab_ref_read`, which does not support it on an integer
+([#362](https://github.com/JulianKemmerer/PipelineC/issues/362)).
 
 ### Bit-Slice Assignment
 
 ```python
 x[15:0] = y   # write bits [15:0] of x with value y, leaving other bits unchanged
+x[3] = b      # write bit 3 of x with the uint1_t b
 ```
 
-Creates a new alias wire for `x` via a `BIT_SLICE_ASSIGN_<type>_<hi>_<lo>` submodule that
-takes the old `x` wire and `y` and produces an updated value.
+`_try_elab_bit_slice_assign`, called from `_elab_assign` for a subscript target, creates a
+new alias wire for `x` via a `bit_assign` instance, `<type>_<rhs_type>_<lo>`
+(`uint32_uint16_0`), that takes the old `x` wire and `y` and produces an updated value.
+`x` is a bare name in `env`: a local, a parameter, a register, or a global wire the
+function has written. A single bit is a one-bit slice, so `x[3] = b` and `x[3:3] = b`
+build the same instance. `y` must be exactly as wide as the slice. A hardware index
+(`_bit_bounds` returns `None`) is an `ElaborationError` that names the store and suggests
+splitting the value with `uint_to_array_le`. A field or element base (`s.f[3:0] = v`)
+is not handled here: its slice reaches `_emit_var_ref_assign` as a variable index, which
+stops with an internal error ([#362](https://github.com/JulianKemmerer/PipelineC/issues/362)).
 
 ### Bit Concatenation — `concat()` and tuple literal
 
@@ -6474,9 +6491,9 @@ in `FuncLogicLookupTable` and as VHDL component entity names:
 | VAR_REF_RD | `VAR_REF_RD_<out_type>_<base_type>_<path_toks>_<hash>` | |
 | VAR_REF_ASSIGN | `VAR_REF_ASSIGN_<out_type>_<base_type>_<path_toks>_<hash>` | |
 | Bit manipulation | `BIT_MANIP_<func>_<types>` | `BIT_MANIP_bit_dup_uint4_t_4` |
-| Bit select | `BIT_SELECT_<type>_<pos>` | `BIT_SELECT_uint32_t_15` |
-| Bit slice | `BIT_SLICE_<type>_<hi>_<lo>` | `BIT_SLICE_uint32_t_15_0` |
-| Bit slice assign | `BIT_SLICE_ASSIGN_<type>_<hi>_<lo>` | |
+| Bit select | `<type>_<pos>_<pos>`, `_t` dropped | `uint32_15_15` |
+| Bit slice | `<type>_<hi>_<lo>`, `_t` dropped | `uint32_15_0` |
+| Bit store (`x[hi:lo] = y`, `x[i] = y`) | `<type>_<rhs_type>_<lo>`, `_t` dropped | `uint32_uint16_0` |
 
 Array-typed operands sanitize the same way as `CONST_REF_RD`/`VAR_REF_RD`/`VAR_REF_ASSIGN`
 below: array brackets in `<lhs_type>`/`<rhs_type>`/`<type>` are replaced with `_` before
@@ -6668,7 +6685,7 @@ top.py  (single-file or multi-file entry point)
   │   ├─ _setup_inputs()
   │   ├─ _setup_outputs()
   │   └─ _elab_stmt() recursive:
-  │       ├─ _elab_assign               const_env or hardware wire routing; BIT_SLICE_ASSIGN for x[hi:lo]=y
+  │       ├─ _elab_assign               const_env or hardware wire routing; _try_elab_bit_slice_assign for x[hi:lo]=y, x[i]=y
   │       │   ├─ IfExp RHS              x = body if test else orelse  →  synthetic ast.If  →  _elab_if MUX
   │       │   ├─ struct constructor RHS x = MyStruct(...)  →  _elab_compound_init (no annotation needed)
   │       │   ├─ module-attr LHS        file_a.i = expr  →  _resolve_module_wire_name → 'file_a_i' (or bare name for I/O)
@@ -6688,8 +6705,7 @@ top.py  (single-file or multi-file entry point)
   │               ├─ _elab_ref_read     CONST_REF_RD or VAR_REF_RD
   │               │   └─ bare-name (sub)  _resolve_global_wire → prefixed name
   │               ├─ _elab_name (step 3) _resolve_global_wire → direct or prefixed global wire
-  │               ├─ _elab_bit_select   BIT_SELECT submodule (scalar x[N])
-  │               ├─ _elab_bit_slice    BIT_SLICE submodule (scalar x[hi:lo] or s.field[hi:lo])
+  │               ├─ _try_elab_bit_slice  bit slice instance (scalar x[N], x[hi:lo] or s.field[hi:lo])
   │               ├─ _elab_tuple_concat TUPLE_CONCAT submodule ((a, b, c))
   │               └─ _elab_call         AUTO_PIPELINE tag call → elaborate func, tag inst + constraint
   │                                   ast.Name: FuncLogicLookupTable bare then prefixed (sub-file) key, each only if

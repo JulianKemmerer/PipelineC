@@ -27,6 +27,16 @@ def get_tests() -> list:
             cmd=[INST_DIR / "untyped_namedtuple_test.py"],
         )
     )
+    # A bit store into an integer at a hardware index (x[i] = v) is an
+    # ElaborationError naming it and its workaround, not the internal
+    # "substring not found" of issue #362.
+    tests.append(
+        Test(
+            name="bit_store_error_test",
+            category="elab_introspect",
+            cmd=[INST_DIR / "bit_store_error_test.py"],
+        )
+    )
     tests.append(Test(name="auto_comb_delay_opt_test", category="elab_introspect",
                       cmd=[INST_DIR / "auto_comb_delay_opt_test.py"]))
     tests.append(Test(name="auto_comb_area_opt_test", category="elab_introspect",

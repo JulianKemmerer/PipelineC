@@ -1276,7 +1276,23 @@ Slice bounds must be compile-time constants.
 
 ```python
 x[7:0] = y    # overwrite bits [7:0] of x with y; other bits unchanged
+x[0] = b      # overwrite bit 0 of x with the uint1_t b
 ```
+
+`x` is an integer local (typed or not), a parameter, a `Reg`, or a global wire the
+function has already written whole. The bit index and the slice bounds must be
+compile-time constants, and the value must be exactly as wide as the slice: a one-bit
+store takes a `uint1_t`, and `x[15:8] = 0` is an error, because the literal `0` is one bit
+wide. To store into a bit chosen at run time, split the value into bits:
+
+```python
+bits: uint1_t[32] = uint_to_array_le(x, 1)
+bits[i] = b
+x = array_to_uint_le(bits)
+```
+
+To change bits of a struct field or an array element, copy it to a local, store into the
+local and write it back.
 
 ### Bit concatenation — `concat()`
 

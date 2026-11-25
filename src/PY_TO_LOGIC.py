@@ -4445,11 +4445,60 @@ class FuncElaborator:
             return self._emit_var_ref_rd(ref_toks, c_type, expr)
         return self._read_ref(ref_toks, c_type, expr)
 
+    def _bit_bounds(self, slc, base_desc, base_type, what):
+        """(high, low) of the bit select or bit slice subscript slc on an integer
+        of type base_type: x[i], x[hi:lo], or x[S] where S is a constant
+        slice(hi, lo). The bounds must be compile-time constants. They are taken
+        high first whichever order they are written in, so x[0:7] is x[7:0]
+        (#405). Returns None for a non-slice index that does not fold to a
+        constant (an index read from a hardware value); the caller decides what
+        that means. Raises ElaborationError for a slice with a missing or
+        non-constant bound, and for a bit outside base_type. what names the
+        operation in those messages. Shared by _try_elab_bit_slice (reads) and
+        _try_elab_bit_slice_assign (stores)."""
+        if isinstance(slc, ast.Index):  # Python 3.8 compat
+            slc = slc.value
+        if isinstance(slc, ast.Slice):
+            # x[15:0]: both bounds must be constants
+            if slc.lower is None or slc.upper is None:
+                raise ElaborationError(
+                    f"{what} on '{base_desc}' requires both bounds: e.g. x[15:0]"
+                )
+            high_val = self._try_resolve_int_constant(slc.lower)
+            low_val = self._try_resolve_int_constant(slc.upper)
+            if high_val is None or low_val is None:
+                raise ElaborationError(
+                    f"{what} bounds on '{base_desc}' must be compile-time constants"
+                )
+        else:
+            # x[i]: one bit, i a literal or a const_env/globals name or expression
+            bit_val = self._try_resolve_int_constant(slc)
+            if bit_val is not None:
+                high_val = low_val = bit_val
+            else:
+                # A slice object in const_env, e.g. S = slice(hi, lo); x[S]
+                slice_val = self._try_eval_const(slc)
+                if not isinstance(slice_val, slice):
+                    return None
+                if slice_val.start is None or slice_val.stop is None:
+                    raise ElaborationError(
+                        f"{what} on '{base_desc}' requires both bounds: e.g. slice(hi, lo)"
+                    )
+                high_val, low_val = int(slice_val.start), int(slice_val.stop)
+        high, low = max(high_val, low_val), min(high_val, low_val)
+        _, width = _ctype_info(base_type)
+        if low < 0 or high >= width:
+            raise ElaborationError(
+                f"{what} [{high}:{low}] out of range for {base_type} (width={width})"
+            )
+        return high, low
+
     def _try_elab_bit_slice(self, expr):
         """Attempt to elaborate x[bit] or x[high:low] as a bit-select/slice submodule.
         Returns (wire, type) on success, None if the expression is not a bit slice
         (falls through to _elab_ref_read for normal array/struct access).
-        Both the bit index and slice bounds must be compile-time constants.
+        Both the bit index and slice bounds must be compile-time constants
+        (_bit_bounds); a hardware index falls through too.
         Supports bare names (x[bit]) and struct-field access (s.field[bit]).
         """
         base_node = expr.value
@@ -4471,48 +4520,10 @@ class FuncElaborator:
         if not _ctype_is_int(base_type):
             return None
 
-        slc = expr.slice
-        if isinstance(slc, ast.Index):  # Python 3.8 compat
-            slc = slc.value
-
-        if isinstance(slc, ast.Constant) and isinstance(slc.value, int):
-            # x[15] — single bit select (literal)
-            high = low = slc.value
-        elif not isinstance(slc, ast.Slice):
-            # x[i] — single bit select where i is a const_env/globals name or expr
-            bit_val = self._try_resolve_int_constant(slc)
-            if bit_val is None:
-                # Also handle slice objects in const_env, e.g. S = slice(hi, lo); x[S]
-                slice_val = self._try_eval_const(slc)
-                if not isinstance(slice_val, slice):
-                    return None
-                if slice_val.start is None or slice_val.stop is None:
-                    raise ElaborationError(
-                        f"Bit slice on '{base_desc}' requires both bounds: e.g. slice(hi, lo)"
-                    )
-                high_val, low_val = int(slice_val.start), int(slice_val.stop)
-                high, low = max(high_val, low_val), min(high_val, low_val)
-            else:
-                high = low = bit_val
-        else:
-            # x[15:0] — bit range; both bounds must be constants
-            if slc.lower is None or slc.upper is None:
-                raise ElaborationError(
-                    f"Bit slice on '{base_desc}' requires both bounds: e.g. x[15:0]"
-                )
-            high_val = self._try_resolve_int_constant(slc.lower)
-            low_val = self._try_resolve_int_constant(slc.upper)
-            if high_val is None or low_val is None:
-                raise ElaborationError(
-                    f"Bit slice bounds on '{base_desc}' must be compile-time constants"
-                )
-            high, low = max(high_val, low_val), min(high_val, low_val)
-
-        _, width = _ctype_info(base_type)
-        if low < 0 or high >= width:
-            raise ElaborationError(
-                f"Bit index [{high}:{low}] out of range for {base_type} (width={width})"
-            )
+        bounds = self._bit_bounds(expr.slice, base_desc, base_type, "Bit slice")
+        if bounds is None:
+            return None  # x[i] with a hardware i: not a bit select (#362)
+        high, low = bounds
 
         prefix = base_type.replace("_t", "")
         func_name = f"{prefix}_{high}_{low}"
@@ -4583,10 +4594,11 @@ class FuncElaborator:
         return acc_wire, acc_type
 
     def _try_elab_bit_slice_assign(self, target, rhs_wire, rhs_type, stmt):
-        """Handle x[15:0] = y — bit-slice assignment on a scalar integer wire.
+        """Handle x[15:0] = y and x[3] = y: a bit store into a scalar integer.
         Reads current wire for x, instantiates a bit_assign submodule, aliases x to result.
-        Returns True if handled, False if the target is not a bit-slice assign.
-        Both slice bounds must be compile-time constants.
+        Returns True if handled, False if the target is not a bit store.
+        The bit index and both slice bounds must be compile-time constants
+        (_bit_bounds); a hardware bit index is an ElaborationError.
         """
         base_node = target.value
         if not isinstance(base_node, ast.Name):
@@ -4598,30 +4610,24 @@ class FuncElaborator:
         if not _ctype_is_int(base_type):
             return False
 
-        slc = target.slice
-        if isinstance(slc, ast.Index):  # Python 3.8 compat
-            slc = slc.value
-
-        if not isinstance(slc, ast.Slice):
-            return False  # x[i] = y on an integer is not a slice assign
-
-        if slc.lower is None or slc.upper is None:
+        bounds = self._bit_bounds(target.slice, x_name, base_type, "Bit-slice assign")
+        if bounds is None:
+            # x[i] = y with a hardware i. Returning False would send the integer
+            # on to _emit_var_ref_assign, which would index it as an array.
+            _, base_w = _ctype_info(base_type)
+            slc = target.slice
+            if isinstance(slc, ast.Index):  # Python 3.8 compat
+                slc = slc.value
+            idx = slc.id if isinstance(slc, ast.Name) else "i"
             raise ElaborationError(
-                f"Bit-slice assign on '{x_name}' requires both bounds: e.g. x[15:0] = y"
+                f"Bit store '{base_node.id}[{idx}] = ...' in func '{self.func_name}' "
+                f"({self.src_file}:{target.lineno}): the bit index of an integer must "
+                f"be a compile-time constant, and '{idx}' is a hardware value. To "
+                f"write a bit chosen at run time, split the value into bits: "
+                f"'bits: uint1_t[{base_w}] = uint_to_array_le({base_node.id}, 1)', "
+                f"'bits[{idx}] = ...', then '{base_node.id} = array_to_uint_le(bits)'"
             )
-        high_val = self._try_resolve_int_constant(slc.lower)
-        low_val = self._try_resolve_int_constant(slc.upper)
-        if high_val is None or low_val is None:
-            raise ElaborationError(
-                f"Bit-slice assign bounds on '{x_name}' must be compile-time constants"
-            )
-        high, low = max(high_val, low_val), min(high_val, low_val)
-
-        _, base_w = _ctype_info(base_type)
-        if low < 0 or high >= base_w:
-            raise ElaborationError(
-                f"Bit-slice assign [{high}:{low}] out of range for {base_type} (width={base_w})"
-            )
+        high, low = bounds
         expected_rhs_w = high - low + 1
         if not _ctype_is_int(rhs_type):
             raise ElaborationError(

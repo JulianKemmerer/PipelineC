@@ -192,6 +192,10 @@ COMB_TEST_FILES = [
     ("sim_print_decimal_test.py", INST_DIR, []),
     # A sim_print on the sim_finish() cycle reaches the GHDL log (issue #361).
     ("sim_finish_print_test.py", INST_DIR, []),
+    # Integer bit stores, x[hi:lo] = v and x[i] = v, into a typed, signed and
+    # untyped local, a parameter, a Reg and a scalar wire (issue #408, and
+    # #362's single-bit store), plus the hardware-index workaround.
+    ("bit_store_test.py", INST_DIR, []),
 ]
 # Non---comb (pipelined/scheduled) compares: full build, then native sim runs
 # with the discovered latencies emulated, diffed against real pipelined VHDL.

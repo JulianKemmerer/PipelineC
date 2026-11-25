@@ -1127,7 +1127,7 @@ def _struct_class_getitem(cls, dim):
 
 @_functools.lru_cache(maxsize=None)
 def _is_scalar_pypeline_int(ctype):
-    """True for scalar uint/int types and @enum types; False for arrays and structs."""
+    """True for scalar uint/int types, @enum types and arrays of them; False for structs."""
     if getattr(ctype, "_pypeline_is_enum", False):
         return True
     if not hasattr(ctype, "_ctype_name"):
@@ -9266,6 +9266,47 @@ def strlen(arr) -> int:
     return len(arr)
 
 
+# SimVal is not iterable, like int. Without this, Python's legacy iteration
+# protocol would call __getitem__(0), __getitem__(1), ... and never stop, since
+# a bit select past the width is 0, not an IndexError: list(x) of an integer
+# (_sim_lens_set below, on a bit store into an array element) would fill
+# memory. Set here rather than in the class body to keep the line numbers
+# above unchanged: generated names and VHDL comments cite pypeline.py lines
+# (pypeline_py_l<N>), and a renamed one misses the synthesis cache.
+SimVal.__iter__ = None
+
+
+def _sim_bit_store(base, key, value):
+    """Return base with the bits key selects replaced by value: native
+    simulation's `x[hi:lo] = v` and `x[i] = v` on an integer, which
+    _TypedAnnAssignRewriter (Rule 7) and _sim_wire_bit_store turn into
+    `x = _sim_bit_store(x, key, v)`, since a SimVal is an immutable int.
+
+    key is what the subscript evaluates to, read as SimVal.__getitem__ reads it:
+    an int selects one bit, a slice is x[hi:lo], high index first. value is
+    truncated to the slice's width, the result keeps base's ctype, and a signed
+    result is normalized by _sim_cast. Elaboration builds the same store
+    (PY_TO_LOGIC._try_elab_bit_slice_assign), and accepts only a value exactly
+    as wide as the slice.
+
+    A base that is not an integer (an untyped local holding a Python list or
+    dict) is stored into in place and returned, which is what plain Python's
+    `x[key] = v` does."""
+    if not isinstance(base, int):
+        base[key] = value
+        return base
+    if isinstance(key, slice):
+        hi, lo = key.start, key.stop
+    else:
+        hi = lo = key
+    mask = ((1 << (hi - lo + 1)) - 1) << lo
+    result = (int(base) & ~mask) | ((int(value) << lo) & mask)
+    ctype = getattr(base, "_ctype", None)
+    if ctype is None:
+        return SimVal(result)
+    return _sim_cast(result, ctype)
+
+
 def _sim_lens_set(obj, path, value):
     """Return a copy of obj with the nested element at path replaced by value.
 
@@ -9279,7 +9320,17 @@ def _sim_lens_set(obj, path, value):
     if isinstance(head, str):
         child = getattr(obj, head)
         return obj._replace(**{head: _sim_lens_set(child, rest, value)})
-    new_list = list(obj)
+    try:
+        new_list = list(obj)
+    except TypeError:
+        if isinstance(obj, int):
+            # `s.f[0] = v` / `a[1][0] = v`: elaboration does not build it either
+            raise TypeError(
+                f"a bit store into a struct field or an array element ([{head!r}] "
+                f"of an integer) is not supported: copy the field or element to a "
+                f"local, store into the local and write it back (issue #362)"
+            ) from None
+        raise
     idx = int(head)
     new_list[idx] = _sim_lens_set(new_list[idx], rest, value)
     return new_list
@@ -9504,6 +9555,22 @@ def _sim_wire_lens_write(name: str, path: list, value, claim_key=None) -> None:
         _sim_wire_claims.setdefault(claim_key, {}).setdefault(name, set()).add(
             norm_path
         )
+
+
+def _sim_wire_bit_store(name: str, key, value, claim_key=None) -> None:
+    """`wire[hi:lo] = v` / `wire[i] = v` on a scalar integer global wire: a
+    whole-wire write of the wire's value with those bits replaced
+    (_sim_bit_store), as elaboration builds it (PY_TO_LOGIC's
+    _try_elab_bit_slice_assign stores into the function's own value of the wire,
+    then writes the whole wire). The value stored into is this invocation's own:
+    a pipelined region's overlay, else the wire's state, read without recording
+    the writer as a reader of its own wire."""
+    base = None
+    if _sim_regions:
+        base = _sim_region_for(name, "written")["overlay"].get(name)
+    if base is None:
+        base = _sim_wire_current_or_zero(name)
+    _sim_wire_write(name, _sim_bit_store(base, key, value), claim_key)
 
 
 def _sim_ctype_at_path(ctype, path):
@@ -9873,6 +9940,30 @@ def _check_sim_only_call_sites(
         )
 
 
+def _bit_store_key_node(subscript):
+    """The key expression of a bit store `x[...] = v`, for _sim_bit_store: the
+    index expression of `x[i]`, or a `slice(hi, lo)` call for `x[hi:lo]` (an
+    ast.Slice is only legal inside a subscript, so it can't be passed as an
+    argument as it is). None for an extended subscript (`x[a:b, c]`), which is
+    not a bit store. Used by _TypedAnnAssignRewriter's Rule 7 and
+    _GlobalWireRewriter's scalar wire bit store."""
+    slc = subscript.slice
+    if isinstance(slc, _ast.Index):  # py3.8 compat
+        slc = slc.value
+    if isinstance(slc, _ast.Slice):
+        return _ast.Call(
+            func=_ast.Name(id="slice", ctx=_ast.Load()),
+            args=[
+                slc.lower if slc.lower is not None else _ast.Constant(value=None),
+                slc.upper if slc.upper is not None else _ast.Constant(value=None),
+            ],
+            keywords=[],
+        )
+    if isinstance(slc, getattr(_ast, "ExtSlice", ())) or isinstance(slc, _ast.Tuple):
+        return None
+    return slc
+
+
 class _GlobalWireRewriter(_ast.NodeTransformer):
     """AST transformer that rewrites global wire reads/writes in hw_func bodies.
 
@@ -9883,6 +9974,9 @@ class _GlobalWireRewriter(_ast.NodeTransformer):
                                           then rewritten as above; see _lower_unpack)
       - module.wire  (Load)            →  _sim_wire_read('<mod>.wire')          (cross-module read)
       - module.wire = expr             →  _sim_wire_write('<mod>.wire', cast(expr))   (cross-module write)
+      - wire[hi:lo] = expr, wire[i] = expr on a scalar integer wire
+                                       →  _sim_wire_bit_store('<mod>.wire', key, expr)
+                                          (a whole-wire write; key as _bit_store_key_node)
 
     cast(...) is `_sim_cast_deep(value, <the written leaf's ctype>)` (_cast_to_wire_type):
     every write stores a value of the wire's type, as the hardware wire does, so a
@@ -10184,6 +10278,38 @@ class _GlobalWireRewriter(_ast.NodeTransformer):
                     )
                 )
                 return _ast.copy_location(new_node, node)
+            if isinstance(target, _ast.Subscript):
+                # Bit store on a scalar integer wire: wire[hi:lo] = expr,
+                # wire[i] = expr, module.wire[hi:lo] = expr. A whole-wire write
+                # of the stored-into value, as elaboration builds it, not a lens
+                # write: an integer has no elements to claim. The compound check
+                # is needed: _is_scalar_pypeline_int(uint8_t[4]) is True (an
+                # array type's .width is its element's), and an array wire's
+                # element write must stay a lens write.
+                root = self._wire_root(target.value)
+                key_node = _bit_store_key_node(target)
+                if (
+                    root is not None
+                    and key_node is not None
+                    and _is_scalar_pypeline_int(root[1])
+                    and not _is_compound_pypeline_type(root[1])
+                ):
+                    self.modified = True
+                    wire_name = root[0]
+                    self._record_whole_write(wire_name, root[1])
+                    new_node = _ast.Expr(
+                        value=_ast.Call(
+                            func=_ast.Name(id="_sim_wire_bit_store", ctx=_ast.Load()),
+                            args=[
+                                _ast.Constant(value=wire_name),
+                                self.visit(key_node),
+                                self.visit(node.value),
+                                self._claim_key_const(),
+                            ],
+                            keywords=[],
+                        )
+                    )
+                    return _ast.copy_location(new_node, node)
             if isinstance(target, (_ast.Attribute, _ast.Subscript)):
                 wire_name, path_nodes, leaf_ctype, root_ctype = (
                     self._wire_chain_to_path(target)
@@ -10306,6 +10432,14 @@ class _TypedAnnAssignRewriter(_ast.NodeTransformer):
     6. Typed parameters are tracked like locals (see track_params): hardware
        ports are pass-by-value, so `arr_param[i] = x` must not edit the
        caller's object, and a scalar parameter truncates like a typed local.
+    7. `var[hi:lo] = expr` / `var[i] = expr` where `var` is a scalar integer
+       (rule 2's typed locals, scalar Reg/Feedback and parameters) or an
+       untyped local  →  `var = _sim_bit_store(var, key, expr)`, then rule 2's
+       cast for a typed one. A SimVal is an immutable int, so the store must
+       rebind the name. An untyped local is any name a plain `name = ...`
+       earlier in the same function binds, unless the function declares it
+       `global` or `nonlocal`; _sim_bit_store stores into a non-integer value
+       (a Python list) in place, as Python would.
     """
 
     def __init__(self, eval_ns, ann_ctypes_out):
@@ -10313,7 +10447,37 @@ class _TypedAnnAssignRewriter(_ast.NodeTransformer):
         self._ann_ctypes_out = ann_ctypes_out  # filled in-place: key → ctype_obj
         self._declared_types = {}  # var_name → ctype, populated by AnnAssign visits
         self._compound_declared = {}  # var_name → ctype, bare/typed struct or array locals
-        self.modified = False  # True if any compound zero-init/lens rewrite happened
+        # Names bound by an untyped `name = ...` in the function being visited
+        # (rule 7). Per function: rebinding a nested def's free variable would
+        # make it local to the nested def (see visit_FunctionDef).
+        self._untyped_locals = set()
+        # Names the function being visited declares `global` or `nonlocal`:
+        # never rule 7's untyped locals (see visit_Global)
+        self._not_locals = set()
+        # True if any compound zero-init, lens or bit-store rewrite happened
+        self.modified = False
+
+    def visit_FunctionDef(self, node):
+        """Visit a function with its own rule-7 untyped locals: a nested def
+        must not rebind (and so make local) a name only the enclosing function
+        binds."""
+        saved = self._untyped_locals, self._not_locals
+        self._untyped_locals, self._not_locals = set(), set()
+        self.generic_visit(node)
+        self._untyped_locals, self._not_locals = saved
+        return node
+
+    visit_AsyncFunctionDef = visit_FunctionDef
+
+    def visit_Global(self, node):
+        """A `global`/`nonlocal` name assigned in the function is not a local:
+        rule 7 leaves its subscript stores (a numpy frame buffer of a
+        @sim_output, say) as plain Python."""
+        self._not_locals.update(node.names)
+        self._untyped_locals.difference_update(node.names)
+        return node
+
+    visit_Nonlocal = visit_Global
 
     def track_params(self, func_def, sig_anns):
         """Rule 6: track typed parameters (resolved annotation objects from the
@@ -10494,12 +10658,55 @@ class _TypedAnnAssignRewriter(_ast.NodeTransformer):
         if isinstance(target, _ast.Name):
             ctype = self._declared_types.get(target.id)
             if ctype is None:
-                return node  # not a previously-declared scalar-typed variable
+                # not a previously-declared scalar-typed variable
+                if target.id not in self._not_locals:
+                    self._untyped_locals.add(target.id)
+                return node
             new_node = _ast.Assign(
                 targets=node.targets,
                 value=self._make_cast(node.value, ctype, node),
             )
             return _ast.copy_location(new_node, node)
+        if isinstance(target, (_ast.Tuple, _ast.List)):
+            # `a, b = ...` binds untyped locals too (rule 7)
+            self._untyped_locals.update(
+                n.id
+                for n in _ast.walk(target)
+                if isinstance(n, _ast.Name)
+                and isinstance(n.ctx, _ast.Store)
+                and n.id not in self._not_locals
+            )
+            return node
+        if (
+            isinstance(target, _ast.Subscript)
+            and isinstance(target.value, _ast.Name)
+            and target.value.id not in self._compound_declared
+            and (
+                target.value.id in self._declared_types
+                or target.value.id in self._untyped_locals
+            )
+        ):
+            # Rule 7: bit store into a scalar integer
+            key_node = _bit_store_key_node(target)
+            if key_node is not None:
+                self.modified = True
+                name = target.value.id
+                synth = _ast.copy_location(
+                    _ast.Assign(
+                        targets=[_ast.Name(id=name, ctx=_ast.Store())],
+                        value=_ast.Call(
+                            func=_ast.Name(id="_sim_bit_store", ctx=_ast.Load()),
+                            args=[
+                                _ast.Name(id=name, ctx=_ast.Load()),
+                                key_node,
+                                node.value,
+                            ],
+                            keywords=[],
+                        ),
+                    ),
+                    node,
+                )
+                return self.visit_Assign(synth)
         if isinstance(target, (_ast.Attribute, _ast.Subscript)):
             root, path, kinds = self._chain_to_path(target)
             if root is not None and root in self._compound_declared:
@@ -11237,6 +11444,7 @@ def _build_reg_sim_func(fn):
         _sim_cast_deep=_sim_cast_deep,
         _make_sim_zero=_make_sim_zero,
         _sim_lens_set=_sim_lens_set,
+        _sim_bit_store=_sim_bit_store,
         _sim_current_inst_path=_sim_current_inst_path,
         _sim_loop_enter=_sim_loop_enter,
         _sim_loop_exit=_sim_loop_exit,
@@ -11248,6 +11456,7 @@ def _build_reg_sim_func(fn):
         _sim_wire_write=_sim_wire_write,
         _sim_wire_lens_read=_sim_wire_lens_read,
         _sim_wire_lens_write=_sim_wire_lens_write,
+        _sim_wire_bit_store=_sim_wire_bit_store,
         _sim_wire_reset_claims=_sim_wire_reset_claims,
         _sim_set_converging=_sim_set_converging,
     )

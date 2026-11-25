@@ -373,20 +373,10 @@ def get_tests() -> list:
             requires=["ghdl", "yosys", "verilator"],
         )
     )
-    # Bit-slice assignment (x[hi:lo] = v) elaborates, and GHDL holds the
-    # design's sim_asserts, but native sim raises "'SimVal' object does not
-    # support item assignment". Fails while native sim raises; passes once it
-    # stores the bits and the sim_asserts hold. Native sim only. Issue #408.
-    tests.append(
-        Test(
-            name="native_bit_store_known_issue",
-            category="known_issues",
-            cmd=[PYPELINEC, INST_DIR / "native_bit_store_design.py",
-                 "--sim", "--comb", "--run", "all"],
-            needs_out_dir=True,
-            expect_fail=True,
-        )
-    )
+    # (native_bit_store_known_issue was here while native sim raised on a
+    # bit-slice assignment, x[hi:lo] = v (#408). Fixed: it is
+    # native_vs_vhdl_sim's bit_store_test.py, which also covers the
+    # single-bit store, x[i] = v, that stopped elaboration (#362).)
     # (operator_library_predicate_never_fires_known_issue was here while
     # SYN._IS_PYPELINE_OPERATOR_LIBRARY_CODE, meant to put operator-library
     # delays in the name-keyed cache/delay, never fired (#364). The predicate

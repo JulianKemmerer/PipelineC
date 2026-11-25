@@ -135,7 +135,7 @@ on `PATH`; the legacy Makefiles say `export PATH=$PATH:/opt/riscv/bin`.
 | A wire or port declared inside a module-level `if` | Bug, [#404](https://github.com/JulianKemmerer/PipelineC/issues/404): an `Output[T]` gets no port, and the `@MAIN`'s write to it is dropped with no error. A `Wire[T]` read by another `@MAIN` stops the build with "Unknown name". Native simulation treats both as wires | Fix before [M6](#m6-hardware-bring-up), whose board tops choose pins. Until then, choose variants by conditional `import` |
 | Reversed bit slice `x[0:7]` | Bug, [#405](https://github.com/JulianKemmerer/PipelineC/issues/405): built as `x[7:0]`; native simulation raises | The CPU needs no reversed slice |
 | Bit index from a hardware value, `x[i]` | Not supported ([#362](https://github.com/JulianKemmerer/PipelineC/issues/362)) | Load and store byte lanes index a `uint_to_array_le` array instead |
-| Bit-slice assignment `x[hi:lo] = v` | Bug, [#408](https://github.com/JulianKemmerer/PipelineC/issues/408): elaborates, but native simulation raises `TypeError`. A single-bit store, `x[i] = v`, stops elaboration ([#362](https://github.com/JulianKemmerer/PipelineC/issues/362)). Both found by M0 | `bit_assign(x, v, lo)` or `concat`, which both simulations run: JALR clears bit 0 with `bit_assign(target, uint1_t(0), 0)` |
+| Bit store into a struct field or array element, `s.f[0] = v` | Not supported ([#362](https://github.com/JulianKemmerer/PipelineC/issues/362)): elaboration stops with an internal error, native simulation with a `TypeError`. Bit stores into a local, a parameter, a `Reg` or a wire work in both | Store into a local and write the field back. JALR clears bit 0 of a local: `result[0] = 0` |
 | Reading a field of a call's result, `f(x).y` | Elaboration stops with an internal error ([#71](https://github.com/JulianKemmerer/PipelineC/issues/71)) | Bind the result to a local first: `o = ram(...)`, then `o.p0.rd_data` |
 | Native-simulation state behind a stateless caller | Two stateful instances that only a stateless caller tells apart share one native-simulation state ([#382](https://github.com/JulianKemmerer/PipelineC/issues/382)). Two `make_stream_fifo` FIFOs in one `@MAIN` hit it. The three memories in one `@MAIN` (above) do not | M4's console has a TX and an RX FIFO: fix #382 before [M4](#m4-console-and-uart) |
 | Memories on iCE40 | The UP5K has no distributed RAM: its block RAMs (EBR) and SPRAM read on a clock edge. It has 5,280 LUT4s and 5,280 flip-flops. Combinational-read memories therefore become flip-flops or logic: a 2 KiB DMEM alone is 16,384 bits. A constant IMEM is a ROM that synthesis reduces to logic, so a short program whose memory is mostly zeros may fit | Arty is the first board. [M6](#m6-hardware-bring-up) tries pico-ice with a blink firmware and the smallest memories that hold it. A registered-read core is [deferred](#deferred) |
@@ -221,7 +221,7 @@ address bits:
 | Milestone | Delivers | Before it starts | Done when |
 |---|---|---|---|
 | [M0](#m0-audit) | Audit of the legacy CPUs and of Pypeline; decisions; bugs filed | — | Done |
-| [M1](#m1-single-cycle-rv32i-core-firmware-build-and-isa-tests) | Single-cycle RV32I core ported from the legacy core; firmware built during import; resets; `rv32ui` with a replacement test environment | Nothing to fix; workarounds for #71, #362 and #408 | `rv32ui` passes in native simulation and GHDL; a C demo builds with no manual step |
+| [M1](#m1-single-cycle-rv32i-core-firmware-build-and-isa-tests) | Single-cycle RV32I core ported from the legacy core; firmware built during import; resets; `rv32ui` with a replacement test environment | Nothing to fix; workarounds for #71 and #362 | `rv32ui` passes in native simulation and GHDL; a C demo builds with no manual step |
 | [M2](#m2-machine-mode-traps-and-csrs) | Machine-mode CSRs, ECALL, EBREAK, MRET and exception traps | Nothing known | `rv32ui` passes with the unmodified riscv-tests `p` environment |
 | [M3](#m3-memory-mapped-control-and-status-registers) | Memory map with struct registers for LEDs, buttons and a cycle counter; C header export | Nothing known | Firmware reads and writes every field of the mapped structs, checked field by field |
 | [M4](#m4-console-and-uart) | Console MMIO device and UART | Fix [#382](https://github.com/JulianKemmerer/PipelineC/issues/382) | "Hello" prints in native simulation and GHDL; an echo test passes |
@@ -241,7 +241,7 @@ findings that change the plan are folded into the sections they change: the
 
 ### Bugs
 
-Every bug has an entry in the [issues inventory](issues_inventory.md) and a
+Every open bug has an entry in the [issues inventory](issues_inventory.md) and a
 `known_issues_tests.py` reproducer, unless the row says otherwise.
 
 | Bug | Found by | Issue |
@@ -252,11 +252,11 @@ Every bug has an entry in the [issues inventory](issues_inventory.md) and a
 | A struct constant from a module-level table does not elaborate | The decoder-table check | Part of [#402](https://github.com/JulianKemmerer/PipelineC/issues/402), whose reproducer has the table form |
 | Bit-slice assignment raises in native simulation | The `decode()` port | [#408](https://github.com/JulianKemmerer/PipelineC/issues/408) |
 | `hex()` of a negative signed value prints differently in native and VHDL simulation | The `decode()` port | [#409](https://github.com/JulianKemmerer/PipelineC/issues/409) |
-| A single-bit store, `x[i] = v`, stops elaboration with an internal error | The `decode()` port | A new form of [#362](https://github.com/JulianKemmerer/PipelineC/issues/362), added to the issue and its inventory entry; like #362's other forms, no registered reproducer |
+| A single-bit store, `x[i] = v`, stops elaboration with an internal error | The `decode()` port | A new form of [#362](https://github.com/JulianKemmerer/PipelineC/issues/362), added to the issue; fixed with #408 |
 | Reading a field of a call's result, `f(x).y`, stops elaboration | The `decode()` testbench | Already [#71](https://github.com/JulianKemmerer/PipelineC/issues/71) |
 
-Each open one has a workaround in the gaps table; #409 is fixed. #402 and #404 are fixed
-before M5 and M6.
+Each open one has a workaround in the gaps table; #408, #409 and the single-bit store are
+fixed. #402 and #404 are fixed before M5 and M6.
 
 ### Legacy sources
 
@@ -264,7 +264,7 @@ before M5 and M6.
 |---|---|---|
 | `include/risc-v/risc-v.h`: opcode and funct constants | Port as is | Module-level integers |
 | `risc-v.h`: `decode()` | Port | One `if`/`elif` tree, as in C. The per-instruction `printf`s become M1's `RISCV_TRACE` prints. Dropped: `print_rs1_read`/`print_rs2_read`, which only steer those prints, and `is_rv32i`/`is_rv32_mul`/`is_rv32_div`, autopipeline split flags that M5's plugins replace. Each chain of `int13_uint1_12(...)` immediate helpers becomes one `concat`. Added for M1: FENCE as a no-op, ECALL and EBREAK as halt |
-| `risc-v.h`: `execute()` | Port | JALR's `int32_uint1_0(result, 0)` becomes `bit_assign` (bit-slice assignment fails in native simulation). The M extension's `execute_rv32_mul` and `execute_rv32_div` move to M5's M plugin |
+| `risc-v.h`: `execute()` | Port | JALR's `int32_uint1_0(result, 0)` becomes the single-bit store `result[0] = 0`. The M extension's `execute_rv32_mul` and `execute_rv32_div` move to M5's M plugin |
 | `risc-v.h`: `select_reg_wr_data()`, `select_next_pc()` | Port | Legacy load handling is split three ways: `decode()` sets byte enables, the DMEM wrapper shifts and truncates, and `select_reg_wr_data()` sign-extends. M1 joins them in the load and store alignment function |
 | `examples/risc-v/risc-v_decl.h` | Redesigned as M1's core factory | Same datapath. The macro instance (`riscv_name` and `#define`d sizes and contents) becomes factory arguments, and `#pragma FEEDBACK` becomes `Feedback[T]`. Its `halt` and `return_value` outputs are declared but never assigned; M1's halt comes from ECALL, EBREAK and the `TOHOST` write |
 | `include/risc-v/reg_file.h` | Port | The same three-port RAM and `x0` write gate. M1 adds the `x0` read mux, so `x0` does not depend on the RAM's initial contents |
@@ -336,8 +336,6 @@ need, and builds the firmware with no manual step.
 
 - [#362](https://github.com/JulianKemmerer/PipelineC/issues/362): byte lanes through an
   array;
-- [#408](https://github.com/JulianKemmerer/PipelineC/issues/408): bit stores with
-  `bit_assign`;
 - [#71](https://github.com/JulianKemmerer/PipelineC/issues/71): bind a call's result to a
   local before reading its fields.
 
