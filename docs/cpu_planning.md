@@ -16,7 +16,7 @@ otherwise, the checks ran against commit `b88f7600`, and [M0](#m0-audit)'s again
 cycle diff) where a row says so, and the GCC toolchain described under
 [What Pypeline provides today](#what-pypeline-provides-today).
 
-## Table of Contents
+## Table of Contents 
 
 - [Goal and scope](#goal-and-scope)
 - [What Pypeline provides today](#what-pypeline-provides-today)
@@ -24,6 +24,7 @@ cycle diff) where a row says so, and the GCC toolchain described under
 - [Architecture](#architecture)
   - [Layers](#layers)
   - [Address map](#address-map)
+  - [One command and the build order](#one-command-and-the-build-order)
   - [Where the code goes](#where-the-code-goes)
 - [Milestones](#milestones)
 - [M0: Audit](#m0-audit)
@@ -79,6 +80,12 @@ Principles:
 - **One firmware binary everywhere.** The same ELF runs in native simulation, in GHDL and
   on each board. Simulation hooks sit behind MMIO addresses that the hardware implements
   too.
+- **One command per run.** Every `pypelinec` run on a CPU top compiles the firmware
+  during the design import, so one command builds the software and builds, simulates or
+  synthesizes the hardware. For a board, that command ends at the final VHDL, and the
+  user runs the vendor flow by hand. Each milestone keeps this as more of the firmware's
+  inputs come from the hardware
+  ([One command and the build order](#one-command-and-the-build-order)).
 - **Standard tools.** The RISC-V GCC toolchain and the official
   [riscv-tests](https://github.com/riscv-software-src/riscv-tests) suite. No custom
   assembler or ISA model.
@@ -137,7 +144,7 @@ on `PATH`; the legacy Makefiles say `export PATH=$PATH:/opt/riscv/bin`.
 | Bit index from a hardware value, `x[i]` | Not supported ([#362](https://github.com/JulianKemmerer/PipelineC/issues/362)) | Load and store byte lanes index a `uint_to_array_le` array instead |
 | Bit store into a struct field or array element, `s.f[0] = v` | Not supported ([#362](https://github.com/JulianKemmerer/PipelineC/issues/362)): elaboration stops with an internal error, native simulation with a `TypeError`. Bit stores into a local, a parameter, a `Reg` or a wire work in both | Store into a local and write the field back. JALR clears bit 0 of a local: `result[0] = 0` |
 | Reading a field of a call's result, `f(x).y` | Elaboration stops with an internal error ([#71](https://github.com/JulianKemmerer/PipelineC/issues/71)) | Bind the result to a local first: `o = ram(...)`, then `o.p0.rd_data` |
-| Native-simulation state behind a stateless caller | Two stateful instances that only a stateless caller tells apart share one native-simulation state ([#382](https://github.com/JulianKemmerer/PipelineC/issues/382)). Two `make_stream_fifo` FIFOs in one `@MAIN` hit it. The three memories in one `@MAIN` (above) do not | M4's console has a TX and an RX FIFO: fix #382 before [M4](#m4-console-and-uart) |
+| Native-simulation state behind a stateless caller | Two stateful instances that only a stateless caller tells apart share one native-simulation state ([#382](https://github.com/JulianKemmerer/PipelineC/issues/382)). Two `make_stream_fifo` FIFOs in one `@MAIN` hit it. The three memories in one `@MAIN` (above) do not | M3's memory map calls several stateful devices of one kind from library code, and M4's console has a TX and an RX FIFO: fix #382 before [M3](#m3-memory-mapped-control-and-status-registers) |
 | Memories on iCE40 | The UP5K has no distributed RAM: its block RAMs (EBR) and SPRAM read on a clock edge. It has 5,280 LUT4s and 5,280 flip-flops. Combinational-read memories therefore become flip-flops or logic: a 2 KiB DMEM alone is 16,384 bits. A constant IMEM is a ROM that synthesis reduces to logic, so a short program whose memory is mostly zeros may fit | Arty is the first board. [M6](#m6-hardware-bring-up) tries pico-ice with a blink firmware and the smallest memories that hold it. A registered-read core is [deferred](#deferred) |
 | Wires, ports, instances and FIFOs made by library code | Not supported. A `@MAIN` that a library factory makes cannot reach the design's wires | The core factory takes its MMIO devices as hardware-function arguments, and the design module owns the pins |
 | Native simulation speed | Measured only for M0's decode spike: `decode` and `execute` fed from three ROMs, with a 20-field `sim_print` each cycle, ran 2,290 cycles at 499 cycles per second | M1 measures cycles per second on the ISA tests, which are short programs |
@@ -186,6 +193,63 @@ address bits:
 - A data access outside DMEM and MMIO, or a misaligned one, sets `mem_out_of_range`, as
   the legacy core does. From M2, it traps instead.
 
+### One command and the build order
+
+Each run is one command. The file names are proposals:
+
+| Run | Command |
+|---|---|
+| Native simulation | `pypelinec top.py --sim --comb --run all` |
+| cocotb + GHDL | `pypelinec top.py --sim --comb --cocotb --ghdl --run all` |
+| Synthesis | `pypelinec top.py`, with the part from the top's board module or `--part` |
+| One ISA test | `pypelinec isa_test_top.py --sim --comb --run 200000 -D ISA_TEST=rv32ui/add` |
+| Board VHDL, from M6 | `pypelinec board_top.py`; the vendor flow after it is manual ([M6](#m6-hardware-bring-up)) |
+
+Each of these compiles the firmware while it imports the design, and a run that imports
+the design twice compiles it twice ([Spikes](#spikes)). Only a project with its own
+firmware build runs a second command: it builds its ELF and passes it with
+`-D FIRMWARE=` ([Firmware build and RAM contents](#firmware-build-and-ram-contents)).
+
+More of the firmware's inputs come from the hardware definitions as the milestones
+add them:
+
+| From | Firmware input | Made from |
+|---|---|---|
+| M1 | Linker script, `crt0.S` | The address map constants and `TOHOST` |
+| M2 | `-march=rv32i_zicsr`; the `.tohost` placement | The core's CSRs; `TOHOST` |
+| M3 | `mmio.h`, with the stream registers' polling functions | The frozen memory map |
+| M4 | The console's registers in `mmio.h`, and its C library | The console device |
+| M5 | `-march` (`rv32im` with the M plugin), the riscv-tests suites to run, and a header of wrappers for a custom instruction | The plugin list, and the custom instruction plugin's rows |
+
+Four rules keep each run one command:
+
+- **One description, two consumers.** The firmware helper takes the objects the core
+  factory takes: the memory sizes, the frozen memory map and, from M5, the plugin list.
+  It derives the linker script, the header and `-march` from them, so the firmware and
+  the hardware cannot disagree, and the top states each choice once.
+- **The top's module-level code sets the order.** The hardware definitions come
+  first, then the helper, then the core factory, which receives the helper's words:
+
+  ```python
+  mm = MemoryMap(base=MMIO_BASE)          # from M3; M1 passes the simulation-control device
+  mm.add("leds", ctrl_t=leds_ctrl_t)
+  mm.freeze()
+  fw = firmware.build(sources=("main.c",), imem=IMEM, dmem=DMEM, mmio=mm)  # writes mmio.h, runs gcc
+  core = make_rv32i_core(imem_init=fw.imem_words, dmem_init=fw.dmem_words, mmio=mm)
+  ```
+
+- **Firmware inputs are fixed during import.** Parameters, Python constants, struct
+  types, the frozen map and the plugin list are all known before the RAMs exist. Results
+  of elaboration, pipelining or synthesis are not, and no milestone's firmware uses
+  them. A device whose result takes cycles gives the firmware a status bit to poll, not
+  a cycle count, so the same ELF runs whatever pipeline depth a build picks. Such
+  devices are [deferred](#deferred) anyway.
+- **Generated files are not declared.** The helper writes the linker script, `crt0.S`
+  and, from M3, `mmio.h` into its fresh temporary directory, and gcc's `-MD` file lists
+  that header too. The helper leaves these files out of what it passes to `depends_on`.
+  They come from Python sources the build already records, and they are gone by the
+  next build's up-to-date check.
+
 ### Where the code goes
 
 - `include/pypeline/riscv/`: everything RISC-V:
@@ -221,10 +285,10 @@ address bits:
 | Milestone | Delivers | Before it starts | Done when |
 |---|---|---|---|
 | [M0](#m0-audit) | Audit of the legacy CPUs and of Pypeline; decisions; bugs filed | — | Done |
-| [M1](#m1-single-cycle-rv32i-core-firmware-build-and-isa-tests) | Single-cycle RV32I core ported from the legacy core; firmware built during import; resets; `rv32ui` with a replacement test environment | Nothing to fix; workarounds for #71 and #362 | `rv32ui` passes in native simulation and GHDL; a C demo builds with no manual step |
+| [M1](#m1-single-cycle-rv32i-core-firmware-build-and-isa-tests) | Single-cycle RV32I core ported from the legacy core; firmware built during import; resets; `rv32ui` with a replacement test environment | Nothing to fix; workarounds for #71 and #362 | `rv32ui` passes in native simulation and GHDL; a C demo builds and runs from one command |
 | [M2](#m2-machine-mode-traps-and-csrs) | Machine-mode CSRs, ECALL, EBREAK, MRET and exception traps | Nothing known | `rv32ui` passes with the unmodified riscv-tests `p` environment |
-| [M3](#m3-memory-mapped-control-and-status-registers) | Memory map with struct registers for LEDs, buttons and a cycle counter; C header export | Nothing known | Firmware reads and writes every field of the mapped structs, checked field by field |
-| [M4](#m4-console-and-uart) | Console MMIO device and UART | Fix [#382](https://github.com/JulianKemmerer/PipelineC/issues/382) | "Hello" prints in native simulation and GHDL; an echo test passes |
+| [M3](#m3-memory-mapped-control-and-status-registers) | Memory map with struct registers for LEDs, buttons and a cycle counter; stream registers with a valid/ready handshake for FIFOs; C header export with polling functions | Fix [#382](https://github.com/JulianKemmerer/PipelineC/issues/382) | Firmware reads and writes every field of the mapped structs, checked field by field; a FIFO loopback through stream registers passes |
+| [M4](#m4-console-and-uart) | Console MMIO device and UART | Nothing more (#382 is fixed before M3) | "Hello" prints in native simulation and GHDL; an echo test passes |
 | [M5](#m5-table-driven-decoder-and-isa-extensions) | Table-driven decoder; extension plugins, starting with M | Fix [#402](https://github.com/JulianKemmerer/PipelineC/issues/402), including its table form | The table decoder matches M1's decoder; `rv32um` passes |
 | [M6](#m6-hardware-bring-up) | Arty bring-up, then a pico-ice blink | Fix the dropped conditional declaration, [#404](https://github.com/JulianKemmerer/PipelineC/issues/404) | The same firmware runs in simulation and on Arty; blink runs on pico-ice, or its utilization is recorded |
 
@@ -271,7 +335,7 @@ fixed. #402 and #404 are fixed before M5 and M6.
 | `include/risc-v/mem_decl.h`, 0-cycle IMEM and DMEM | Redesigned | The raw-VHDL RAMs become `make_ram(read_latency=0)`, with `byte_write_enables=True` for DMEM. A store outside DMEM and MMIO, or to an unmapped MMIO address, sets `mem_out_of_range` but still drives the DMEM write at `addr >> 2` (from the code). M1 enables the write only in the DMEM window. The legacy check flags a misaligned access only when it spills past its word; M1 flags any misaligned access |
 | `mem_decl.h`, 1-cycle and handshake variants | Deferred | They belong to the registered-read and FSM cores |
 | `include/risc-v/mem_map.h`: `STRUCT_MM_ENTRY_NEW` | Redesigned in M3 | Each device's structs are mapped whole through bytes, instead of one `mm_regs_t` for every device |
-| `mem_map.h`: `MM_STREAM`, `HANDSHAKE_MM_READ`/`_WRITE` and the C `mm_handshake_*` macros | Dropped | M4's console FIFOs replace the valid-flag handshake |
+| `mem_map.h`: `MM_STREAM`, `HANDSHAKE_MM_READ`/`_WRITE` and the C `mm_handshake_*` macros | Redesigned in M3 | They become M3's [stream registers](#memory-map), and the C macros become polling functions in the generated header. `MM_STREAM` is a data field plus a `uint32_t` valid flag that both sides write. `HANDSHAKE_MM_READ` captures a stream into the registers while the flag is clear and sets it; `HANDSHAKE_MM_WRITE` drives a stream from them while the flag is set and clears it on a transfer. The firmware's `mm_handshake_read`/`_try_read`/`_write` wait on the flag, copy the data and flip the flag. There is no try-write. StreamSoC's mem-map module (`examples/stream_soc/cpu/hardware/devices.c`) applies the CPU's store after the handshake logic, so a store in the same cycle wins |
 | `mem_map.h`: `STRUCT_MM_ENTRY_NEWEST`, `BYTES4_MM_WRITE_LOGIC`, `MM_SHARED_AXI_TO_FROM_HOST` | Dropped or deferred | `NEWEST` is a word-indexed form of the same mapping, which M3 builds its own way. The AXI windows are deferred |
 | `examples/risc-v/risc-v.c`, `examples/pico-ice/ice_makefile_pipelinec/risc-v/single_cycle_risc-v_top.c` | Redesigned in M3 and M6 | Their memory-map modules write fields (`o.outputs`, `mem_map_outputs`) that the current headers do not declare, so they probably do not build. From the code; not built |
 | Firmware: the `Makefile`, `link.ld`, `bootstrap.S` and `bin2vhdl.py` in `examples/pico-ice/.../firmware/` and `examples/risc-v/gcc_test/` | Dropped | The firmware helper replaces them. The legacy build uses `-O3 -mstrict-align -lm` without `-nostdlib`. `bootstrap.S` sets `sp`, calls `main` and has nothing after the call. `.bss` sits inside `.data`, so objcopy writes its zeros, and `.data` has a load address in ROM that nothing uses |
@@ -440,7 +504,7 @@ The names are proposals.
   that does not fit, is an error that names the segment.
 - **Choosing the firmware per run:** `param("FIRMWARE", ...)` names an ELF to load
   instead of building the default sources, so one design runs any program:
-  `pypelinec top.py --sim --comb --run 200000 -D FIRMWARE=add.elf`. A project with its own
+  `pypelinec top.py --sim --comb --run 200000 -D FIRMWARE=app.elf`. A project with its own
   build passes its ELF this way. Running an existing Makefile from the helper is not
   supported.
 - **Hardware identity:** the contents are part of each RAM's entity name. To the build
@@ -451,7 +515,9 @@ The names are proposals.
   ([Code that runs during design import](pypeline_guide.md#code-that-runs-during-design-import)).
   The `-MD` file also lists the toolchain's own headers (`stdint.h` and newlib's), so a
   toolchain change that changes them builds again too. Any other toolchain change needs
-  `--rebuild`.
+  `--rebuild`. The files the helper generates, the linker script and `crt0.S` among
+  them, are not declared
+  ([One command and the build order](#one-command-and-the-build-order)).
 
 ### ISA tests
 
@@ -469,9 +535,13 @@ The names are proposals.
   - `fence_i`, which writes instructions through data stores. A Harvard IMEM cannot take
     those writes.
   - `ma_data`, where present, which tests misaligned accesses.
-- **Native run:** a registered test builds each ISA test with the firmware helper and
-  runs it in native simulation with `-D FIRMWARE=`, in parallel, reporting pass or fail
-  per test. A cycle cap catches a hung test.
+- **ISA test top:** `param("ISA_TEST", ...)` names one test, such as `rv32ui/add`. The
+  top builds it with the firmware helper during import, against the test environment's
+  include directories. Each test is then one command:
+  `pypelinec isa_test_top.py --sim --comb --run 200000 -D ISA_TEST=rv32ui/add`. The
+  `--run` count is the cycle cap that catches a hung test.
+- **Native run:** a registered test runs that command for each ISA test, in parallel,
+  and reports pass or fail per test.
 - **GHDL run:** the same tests run in cocotb + GHDL. If the full GHDL set is too slow for
   the default run, a named subset is registered, and the full set is documented as an
   opt-in command. M1 records both run times.
@@ -492,7 +562,8 @@ The names are proposals.
   program from the reset vector.
 - **Synthesis and docs:** a synthesis test of the core top passes with `device_models`,
   the default tool for tests. The guide sections, the example README and the README
-  feature table describe the core and firmware workflow.
+  feature table describe the core and firmware workflow. The example README gives each
+  run as one command.
 
 Risks: M0 elaborated only `decode()` and `execute()` (2 s), and measured native
 simulation speed only for them (499 cycles per second). The whole core is larger on both
@@ -551,7 +622,12 @@ M2 is done when:
 
 ## M3: Memory-mapped control and status registers
 
-**Before it starts:** nothing known.
+**Before it starts:** fix [#382](https://github.com/JulianKemmerer/PipelineC/issues/382).
+Native simulation gives two stateful instances one state when only a stateless caller
+tells them apart. The memory map calls several devices of one kind from library code,
+which takes that shape unless the builder's code is arranged around the bug, and the
+loopback demo puts a `make_stream_fifo` beside them. M4's console needed the fix
+anyway, for its two FIFOs in one `@MAIN`.
 
 ### Memory map
 
@@ -564,12 +640,34 @@ mm = MemoryMap(base=MMIO_BASE)
 mm.add("sim", sim_ctrl_device)              # M1's TOHOST keeps its address
 mm.add("leds", ctrl_t=leds_ctrl_t)          # the CPU writes, the design reads
 mm.add("board", status_t=board_status_t)    # the design drives, the CPU reads
+mm.add("cmd", to_design=cmd_t)              # a stream from the CPU, into a FIFO's write side
+mm.add("result", from_design=result_t)      # a stream to the CPU, from a FIFO's read side
 mm.freeze()
 ```
 
 - **Control struct:** a register that the CPU writes with byte enables and the design
   reads.
 - **Status struct:** a value that the design drives and the CPU reads.
+- **Stream registers:** the legacy `MM_STREAM` registers and their valid/ready
+  handshake, so a FIFO's write or read side connects to the CPU without glue logic.
+  Each holds the data, padded to whole words, then a 32-bit `valid` word. Both sides
+  write `valid`, each only in the state the other side waits for:
+  - **To the design** (`to_design=`, the legacy `HANDSHAKE_MM_WRITE`): the firmware
+    waits for `valid` to clear, writes the data and sets `valid`. The device drives the
+    data and `valid` to the design as a `make_stream_interface(T).fwd_t` and takes back
+    its `fb_t`, which is the shape of `make_stream_fifo`'s `in_stream_if`. It clears
+    `valid` in the cycle the design accepts the data.
+  - **From the design** (`from_design=`, the legacy `HANDSHAKE_MM_READ`): the device's
+    `ready` to the design is `not valid`. On a transfer it captures the data and sets
+    `valid`. The firmware waits for `valid`, reads the data and clears `valid`. A FIFO's
+    `out_stream_if` connects directly.
+
+  Neither side touches the data while the other side owns it, so a `T` wider than a
+  word is safe across several accesses. If misused firmware stores to `valid` in the
+  cycle the device changes it, the store wins, as in the legacy module. The device's
+  outputs to the design come straight from its registers, so a FIFO whose `ready` is
+  combinational makes no loop. Each register holds one transfer, and the FIFO behind
+  it does the buffering.
 - **Mapping:** each struct maps whole, through `make_type_to_bytes`/`make_type_from_bytes`
   and a word index, as the legacy `STRUCT_MM_ENTRY_NEW` does. No generic code names a
   field.
@@ -600,10 +698,16 @@ writes `mmio.h`, which contains:
 - typedefs that use `stdint.h` types;
 - the window and device base addresses;
 - `volatile` struct pointers;
-- `_Static_assert`s on `sizeof` and on every `offsetof`.
+- `_Static_assert`s on `sizeof` and on every `offsetof`;
+- for each stream register, polling functions that replace the legacy `mm_handshake_*`
+  macros. `<name>_write()` and `<name>_read()` wait on `valid`, move the data and flip
+  `valid`. `<name>_try_write()` and `<name>_try_read()` return 0 instead of waiting; the
+  legacy macros have no try-write. The data is written before `valid` is set and read
+  before it is cleared, and `volatile` keeps those accesses in order.
 
-The firmware helper calls the generator during import and compiles against the header. The
-build also writes the header to `<out_dir>/host/`, and `project_dir=` gets a copy.
+The firmware helper takes the frozen map (`mmio=`), calls the generator during import and
+compiles against the header. The build also writes the header to `<out_dir>/host/`, and
+`project_dir=` gets a copy.
 
 **Demo:**
 
@@ -612,6 +716,9 @@ build also writes the header to `<out_dir>/host/`, and `project_dir=` gets a cop
 - A combinational compute block between a control struct (the operands) and a status
   struct (the result). This shows the first accelerator pattern: the firmware writes
   operands, and the next instruction reads the result.
+- A loopback through a `make_stream_fifo`: a `to_design` register feeds the FIFO's
+  write side, and its read side feeds a `from_design` register. The firmware writes
+  values and reads them back through the polling functions.
 
 ### M3 exit criteria
 
@@ -620,37 +727,37 @@ build also writes the header to `<out_dir>/host/`, and `project_dir=` gets a cop
   a nested struct. Native simulation checks the hardware values against Python's.
 - **Header unit test:** the header's offsets match Pypeline's leaf offsets, and `mm.add`
   rejects a misaligned struct with an error that names the field.
+- **Stream registers:** in the loopback demo, the firmware writes as many values as the
+  two registers and the FIFO's `capacity_beats` hold, checks that one more
+  `try_write` fails, then reads every value back in order and checks that a
+  `try_read` then fails. It passes in native simulation and GHDL, and
+  `native_vs_vhdl_sim` compares it cycle by cycle.
 - **Blinky:** the blinky firmware drives the LED register in simulation.
 - **Docs:** a guide section, and [One walk, three consumers](pypeline_DESIGN.md#one-walk-three-consumers)
   updated for the fourth consumer of the leaf walk.
 
 ## M4: Console and UART
 
-**Before it starts:** fix [#382](https://github.com/JulianKemmerer/PipelineC/issues/382).
-The console device calls two `make_stream_fifo` FIFOs, TX and RX, from one `@MAIN`, which
-is the shape in which native simulation gives both FIFOs one state. Giving each FIFO its
-own `@MAIN` would avoid it, at the cost of wiring that the fix makes unnecessary.
+**Before it starts:** nothing more. The console device calls two `make_stream_fifo`
+FIFOs, TX and RX, from one `@MAIN`, the shape of
+[#382](https://github.com/JulianKemmerer/PipelineC/issues/382), which is fixed before M3.
 
 - **UART MAC:** a port of `include/uart/uart_mac.h` (TX and RX, with the baud divisor
   derived from the clock rate) to Pypeline streams, buffered with `make_stream_fifo`.
-- **Console device:** four registers:
-
-  | Register | Access |
-  |---|---|
-  | `TX_DATA` | A write pushes a byte |
-  | `TX_STATUS` | The space left |
-  | `RX_DATA` | A read pops a byte |
-  | `RX_STATUS` | Whether a byte is waiting |
-
-  A single-cycle core drives an address every cycle. The device therefore pops RX only in
-  a cycle where the core performs a load from `RX_DATA` (its read enable), never on the
-  address alone.
+- **Console device:** two of M3's stream registers, both of `uint8_t`. `tx` is a
+  `to_design` register that feeds the TX FIFO's write side, and `rx` is a `from_design`
+  register fed by the RX FIFO's read side. A load has no side effect: the firmware
+  clears `rx`'s `valid` after taking the byte. A single-cycle core drives an address
+  every cycle, so a pop-on-read register would need the read enable, and this design
+  avoids that.
 - **Simulation console:** `sim_print` adds its own newline, so one print per character
   does not work. The device collects TX bytes into a `char_t[N]` line buffer and prints
   it with `sim_print` at each newline. Console output then appears the same way in native
   simulation and in GHDL.
 - **Firmware library:** `putchar`, `puts`, `getchar`, and decimal and hex number output,
-  without `printf`.
+  without `printf`. `putchar` and `getchar` call the header's polling functions for
+  `tx` and `rx`. The console device brings these C sources, and the firmware helper
+  compiles the sources of every device in the map, so a top lists only its own.
 - **Stimulus:** a simulation-only `@MAIN` over `@sim_input` feeds RX bytes.
 
 M4 is done when:
@@ -677,12 +784,17 @@ module-level constants work.
 - **Plugins:** a plugin is a Python object that contributes rows, control fields and an
   execute function. It can also bring state or MMIO devices. The core factory takes a
   list of plugins. RV32I itself is the first one, and M2's CSRs and traps the second.
+  The firmware helper takes the same list. It sets `-march` from it (`rv32im` with the
+  M plugin), and the ISA test registration runs only the riscv-tests suites of the
+  enabled plugins.
 - **First extension, M:** `mul`, `mulh*`, `div*` and `rem*`, checked with `rv32um`
   through the `p` environment. In a single-cycle core these instructions are
   combinational and set the clock rate. M5 measures that; a multi-cycle execute stays
   deferred.
 - **Second candidate:** a custom-0 instruction that wraps a Pypeline function (CFU
-  style).
+  style). Its plugin also generates a C header from its rows: one inline function per
+  instruction, emitting it with the assembler's `.insn` directive, so firmware calls it
+  by name. GCC 12.1 assembles `.insn r CUSTOM_0, ...` under `-march=rv32i`.
 - **Optimized decoder netlist (optional, needs a compiler feature):** a combinational
   function tagged for optimization would be synthesized on its own with Yosys and ABC.
   The optimized gate netlist would then come back as ordinary Pypeline operators
@@ -730,6 +842,15 @@ treats as a timing loop, cause unknown).
   become flip-flops. The top reuses `examples/pypeline/pico_ice`'s `top.sv` (an icepll
   PLL) and Makefile. If it does not fit, M6 records the utilization; the registered-read
   core it would need is deferred.
+- **Final VHDL, then by hand:** the `pypelinec` command builds the firmware and writes
+  the final VHDL and its file list, `vhdl_files.txt`. The user then runs the rest by
+  hand, as in the board examples: the vendor flow, with the board wrapper (`board.vhd`
+  or `top.sv`, holding the PLL) and the constraints, and then programming the board.
+  The example README gives these steps. Rebuild the bitstream after every firmware
+  edit, because the firmware is in the IMEM and DMEM contents. The board examples'
+  Makefile rules depend only on the wrapper and the constraints, so their documented
+  command is `make clean all`. Generating the wrapper and running the vendor flow from
+  the build are [deferred](#deferred).
 - **Clock and reset:** the CPU `@MAIN` runs on the PLL clock, under the reset made from
   `pll_locked`, with `reset_registers="all"`.
 - **Pins:**
@@ -745,7 +866,8 @@ M6 is done when:
   fit;
 - each board top has a registered synthesis test: Vivado for Arty and open tools for
   pico-ice, as `example_arty_top` and `example_pico_ice_top` do;
-- the example README lists the hardware checks to run by hand.
+- the example README gives the manual steps from the final VHDL to a programmed board,
+  and lists the hardware checks to run by hand.
 
 ## Deferred
 
@@ -760,8 +882,13 @@ M6 is done when:
   allocation (`INST_ARRAY`) and library-made wires, instances and FIFOs, scoped by what
   the bus needs.
 - Sub-byte register fields and bitfield packing in the memory map and the header.
-- Multiple clock domains, PLLs generated by the build, and the vendor IP the StreamSoC
-  port needs (DDR3, Ethernet).
+- Board wrapper generation, a candidate milestone after M6. The build would write the
+  board top that M6 writes by hand (the PLL or MMCM instance, the reset from its lock
+  signal, the pin constraints) and could run the vendor flow through to a bitstream.
+  Its first step is a survey of existing board descriptions that could supply per-board
+  pins and clocks, such as LiteX's
+  [litex-boards](https://github.com/litex-hub/litex-boards).
+- Multiple clock domains, and the vendor IP the StreamSoC port needs (DDR3, Ethernet).
 - Whole-SoC verification at scale: `@sim_model`s of vendor IP, and Verilator or CXXRTL
   drivers.
 - Other ISAs and switchable endianness, through an adapter from their native port.
