@@ -103,7 +103,7 @@ Constraints until a milestone lifts them:
 | PC and control state | `Reg[T]`: blocking read-after-write within a cycle | guide |
 | Register file with two combinational reads and one write | `make_ram(uint32_t, 32, ports=("r", "r", "w"), read_latency=0)`. Write-back is computed after the reads, so the write port is driven through a [`Feedback[T]`](pypeline_guide.md#feedback-wires-feedbackt) of `ram.p2_in_t` | A design reads `x[k]` and `x[k-1]` each cycle, where `x[k-1]` was written the cycle before. Native simulation and cocotb + GHDL printed the same values |
 | IMEM ROM, DMEM with byte lanes | `make_ram(..., ports=("r",), init=...)`; `make_ram(..., ports=("rw",), byte_write_enables=True)`, whose `wr_en` is then a `uint1_t[4]` | guide ([RAMs](pypeline_guide.md#rams-make_ram--make_stream_ram)) |
-| All three memories in one `@MAIN` | An IMEM ROM, a byte-enable DMEM and the register file, each with its own contents, called from one `@MAIN` | `pypeline_sim_debug.py`: native simulation and GHDL printed the same values on every cycle except the `sim_finish()` cycle ([#361](https://github.com/JulianKemmerer/PipelineC/issues/361)) |
+| All three memories in one `@MAIN` | An IMEM ROM, a byte-enable DMEM and the register file, each with its own contents, called from one `@MAIN` | `pypeline_sim_debug.py`: native simulation and GHDL print the same values on all 21 cycles, the `sim_finish()` cycle included |
 | RAM contents from Python | `init=` takes a list or a dict. `make_ram` checks and converts it when called. The contents are part of the RAM's identity: different contents make a different entity | `include/pypeline/ram.py` |
 | Resets | `make_reset()`, `make_clock(..., reset=)`, and `reset_registers="all"` or `Reg[T, RESET]`. Through a reset, a RAM keeps its contents, its in-flight requests are cancelled, and the write at the reset edge does not happen | guide ([Resets](pypeline_guide.md#resets)) |
 | Per-build choices (firmware, memory sizes, tracing) | `param()` and `-D` | guide ([Build Parameters](pypeline_guide.md#build-parameters-param-and--d)) |
@@ -135,9 +135,6 @@ on `PATH`; the legacy Makefiles say `export PATH=$PATH:/opt/riscv/bin`.
 | A wire or port declared inside a module-level `if` | Bug, [#404](https://github.com/JulianKemmerer/PipelineC/issues/404): an `Output[T]` gets no port, and the `@MAIN`'s write to it is dropped with no error. A `Wire[T]` read by another `@MAIN` stops the build with "Unknown name". Native simulation treats both as wires | Fix before [M6](#m6-hardware-bring-up), whose board tops choose pins. Until then, choose variants by conditional `import` |
 | Reversed bit slice `x[0:7]` | Bug, [#405](https://github.com/JulianKemmerer/PipelineC/issues/405): built as `x[7:0]`; native simulation raises | The CPU needs no reversed slice |
 | Bit index from a hardware value, `x[i]` | Not supported ([#362](https://github.com/JulianKemmerer/PipelineC/issues/362)) | Load and store byte lanes index a `uint_to_array_le` array instead |
-| `sim_print` on the `sim_finish()` cycle | Missing from VHDL simulation output ([#361](https://github.com/JulianKemmerer/PipelineC/issues/361)); the memory checks above show it too | Print the result, then finish one cycle later |
-| `sim_print` of a value of 2³¹ or more | Overflows in GHDL ([#360](https://github.com/JulianKemmerer/PipelineC/issues/360)). MMIO addresses start at `0x8000_0000` | Print addresses and data with Pypeline's `hex()` (`from pypeline import hex`), which does not overflow |
-| `hex()` of a negative signed value | Bug, [#409](https://github.com/JulianKemmerer/PipelineC/issues/409): native simulation prints `-0000800` where VHDL simulation prints `FFFFF800`, so the cycle diff reports a mismatch. Found by M0 | Traces print unsigned values: `hex(uint32_t(imm))` |
 | Bit-slice assignment `x[hi:lo] = v` | Bug, [#408](https://github.com/JulianKemmerer/PipelineC/issues/408): elaborates, but native simulation raises `TypeError`. A single-bit store, `x[i] = v`, stops elaboration ([#362](https://github.com/JulianKemmerer/PipelineC/issues/362)). Both found by M0 | `bit_assign(x, v, lo)` or `concat`, which both simulations run: JALR clears bit 0 with `bit_assign(target, uint1_t(0), 0)` |
 | Reading a field of a call's result, `f(x).y` | Elaboration stops with an internal error ([#71](https://github.com/JulianKemmerer/PipelineC/issues/71)) | Bind the result to a local first: `o = ram(...)`, then `o.p0.rd_data` |
 | Native-simulation state behind a stateless caller | Two stateful instances that only a stateless caller tells apart share one native-simulation state ([#382](https://github.com/JulianKemmerer/PipelineC/issues/382)). Two `make_stream_fifo` FIFOs in one `@MAIN` hit it. The three memories in one `@MAIN` (above) do not | M4's console has a TX and an RX FIFO: fix #382 before [M4](#m4-console-and-uart) |
@@ -224,7 +221,7 @@ address bits:
 | Milestone | Delivers | Before it starts | Done when |
 |---|---|---|---|
 | [M0](#m0-audit) | Audit of the legacy CPUs and of Pypeline; decisions; bugs filed | — | Done |
-| [M1](#m1-single-cycle-rv32i-core-firmware-build-and-isa-tests) | Single-cycle RV32I core ported from the legacy core; firmware built during import; resets; `rv32ui` with a replacement test environment | Nothing to fix; workarounds for #71, #360, #361, #362, #408 and #409 | `rv32ui` passes in native simulation and GHDL; a C demo builds with no manual step |
+| [M1](#m1-single-cycle-rv32i-core-firmware-build-and-isa-tests) | Single-cycle RV32I core ported from the legacy core; firmware built during import; resets; `rv32ui` with a replacement test environment | Nothing to fix; workarounds for #71, #362 and #408 | `rv32ui` passes in native simulation and GHDL; a C demo builds with no manual step |
 | [M2](#m2-machine-mode-traps-and-csrs) | Machine-mode CSRs, ECALL, EBREAK, MRET and exception traps | Nothing known | `rv32ui` passes with the unmodified riscv-tests `p` environment |
 | [M3](#m3-memory-mapped-control-and-status-registers) | Memory map with struct registers for LEDs, buttons and a cycle counter; C header export | Nothing known | Firmware reads and writes every field of the mapped structs, checked field by field |
 | [M4](#m4-console-and-uart) | Console MMIO device and UART | Fix [#382](https://github.com/JulianKemmerer/PipelineC/issues/382) | "Hello" prints in native simulation and GHDL; an echo test passes |
@@ -258,7 +255,8 @@ Every bug has an entry in the [issues inventory](issues_inventory.md) and a
 | A single-bit store, `x[i] = v`, stops elaboration with an internal error | The `decode()` port | A new form of [#362](https://github.com/JulianKemmerer/PipelineC/issues/362), added to the issue and its inventory entry; like #362's other forms, no registered reproducer |
 | Reading a field of a call's result, `f(x).y`, stops elaboration | The `decode()` testbench | Already [#71](https://github.com/JulianKemmerer/PipelineC/issues/71) |
 
-Each has a workaround in the gaps table. #402 and #404 are fixed before M5 and M6.
+Each open one has a workaround in the gaps table; #409 is fixed. #402 and #404 are fixed
+before M5 and M6.
 
 ### Legacy sources
 
@@ -336,11 +334,6 @@ need, and builds the firmware with no manual step.
 
 **Before it starts:** nothing to fix. M1 works around:
 
-- [#361](https://github.com/JulianKemmerer/PipelineC/issues/361): finish a cycle after
-  the last print;
-- [#360](https://github.com/JulianKemmerer/PipelineC/issues/360): print with `hex()`;
-- [#409](https://github.com/JulianKemmerer/PipelineC/issues/409): print signed values as
-  unsigned, `hex(uint32_t(x))`;
 - [#362](https://github.com/JulianKemmerer/PipelineC/issues/362): byte lanes through an
   array;
 - [#408](https://github.com/JulianKemmerer/PipelineC/issues/408): bit stores with
@@ -403,7 +396,7 @@ On a write, the device:
 
 - prints the result with `sim_print`;
 - fails a `sim_assert` on a failure code;
-- calls `sim_finish()` one cycle later ([#361](https://github.com/JulianKemmerer/PipelineC/issues/361)).
+- calls `sim_finish()`.
 
 These are hardware statements, so the same pass/fail check works in native simulation and
 in GHDL. On a board, the write sets `halt`.

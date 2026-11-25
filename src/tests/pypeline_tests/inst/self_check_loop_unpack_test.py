@@ -134,9 +134,7 @@ def self_check_loop_unpack():
         acc == EXPECTED_ACC,
         f"loop/unpack accumulator mismatch: got {acc}, want {EXPECTED_ACC}",
     )
-    # No debug print on the sim_finish() cycle -- whether a same-cycle VHDL
-    # write flushes before std.env.finish kills GHDL is a process-ordering
-    # race the cycle diff must not depend on.
+    # No debug print on the sim_finish() cycle -- see self_check_counter_test.py.
     if n < NUM_COUNTS - 1:
         sim_print(f"self_check_loop_unpack acc={acc}", debug=True)
     if n == NUM_COUNTS - 1:

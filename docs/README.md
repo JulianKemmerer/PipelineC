@@ -906,8 +906,7 @@ pypelinec ./examples/pypeline/pipeline.py --no_sweep --no_hier_syn
 
 Use native strict simulation for fast source-level tests, then include at least one
 generated-VHDL check for every reusable block. Native simulation cannot expose
-VHDL-only identifier restrictions, unknown-value warm-up, raw-VHDL mismatches, or
-VHDL integer display overflow.
+VHDL-only identifier restrictions, unknown-value warm-up or raw-VHDL mismatches.
 
 ```sh
 # Native source simulation for a fixed number of cycles

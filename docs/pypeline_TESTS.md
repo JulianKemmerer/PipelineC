@@ -1237,7 +1237,8 @@ covered:
   `nested_truncate_test`, `struct_ctor_positional_test`, `cast_interface_test`,
   `char_array_test`, `enum_test`, `bit_math_test`), the `sim_*` APIs (`sim_input_test`,
   `sim_output_direct_wire_test`, `sim_only_main_test`, `sim_print_test`, `sim_assert_finish_test`,
-  `main_args_sim_test`);
+  `sim_print_hex_signed_test`, `sim_print_decimal_test`, `sim_finish_print_test`,
+  `sim_assert_fail_print_test`, `main_args_sim_test`);
 - elaboration-rule, error and API tests, whose designs are rejected or whose subject is a
   call form or a naming or clock rule (`interface_type_error_test`,
   `global_wire_errors_test`, `wires_contract_test`, `multi_rate_sim_refusal_test`,
@@ -1903,25 +1904,13 @@ A design registered in `native_vs_vhdl_sim_tests.py` must:
 
 - Emit at least one `sim_print(..., debug=True)` probe covering the values its
   `sim_assert`s already check.
-- **Never** emit a `debug=True` print on the same cycle `sim_finish()` is called.
-  Whether a same-cycle VHDL write flushes before `std.env.finish` kills GHDL is a
-  process-ordering race the diff must not depend on -- the print is silently DROPPED
-  from the VHDL/cocotb log entirely if this rule is broken (present in native sim,
-  absent in VHDL -- not a text-visible failure, just a missing line the cycle diff
-  will flag as a mismatch). It is tracked as bug [#361](https://github.com/JulianKemmerer/PipelineC/issues/361) --
-  see `known_issues_tests.py`'s `sim_finish_debug_print_race_test` for a
-  direct reproduction of what happens if it's broken, and e.g.
-  `self_check_counter_test.py` for the standard one-cycle gate
-  (`if n < NUM_COUNTS - 1: sim_print(...)`).
+- On the `sim_finish()` cycle, print before the `sim_finish()` call. Native
+  simulation stops at the call, so a print it would run afterwards (later in the
+  function, or in a `@MAIN` registered after it) appears only in the VHDL log, and
+  the diff flags it. `sim_finish_print_test.py` prints on the finishing cycle.
 - For a non-`--comb` (pipelined) entry: put every probe inside a stateful (0-latency)
   MAIN, and valid-/count-gate it, since VHDL's undefined (`'U'`) warm-up registers
   can't be compared against native's typed zeros.
-
-- Keep every probed value under 2**31 if it is a `uint32_t`. `sim_print` lowers to
-  `integer'image(to_integer(x))` and VHDL's `integer` is 32-bit *signed*, so GHDL
-  aborts with `overflow detected` on a larger value while native sim prints it
-  happily -- a VHDL-only failure by construction. `self_check_type_axis_test.py`
-  carries a comment marking where it deliberately stays under the limit.
 
 For a pipelined entry, use global wires only in the body of the pipelined `@MAIN` or
 `AUTO_PIPELINE` function itself, and no `VOLATILE` ones. Native sim refuses anything else

@@ -1921,6 +1921,17 @@ Correctness under both simulation layers follows directly from the existing
 `sim_call()` (`_sim_converging` stays `False` there), fires only in the final pass under
 `pypeline_sim.py`.
 
+The printed text equals the VHDL simulation's because elaboration
+(`PY_TO_LOGIC._build_sim_fmt_string`) accepts only interpolations whose Python rendering is
+the generated VHDL's:
+- a bare integer prints `str(int)`, which VHDL prints with `integer'image`, or with
+  `to_dec_string` for a type wider than VHDL's 32-bit `integer`;
+- Pypeline's `hex()` prints the value's bits, sign-extended to whole digits, as `to_hstring`
+  does;
+- `chr()` and a `char_t[N]` array (`CharArray`) print characters.
+
+Format specs (`{n:x}`) and a bare `char_t` are elaboration errors.
+
 ### `sim_print(..., debug=True)` — tagged prints for `pypeline_sim_debug.py`
 
 `sim_print`'s optional `debug` keyword (default `False`) is not a distinct dual-mode builtin
@@ -2535,15 +2546,17 @@ refused rather than silently mis-simulated); the rest are constraints on how you
   object on one physical source line share one delay line (identical `_sim_inst_stack` key)
   unless `SIM_TRACE_LOCATIONS=True` restores column-level call identity — the same pre-existing
   limitation multi-instance `Reg[T]` designs already carry ([#353](https://github.com/JulianKemmerer/PipelineC/issues/353)).
-- **`sim_finish` cycle prints are racy across sims.** GHDL gives no ordering guarantee between a
-  write process and `std.env.finish` on the same clock edge, so a design must not emit
-  prints on the cycle it calls `sim_finish()` — plain `sim_print` lines are dropped the same
-  way as `debug=True` ones — quiesce prints one cycle earlier
-  (the shipped `native_vs_vhdl_*` test designs gate their final prints with a `done` register).
-  This is a testbench-authoring rule, not a native-sim inaccuracy, but it governs whether a diff
-  reads clean. Broken, it does not raise or warn — the print simply never appears in the VHDL log
-  (present in native sim, absent in VHDL); see `src/tests/pypeline_tests/inst/
-  sim_finish_debug_print_race_test.py` for a direct reproduction, and [#361](https://github.com/JulianKemmerer/PipelineC/issues/361).
+- **Prints and checks around a simulation stop.** `SimFinish` and `AssertionError` end native
+  simulation at the call, so a print or `sim_assert` that would run after it in that cycle (later
+  in the same function, or in a `@MAIN` registered after it) does not run. In VHDL the whole
+  clock edge runs: a failing `sim_assert` and `sim_finish()` stop the simulation from postponed
+  processes, after the edge's other processes, and every failing assertion of the finishing
+  cycle reports before the finish
+  ([PY_TO_LOGIC_DESIGN.md](PY_TO_LOGIC_DESIGN.md#vhdl-codegen-get_sim_assert_module_text--get_sim_finish_module_text)).
+  So a stopping cycle diffs clean when its prints run before the call that stops native
+  simulation, as in `src/tests/pypeline_tests/inst/sim_finish_print_test.py` and
+  `inst/sim_assert_fail_print_test.py`. A `sim_assert` that fails after the `sim_finish()` call
+  fails the VHDL run only, as in `inst/sim_assert_on_finish_cycle_design.py`.
 - **cocotb verdicts and long file lists.** How cocotb's PASS/FAIL is read from
   `results.xml` after `sim_finish()` and why `VHDL_SOURCES` is a GHDL `@file` response file
   are in [`SIM_DESIGN.md`](SIM_DESIGN.md#cocotb-cocotbpy).
@@ -2714,17 +2727,13 @@ with `make_type_to_bytes`, so a testbench comparing hardware wire bytes against
 `type_to_bytes(...)` is comparing against one source of truth rather than a parallel
 implementation of the layout.
 
-Two traps when writing a design that will be diffed against real VHDL:
+One trap when writing a design that will be diffed against real VHDL:
 
 - **Zero unkept lanes explicitly.** A `Reg` element that is never written reads `'U'` in
   GHDL but `0` in native simulation. `stream/serializer.py` and `axi/type_axis.py` both
   zero the data on lanes they do not keep for exactly this reason; a module that leaves
   stale buffer contents there passes native simulation and then fails the cycle diff on
   the final beat of every packet.
-- **`sim_print` cannot show a `uint32_t` value >= 2**31.** It lowers to
-  `integer'image(to_integer(x))`, and VHDL's `integer` is 32-bit *signed*, so GHDL raises
-  `overflow detected` at runtime while native simulation prints the value happily. Narrow
-  or mask a wide probe value before printing it.
 
 ## Limitations
 

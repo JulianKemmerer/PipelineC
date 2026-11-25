@@ -6777,9 +6777,11 @@ sim_print(f"n={n} hex={hex(n)}")
 Write it like ordinary Python `print()`-style code: an f-string (or a plain string with no
 interpolation), one argument, no separate `%`-style format-string-plus-args form. A trailing
 newline is appended automatically, like real `print()`. Bare `{expr}` interpolation works for
-plain integers (decimal, sign-aware) and for `char_t[N]` arrays (`%s`); `hex(expr)` gives hex.
-A single `char_t` still needs `chr(expr)` — a bare `{ch}` is ambiguous between a number and a
-character, so it's a compile error instead of a silent mismatch:
+plain integers of any width (decimal, sign-aware) and for `char_t[N]` arrays (`%s`); `hex(expr)`
+gives hex: the value's bits as zero-padded uppercase digits, so an `int8_t` of -1 prints `FF`.
+Format specs such as `{n:x}` are a compile error, because Python formats them differently from
+the hardware; write `hex(n)`. A single `char_t` still needs `chr(expr)` — a bare `{ch}` is
+ambiguous between a number and a character, so it's a compile error instead of a silent mismatch:
 
 ```python
 from pypeline import char_t, strlen
@@ -6806,15 +6808,21 @@ if n >= 3:
 
 `sim_assert(cond, msg=None)` checks `cond` every cycle it executes while enabled — a failing
 condition raises `AssertionError` in native Python simulation and elaborates to a VHDL `assert
-... report ... severity failure;` that halts a real GHDL simulation immediately. `msg` follows
-the same f-string interpolation rules as `sim_print`'s argument.
+... report ... severity failure;` that halts a real GHDL simulation at the end of the failing
+cycle. `msg` follows the same f-string interpolation rules as `sim_print`'s argument, and prints
+the values of the failing cycle.
 
 `sim_finish()` takes no arguments and signals "stop simulating now": it raises a
 `SimFinish` exception in native simulation and elaborates to VHDL's
 `std.env.finish;`, halting a VHDL simulation.
 
-A `sim_print` that runs on the same cycle as `sim_finish()` appears in native simulation
-but is missing from VHDL simulation output ([#361](https://github.com/JulianKemmerer/PipelineC/issues/361)). Print one cycle before finishing.
+The prints of a cycle that fails a `sim_assert` or calls `sim_finish()` appear in both
+simulations. Native simulation stops at the call, though: a print it would run after it in that
+cycle, later in the same function or in a `@MAIN` registered after it, appears only in VHDL
+simulation, and a `sim_assert` it would run after a `sim_finish()` call fails only the VHDL
+simulation. VHDL simulation ends one step of the simulator's time resolution (1 fs in GHDL)
+after the finishing clock edge, so GHDL reports a time such as `simulation finished
+@10001001fs`.
 
 ### `@initial` / `@final` — start/end-of-run hooks
 
@@ -7137,15 +7145,14 @@ tracks the row.
 | Simulation | **More than one clock** | Not supported | Native simulation and generated cocotb testbenches run one clock. Native simulation refuses a design whose `@MAIN`s name more than one clock, two rates or two named clocks of one rate, naming the clocks and the `@MAIN`s on each; bare `@MAIN`s name no clock and do not count (see [Simulation across clocks](#simulation-across-clocks)). Build with `--comb --no_synth` and drive `top` from a VHDL testbench of your own | [#354](https://github.com/JulianKemmerer/PipelineC/issues/354), [#342](https://github.com/JulianKemmerer/PipelineC/discussions/342) |
 | Simulation | **`@sim_input` called with different arguments in one cycle** | Wrong in native simulation | The once-per-cycle cache ignores arguments, so every call in a cycle returns the first call's value. Use one function per value | [#355](https://github.com/JulianKemmerer/PipelineC/issues/355) |
 | Simulation | **A `@sim_input` result stored in a local, or used inside an expression** | Rejected | `x = stim()` and `stim() + 1` raise a clear error in native sim (at import) and in elaboration. Declare a module-level `Input[T]` and assign the call to it as its own statement (`in0 = stim()`); it becomes a real top-level port (see [`@sim_input`](#sim_input--driving-simulation-inputs)). A future version could accept a local by turning it into an implicit `Input[T]` port of the function's return type | — |
-| Simulation | **`sim_print` of a `uint32_t` value ≥ 2³¹** | Fails in VHDL only | `sim_print` lowers to `integer'image(to_integer(x))`, and VHDL's `integer` is 32-bit *signed*, so GHDL raises `overflow detected` at runtime. Native simulation prints it happily, so this only ever appears in a cocotb/GHDL run — mask or narrow the value before probing it | [#360](https://github.com/JulianKemmerer/PipelineC/issues/360) |
-| Simulation | **`sim_print` on the `sim_finish()` cycle** | Missing in VHDL simulation | Native simulation prints the line; in GHDL the run ends before it is written. Print one cycle before finishing | [#361](https://github.com/JulianKemmerer/PipelineC/issues/361) |
+| Simulation | **`sim_print`/`sim_assert` in a function whose result is unused, or in two calls with the same inputs** | Wrong in VHDL simulation | The generated VHDL leaves out a call whose result nothing reads, with its prints and checks, and keeps one of two calls with the same inputs, so a failing check there can pass in GHDL. Use the result (printing it is enough) and give each call its own inputs | [#410](https://github.com/JulianKemmerer/PipelineC/issues/410) |
 | Simulation | **`sim_wave` signals in HDL simulation** | Not supported | `sim_wave` and the stream perf probes record in native simulation only. Elaboration deletes them, so GHDL's `--wave` dump has the generated VHDL's own signals instead | — |
 | Simulation | **Records and arrays in GHDL's VCD and FST** | Not supported by GHDL | GHDL's VCD and FST writers skip records and arrays of vectors, which hold most Pypeline data. Write `--wave FILE.ghw`, GHDL's own format, which keeps every VHDL type, or record the native simulation | — |
 | Simulation | **`@initial`/`@final` under `sim_call`** | Not run | Hooks run in clocked simulation runs (`pypelinec --sim`, `pypeline_sim.py`) only. A plain Python script that drives `sim_call` itself has no run start/end for the tools to hook — call its setup/teardown code directly | — |
 
 Native simulation cannot detect restrictions that appear only after emitting VHDL, such
-as a reserved enum member, an underscore in a string literal, an array-length mismatch or
-VHDL integer display overflow. Give every reusable source
+as a reserved enum member, an underscore in a string literal or an array-length mismatch.
+Give every reusable source
 block a small synthesizable `@MAIN` wrapper with representative `Input[T]`/`Output[T]`
 ports, then exercise that wrapper using the flows described in
 [Simulation](README.md#simulation) under Tools & CLI.

@@ -8,10 +8,13 @@ from under cocotb's still-running coroutine, and cocotb scored that a
 SimFailure no matter what. src/COCOTB.py compensated by telling cocotb to
 expect that specific SimFailure for --run all (expect_error=SimFailure) and
 switched its verdict from log-text regex scraping to cocotb's own
-results.xml. The two checks below are the direct regression guard for both
-halves: a clean sim reports PASS (not the old universal FAIL), and a real
+results.xml. The first two checks below are the direct regression guard for
+both halves: a clean sim reports PASS (not the old universal FAIL), and a real
 failure (a firing sim_assert) still reports FAIL -- i.e. the fix didn't
-turn CHECK_COCOTB_RESULTS into a rubber stamp.
+turn CHECK_COCOTB_RESULTS into a rubber stamp. The third checks that a
+sim_assert failing on the sim_finish() cycle still reports FAIL, from a @MAIN
+that native simulation never reaches on that cycle: VHDL.GET_SIM_FINISH_MODULE_TEXT
+finishes after the postponed processes the assertions fire from.
 
 Run standalone: python3 cocotb_verdict_test.py
 """
@@ -25,6 +28,9 @@ THIS_DIR = os.path.dirname(os.path.abspath(__file__))
 PYPELINEC = os.path.join(THIS_DIR, "..", "..", "..", "pypelinec")
 PASSING_DESIGN = os.path.join(THIS_DIR, "self_check_counter_test.py")
 FAILING_DESIGN = os.path.join(THIS_DIR, "deliberate_sim_assert_failure_design.py")
+FINISH_CYCLE_FAILING_DESIGN = os.path.join(
+    THIS_DIR, "sim_assert_on_finish_cycle_design.py"
+)
 
 
 def _run(design, out_dir):
@@ -67,6 +73,18 @@ def main():
             f"expected a nonzero exit for a design with a firing sim_assert "
             f"({FAILING_DESIGN}), got 0"
         )
+
+    finish_out, finish_rc = _run(
+        FINISH_CYCLE_FAILING_DESIGN, os.path.join(out_dir, "finish_cycle_fail")
+    )
+    print(finish_out)
+    if finish_rc == 0:
+        fail(
+            f"expected a nonzero exit for a sim_assert failing on the sim_finish() "
+            f"cycle ({FINISH_CYCLE_FAILING_DESIGN}), got 0"
+        )
+    if "count reached 3" not in finish_out:
+        fail("expected the assertion's message 'count reached 3' in output above")
 
     print("PASS: cocotb verdict reporting correctly distinguishes pass from fail.")
     return 0

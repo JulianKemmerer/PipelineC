@@ -75,6 +75,18 @@ part of a wrong choice. `sim_input_output_elab_test` fails when no reader filter
 other readers one at a time, and none fails for the reverse mistake in a place that must
 see every MAIN.
 
+The `sim_print`/`sim_assert` message is an internal C-printf string with no single owner
+(working tree based on `ec3eee13`, found while making native and VHDL prints agree).
+`_build_sim_fmt_string` encodes it: it escapes literal `%` as `%%`, picks `%X`, `%c`, `%s`,
+`%d` or `%u` per interpolation, and rejects forms whose Python rendering differs from the
+hardware's. `LOGIC.PRTINTF_STRING_TO_FORMATS` decodes it into the argument list, and
+`VHDL.PRINTF_FORMAT_TO_VHDL_STRING` into the VHDL text. Native simulation never reads it: it
+prints the f-string Python evaluated, through `pypeline.hex`, `CharArray.__str__` and
+`int.__str__`. A new escape, specifier or accepted form must change all four places
+together, and only the native-versus-VHDL diffs (`sim_print_hex_signed_test`,
+`sim_print_decimal_test`) check them against each other. The accepted forms are listed in
+[pypeline_sim_DESIGN.md](../../pypeline_sim_DESIGN.md#sim_print--printf-style-console--hardware-output).
+
 ## Validation
 
 Use branch/loop partial struct writes, nested arrays, dynamic indices, hardware-local shadowing and custom operators as differential cases. Verify exceptions preserve original helper diagnostics and helpers are not evaluated repeatedly after classification. Compare cold/warm/reparsed builds, emitted type identities, source locations and clock crossing reports. The [constant-evaluation probe](REVIEW_EXPERIMENTS.md#constant-evaluation-outcomes) is a method-level experiment, not a complete design compile.

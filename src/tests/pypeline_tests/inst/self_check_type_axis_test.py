@@ -91,12 +91,7 @@ def self_check_type_axis():
     v: hdr_t
     v.version = 0xA0 + sent
     v.length = 0x1000 + sent
-    # Deliberately under 2**31: sim_print lowers to
-    # integer'image(to_integer(x)), and VHDL's `integer` is 32-bit SIGNED, so
-    # GHDL raises "overflow detected" at runtime on any uint32_t probe value
-    # >= 2**31. (A native-sim-only test would never notice -- which is exactly
-    # what this GHDL diff is here to catch.) All four bytes are still
-    # non-zero, so the byte-lane muxing is exercised just as well.
+    # All four bytes are non-zero, so every byte lane's muxing is exercised.
     v.flags = 0x7EADBEE0 + sent
 
     in_stream: tx.in_if_t.stream_t

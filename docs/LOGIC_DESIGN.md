@@ -300,8 +300,8 @@ came from.
   that fallback raises instead; Pypeline registers soft implementations for those operators
   (see
   [Default replacements for C-generated operators](pypeline_DESIGN.md#default-replacements-for-c-generated-operators)).
-- **printf.** `PRTINTF_STRING_TO_FORMATS` splits a format string into `PrintfFormat`s for
-  `VHDL.py`.
+- **printf.** `PRTINTF_STRING_TO_FORMATS` splits a format string into `PrintfFormat`s, one
+  per argument (a literal `%%` takes none), for `VHDL.PRINTF_FORMAT_TO_VHDL_STRING`.
 - **Caches.** `LOGIC.DEL_ALL_CACHES()` clears the per-parse trim/collapse and
   clock-enable memos; the Python front end calls it before a re-parse.
   `C_TO_LOGIC.DEL_ALL_CACHES()` calls it and also clears the C front end's caches.

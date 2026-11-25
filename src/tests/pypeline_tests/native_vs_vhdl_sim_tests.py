@@ -12,11 +12,6 @@ separately, which only proved each sim's own sim_assert/sim_finish passed.
 Designs registered here must:
   - emit at least one sim_print(..., debug=True) probe covering the values
     their sim_assert already checks;
-  - never emit a debug=True print on the same cycle sim_finish() is called
-    (GHDL's std.env.finish vs write-flush is a process-ordering race the
-    diff must not depend on -- see the design files' own comments, and
-    known_issues_tests.py's sim_finish_debug_print_race_test for a direct
-    reproduction of what happens if this rule is broken);
   - for a non---comb (pipelined) entry, put every probe inside a stateful
     (0-latency) MAIN, and valid-/count-gate it so VHDL's undefined ('U')
     warm-up registers can't be compared against native's typed zeros.
@@ -119,16 +114,13 @@ COMB_TEST_FILES = [
     # bare 'pair_t' (KeyError) or an unrelated same-named global's struct
     # (GHDL rejects the port map).
     ("factory_arg_port_annotation_test.py", INST_DIR, []),
-    # self_check_bit_math_test.py is deliberately NOT here: its whole body is
-    # one combinational block that calls sim_finish() the very same cycle it
-    # computes everything, with nothing before that cycle to safely print --
-    # structurally incompatible with the "no debug print on the sim_finish()
-    # cycle" rule (see module docstring). (It used to ALSO trip a real
-    # int16_t narrowing VHDL-emission bug -- nested_truncate(200) computed a
-    # different value in GHDL than in native sim -- fixed as part of adding
-    # T(x) casting; see nested_truncate_test.py, which carries the real
-    # regression coverage for that fix now that it's a plain -- not
-    # known_issues -- entry here.)
+    # self_check_bit_math_test.py is not here: it has no debug=True probe to
+    # diff (its sim_asserts run natively in native_sim_tests.py). (It used to
+    # ALSO trip a real int16_t narrowing VHDL-emission bug --
+    # nested_truncate(200) computed a different value in GHDL than in native
+    # sim -- fixed as part of adding T(x) casting; see nested_truncate_test.py,
+    # which carries the real regression coverage for that fix now that it's a
+    # plain -- not known_issues -- entry here.)
     ("struct_ctor_positional_test.py", INST_DIR, []),
     # See docs: Casting's "Make integer conversion match C" section --
     # signed narrowing used to disagree with native sim in real GHDL.
@@ -192,6 +184,14 @@ COMB_TEST_FILES = [
     # AUTO_PIPELINE(func, latency=2): plain native sim's 2-cycle delay line vs
     # the --comb VHDL build's 2 fixed registers.
     ("self_check_fixed_auto_pipeline_test.py", INST_DIR, []),
+    # Pypeline's hex() of negative signed values, including a width that is
+    # not a multiple of 4, prints the VHDL to_hstring text (issue #409).
+    ("sim_print_hex_signed_test.py", INST_DIR, []),
+    # Decimal sim_print/sim_assert values past VHDL integer's 32-bit range
+    # (issue #360), and a literal "%".
+    ("sim_print_decimal_test.py", INST_DIR, []),
+    # A sim_print on the sim_finish() cycle reaches the GHDL log (issue #361).
+    ("sim_finish_print_test.py", INST_DIR, []),
 ]
 # Non---comb (pipelined/scheduled) compares: full build, then native sim runs
 # with the discovered latencies emulated, diffed against real pipelined VHDL.

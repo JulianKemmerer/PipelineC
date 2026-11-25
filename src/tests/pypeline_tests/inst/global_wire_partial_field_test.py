@@ -57,9 +57,8 @@ def checker():
         point_out.x == n + 1,
         f"driven .x should track writer, expected {n + 1} got {point_out.x}",
     )
-    # No debug print on the sim_finish() cycle -- whether a same-cycle VHDL
-    # write flushes before std.env.finish kills GHDL is a process-ordering
-    # race the cycle diff must not depend on (see docs/pypeline_sim_DESIGN.md).
+    # No debug print on the sim_finish() cycle. (A print there would diff
+    # clean too: sim_finish_print_test.py checks that.)
     if n < NUM_CHECKS - 1:
         sim_print(f"global_wire_partial_field x={point_out.x}", debug=True)
     if n == NUM_CHECKS - 1:

@@ -4904,26 +4904,9 @@ def C_CONST_STR_TO_VHDL_CONST_STR(c_str):
     return vhdl
 
 
-def GET_PRINTF_MODULE_TEXT(inst_name, Logic, parser_state, TimingParamsLookupTable):
-    format_string = Logic.printf_format_string
-    formats = LOGIC.PRTINTF_STRING_TO_FORMATS(format_string)
-
-    # Make a vhdl format string working left to right replacing as you go
-    vhdl_format_string = C_CONST_STR_TO_VHDL_CONST_STR(format_string)
-    for i, f in enumerate(formats):
-        vhdl_arg_str = (
-            '"&'
-            + f.vhdl_to_string_toks[0]
-            + "arg"
-            + str(i)
-            + f.vhdl_to_string_toks[1]
-            + '&"'
-        )
-        vhdl_format_string = vhdl_format_string.replace(f.specifier, vhdl_arg_str, 1)
-
-    text = ""
-
-    text += """
+# %s conversion of a byte array, declared by every module that prints a
+# format string (GET_PRINTF_MODULE_TEXT, GET_SIM_ASSERT_MODULE_TEXT)
+PRINTF_TO_STRING_FUNC_TEXT = """
   function to_string(bytes : byte_array_t) return string is
     variable rv : string(1 to bytes'length) := (others => NUL);
   begin
@@ -4933,6 +4916,92 @@ def GET_PRINTF_MODULE_TEXT(inst_name, Logic, parser_state, TimingParamsLookupTab
     return rv;
   end function;
   """
+
+# Decimal image of an unsigned/signed of any width, declared after
+# PRINTF_TO_STRING_FUNC_TEXT by a module whose %d/%u argument does not fit
+# VHDL's integer (PRINTF_INT_FITS_VHDL_INTEGER). to_01 maps a value with
+# metavalues to 0, which is what integer'image(to_integer(x)) prints for one.
+# Only the translate_off print process calls it, so synthesis never sees it.
+PRINTF_DEC_STRING_FUNCS_TEXT = """-- synthesis translate_off
+  function to_dec_string(v : unsigned) return string is
+    variable n : unsigned(v'length - 1 downto 0) := to_01(v);
+    variable digits : string(1 to v'length / 3 + 1);
+    variable i : natural := digits'high;
+  begin
+    loop
+      digits(i) := character'val(character'pos('0') + to_integer(resize(n mod 10, 4)));
+      n := n / 10;
+      exit when n = 0;
+      i := i - 1;
+    end loop;
+    return digits(i to digits'high);
+  end function;
+  function to_dec_string(v : signed) return string is
+    variable s : signed(v'length downto 0) := resize(to_01(v), v'length + 1);
+  begin
+    if s(s'high) = '1' then
+      return "-" & to_dec_string(unsigned(-s));
+    end if;
+    return to_dec_string(unsigned(s));
+  end function;
+-- synthesis translate_on
+"""
+
+
+def PRINTF_INT_FITS_VHDL_INTEGER(c_type):
+    """Whether integer'image(to_integer(x)) can print every value of c_type.
+    VHDL's integer is 32-bit signed, so a uint32_t of 2**31 or more, or any
+    wider integer, stopped GHDL with "overflow detected" (#360). Types other
+    than intN/uintN keep their format's conversion."""
+    if LOGIC.C_TYPE_IS_INT_N(c_type):
+        return LOGIC.GET_WIDTH_FROM_C_N_BITS_INT_TYPE_STR(c_type) <= 32
+    if LOGIC.C_TYPE_IS_UINT_N(c_type):
+        return LOGIC.GET_WIDTH_FROM_C_N_BITS_INT_TYPE_STR(c_type) <= 31
+    return True
+
+
+def _PRINTF_LITERAL_TO_VHDL(c_text):
+    # Literal text between specifiers: "%%" prints one "%".
+    return C_CONST_STR_TO_VHDL_CONST_STR(c_text.replace("%%", "%"))
+
+
+def PRINTF_FORMAT_TO_VHDL_STRING(format_string, Logic, arg_suffix=""):
+    """The VHDL string expression that renders a C-quoted printf-style format
+    string (a printf/sim_print format, or a sim_assert message) with the
+    module's input ports: the i-th specifier, left to right, prints port argi,
+    or the signal named argi + arg_suffix (a sim_assert message prints the
+    copies its clocked process took, GET_SIM_ASSERT_MODULE_TEXT).
+    Returns (expression, whether it calls to_dec_string). A %d/%u argument whose
+    type does not fit VHDL's integer prints through to_dec_string, which the
+    module then declares (PRINTF_DEC_STRING_FUNCS_TEXT)."""
+    formats = LOGIC.PRTINTF_STRING_TO_FORMATS(format_string)
+    pieces = []
+    needs_dec_string = False
+    pos = 0
+    for i, f in enumerate(formats):
+        arg = "arg" + str(i)
+        to_string_toks = f.vhdl_to_string_toks
+        if f.base == 10 and not PRINTF_INT_FITS_VHDL_INTEGER(Logic.wire_to_c_type[arg]):
+            to_string_toks = ["to_dec_string(", ")"]
+            needs_dec_string = True
+        pieces.append(_PRINTF_LITERAL_TO_VHDL(format_string[pos : f.index]))
+        pieces.append(
+            '"&' + to_string_toks[0] + arg + arg_suffix + to_string_toks[1] + '&"'
+        )
+        pos = f.index + len(f.specifier)
+    pieces.append(_PRINTF_LITERAL_TO_VHDL(format_string[pos:]))
+    return "".join(pieces), needs_dec_string
+
+
+def GET_PRINTF_MODULE_TEXT(inst_name, Logic, parser_state, TimingParamsLookupTable):
+    vhdl_format_string, needs_dec_string = PRINTF_FORMAT_TO_VHDL_STRING(
+        Logic.printf_format_string, Logic
+    )
+
+    text = ""
+    text += PRINTF_TO_STRING_FUNC_TEXT
+    if needs_dec_string:
+        text += PRINTF_DEC_STRING_FUNCS_TEXT
 
     text += "\nbegin\n"
     # Clocked process, fires once per enabled clock cycle regardless of whether
@@ -4962,46 +5031,55 @@ end if;\n"""
 
 
 def GET_SIM_ASSERT_MODULE_TEXT(inst_name, Logic, parser_state, TimingParamsLookupTable):
+    # An assert of severity failure stops the simulator inside the delta cycle
+    # that runs it, like std.env.finish (see GET_SIM_FINISH_MODULE_TEXT): a
+    # sim_print of the failing cycle that GHDL has not run yet never prints. So the
+    # clocked process only records the failure, with a copy of each message
+    # argument as it was at that clock edge, and a postponed process, which
+    # runs after every delta cycle of the time step, asserts.
     msg_format_string = Logic.sim_assert_msg
     cond_port = WIRE_TO_VHDL_NAME("cond", Logic)
+    # The message's i-th specifier prints port argi (PRINTF_FORMAT_TO_VHDL_STRING)
+    msg_args = []
+    if msg_format_string is not None:
+        msg_args = [
+            "arg" + str(i)
+            for i in range(len(LOGIC.PRTINTF_STRING_TO_FORMATS(msg_format_string)))
+        ]
 
     text = ""
+    text += "-- synthesis translate_off\n"
+    text += "signal assert_failed : std_logic := '0';\n"
+    for arg in msg_args:
+        text += (
+            "signal "
+            + arg
+            + "_q : "
+            + WIRE_TO_VHDL_TYPE_STR(arg, Logic, parser_state)
+            + ";\n"
+        )
+    text += "-- synthesis translate_on\n"
     if msg_format_string is not None:
-        formats = LOGIC.PRTINTF_STRING_TO_FORMATS(msg_format_string)
-        vhdl_msg_string = C_CONST_STR_TO_VHDL_CONST_STR(msg_format_string)
-        for i, f in enumerate(formats):
-            vhdl_arg_str = (
-                '"&'
-                + f.vhdl_to_string_toks[0]
-                + "arg"
-                + str(i)
-                + f.vhdl_to_string_toks[1]
-                + '&"'
-            )
-            vhdl_msg_string = vhdl_msg_string.replace(f.specifier, vhdl_arg_str, 1)
+        vhdl_msg_string, needs_dec_string = PRINTF_FORMAT_TO_VHDL_STRING(
+            msg_format_string, Logic, arg_suffix="_q"
+        )
         # _build_sim_fmt_string always auto-appends a trailing newline (like sim_print),
         # which C_CONST_STR_TO_VHDL_CONST_STR renders as a trailing `&LF&""` concatenation
         # -- strip it since an `assert ... report` message shouldn't end with one.
         if vhdl_msg_string.endswith('&LF&""'):
             vhdl_msg_string = vhdl_msg_string[: -len('&LF&""')]
 
-        text += """
-  function to_string(bytes : byte_array_t) return string is
-    variable rv : string(1 to bytes'length) := (others => NUL);
-  begin
-    for i in 0 to bytes'length -1 loop
-      rv(i+1) := character'val(to_integer(bytes(i)));
-    end loop;
-    return rv;
-  end function;
-  """
+        text += PRINTF_TO_STRING_FUNC_TEXT
+        if needs_dec_string:
+            text += PRINTF_DEC_STRING_FUNCS_TEXT
     else:
         vhdl_msg_string = '"sim_assert failed"'
 
     text += "\nbegin\n"
-    # Clocked process, fires once per enabled clock cycle (matches native sim's
-    # sim_assert semantics) -- see GET_PRINTF_MODULE_TEXT for why this must be a
-    # plain process(clk), not a postponed process.
+    # Clocked process, checks once per enabled clock cycle (matches native sim's
+    # sim_assert semantics). The enable, the condition and the arguments are
+    # sampled at the clock edge: by the postponed phase the edge's register
+    # updates have moved them on, hence the copies.
     text += "-- synthesis translate_off\n"
     text += "process(clk) is \nbegin\n"
     text += "if rising_edge(clk) then\n"
@@ -5010,25 +5088,51 @@ def GET_SIM_ASSERT_MODULE_TEXT(inst_name, Logic, parser_state, TimingParamsLooku
 if """
         + LOGIC.CLOCK_ENABLE_NAME
         + """(0) = '1' then
-  assert """
+  if """
         + cond_port
-        + """(0) = '1' report """
-        + vhdl_msg_string
-        + """ severity failure;
-end if;\n"""
+        + """(0) /= '1' then
+    assert_failed <= '1';
+"""
     )
+    for arg in msg_args:
+        text += "    " + arg + "_q <= " + arg + ";\n"
+    text += "  end if;\n"
     text += "end if;\n"
+    text += "end if;\n"
+    text += "end process;\n"
+    # The report expression is evaluated only when the assertion fails, so
+    # the copies' initial 'U's are never printed.
+    text += "postponed process(assert_failed) is \nbegin\n"
+    text += (
+        "  assert assert_failed = '0' report "
+        + vhdl_msg_string
+        + " severity failure;\n"
+    )
     text += "end process;\n"
     text += "-- synthesis translate_on\n"
     return text
 
 
 def GET_SIM_FINISH_MODULE_TEXT(inst_name, Logic, parser_state, TimingParamsLookupTable):
+    # std.env.finish stops the simulator inside the delta cycle that calls it:
+    # a process it has not run yet at that clock edge never runs. Calling it
+    # from the clocked process lost any sim_print of the same cycle that GHDL
+    # happened to run later (#361). So the clocked process only requests the
+    # finish, and a postponed process finishes one resolution unit (1 fs in
+    # GHDL by default) after that clock edge, once every process on the edge
+    # has run. Not in the edge's own postponed phase: a sim_assert failing on
+    # the same cycle reports from a postponed process too
+    # (GET_SIM_ASSERT_MODULE_TEXT), and the simulator picks the order of
+    # postponed processes, so a finish there could end the run with exit 0
+    # before the failure was reported.
     text = ""
+    text += "-- synthesis translate_off\n"
+    text += "signal finish_requested : std_logic := '0';\n"
+    text += "-- synthesis translate_on\n"
     text += "\nbegin\n"
     # Clocked process, fires once per enabled clock cycle (matches native sim's
-    # sim_finish semantics) -- see GET_PRINTF_MODULE_TEXT for why this must be a
-    # plain process(clk), not a postponed process.
+    # sim_finish semantics) -- see GET_PRINTF_MODULE_TEXT for why the enable
+    # must be sampled by a plain process(clk), not a postponed process.
     text += "-- synthesis translate_off\n"
     text += "process(clk) is \nbegin\n"
     text += "if rising_edge(clk) then\n"
@@ -5037,10 +5141,15 @@ def GET_SIM_FINISH_MODULE_TEXT(inst_name, Logic, parser_state, TimingParamsLooku
 if """
         + LOGIC.CLOCK_ENABLE_NAME
         + """(0) = '1' then
-  std.env.finish;
+  finish_requested <= '1';
 end if;\n"""
     )
     text += "end if;\n"
+    text += "end process;\n"
+    text += "postponed process is \nbegin\n"
+    text += "  wait until finish_requested = '1';\n"
+    text += "  wait for std.env.resolution_limit;\n"
+    text += "  std.env.finish;\n"
     text += "end process;\n"
     text += "-- synthesis translate_on\n"
     return text

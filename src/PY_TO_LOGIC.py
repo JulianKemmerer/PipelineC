@@ -2865,14 +2865,16 @@ class FuncElaborator:
                     f"{builtin_name}: !r/!s/!a conversions are not supported "
                     f"(at {_loc_str(self.src_file, stmt)})"
                 )
-            is_hex = False
             if part.format_spec is not None:
-                if not self._is_hex_format_spec(part.format_spec):
-                    raise ElaborationError(
-                        f"{builtin_name}: only plain {{expr}} and hex {{expr:x}}/{{expr:X}} "
-                        f"interpolation are supported (at {_loc_str(self.src_file, stmt)})"
-                    )
-                is_hex = True
+                # Native simulation formats {expr:x} with Python's own rules
+                # (no padding, a minus sign), which differ from hardware's %X.
+                raise ElaborationError(
+                    f"{builtin_name}: format specs such as {{expr:x}} are not "
+                    f"supported -- they would print differently in simulation than "
+                    f"in hardware; write hex(expr) (from pypeline import hex) for "
+                    f"hex (at {_loc_str(self.src_file, stmt)})"
+                )
+            is_hex = False
             value_expr = part.value
             wrapper_name = None
             if (
@@ -2921,16 +2923,6 @@ class FuncElaborator:
         )  # auto-appended, like print()
         return fmt_c_quoted, input_ports
 
-    def _is_hex_format_spec(self, format_spec_node):
-        # format_spec is itself a JoinedStr; only a bare static "x"/"X" is recognized.
-        if (
-            not isinstance(format_spec_node, ast.JoinedStr)
-            or len(format_spec_node.values) != 1
-        ):
-            return False
-        v = format_spec_node.values[0]
-        return isinstance(v, ast.Constant) and v.value in ("x", "X")
-
     def _sim_print_infer_spec(self, ctype, stmt, builtin_name="sim_print"):
         m = _INT_CTYPE_RE.match(ctype) if isinstance(ctype, str) else None
         if m:
@@ -2963,8 +2955,9 @@ class FuncElaborator:
         != 0 the same way `if cond:` does — see _elab_if). `msg` is optional, an
         f-string or plain string literal like sim_print's argument, reusing the same
         f-string walker (_build_sim_fmt_string). Elaborates to a printf-family submodule
-        instance (see LOGIC.IS_SIM_CTRL_FUNC_NAME) whose VHDL body is a clocked
-        `assert ... report ... severity failure;` (VHDL.GET_SIM_ASSERT_MODULE_TEXT).
+        instance (see LOGIC.IS_SIM_CTRL_FUNC_NAME) whose VHDL body checks the condition
+        on the clock edge and fires `assert ... report ... severity failure;` from a
+        postponed process (VHDL.GET_SIM_ASSERT_MODULE_TEXT).
         """
         call = stmt.value
         if len(call.args) not in (1, 2) or call.keywords:
@@ -3028,8 +3021,9 @@ class FuncElaborator:
 
     def _elab_sim_finish_stmt(self, stmt):
         """sim_finish() — simulation-only stop signal, no arguments. Elaborates to a
-        printf-family submodule instance whose VHDL body is a clocked
-        `std.env.finish;` (VHDL.GET_SIM_FINISH_MODULE_TEXT).
+        printf-family submodule instance whose VHDL body requests the finish on the
+        clock edge and calls `std.env.finish;` just after it
+        (VHDL.GET_SIM_FINISH_MODULE_TEXT).
         """
         call = stmt.value
         if len(call.args) != 0 or call.keywords:

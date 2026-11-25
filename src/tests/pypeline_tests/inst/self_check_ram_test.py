@@ -18,7 +18,7 @@ where the two must agree exactly:
   4. a stream RAM under toggling backpressure: every response, in order.
 
 Probes follow the native_vs_vhdl rules: every debug print is in the stateful
-checker, valid-gated, below 2**31, and never on the sim_finish() cycle.
+checker and valid-gated.
 """
 import os
 import sys

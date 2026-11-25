@@ -23,18 +23,12 @@ for why an XPASS here would otherwise report as a failure.
 Discovered while building native_vs_vhdl_sim_tests.py's cycle-diff coverage:
 self_check_bit_math_test.py (native_sim_tests.py, synth_tests.py) exercises
 this same nested_truncate(200) call and had silently carried this exact
-check through GHDL the whole time -- masked because its GHDL registration is
-excluded from native_vs_vhdl_sim_tests.py for an unrelated structural reason
-(its whole body is one combinational block calling sim_finish() the same
-cycle it computes everything -- see that file's own registration comment),
-so nobody looking at a green run ever saw this assertion actually execute
-against real hardware.
+check through GHDL the whole time -- masked because it has no debug=True
+probe, so it is not registered in native_vs_vhdl_sim_tests.py (see that
+file's registration comment), and nobody looking at a green run ever saw this
+assertion actually execute against real hardware.
 
-sim_finish() is deliberately delayed by one cycle from the check via the
-`finishing` Reg: calling it the SAME cycle as the sim_assert races GHDL's
-write-flush vs std.env.finish ordering and produces a premature-shutdown
-false read -- see sim_finish_debug_print_race_test.py in this directory for
-a direct reproduction of THAT (separate, non-compiler) issue.
+sim_finish() comes one cycle after the check, through the `finishing` Reg.
 """
 
 import sys, os

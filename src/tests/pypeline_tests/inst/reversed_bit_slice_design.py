@@ -29,8 +29,7 @@ def top():
     done: Reg[uint1_t]
     y: uint8_t = x[0:7]
     sim_assert(y == 0x80, "x[0:7] does not reverse the bits")
-    # Print in cycle 0, finish in cycle 1 without a print: a print on the
-    # sim_finish() cycle is missing from VHDL output (#361).
+    # Print in cycle 0, finish in cycle 1 without a print.
     if done:
         sim_finish()
     else:

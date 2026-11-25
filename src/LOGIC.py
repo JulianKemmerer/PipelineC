@@ -2909,15 +2909,21 @@ def PRTINTF_STRING_TO_FORMATS(format_string):
     )
     for format_specifier_tup in format_specifier_tups:
         index, format_specifier = format_specifier_tup
+        if format_specifier == "%%":
+            # A literal "%": no argument. VHDL.PRINTF_FORMAT_TO_VHDL_STRING
+            # prints it as one "%".
+            continue
         f = PrintfFormat()
         f.index = index
         f.specifier = format_specifier
+        # %d/%u: VHDL.PRINTF_FORMAT_TO_VHDL_STRING replaces integer'image with
+        # to_dec_string for an argument type wider than VHDL's 32-bit integer.
         if format_specifier == "%d":
             f.c_type = "int32_t"
             f.base = 10
             f.vhdl_to_string_toks = ["integer'image(to_integer(", "))"]
         elif format_specifier == "%u":
-            f.c_type = "uint32_t"  # VHDL cant do full u32 range printed as int?32
+            f.c_type = "uint32_t"
             f.base = 10
             f.vhdl_to_string_toks = ["integer'image(to_integer(", "))"]
         elif (format_specifier == "%08X") or (

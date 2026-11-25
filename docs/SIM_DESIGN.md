@@ -277,7 +277,9 @@ fails the build on a nonzero exit.
   reads the verdict from cocotb's own `results.xml` rather than `make`'s exit code or any
   console-text heuristic. A real failure (e.g. a firing `sim_assert`) still fails the
   build: GHDL itself exits nonzero in that case, which `make` (and `COCOTB.DO_SIM`)
-  propagates. `--run all` has a safety cap of 1,000,000 cycles, after which the testbench
+  propagates. That includes a failure on the `sim_finish()` cycle, because the finish waits
+  until the assertions of that cycle have fired
+  ([PY_TO_LOGIC_DESIGN.md](PY_TO_LOGIC_DESIGN.md#vhdl-codegen-get_sim_assert_module_text--get_sim_finish_module_text)). `--run all` has a safety cap of 1,000,000 cycles, after which the testbench
   raises. See `COCOTB.CHECK_COCOTB_RESULTS`'s docstring and
   `src/tests/pypeline_tests/inst/cocotb_verdict_test.py`, the regression guard for both
   halves.
@@ -468,7 +470,9 @@ two share `pypeline`, whose state the run uses.
   probes add no top-level port; `ghdl` (`build_report_device_models`) checks that GHDL
   writes the `.vcd`, `.fst` and `.ghw` asked for, and `cocotb/top.vcd` without `--wave`.
 - `cocotb_verdict_test.py`: cocotb's `results.xml` verdict for a clean `sim_finish()` stop
-  and for a real failure.
+  and for a real failure, on its own cycle or on the `sim_finish()` cycle.
+- `sim_assert_fail_print_test.py`: the failing cycle's prints and message in both
+  simulations.
 - `long_file_list_arg_len_test.py`: file lists longer than `MAX_ARG_STRLEN` reach GHDL and
   yosys.
 - `src_module_import_test.py`: every src module, `SIM` and the backends included, imports

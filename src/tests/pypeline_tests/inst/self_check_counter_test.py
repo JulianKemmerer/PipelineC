@@ -32,9 +32,8 @@ rst: Input[uint1_t] = make_reset()
 def self_check_counter():
     n: Reg[uint8_t]
     sim_assert(n < NUM_COUNTS, f"counter exceeded expected range: {n}")
-    # No debug print on the sim_finish() cycle -- whether a same-cycle VHDL
-    # write flushes before std.env.finish kills GHDL is a process-ordering
-    # race the cycle diff must not depend on.
+    # No debug print on the sim_finish() cycle. (A print there would diff
+    # clean too: sim_finish_print_test.py checks that.)
     if n < NUM_COUNTS - 1:
         sim_print(f"self_check_counter n={n}", debug=True)
     if n == NUM_COUNTS - 1:

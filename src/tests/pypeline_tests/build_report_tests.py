@@ -494,15 +494,29 @@ def get_tests() -> list:
         )
     )
     # Regression guard for src/COCOTB.py's PASS/FAIL reporting: runs one
-    # passing and one failing design through --cocotb --ghdl --run all and
+    # passing and two failing designs through --cocotb --ghdl --run all and
     # asserts each is scored correctly. See COCOTB.py's CHECK_COCOTB_RESULTS
     # docstring for the bug this guards (every --run all sim used to report
-    # FAIL in cocotb's own summary regardless of the actual outcome).
+    # FAIL in cocotb's own summary regardless of the actual outcome). The
+    # second failing design fails a sim_assert on the sim_finish() cycle.
     tests.append(
         Test(
             name="cocotb_verdict_test",
             category=DM,
             cmd=[INST_DIR / "cocotb_verdict_test.py"],
+            needs_out_dir=True,
+            requires=["ghdl"],
+        )
+    )
+    # A sim_print on the cycle a sim_assert fails appears in the cocotb + GHDL
+    # log as in native simulation, and the message prints that cycle's values.
+    # Both simulations fail on the assertion, so the wrapper compares their
+    # output. About 15 seconds: one native and one GHDL run.
+    tests.append(
+        Test(
+            name="sim_assert_fail_print_test",
+            category=DM,
+            cmd=[INST_DIR / "sim_assert_fail_print_test.py"],
             needs_out_dir=True,
             requires=["ghdl"],
         )

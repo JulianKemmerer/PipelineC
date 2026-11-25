@@ -186,6 +186,40 @@ def test_bare_char_scalar_rejected_at_elaboration():
     print("test_bare_char_scalar_rejected_at_elaboration PASS")
 
 
+def test_hex_format_spec_rejected_at_elaboration():
+    """{n:x} and {n:X} must be elaboration errors that point at hex(n). Native sim
+    formats them with Python's int formatting (no padding, a minus sign: uint8_t 10 is
+    "a", int8_t -1 is "-1"), which never matches hardware's %X ("0A", "FF")."""
+    import PY_TO_LOGIC
+
+    for spec in ("x", "X"):
+        src = (
+            "from pypeline import MAIN, Reg, sim_print, uint8_t\n\n"
+            "@MAIN\n"
+            "def bad():\n"
+            "    n: Reg[uint8_t]\n"
+            f'    sim_print(f"n={{n:{spec}}}")\n'
+            "    n = n + 1\n"
+        )
+        fd, path = tempfile.mkstemp(
+            suffix=".py", dir=os.path.dirname(os.path.abspath(__file__))
+        )
+        try:
+            with os.fdopen(fd, "w") as f:
+                f.write(src)
+            try:
+                PY_TO_LOGIC.PARSE_FILE(path)
+            except PY_TO_LOGIC.ElaborationError as e:
+                assert "hex(expr)" in str(e), str(e)
+            else:
+                raise AssertionError(
+                    f"expected ElaborationError for {{n:{spec}}} interpolation"
+                )
+        finally:
+            os.remove(path)
+    print("test_hex_format_spec_rejected_at_elaboration PASS")
+
+
 if __name__ == "__main__":
     test_counter_prints()
     test_print_name()
@@ -193,4 +227,5 @@ if __name__ == "__main__":
     test_extra_positional_arg_rejected_in_sim()
     test_bare_char_array_elaborates()
     test_bare_char_scalar_rejected_at_elaboration()
+    test_hex_format_spec_rejected_at_elaboration()
     print("All sim_print tests passed.")

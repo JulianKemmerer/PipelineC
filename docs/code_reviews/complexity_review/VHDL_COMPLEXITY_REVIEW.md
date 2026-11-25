@@ -41,6 +41,20 @@ The entity-name hash cache of `AUTO_PIPELINE.GET_ZERO_ADDED_CLKS_TIMING_PARAMS_L
 
 Use content-addressed type dependencies and artifact manifests to reduce grow-only package and cache coupling over time. CIRCT's documented SystemVerilog path is an optional backend experiment; it does not directly replace the existing VHDL product.
 
+The simulation-control entities, `GET_PRINTF_MODULE_TEXT`, `GET_SIM_ASSERT_MODULE_TEXT` and
+`GET_SIM_FINISH_MODULE_TEXT`, are described in
+[PY_TO_LOGIC_DESIGN.md](../../PY_TO_LOGIC_DESIGN.md#sim_assert--sim_finish--simulation-control-builtins),
+not in the VHDL design, so a reader starting from `VHDL.py` does not find them (working tree
+based on `ec3eee13`). They also depend on each other through process order, which no entity
+states: `std.env.finish` and `assert ... severity failure` stop GHDL inside the delta cycle
+that runs them, and the processes of other entities that GHDL has not run yet at that clock
+edge, prints among them, never run. So `GET_SIM_ASSERT_MODULE_TEXT` fails its assertion from
+a postponed process, and `GET_SIM_FINISH_MODULE_TEXT` finishes one resolution unit after the
+edge, because the simulator orders postponed processes and a finish among them could end the
+run before a failing assertion of the same cycle reports. The two functions rely on each
+other's timing, and only their comments say so. Any new statement that stops the simulator
+needs the same treatment, and its place in that order.
+
 ## Validation
 
 The original review reproduced no VHDL miscompile. The enum-default regression above establishes package elaboration legality and default values, including sparse, signed, wide one-hot and nested aggregate cases; it does not establish other HDL behavior. Compile generated VHDL with GHDL for enum conversions, CE, fixed/automatic pipelines and supported FIFO crossings. Compare native/HDL cycle behavior where native simulation supports the design. Render the same entity twice from equivalent physical inputs under different planner states and require identical bytes.

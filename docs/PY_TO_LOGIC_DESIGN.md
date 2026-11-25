@@ -4374,14 +4374,17 @@ trap.
    `LOGIC.PRTINTF_STRING_TO_FORMATS`, which scans for `%`-specifiers — any `%` the user
    actually typed must not be misread as one). Each `ast.FormattedValue` (an `{expr}`
    interpolation) is elaborated and mapped to a specifier:
-   - `{expr:x}` / `{expr:X}` (format-spec) or `hex(expr)` (structurally recognized by bare
-     name, the same technique `vhdl(...)` recognition uses) → `%X`.
+   - `hex(expr)` (structurally recognized by bare name, the same technique `vhdl(...)`
+     recognition uses) → `%X`.
    - `chr(expr)` → `%c`.
    - Bare `{expr}` with no wrapper → inferred from `expr`'s elaborated ctype: plain scalar
      ints (`%d` for signed, `%u` for unsigned) and `char_t[N]` arrays (`%s`) — see below for
      why a single `char_t` scalar and `uint8_t[N]` arrays are excluded from this inference.
-   - `!r`/`!s`/`!a` conversions, non-hex format specs, and anything else are rejected with a
-     clear `ElaborationError` (the "Minimal + hex" scope decision).
+   - `!r`/`!s`/`!a` conversions, format specs (`{expr:x}` included), and anything else are
+     rejected with a clear `ElaborationError` (the "Minimal + hex" scope decision). Native
+     simulation would format a spec with Python's own rules (`{n:x}` of `uint8_t` 10 is `a`,
+     of `int8_t` -1 is `-1`), never hardware's `%X` (`0A`, `FF`), so the error points at
+     `hex(expr)`.
 4. Each interpolated value is elaborated via `self._elab_expr(...)` (or `self._elab_str_literal(...)`
    for a literal-string sub-expression), and its **real** elaborated type becomes the
    submodule port's type directly — there is no format-implied placeholder type to
@@ -4522,9 +4525,15 @@ self.submodule_instance_to_printf_format_string = {}     # Logic.__init__
   instance onto that instance's own standalone `Logic.printf_format_string`, right alongside
   its existing `ast_meta` extraction — the same relay mechanism already used for instance
   source-location metadata.
-- **Read**: `GET_PRINTF_MODULE_TEXT` reads `Logic.printf_format_string` directly and calls
-  `LOGIC.PRTINTF_STRING_TO_FORMATS(format_string)`, which is already frontend-agnostic —
-  it always takes a plain string.
+- **Read**: `GET_PRINTF_MODULE_TEXT` reads `Logic.printf_format_string` directly and passes
+  it to `VHDL.PRINTF_FORMAT_TO_VHDL_STRING`, as `GET_SIM_ASSERT_MODULE_TEXT` does its
+  message. That calls `LOGIC.PRTINTF_STRING_TO_FORMATS(format_string)`, which is already
+  frontend-agnostic — it always takes a plain string — and replaces each specifier, by its
+  position, with the conversion of port `argN`; `%%` prints one `%`. A `%d`/`%u` argument
+  whose type does not fit VHDL's 32-bit `integer` (`VHDL.PRINTF_INT_FITS_VHDL_INTEGER`: a
+  `uint32_t` or wider, an `int33_t` or wider) prints through `to_dec_string`, which the
+  module then declares (`VHDL.PRINTF_DEC_STRING_FUNCS_TEXT`); narrower ones keep
+  `integer'image(to_integer(x))`, so their entities' text does not depend on the wide case.
 
 `Logic.__init__`/`DEEPCOPY`/`MERGE_COMB_LOGIC` follow the exact
 `vhdl_module_text`/`submodule_instance_to_ast_meta` patterns respectively for both fields
@@ -4683,35 +4692,76 @@ suffix.
 
 ### VHDL codegen: `GET_SIM_ASSERT_MODULE_TEXT` / `GET_SIM_FINISH_MODULE_TEXT`
 
-Both mirror `GET_PRINTF_MODULE_TEXT`'s clocked-process shape (a plain `process(clk)` gated on
-`rising_edge(clk)` + `CLOCK_ENABLE(0) = '1'`, not a `postponed process` — see the previous
-section for why):
+Both sample `CLOCK_ENABLE` with `GET_PRINTF_MODULE_TEXT`'s clocked-process shape (a plain
+`process(clk)` gated on `rising_edge(clk)` + `CLOCK_ENABLE(0) = '1'`, not a `postponed process`
+— see the previous section for why). The clocked process only records what happened on the
+edge; a postponed process stops the simulation:
 
 ```vhdl
-process(clk) is
+process(clk) is                                          -- sim_assert
 begin
   if rising_edge(clk) then
     if CLOCK_ENABLE(0) = '1' then
-      assert cond(0) = '1' report <msg> severity failure;   -- sim_assert
-      -- or:
-      std.env.finish;                                        -- sim_finish
+      if cond(0) /= '1' then
+        assert_failed <= '1';
+        arg0_q <= arg0;                                  -- one copy per message argument
+      end if;
     end if;
   end if;
 end process;
+postponed process(assert_failed) is
+begin
+  assert assert_failed = '0' report <msg of arg0_q, ...> severity failure;
+end process;
+
+process(clk) is                                          -- sim_finish
+begin
+  if rising_edge(clk) then
+    if CLOCK_ENABLE(0) = '1' then
+      finish_requested <= '1';
+    end if;
+  end if;
+end process;
+postponed process is
+begin
+  wait until finish_requested = '1';
+  wait for std.env.resolution_limit;
+  std.env.finish;
+end process;
 ```
 
-`sim_assert`'s message re-derives the same VHDL string-concatenation expression
-`GET_PRINTF_MODULE_TEXT` builds (via `LOGIC.PRTINTF_STRING_TO_FORMATS` +
-`C_CONST_STR_TO_VHDL_CONST_STR`), then strips the auto-appended trailing-newline concatenation
-(`&LF&""`) that `_build_sim_fmt_string` always adds — `assert ... report` messages shouldn't end
-with a literal newline the way a `sim_print` line does. No message given (`msg=None`) falls back
-to a literal `"sim_assert failed"`.
+`std.env.finish` and an `assert ... severity failure` stop the simulator inside the delta
+cycle that runs them, and a process the simulator has not run yet at that clock edge never
+runs. Called from the clocked process, either one drops a `sim_print` of the same cycle
+whenever GHDL runs the print's process later
+([#361](https://github.com/JulianKemmerer/PipelineC/issues/361) for `sim_finish`). A
+postponed process runs after every delta cycle of its time step, so it stops the simulation
+once every process of the edge, including any clocked by a delta-delayed copy of the clock,
+has run. By then the edge's register updates have changed the `sim_assert` entity's inputs,
+so the message prints the copies (`argN_q`) the clocked process took on the edge; the report
+expression is evaluated only when the assertion fails, so their initial `'U'`s never print.
 
-`std.env.finish` (VHDL-2008) needed a new `use std.env.all;` in the per-entity `use` clause
-preamble (`VHDL.py`, alongside the pre-existing unconditional `use std.textio.all;`) — added
-unconditionally rather than gated, since every entity file already unconditionally includes
-`use std.textio.all;` for the (currently unrelated) `write(output, ...)` machinery, so this
-follows the same precedent.
+The order of postponed processes within one time step is the simulator's choice. GHDL
+(4.0.0-dev, mcode) runs them in elaboration order, which follows program order, so a finish in
+the edge's own postponed phase would run before an assertion that a later `@MAIN` fails on the
+same cycle, and the run would end with exit 0. So `sim_finish` waits one resolution unit (1 fs
+in GHDL by default) first: every failing assertion of the finishing cycle stops the simulation
+before the finish, whatever order the simulator picks, and the run ends one resolution unit
+after the edge (for example `simulation finished @10001001fs` instead of `@10001ps`).
+`inst/sim_finish_print_test.py` diffs a finishing cycle's prints,
+`inst/sim_assert_fail_print_test.py` a failing cycle's prints and message, and
+`inst/cocotb_verdict_test.py` checks that a failure on the finishing cycle fails the run.
+
+`sim_assert`'s message is rendered by the same `PRINTF_FORMAT_TO_VHDL_STRING` as a
+`sim_print` line (see "Frontend-agnostic format-string plumbing" above), which then strips the
+auto-appended trailing-newline concatenation (`&LF&""`) that `_build_sim_fmt_string` always
+adds — `assert ... report` messages shouldn't end with a literal newline the way a `sim_print`
+line does. No message given (`msg=None`) falls back to a literal `"sim_assert failed"`.
+
+`std.env.finish` (VHDL-2008) needs `use std.env.all;` in the per-entity `use` clause preamble
+(`VHDL.py`, alongside the unconditional `use std.textio.all;`). Only `sim_finish` entities get
+it: Quartus compiles VHDL-93, where `std.env` does not exist, so emitting it in every entity
+failed every Quartus build.
 
 ### Native simulation: `SimFinish` and the CLI run loop
 

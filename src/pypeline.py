@@ -8529,6 +8529,10 @@ def hex(value):
     hex digits with no "0x" prefix, matching VHDL's %X rendering of the same
     value -- e.g. hex(uint8_t value 7) -> "07", not Python's default "0x7".
 
+    A negative value prints its two's complement bits, as VHDL's to_hstring
+    does: int8_t -1 -> "FF", not "-1". to_hstring sign-extends a signed value
+    to whole hex digits, so int6_t -1 -> "FF" too.
+
     Width is taken from the value's ctype (SimVal instances, including bit-slice
     results like x[hi:lo] -- see SimVal.__getitem__) when known; otherwise (a
     plain Python int with no ctype) falls back to Python's own hex(), matching
@@ -8542,7 +8546,7 @@ def hex(value):
     except (AttributeError, NotImplementedError):
         return _builtin_hex(value)
     nibbles = (width + 3) // 4
-    return f"{int(value):0{nibbles}X}"
+    return f"{int(value) & ((1 << (4 * nibbles)) - 1):0{nibbles}X}"
 
 
 # ─────────────────────────────────────────────
@@ -8760,7 +8764,7 @@ def sim_assert(cond, msg=None):
     """Simulation-only assertion: checks `cond` during simulation (once per cycle, using
     converged wire values -- same semantics as sim_print) and elaborates to a real VHDL
     `assert ... report ... severity failure;` statement in hardware, which halts GHDL
-    simulation immediately on failure.
+    simulation at the end of the failing cycle, after that cycle's prints.
 
     `msg` is optional, an f-string or plain string literal like sim_print's argument.
     """

@@ -69,9 +69,8 @@ def self_check_fifo():
             f"self_check_fifo: pop order mismatch at index {pop_idx}: "
             f"expected {values[pop_idx]} got {fifo_out.data_out}",
         )
-        # No debug print on the sim_finish() cycle -- whether a same-cycle
-        # VHDL write flushes before std.env.finish kills GHDL is a
-        # process-ordering race the cycle diff must not depend on.
+        # No debug print on the sim_finish() cycle -- see
+        # self_check_counter_test.py.
         if pop_idx < NUM_VALUES - 1:
             sim_print(f"self_check_fifo pop_idx={pop_idx} data={fifo_out.data_out}", debug=True)
         if pop_idx == NUM_VALUES - 1:

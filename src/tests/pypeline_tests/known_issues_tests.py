@@ -7,11 +7,6 @@ run means it got fixed without anyone updating this file (reported as XPASS,
 which run_all.py treats as a FAILURE -- promote that test out of
 known_issues into whichever category now fits it).
 
-One entry (sim_finish_debug_print_race_test) is registered WITHOUT
-expect_fail: see its own module docstring for why plain exit-code inversion
-can't express its particular known issue, and how its PASS/FAIL should be
-read instead.
-
 Deliberately EXCLUDED from run_all.py's default category set (see
 run_all.py's module docstring) -- run explicitly:
     python3 known_issues_tests.py [-j N]
@@ -178,22 +173,6 @@ def get_tests() -> list:
             expect_fail=True,
         )
     )
-    # A sim_print(..., debug=True) call the SAME cycle as sim_finish() races
-    # GHDL's write-flush against std.env.finish and the print is silently
-    # dropped from the VHDL/cocotb log entirely (present in native sim,
-    # absent in VHDL). This wrapper runs both sims itself and asserts on
-    # that (NOT expect_fail -- pypelinec's exit code is 0 either way; see
-    # the wrapper's own docstring for why text/exit-code alone can't express
-    # this).
-    tests.append(
-        Test(
-            name="sim_finish_debug_print_race_test",
-            category="known_issues",
-            cmd=[INST_DIR / "sim_finish_debug_print_race_test.py"],
-            needs_out_dir=True,
-            requires=["ghdl"],
-        )
-    )
     # Factory specializations that differ only inside a numpy array argument
     # over 1000 elements share one identity (numpy's repr elides the middle),
     # so the second elaborates as a DUPLICATE of the first: wrong hardware.
@@ -351,6 +330,21 @@ def get_tests() -> list:
             expect_fail=True,
         )
     )
+    # A sim_print or sim_assert inside a called function is trimmed with the
+    # call: removed when the call's result is unused, merged when two calls
+    # have the same inputs. Native simulation runs every call, so the cycle
+    # diff fails while either happens. Issue #410.
+    tests.append(
+        Test(
+            name="sim_statement_call_trim_known_issue",
+            category="known_issues",
+            cmd=[PYPELINE_SIM_DEBUG, INST_DIR / "sim_statement_call_trim_design.py",
+                 "--sim", "--comb", "--run", "all"],
+            needs_out_dir=True,
+            expect_fail=True,
+            requires=["ghdl"],
+        )
+    )
     # x[0:7] (low index first) is accepted: the VHDL reads x(7 downto 0),
     # unreversed, and native sim raises "negative shift count". The cycle diff
     # fails while native sim raises and GHDL's sim_assert (y == 0x80) fails;
@@ -391,20 +385,6 @@ def get_tests() -> list:
                  "--sim", "--comb", "--run", "all"],
             needs_out_dir=True,
             expect_fail=True,
-        )
-    )
-    # Pypeline's hex() of a negative intN_t prints "-1" natively and "FF" in
-    # VHDL sim. The cycle diff fails while the two print different text and
-    # passes once they agree. Issue #409.
-    tests.append(
-        Test(
-            name="hex_negative_known_issue",
-            category="known_issues",
-            cmd=[PYPELINE_SIM_DEBUG, INST_DIR / "hex_negative_design.py",
-                 "--sim", "--comb", "--run", "all"],
-            needs_out_dir=True,
-            expect_fail=True,
-            requires=["ghdl"],
         )
     )
     # (operator_library_predicate_never_fires_known_issue was here while
