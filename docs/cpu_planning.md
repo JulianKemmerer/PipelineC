@@ -683,6 +683,25 @@ module-level constants work.
   deferred.
 - **Second candidate:** a custom-0 instruction that wraps a Pypeline function (CFU
   style).
+- **Optimized decoder netlist (optional, needs a compiler feature):** a combinational
+  function tagged for optimization would be synthesized on its own with Yosys and ABC.
+  The optimized gate netlist would then come back as ordinary Pypeline operators
+  (bitwise ops, adds, muxes). The source can then be written for clarity, as a table
+  loop or a plain `if`/`elif` chain, and still get an optimized netlist. Unlike a
+  `vhdl()` body, the result stays visible to the elaborator, so autopipelining can cut
+  it. No such tag exists yet; it is a separate compiler task. A manual trial on a
+  radix-2 divider step (sky130, `abc -fast`) measured:
+  - cells and delay fell from 1,249 and 10.7 ns to 754 and 5.8 ns, against 449 and
+    5.3 ns for hand-written flat VHDL;
+  - the 32-step divider met its goal in 77 pipeline stages, against 81 without the
+    netlist;
+  - limiting ABC's gate list to AND, OR, XOR and MUX avoids gates that Pypeline must
+    build from two operators (NAND, NOR, XNOR, ANDNOT, ORNOT);
+  - fine-grained gate netlists must be judged with the planned sweep: `--coarse`
+    under-measured the trial badly.
+
+  If the feature exists by M5, the decoder is its first CPU user and joins the
+  comparison against M1's decoder below.
 
 M5 is done when:
 
@@ -690,8 +709,9 @@ M5 is done when:
   `sim_call` with an exhaustive sweep of the opcode and funct fields plus random words;
 - `rv32ui` and the M2 `rv32mi` set pass with the table decoder;
 - `rv32um` passes with the M plugin;
-- elaboration time and synthesis results are recorded against M1's decoder, and M5
-  decides whether M1's decoder stays.
+- elaboration time and synthesis results are recorded against M1's decoder, and against
+  the optimized-netlist decoder if that feature exists, and M5 decides whether M1's
+  decoder stays.
 
 ## M6: Hardware bring-up
 
