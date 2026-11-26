@@ -40,6 +40,7 @@ Python design files into PypelineC's internal `Logic()` graph representation. Fo
 - [VAR_REF_ASSIGN — Variable-Index Writes](#var_ref_assign--variable-index-writes)
   - [Out-of-Range Dynamic Index: Silent Truncation, Not Rejection](#out-of-range-dynamic-index-silent-truncation-not-rejection)
 - [`if` Statements — Hardware MUX Generation](#if-statements--hardware-mux-generation)
+  - [Names First Assigned Inside an `if`](#names-first-assigned-inside-an-if)
   - [Clock Enable Propagation Through `if`](#clock-enable-propagation-through-if)
   - [Reduction (`_reduce_driven_ref_toks`)](#reduction-_reduce_driven_ref_toks)
   - [Reading Branch Wires](#reading-branch-wires)
@@ -1015,6 +1016,16 @@ truthiness: `num=2` (bit[0]=0 but `num != 0`) evaluates as true, not as bit[0].
 Both branches elaborate **into the same `logic` object** — wires and submodule instances
 accumulate permanently. Only `env` and `wire_aliases_over_time` are snapshot/restored, so
 the hardware graph is additive across both branches while the alias view remains consistent.
+
+### Names First Assigned Inside an `if`
+
+Step 12 collects only variables that exist in `env_snap`: `_collect_new` skips every
+name first assigned inside the `if`, and step 11's restore drops it. Such a name is
+therefore local to its arm, as a C block variable is. That holds even when both arms
+assign it, with the same annotated type, which Python and native simulation accept.
+A later read stops with `Unknown name`, which does not say why. This is a
+[#411](issues_inventory.md#39-411i411-a-local-first-assigned-inside-a-runtime-if-is-unknown-after-the-if).
+A name declared before the `if` (`value: uint8_t`) is muxed normally.
 
 ### Clock Enable Propagation Through `if`
 
@@ -3852,7 +3863,10 @@ x = body if test else orelse
 
 This reuses the full `_elab_if` MUX machinery, including clock-enable propagation and
 temporal sorting of covering wires. If the condition evaluates to a compile-time constant
-via `_try_eval_const`, the unused branch is eliminated entirely.
+via `_try_eval_const`, the unused branch is eliminated entirely. An unannotated `x` that
+does not exist yet is therefore first assigned inside the `if`, which `_elab_if` does not
+carry past the join ([below](#names-first-assigned-inside-an-if)). The annotated form
+above works.
 
 `uint4_t(0)` above is a cast (see Casting, below) — a ctype class is callable, so before
 cast recognition existed this exact shape would have reached `_elaborate_live_func`

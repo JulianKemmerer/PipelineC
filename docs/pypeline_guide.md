@@ -79,8 +79,9 @@ For getting started information see the [README](README.md).
 
 44. [Simulation Reference](#simulation-reference)
 45. [DSP: Filters & Signal Conditioning](#dsp-filters--signal-conditioning)
-46. [Source Naming Rules](#source-naming-rules)
-47. [Limitations / Not Yet Supported](#limitations--not-yet-supported)
+46. [RISC-V CPU](#risc-v-cpu)
+47. [Source Naming Rules](#source-naming-rules)
+48. [Limitations / Not Yet Supported](#limitations--not-yet-supported)
 
 ---
 
@@ -190,6 +191,10 @@ to run. Declare the inputs, not what the import generates: a firmware helper dec
 the sources it passes to gcc, not the ELF it writes to a temporary directory. A file the
 import reads without declaring it is not checked: after editing one, build with
 `--rebuild`.
+
+The [RISC-V firmware helper](../include/pypeline/riscv/pypeline_riscv_guide.md#building-firmware)
+uses gcc's dependency list to declare the C and assembly sources, project headers and
+toolchain headers it reads during import.
 
 Use [simulation hooks](#initial--final--startend-of-run-hooks) for setup and checks that
 belong to a simulation.
@@ -765,6 +770,13 @@ def abs_val(x: int32_t) -> int32_t:
 > must be the function's final top-level statement — there is no early return from
 > inside an `if`/`else` branch. To make a value conditional, assign to a variable in
 > each branch (as above) and return it once at the end.
+
+> ⚠ **Declare the variable before the `if`.** A local first assigned inside the arms
+> of a runtime `if` is unknown after it, even when every arm assigns it, and the
+> build stops with `Unknown name`. Native simulation accepts it. Write
+> `result: int32_t` (or `result: int32_t = x`, as above) first. A ternary that
+> introduces a name, `out = a if c else b`, needs its annotation for the same reason.
+> See [#411](issues_inventory.md#39-411i411-a-local-first-assigned-inside-a-runtime-if-is-unknown-after-the-if).
 
 #### Ternary expression
 
@@ -7078,6 +7090,13 @@ next to the library source it documents. See that file for the full reference.
 
 ---
 
+## RISC-V CPU
+
+The single-cycle RV32I core runs import-built C firmware and upstream ISA tests.
+The [library guide](../include/pypeline/riscv/pypeline_riscv_guide.md) describes the
+core factory, memory map and firmware API. The [example](../examples/pypeline/riscv/README.md)
+gives the simulation and synthesis commands.
+
 ## Source Naming Rules
 
 Python names used for locals, parameters, functions, struct fields, global `Wire`s,
@@ -7116,6 +7135,7 @@ tracks the row.
 | Language | **Starred unpack targets** | Not supported | Nested unpacking is supported for compile-time values; hardware-valued unpacking must be flat and use a literal tuple/list RHS | [#345](https://github.com/JulianKemmerer/PipelineC/discussions/345) |
 | Language | **Iterating a `set`/`frozenset` in a `for` loop** | Not supported | Iteration order is `PYTHONHASHSEED`-dependent, not a deterministic function of the design source; `sorted(...)` it first — tuple/list/dict/str/`enumerate`/`zip`/generator iteration, and a nested-tuple loop target (`for kind, a, b in ops:`), are all fine | — |
 | Language | **Bit index from a hardware signal (`x[i]`)** | Not supported | Bit positions must be compile-time constants. A hardware index currently crashes the elaborator with `ValueError: substring not found` instead of a clear error. Split the value into bits first, `bits: uint1_t[32] = uint_to_array_le(x, 1)`, then index `bits[i]` (see [Built-in bit helpers](#built-in-bit-helpers)) | [#362](https://github.com/JulianKemmerer/PipelineC/issues/362), [#323](https://github.com/JulianKemmerer/PipelineC/discussions/323) |
+| Language | **A local first assigned inside a runtime `if`** | Build error | A name assigned in the arms of a runtime `if`, or introduced by an unannotated ternary, is unknown after it (`Unknown name`), even when every arm assigns it. Native simulation accepts it. Declare the local before the `if` (see [Control flow](#if--else--hardware-mux)) | [#411](https://github.com/JulianKemmerer/PipelineC/issues/411)) |
 | Language | **Casting to an `@enum` or an array type** | Not supported | Scalar int/uint and `char_t` casting, and compound (struct/`@interface`-half) casting via `@cast`/`register_cast`, are supported (see [Casting](#casting)). An array destination is rejected with a clear error. Any `state_t(...)` call inside a hardware function currently crashes with an internal `TypeError`; use the members (`state_t.RUN`) directly | [#362](https://github.com/JulianKemmerer/PipelineC/issues/362) |
 | Language | **Assigning or returning an array of a different length** | Invalid VHDL | A `uint2_t[4]` value assigned to a `uint2_t[16]` local, or returned from a function declared `-> uint2_t[16]`, is accepted. Native simulation passes the 4-element value through, and GHDL rejects the generated VHDL. Keep array lengths equal | [#359](https://github.com/JulianKemmerer/PipelineC/issues/359) |
 | Language | **Arrays of `@enum` (`some_enum_t[N]`)** | Not supported | `@struct` installs `__class_getitem__`, `@enum` does not, so the subscript is an `IntEnum` member lookup and raises `KeyError`. Wrap the enum in a `@struct` and make an array of that — an enum inside a struct inside an array is fine | [#362](https://github.com/JulianKemmerer/PipelineC/issues/362) |

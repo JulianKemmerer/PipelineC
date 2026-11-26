@@ -133,8 +133,11 @@ For test-runner commands, see [Testing](#testing).
   edits really are needed, say so before editing, with the alternative.
 - **Library features stay pure Pypeline.** A feature in `include/pypeline/` uses raw
   `vhdl()`, `@pipeline_latency`, `@sim_model` and generated functions, with no `src/`
-  changes. Don't reuse old C front-end machinery. If you find a compiler bug, work
-  around it in the library if that's clean, and write a handoff for the fix.
+  changes. Don't reuse old C front-end machinery. If you find a compiler bug, file it
+  then, without waiting to be asked: an inventory entry and a known-issue reproducer
+  ([Issues](#issues)). Then work around it in the library if that's clean, and write
+  a handoff for the fix. A workaround with no entry hides the bug from the next design
+  that hits it.
 
 ### Scope the design
 
@@ -379,6 +382,11 @@ python3 src/tests/pypeline_tests/run_all.py --category known_issues -t NAME -j 1
 - **Synthesizing tests use `device_models` (sky130) by default**, one tool per test.
   Use Vivado only for Vivado-specific behavior, on a part with a committed cache. See
   [Choosing a synthesis tool](docs/pypeline_TESTS.md#choosing-a-synthesis-tool).
+- **Register a test in the category of what it runs.** A `synth_<tool>` or
+  `build_report_<tool>` test runs that tool's synthesis. A test that only builds
+  firmware and simulates natively is `native_sim`, even next to a synthesizing test
+  of the same feature. The runner's tool check rejects only a visibly wrong tool, so
+  it does not catch a test that synthesizes nothing.
 - **One behavior per test.** Name each test function after the behavior it checks,
   and split a test that checks several. Keep header comments and registration
   docstrings in step with the real build counts, scenarios and run times.
@@ -458,6 +466,14 @@ python3 src/tests/pypeline_tests/run_all.py --category known_issues -t NAME -j 1
   `*_DESIGN.md`.
 - **Numbers carry their conditions** (tool, part, model version, a commit hash where
   it pins an artifact), not the date they were measured.
+- **Measure a documented number on its own run.** A time taken while other test or
+  build jobs share the machine describes the load, not the code. Rerun it alone, or
+  leave it in the report. Put each measurement in one doc and link to it from the
+  others.
+- **Follow the file's existing shape.** A new section matches its neighbors: a
+  coverage section in `docs/pypeline_TESTS.md` is one `Test | Category | What it
+  covers` table. Per-test timing tables and shell loops that repeat a runner
+  selection belong in the report.
 - **Cite other docs by anchor**, from code comments too: `SYN_DESIGN.md#6-caches`,
   not "section 6".
 - **Every `docs/*_DESIGN.md` has the convention note and a complete
@@ -486,6 +502,18 @@ python3 src/tests/pypeline_tests/run_all.py --category known_issues -t NAME -j 1
   [`docs/issues_inventory.md`](docs/issues_inventory.md) at its rank and register a
   reproducer in `known_issues_tests.py`. The issue number can stay TBD until the
   issue exists.
+- **File the general case.** Before writing the entry, find the condition the code
+  branches on ([Find the trigger in the code, not the report](#write-tests)) and try
+  the other forms that reach it. A ternary that introduces a local was once filed
+  alone, but it lowers to an `if`, and every runtime `if` that introduces a local
+  fails the same way. That is the entry, and its reproducer has both forms.
+- **Keep ranks whole numbers.** Insert a new entry at its rank and renumber the
+  entries below it, in the ranking table and in the headings. Fix any link to a
+  renumbered anchor. Don't invent a rank like `38a`.
+- **Cite a known issue by its inventory entry.** The guide gives the workaround and
+  the design doc gives the code rule, and both link the entry. The trigger, the
+  reproducer and the fix plan live only in the entry, so a fix updates one
+  description.
 
 ### Handoffs
 

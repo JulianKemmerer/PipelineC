@@ -25,12 +25,16 @@ Run standalone: python3 native_vs_vhdl_sim_tests.py [-j N]
 import sys
 
 from common import (
+    EXAMPLES_PYPELINE_DIR,
     INST_DIR,
     PYPELINE_SIM_DEBUG,
     SYN_TOOL_ARGS,
     Test,
     main,
+    riscv_gcc,
 )
+
+from riscv.isa_tests import ISA_TESTS
 
 # fmt: off
 # (filename, source_dir, extra_args) -- extra_args always includes --sim and
@@ -474,6 +478,70 @@ def get_tests() -> list:
             long_pole=True,
         )
     )
+    # Compare architectural traces through the exit store for each firmware.
+    for isa_test in ISA_TESTS:
+        tests.append(
+            Test(
+                "riscv_isa_" + isa_test.replace("/", "_") + "_comb",
+                "native_vs_vhdl_sim",
+                [
+                    PYPELINE_SIM_DEBUG,
+                    EXAMPLES_PYPELINE_DIR / "riscv/isa_test_top.py",
+                    "--sim",
+                    "--comb",
+                    "--run",
+                    "all",
+                    "-D",
+                    "ISA_TEST=" + isa_test,
+                    "-D",
+                    "RISCV_TRACE=1",
+                ],
+                needs_out_dir=True,
+                requires=[riscv_gcc],
+            )
+        )
+    # The C demo exits through bootstrap.S after checking its checksum.
+    tests.append(
+        Test(
+            "example_riscv_top_comb",
+            "native_vs_vhdl_sim",
+            [
+                PYPELINE_SIM_DEBUG,
+                EXAMPLES_PYPELINE_DIR / "riscv/top.py",
+                "--sim",
+                "--comb",
+                "--run",
+                "all",
+                "-D",
+                "RISCV_TRACE=1",
+            ],
+            needs_out_dir=True,
+            requires=[riscv_gcc],
+        )
+    )
+    # CPU restart from a generated reset and a frozen EBREAK retirement.
+    for filename, requires in (
+        ("riscv_reset_test.py", [riscv_gcc]),
+        ("riscv_halt_test.py", []),
+    ):
+        tests.append(
+            Test(
+                filename[:-3],
+                "native_vs_vhdl_sim",
+                [
+                    PYPELINE_SIM_DEBUG,
+                    INST_DIR / filename,
+                    "--sim",
+                    "--comb",
+                    "--run",
+                    "all",
+                    "-D",
+                    "RISCV_TRACE=1",
+                ],
+                needs_out_dir=True,
+                requires=requires,
+            )
+        )
     return tests
 
 

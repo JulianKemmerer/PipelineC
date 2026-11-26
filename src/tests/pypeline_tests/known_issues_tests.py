@@ -55,7 +55,17 @@ SWEEP_FLOAT32_BLOCKED = {
 
 
 def get_tests() -> list:
-    tests = []
+    tests = [
+        # Issue #411. A local first assigned inside a runtime if (if/else or ternary) is
+        # unknown after the if; native simulation runs both as a mux.
+        Test(
+            "if_branch_local_known_issue",
+            "known_issues",
+            [PYPELINEC, INST_DIR / "if_branch_local_design.py", "--comb", "--no_synth"],
+            needs_out_dir=True,
+            expect_fail=True,
+        ),
+    ]
     # Native sim keeps the Python values of a struct built with _replace() or
     # _make(): a uint8_t field set to 300 holds 300 (hardware: 44) and a
     # uint8_t[2] field set to [1, 2] packs to 5 (hardware: 0x0201), on a wire,

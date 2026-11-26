@@ -108,6 +108,7 @@ uint1_t blink()
 | Automatic multi-cycle path tuning (New) | [Yes](docs/pypeline_guide.md#auto_multi_cycle) | No |
 | Combinational area / delay optimization (New, experimental) | [Yes](docs/pypeline_guide.md#auto_comb_area_opt--auto_comb_delay_opt-experimental) | No |
 | Automatic resource-shared state machines (New, experimental) | [Yes](docs/pypeline_guide.md#auto_fsm-experimental) | No |
+| Single-cycle RISC-V CPU | [RV32I with firmware compiled during design import](include/pypeline/riscv/pypeline_riscv_guide.md) | [Macro cores with a separate firmware build](examples/risc-v) |
 | SoC system bus helpers | No | Yes |
 | Design diagram webpage (files, MAINs, wires, call hierarchy) (New) | [Yes](docs/README.md#viewing-the-design) | Yes (whole wires) |
 | Generates software Helper Code | [Yes](docs/pypeline_guide.md#host-type-export-declarations) | Yes |

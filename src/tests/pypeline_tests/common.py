@@ -65,6 +65,16 @@ assert (REPO_ROOT / "src" / "pypelinec").is_file(), (
     f"computed REPO_ROOT={REPO_ROOT} looks wrong"
 )
 
+# Test manifests import the software-only RISC-V test list and gcc discovery.
+sys.path.insert(0, str(REPO_ROOT / "include/pypeline"))
+from riscv.toolchain import find_gcc
+
+
+def riscv_gcc():
+    """Set RISCV_GCC or install riscv32-unknown-elf-gcc on PATH or in /opt/riscv/bin."""
+    return find_gcc(os.environ.get("RISCV_GCC", "")) is not None
+
+
 PYPELINEC = REPO_ROOT / "src" / "pypelinec"
 PYPELINE_SIM = REPO_ROOT / "src" / "pypeline_sim.py"
 PYPELINE_SIM_DEBUG = REPO_ROOT / "src" / "pypeline_sim_debug.py"
@@ -188,7 +198,7 @@ class Test:
     long_pole: bool = False
     requires: list = dataclasses.field(
         default_factory=list
-    )  # external tool names (shutil.which) needed to run at all
+    )  # executable names on PATH or zero-argument availability checks
     # Extra environment variables for the subprocess, on top of the inherited
     # environment (PYTHONHASHSEED, tool settings). Design parameters go on the
     # command line instead (cmd += ["-D", "NAME=VALUE"]): that is how one design
@@ -264,7 +274,13 @@ def run_test(test: Test, tmp_root: Path) -> TestResult:
     test_dir.mkdir(parents=True, exist_ok=True)
     out_log = test_dir / "out.log"
 
-    missing = [t for t in test.requires if not _tool_available(t)]
+    missing = []
+    for requirement in test.requires:
+        if callable(requirement):
+            if not requirement():
+                missing.append(f"{requirement.__name__} ({requirement.__doc__})")
+        elif not _tool_available(requirement):
+            missing.append(requirement)
     if missing:
         reason = f"missing tool(s): {', '.join(missing)}"
         _log(f"[SKIP] {test.category:26s} {test.name}  ({reason})")

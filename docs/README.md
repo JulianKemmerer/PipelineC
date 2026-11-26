@@ -117,7 +117,9 @@ end top;
   own blinking LED example to Pypeline running on hardware.
 * [Tools & CLI](#tools--cli) and [Set up your tools](#set-up-your-tools): commands,
   simulators, synthesis backends, and installing them.
-* The [examples/pypeline](../examples/pypeline) directory has more example code.
+* The [examples/pypeline](../examples/pypeline) directory has more example code, among
+  it a [single-cycle RISC-V CPU](../examples/pypeline/riscv/README.md) that runs C
+  firmware and the RV32I instruction tests.
 * Coming from the C front end? See [`docs/pipelinec_to_pypeline.md`](pipelinec_to_pypeline.md)
   for a pattern-by-pattern translation reference.
 

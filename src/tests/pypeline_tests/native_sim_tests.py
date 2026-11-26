@@ -18,7 +18,10 @@ from common import (
     PYPELINE_SIM,
     Test,
     main,
+    riscv_gcc,
 )
+
+from riscv.isa_tests import ISA_TESTS
 
 # fmt: off
 PLAIN_PYTHON_TEST_FILES = [
@@ -711,6 +714,54 @@ def get_tests() -> list:
             name="factory_main_pipeline_latency_test",
             category="native_sim",
             cmd=[INST_DIR / "factory_main_pipeline_latency_test.py"],
+        )
+    )
+    # One deadline-checked native firmware run per upstream ISA test.
+    for isa_test in ISA_TESTS:
+        tests.append(
+            Test(
+                "riscv_isa_" + isa_test.replace("/", "_"),
+                "native_sim",
+                [
+                    PYPELINEC,
+                    EXAMPLES_PYPELINE_DIR / "riscv/isa_test_top.py",
+                    "--sim",
+                    "--comb",
+                    "--run",
+                    "all",
+                    "-D",
+                    "ISA_TEST=" + isa_test,
+                ],
+                needs_out_dir=True,
+                requires=[riscv_gcc],
+            )
+        )
+    # The exported firmware Makefile builds the import's words, its ELF runs
+    # through -D FIRMWARE, and an unchanged export rewrites no file.
+    tests.append(
+        Test(
+            "riscv_firmware_makefile_test",
+            "native_sim",
+            [INST_DIR / "riscv_firmware_makefile_test.py"],
+            needs_out_dir=True,
+            requires=[riscv_gcc, "make"],
+        )
+    )
+    # The C demo exits through bootstrap.S after checking its checksum.
+    tests.append(
+        Test(
+            "example_riscv_top_sim",
+            "native_sim",
+            [
+                PYPELINEC,
+                EXAMPLES_PYPELINE_DIR / "riscv/top.py",
+                "--sim",
+                "--comb",
+                "--run",
+                "all",
+            ],
+            needs_out_dir=True,
+            requires=[riscv_gcc],
         )
     )
     return tests

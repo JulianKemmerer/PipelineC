@@ -27,6 +27,7 @@ from common import (
     SYN_TOOL_ARGS,
     Test,
     main,
+    riscv_gcc,
     syn_tool_category,
 )
 
@@ -245,6 +246,15 @@ def get_tests() -> list:
         ("example_arty_top", EXAMPLES_PYPELINE_DIR / "arty" / "top.py", [], VIVADO),
     ]:
         tests.append(_synth_test(name, [path, "--comb"] + extra_args, tool))
+    # End-to-end combinational sky130 timing, including both initialized memories.
+    tests.append(
+        _synth_test(
+            "example_riscv_top",
+            [EXAMPLES_PYPELINE_DIR / "riscv/top.py", "--comb"],
+            DM,
+            requires=[riscv_gcc],
+        )
+    )
     # Pipelined (non---comb) NATIVE simulation: full build first, then the
     # native sim runs with the discovered latencies emulated. Self-checking
     # elastic stream design -- proves build -> harvest -> latency-emulated

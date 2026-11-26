@@ -19,7 +19,7 @@ Run standalone: python3 build_report_tests.py [-j N]
 
 import sys
 
-from common import INST_DIR, Test, main, syn_tool_category
+from common import INST_DIR, Test, main, riscv_gcc, syn_tool_category
 
 DM = syn_tool_category("build_report", "device_models")
 VIVADO = syn_tool_category("build_report", "vivado")
@@ -28,7 +28,16 @@ OPEN_TOOLS = syn_tool_category("build_report", "open_tools")
 
 
 def get_tests() -> list:
-    tests = []
+    tests = [
+        # Cold sky130, an up-to-date check and two rebuilds naming the edited C/header.
+        Test(
+            "riscv_firmware_rebuild_test",
+            DM,
+            [INST_DIR / "riscv_firmware_rebuild_test.py"],
+            needs_out_dir=True,
+            requires=[riscv_gcc],
+        ),
+    ]
     tests.append(
         Test(
             name="auto_pipeline_ram_build_test",

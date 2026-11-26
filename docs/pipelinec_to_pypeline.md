@@ -46,6 +46,7 @@ clock-crossing headers. pypeline uses ordinary Python imports.
 | `#include "global_func_inst.h"` | not needed — use Python directly (see §8) |
 | `#include "dsp/fir.h"` (macro-config FIR) | `from dsp.fir import make_fir` (see guide §25 "DSP: FIR Filters") |
 | `#include "dsp/fir_decim.h"` / `"dsp/fir_interp.h"` | `from dsp.fir_decim import make_fir_decim` / `from dsp.fir_interp import make_fir_interp` |
+| `include/risc-v/`, `examples/risc-v/` macro core, `mem_decl.h` and `bin2vhdl.py` | `riscv.core.make_rv32i_core` takes the word lists from `riscv.firmware.build`. See the [library guide](../include/pypeline/riscv/pypeline_riscv_guide.md). |
 | `#include "mymodule.h"` | `import mymodule` |
 
 Use **qualified imports** in pypeline — `import mymodule` then

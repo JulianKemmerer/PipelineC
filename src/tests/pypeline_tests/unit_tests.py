@@ -10,11 +10,21 @@ Run standalone: python3 unit_tests.py [-j N]
 
 import sys
 
-from common import INST_DIR, Test, main
+from common import INST_DIR, Test, main, riscv_gcc
 
 
 def get_tests() -> list:
-    tests = []
+    tests = [
+        # Synthetic ELF placement and invalid input diagnostics need no toolchain.
+        Test("riscv_elf_test", "unit", [INST_DIR / "riscv_elf_test.py"]),
+        # Compile the ISA suite and check images, symbols and declared dependencies.
+        Test(
+            "riscv_firmware_test",
+            "unit",
+            [INST_DIR / "riscv_firmware_test.py"],
+            requires=[riscv_gcc],
+        ),
+    ]
     # The design diagram page renders in headless Chrome: every view of four
     # designs (three Pypeline, one C) draws without a script error, with the
     # default filters, everything shown and everything hidden, and draws what

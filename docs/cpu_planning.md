@@ -147,7 +147,7 @@ on `PATH`; the legacy Makefiles say `export PATH=$PATH:/opt/riscv/bin`.
 | Native-simulation state behind a stateless caller | Two stateful instances that only a stateless caller tells apart share one native-simulation state ([#382](https://github.com/JulianKemmerer/PipelineC/issues/382)). Two `make_stream_fifo` FIFOs in one `@MAIN` hit it. The three memories in one `@MAIN` (above) do not | M3's memory map calls several stateful devices of one kind from library code, and M4's console has a TX and an RX FIFO: fix #382 before [M3](#m3-memory-mapped-control-and-status-registers) |
 | Memories on iCE40 | The UP5K has no distributed RAM: its block RAMs (EBR) and SPRAM read on a clock edge. It has 5,280 LUT4s and 5,280 flip-flops. Combinational-read memories therefore become flip-flops or logic: a 2 KiB DMEM alone is 16,384 bits. A constant IMEM is a ROM that synthesis reduces to logic, so a short program whose memory is mostly zeros may fit | Arty is the first board. [M6](#m6-hardware-bring-up) tries pico-ice with a blink firmware and the smallest memories that hold it. A registered-read core is [deferred](#deferred) |
 | Wires, ports, instances and FIFOs made by library code | Not supported. A `@MAIN` that a library factory makes cannot reach the design's wires | The core factory takes its MMIO devices as hardware-function arguments, and the design module owns the pins |
-| Native simulation speed | Measured only for M0's decode spike: `decode` and `execute` fed from three ROMs, with a 20-field `sim_print` each cycle, ran 2,290 cycles at 499 cycles per second | M1 measures cycles per second on the ISA tests, which are short programs |
+| Native simulation speed | With Python 3.8, one native simulation of the M1 core runs `ld_st` at 77 cycles per second (928 cycles in 12.1 s), with tracing off. M0's decode spike ran at 499 | Enough for M1, whose longest program, the C demo, runs 1,190 cycles. At this speed 10,000 cycles take over two minutes: M4 measures its console tests and profiles native simulation if they are too slow |
 | Verilator and CXXRTL simulation | The conversion they run drops `sim_print` and `sim_finish()` ([Other HDL simulators](README.md#other-hdl-simulators)), and `--verilator --run all` crashes ([#406](https://github.com/JulianKemmerer/PipelineC/issues/406)) | Not used by these milestones: tests run in native simulation and cocotb + GHDL, and the console is an MMIO device ([M4](#m4-console-and-uart)) |
 
 ## Architecture
@@ -160,7 +160,8 @@ on `PATH`; the legacy Makefiles say `export PATH=$PATH:/opt/riscv/bin`.
    - `addr`, 32 bits;
    - `wr_data`, 32 bits, and `wr_byte_ens[4]`;
    - `rd_byte_ens[4]`;
-   - `rd_data`, combinational, and `addr_is_mapped`.
+   - `rd_data`, combinational, and `addr_is_mapped`;
+   - `halt` and `return_value` from a device. M3 merges them across devices.
 
    Every memory and device sees this port. The legacy module's `valid` and `ready`
    signals belong to the multi-cycle cores, which are [deferred](#deferred).
@@ -196,14 +197,15 @@ address bits:
 
 ### One command and the build order
 
-Each run is one command. The file names are proposals:
+Run these commands from the example directory with `pypelinec` on PATH.
 
 | Run | Command |
 |---|---|
 | Native simulation | `pypelinec top.py --sim --comb --run all` |
 | cocotb + GHDL | `pypelinec top.py --sim --comb --cocotb --ghdl --run all` |
-| Synthesis | `pypelinec top.py`, with the part from the top's board module or `--part` |
-| One ISA test | `pypelinec isa_test_top.py --sim --comb --run 200000 -D ISA_TEST=rv32ui/add` |
+| M1 synthesis | `pypelinec top.py --comb --syn_tool device_models` |
+| One ISA test | `pypelinec isa_test_top.py --sim --comb --run all -D ISA_TEST=rv32ui/add` |
+| Prebuilt ELF | `pypelinec top.py --sim --comb --run all -D FIRMWARE=app.elf` |
 | Board VHDL, from M6 | `pypelinec board_top.py`; the vendor flow after it is manual ([M6](#m6-hardware-bring-up)) |
 
 Each of these compiles the firmware while it imports the design, and a run that imports
@@ -237,7 +239,7 @@ Four rules keep each run one command:
   mm.freeze()
   # writes mem_map.h, link.ld and bootstrap.S, runs gcc
   fw = firmware.build(sources=("main.c",), imem_size=IMEM_SIZE, dmem_size=DMEM_SIZE, mem_map=mm)
-  core = make_rv32i_core(imem_init=fw.imem_init, dmem_init=fw.dmem_init, mem_map=mm)
+  core = make_rv32i_core(IMEM_SIZE, DMEM_SIZE, fw.imem_init, fw.dmem_init, mem_map=mm)
   ```
 
 - **Firmware inputs are fixed during import.** Parameters, Python constants, struct
@@ -258,9 +260,10 @@ Four rules keep each run one command:
   - the core factory, the decoders and the extension plugins;
   - the firmware build: the GCC driver, and the generators of the linker script,
     `bootstrap.S` and the firmware Makefile;
-  - riscv-tests, copied into the repository: `isa/rv32ui/`, `isa/rv32um/`,
-    `isa/macros/scalar/test_macros.h`, the `p` environment and `encoding.h` from
-    riscv-test-env, both BSD licenses, and the upstream commits they came from;
+  - the [pinned riscv-tests sources](../include/pypeline/riscv/riscv-tests/README.md):
+    M1 includes the 42 rv32ui wrappers, the 42 rv64ui files they include, the scalar
+    macros and upstream license. M2 adds the `p` environment, `encoding.h` and its
+    license from the pinned env commit. M5 adds rv32um and its rv64um includes;
   - the replacement test environment from M1.
 - `include/pypeline/cpu/`: the parts no ISA owns:
   - the ELF loader;
@@ -271,10 +274,9 @@ Four rules keep each run one command:
 - `examples/pypeline/riscv/`: top-level designs and demo firmware; from M6, the board
   wrappers and Makefiles.
 - Tests: fixtures in `src/tests/pypeline_tests/inst/`, registered as
-  [Adding a test](pypeline_TESTS.md#adding-a-test) describes. `Test.requires=` is a
-  `shutil.which` check today, which misses a toolchain that is off `PATH`. M1 lets a
-  test ask the firmware helper's toolchain lookup instead. Without a toolchain the test
-  reports a skip, not a pass.
+  [RISC-V CPU coverage](pypeline_TESTS.md#risc-v-cpu-coverage) describes.
+  Firmware tests use a callable `Test.requires` check that shares gcc discovery
+  with the library. A missing toolchain reports a skip.
 - Docs:
   - Library code has no `*_DESIGN.md`. Each user-visible feature gets a guide section
     when it lands.
@@ -287,7 +289,7 @@ Four rules keep each run one command:
 | Milestone | Delivers | Before it starts | Done when |
 |---|---|---|---|
 | [M0](#m0-audit) | Audit of the legacy CPUs and of Pypeline; decisions; bugs filed | — | Done |
-| [M1](#m1-single-cycle-rv32i-core-firmware-build-and-isa-tests) | Single-cycle RV32I core ported from the legacy core; firmware built during import; resets; `rv32ui` with a replacement test environment | Nothing to fix; workarounds for #71 and #362 | `rv32ui` passes in native simulation and GHDL; a C demo builds and runs from one command |
+| [M1](#m1-single-cycle-rv32i-core-firmware-build-and-isa-tests) | Single-cycle RV32I core ported from the legacy core; firmware built during import; resets; `rv32ui` with a replacement test environment | Library workarounds for #71, #362 and a local first assigned inside an `if` | Done. All 40 programs pass in native simulation and GHDL. The C demo builds and runs from one command |
 | [M2](#m2-machine-mode-traps-and-csrs) | Machine-mode CSRs, ECALL, EBREAK, MRET and exception traps | Nothing known | `rv32ui` passes with the unmodified riscv-tests `p` environment |
 | [M3](#m3-memory-mapped-control-and-status-registers) | Memory map with struct registers for LEDs, buttons and a cycle counter; handshake registers (`MM_STREAM`) for FIFOs; C header export with the polling helpers | Fix [#382](https://github.com/JulianKemmerer/PipelineC/issues/382) | Firmware reads and writes every field of the mapped structs, checked field by field; a FIFO loopback through handshake registers passes |
 | [M4](#m4-console-and-uart) | Console MMIO device and UART | Nothing more (#382 is fixed before M3) | "Hello" prints in native simulation and GHDL; an echo test passes |
@@ -395,31 +397,33 @@ The C idioms map to Pypeline like this:
 
 ## M1: Single-cycle RV32I core, firmware build and ISA tests
 
-M1 ports the legacy single-cycle core, adds what the ISA tests
-need, and builds the firmware with no manual step.
-
-**Before it starts:** nothing to fix. M1 works around:
+The [library](../include/pypeline/riscv/pypeline_riscv_guide.md) ports the
+legacy single-cycle core, supplies its simulation-control device and builds the
+firmware during import. The [example](../examples/pypeline/riscv/README.md)
+runs the C demo or a prebuilt ELF. The core works around:
 
 - [#362](https://github.com/JulianKemmerer/PipelineC/issues/362): byte lanes through an
   array;
 - [#71](https://github.com/JulianKemmerer/PipelineC/issues/71): bind a call's result to a
-  local before reading its fields.
+  local before reading its fields;
+- [a local first assigned inside an `if`](issues_inventory.md#39-411i411-a-local-first-assigned-inside-a-runtime-if-is-unknown-after-the-if):
+  declare it before the `if` or ternary that assigns it.
 
 ### Core
 
-A factory in `include/pypeline/riscv/` returns the core as a hardware function. It takes:
+`riscv.core.make_rv32i_core` returns the core as a hardware function. It takes:
 
 - the memory sizes;
 - the IMEM and DMEM contents;
 - the MMIO hardware function, which answers the native port for the MMIO window. M1
   passes the simulation-control device.
 
-The datapath stays split into pure functions around explicit state:
+The core uses the following datapath functions:
 
 - `decode`;
-- immediate generation;
+- immediate generation inside `decode`;
 - `execute`;
-- load and store alignment;
+- load and store alignment in `riscv_dmem`, alongside DMEM and the MMIO call;
 - the write-back select;
 - the next-PC select.
 
@@ -443,9 +447,11 @@ them.
     the values the program last wrote. Only reloading the FPGA restores it.
   - M1 documents this behavior. Restoring `.data` needs a copy from a readable image
     ([Deferred](#deferred)).
-- **Halt:** a clock enable around the core's call stops a halted core.
+- **Halt:** the saved output register holds the halt flag and the final PC. Its
+  halt bit gates the entire instruction step, including register and memory writes.
 - **Debug outputs:** the legacy core's `pc`, `unknown_op`, `mem_out_of_range`, `halt`
   and `return_value`.
+  The tops use the default clock with an input reset and no clock goal.
   Per-instruction trace prints sit behind `param("RISCV_TRACE", False)` and print with
   `hex()`.
 
@@ -460,7 +466,7 @@ ignored (used from M2).
 On a write, the device:
 
 - prints the result with `sim_print`;
-- fails a `sim_assert` on a failure code;
+- fails a `sim_assert` on a partial store, an even code or an odd failure code;
 - calls `sim_finish()`.
 
 These are hardware statements, so the same pass/fail check works in native simulation and
@@ -474,15 +480,14 @@ Repeated calls with the same inputs produce identical IMEM and DMEM words. See
 
 ```python
 fw = firmware.build(sources=("main.c",), imem_size=IMEM_SIZE, dmem_size=DMEM_SIZE)  # compile, link, load
-core = make_rv32i_core(imem_init=fw.imem_init, dmem_init=fw.dmem_init, mem_map=mm)
+core = make_rv32i_core(IMEM_SIZE, DMEM_SIZE, fw.imem_init, fw.dmem_init, mem_map=mm)
 ```
-
-The names are proposals.
 
 - **Compile:** the helper calls gcc directly:
   `riscv32-unknown-elf-gcc -march=rv32i -mabi=ilp32 -O2 -nostdlib -nostartfiles
-  -T <generated .ld> bootstrap.S <sources> -lgcc`, with no `-fpack-struct`. It looks for the
-  toolchain on `PATH`, then in `/opt/riscv/bin`, unless a parameter names its location.
+  -T link.ld -MD bootstrap.S <sources> -lgcc -o fw.elf`. An explicit `RISCV_GCC`
+  parameter or environment value selects the executable. Otherwise it searches PATH,
+  then the conventional installation under `/opt/riscv/bin`.
   It builds in a fresh temporary directory outside the source tree. From M2 it passes
   `-march=rv32i_zicsr`. GCC 12.1 also accepts CSR instructions under `-march=rv32i`,
   but that depends on the toolchain's ISA-spec default.
@@ -499,15 +504,16 @@ The names are proposals.
   Makefile runs the same gcc command, so the firmware can be rebuilt, disassembled and
   debugged by hand. The build itself never runs `make`. Every import writes these
   files, so each is replaced through a temporary file and a rename, and only when its
-  content changed.
+  content changed. The example leaves `project_dir` unset on import.
 - **Load:** the [ELF loader](#where-the-code-goes) reads the loadable segments with
   Python's `struct` module (no objcopy or `pyelftools` step). It places them by virtual
   address into the IMEM and DMEM word lists. A segment with no file bytes outside both
   windows, such as `.tohost`, is skipped. Any other segment outside both windows, or one
   that does not fit, is an error that names the segment.
-- **Choosing the firmware per run:** `param("FIRMWARE", ...)` names an ELF to load
+- **Choosing the firmware per run:** the top passes its `FIRMWARE` parameter to
+  `firmware.load` when it names an ELF to load
   instead of building the default sources, so one design runs any program:
-  `pypelinec top.py --sim --comb --run 200000 -D FIRMWARE=app.elf`. A project with its own
+  `pypelinec top.py --sim --comb --run all -D FIRMWARE=app.elf`. A project with its own
   build passes its ELF this way. Running an existing Makefile from the helper is not
   supported.
 - **Hardware identity:** the contents are part of each RAM's entity name. To the build
@@ -537,40 +543,51 @@ The names are proposals.
 - **Excluded tests:**
   - `fence_i`, which writes instructions through data stores. A Harvard IMEM cannot take
     those writes.
-  - `ma_data`, where present, which tests misaligned accesses.
+  - `ma_data`, which tests misaligned accesses.
 - **ISA test top:** `param("ISA_TEST", ...)` names one test, such as `rv32ui/add`. The
   top builds it with the firmware helper during import, against the test environment's
   include directories. Each test is then one command:
-  `pypelinec isa_test_top.py --sim --comb --run 200000 -D ISA_TEST=rv32ui/add`. The
-  `--run` count is the cycle cap that catches a hung test.
+  `pypelinec isa_test_top.py --sim --comb --run all -D ISA_TEST=rv32ui/add`. The
+  top asserts `cycle < MAX_CYCLES`. The default is four times the longest passing
+  run, `ld_st` at 928 cycles. A hung test fails in native simulation and GHDL.
 - **Native run:** a registered test runs that command for each ISA test, in parallel,
   and reports pass or fail per test.
-- **GHDL run:** the same tests run in cocotb + GHDL. If the full GHDL set is too slow for
-  the default run, a named subset is registered, and the full set is documented as an
-  opt-in command. M1 records both run times.
+- **GHDL run:** all 40 programs are registered in `native_vs_vhdl_sim` with
+  `RISCV_TRACE=1` ([coverage](pypeline_TESTS.md#risc-v-cpu-coverage)). With GHDL
+  4.0.0-dev and three workers on a four-core machine, each ISA comparison takes
+  28–58 s. The 43 RISC-V comparisons, the demo, reset and halt included, take
+  11 minutes and 1,735 CPU-seconds.
 
 ### M1 exit criteria
 
 - **ISA tests:** every `rv32ui` test except the exclusions passes in native simulation,
-  and in cocotb + GHDL (the full set or the registered subset).
+  and in cocotb + GHDL. All 40 are registered in both categories.
 - **C demo:** a demo ported from the pico-ice `main.c`, without its UART, builds during
-  import with no manual step. It runs a counter and some arithmetic and returns a
-  checksum. It passes in native simulation and in GHDL, and `native_vs_vhdl_sim`
-  compares its trace cycle by cycle.
+  import with no manual step. It exercises a counter, libgcc arithmetic and data
+  sections, then returns zero when its checksum equals the host reference. It passes
+  in native simulation and in GHDL, and `native_vs_vhdl_sim` compares its trace cycle
+  by cycle.
 - **Firmware reproducibility:** compiling the same inputs on a second import yields the
   same IMEM and DMEM words.
 - **Edited firmware:** after a build, editing `main.c` or a header it includes makes the
   next build of the same top build again, naming the file.
-- **Reset:** a reset pulsed mid-run, from a `@sim_input`-driven reset pin, restarts the
-  program from the reset vector.
+- **Reset:** a generator MAIN pulses a reset Wire mid-run. The PC returns to zero on
+  the following cycle and the C demo completes after reboot.
 - **Synthesis and docs:** a synthesis test of the core top passes with `device_models`,
   the default tool for tests. The guide sections, the example README and the README
   feature table describe the core and firmware workflow. The example README gives each
   run as one command.
 
-Risks: M0 elaborated only `decode()` and `execute()` (2 s), and measured native
-simulation speed only for them (499 cycles per second). The whole core is larger on both
-counts.
+With GCC 12.1 and Python 3.8, the firmware build (compile, link and load) takes
+28 ms per ISA program and 50 ms for the C demo, on each import. A `--comb
+--no_synth` build of the C demo top, which elaborates it and writes its VHDL,
+takes 9 s. With a 1,024-byte IMEM and a 2,048-byte DMEM, the sky130
+`sky130_fd_sc_hvl` TT 25 °C, 3.3 V model (v4) reports a 590.714 ns period
+(586.558 ns combinational), 82,437 cells including 17,607 sequential, and one
+unpriced cell. Seven critical-path arcs exceed the model's capacitance limit.
+The synthesis test takes 4.6 minutes, as does the edited-firmware test's three
+builds. The [coverage table](pypeline_TESTS.md#risc-v-cpu-coverage) lists the
+tests.
 
 ## M2: Machine-mode traps and CSRs
 

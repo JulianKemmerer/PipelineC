@@ -1191,6 +1191,35 @@ constants of a function writing two compound wires:
 
 The global FIFO tests above also cover the generic instance code on its FIFO kind.
 
+## RISC-V CPU coverage
+
+The single-cycle RV32I core and its firmware build
+([library guide](../include/pypeline/riscv/pypeline_riscv_guide.md),
+[example](../examples/pypeline/riscv/README.md)). The ISA tests are the 40 runnable
+programs of the [pinned riscv-tests copy](../include/pypeline/riscv/riscv-tests/README.md).
+Every test that compiles firmware requires the RISC-V gcc and skips without it
+([Running](#running)):
+
+| Test | Category | What it covers |
+|---|---|---|
+| `riscv_elf_test` | `unit` | the ELF loader on synthetic images, without a toolchain: placement by virtual address, zero fill past a segment's file bytes, a segment with no file bytes outside the windows skipped, a segment outside the windows or overflowing one named in the error, non-ELF, ELF64, big-endian, wrong-machine and truncated input rejected |
+| `riscv_firmware_test` | `unit` | `firmware.build` without hardware: all 40 ISA programs build and load with the entry at 0; two builds give identical words; the declared files are exactly the sources and the project and toolchain headers they include, from every source of a multi-source build; the linker symbols, with no `__global_pointer$`; `.rodata` and `.bss` in DMEM; an entry other than 0 rejected |
+| `riscv_isa_rv32ui_<name>` (40 tests) | `native_sim` | one ISA program each, through `isa_test_top.py --run all`: it stores 1 to `TOHOST` before the `MAX_CYCLES` deadline |
+| `riscv_isa_rv32ui_<name>_comb` (40 tests) | `native_vs_vhdl_sim` (`--comb`) | the same programs with `RISCV_TRACE=1`: native simulation and GHDL print the same PC, instruction, register write, store and exit code every cycle |
+| `example_riscv_top_sim` | `native_sim` | the example's C demo, compiled during import, passes its checksum |
+| `example_riscv_top_comb` | `native_vs_vhdl_sim` (`--comb`) | the C demo's trace, cycle by cycle |
+| `riscv_firmware_makefile_test` | `native_sim` | `project_dir=`: the exported Makefile builds the import's words, its ELF runs through `-D FIRMWARE`, and an unchanged export rewrites no file |
+| `riscv_reset_test` | `native_vs_vhdl_sim` (`--comb`) | a generator `@MAIN` resets the running C demo through a reset `Wire`: the PC is 0 on the next cycle, and the demo boots again and passes |
+| `riscv_halt_test` | `native_vs_vhdl_sim` (`--comb`) | after `ebreak` the core holds `halt` and `pc`, and the clock-enabled step, its device call included, no longer runs |
+| `example_riscv_top` | `synth_device_models` (`--comb`) | the C demo's top, with a 1,024-byte IMEM and a 2,048-byte DMEM, through sky130 synthesis |
+| `riscv_firmware_rebuild_test` | `build_report_device_models` | three sky130 builds of a copy of the example, with small memories: a repeat build is up to date, and editing `main.c` or a header it includes builds again and names the file |
+
+The ISA programs run 6 (`simple`) to 928 (`ld_st`) cycles, and the C demo 1,190.
+Native simulation runs the core at tens of cycles per second, so each native ISA
+test takes up to about 20 s and each comparison up to about a minute
+([cost](cpu_planning.md#isa-tests)). `--category native_sim -k riscv` and
+`--category native_vs_vhdl_sim -k riscv` select the native and comparison sets.
+
 ## Reset coverage
 
 Synchronous resets ([guide](pypeline_guide.md#resets)):
@@ -1966,8 +1995,12 @@ python3 src/tests/pypeline_tests/run_all.py --timeout 60             # override 
 A `synth_<tool>` / `build_report_<tool>` category needs that tool installed.
 The backends are found by `PATH` first and then a hardcoded fallback path in
 `src/<TOOL>.py`, so a tool that is installed but not on `PATH` still works --
-which also means `Test.requires=` (a `shutil.which` check) cannot gate these
-categories, and a missing backend shows up as a failure rather than a skip.
+which also means a tool name in `Test.requires=` (a `shutil.which` check) cannot
+gate these categories, and a missing backend shows up as a failure rather than a
+skip. A `Test.requires=` entry can instead be a zero-argument function that returns
+whether the requirement is met; a false one skips the test with the function's name
+and docstring as the reason. The RISC-V firmware tests use one, `common.riscv_gcc`,
+which runs the firmware helper's own gcc search, `/opt/riscv/bin` fallback included.
 
 ```
 python3 src/tests/pypeline_tests/sweep_float32_tool_compare.py --out_root DIR
