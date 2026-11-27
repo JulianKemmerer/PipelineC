@@ -1,4 +1,4 @@
-// Counter from the pico-ice RISC-V demo. The UART joins the example in M4.
+// Counter from the pico-ice RISC-V demo. See examples/pico-ice/ice_makefile_pipelinec/risc-v/firmware/main.c.
 #include <stdint.h>
 
 static const uint32_t table[] = {3, 1, 4, 1, 5, 9, 2, 6};

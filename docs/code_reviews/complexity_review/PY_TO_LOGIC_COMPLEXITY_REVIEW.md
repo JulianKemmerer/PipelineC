@@ -32,6 +32,8 @@ CCN is a branch-count heuristic, not a defect count. File hash and reproducible 
 
 ## Duplication and simplification
 
+In `69be5ff8`, `_elab_constant` and `_elab_python_value` independently serialize constants into wire names. The VHDL writer parses those names as numeric literals. Python boolean spelling violates that implicit contract when the constant reaches a hardware operand ([reproducer and workaround](../../issues_inventory.md#40-412i412-a-python-boolean-used-as-a-hardware-constant-breaks-vhdl-generation)). A shared numeric encoder would cover both literal and evaluated constants.
+
 Registered binary/comparison dispatch is repeated in `_elab_binop` and `_elab_compare`; variable-index read/write builders share dimension and condition construction; branch clock-enable mux construction is mirrored. Interface-half diagnostics and global-instance path collectors repeat too. Consolidate typed operations and traversal helpers before changing syntax semantics.
 
 The larger reduction is **whole-aggregate SSA with explicit extract/insert operations**: preserve a value for the entire aggregate and merge that value at a branch. Lower dynamic inserts to muxes later. This can replace coverage bookkeeping instead of hiding it behind a class, but must preserve partial initialization and out-of-range behavior. Add a normalization pass for augmented assignment, unpacking and conditional expressions, retaining original source locations.

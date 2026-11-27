@@ -374,6 +374,10 @@ emitted. This prevents spurious `BIN_OP_minus` submodule instances from appearin
 Logic() graph for expressions that are entirely compile-time constants, even when the LHS
 variable being assigned to is already a hardware wire in `self.env`.
 
+A Python boolean that survives as a hardware operand retains its Python spelling in
+the constant wire name. VHDL emission expects a numeric literal there. See the
+[boolean constant reproducer](issues_inventory.md#40-412i412-a-python-boolean-used-as-a-hardware-constant-breaks-vhdl-generation).
+
 **Value-context subscript/attribute reads:** bare-name reads (`_elab_name`) resolve a
 name that isn't a declared hardware variable by checking `const_env`, then
 `module_globals` (an `int`/`bool` value is emitted as a CONST wire via

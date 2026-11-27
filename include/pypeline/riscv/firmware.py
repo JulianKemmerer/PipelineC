@@ -1,4 +1,8 @@
-"""Build RV32I firmware during design import and supply initialized RAM words."""
+"""Build RV32I firmware during design import and supply initialized RAM words.
+
+The PipelineC firmware recipe credits MicroRV32's basic-c linker and Makefile:
+https://github.com/agra-uni-bremen/microrv32/tree/master/microrv32/sw/basic-c
+"""
 
 import os
 import re
@@ -10,8 +14,7 @@ from typing import NamedTuple
 
 from pypeline import depends_on, param
 from cpu.elf import load_elf
-from cpu.mem_map import DMEM_BASE_ADDR, memory_windows
-from cpu.sim_ctrl import TOHOST
+from cpu.mem_map import AddressMap
 from riscv.toolchain import FALLBACK, GCC, find_gcc
 
 # A top or the environment can select an installed toolchain.
@@ -30,41 +33,53 @@ class Firmware(NamedTuple):
 
 
 def _image(data, windows, symbol):
+    # PT_LOAD virtual addresses determine word offsets in the two RAM images.
     entry, words = load_elf(data, windows, e_machine=243)
-    if entry != 0:
-        raise ValueError(f"entry {symbol} at {entry:#010x} must equal reset vector 0")
+    reset_vector = windows[0][0]
+    if entry != reset_vector:
+        raise ValueError(
+            f"entry {symbol} at {entry:#010x} must equal reset vector {reset_vector:#010x}"
+        )
     return Firmware(*words)
 
 
-def load(path, imem_size, dmem_size):
+def load(path, imem_size, dmem_size, *, layout=AddressMap()):
     """Declare a prebuilt ELF and return its RAM images."""
     return _image(
         depends_on(Path(path)).read_bytes(),
-        memory_windows(imem_size, dmem_size),
+        layout.memory_windows(imem_size=imem_size, dmem_size=dmem_size),
         "(_bootstrap or _start)",
     )
 
 
-def _linker_script(imem_size, dmem_size, entry):
+def _linker_script(imem_size, dmem_size, entry, layout):
+    # Explicit load segments keep ELF headers and page padding outside RAM,
+    # including when a relocated window starts in the middle of a page.
+    # Loads use the data port, so even read-only C objects belong in DMEM.
     return f"""OUTPUT_ARCH("riscv")
 ENTRY({entry})
+PHDRS
+{{
+  code PT_LOAD FLAGS(5);
+  data PT_LOAD FLAGS(6);
+}}
 MEMORY
 {{
-  imem (rx) : ORIGIN = 0, LENGTH = {imem_size}
-  dmem (rw) : ORIGIN = 0x{DMEM_BASE_ADDR:08x}, LENGTH = {dmem_size}
+  imem (rx) : ORIGIN = 0x{layout.imem_base:08x}, LENGTH = {imem_size}
+  dmem (rw) : ORIGIN = 0x{layout.dmem_base:08x}, LENGTH = {dmem_size}
 }}
 SECTIONS
 {{
-  .text : {{ KEEP(*(.text.init)) *(.text .text.*) }} > imem
-  .rodata : {{ *(.rodata .rodata.*) *(.srodata .srodata.*) }} > dmem
-  .data : {{ *(.data .data.*) *(.sdata .sdata.*) }} > dmem
+  .text : {{ KEEP(*(.text.init)) *(.text .text.*) }} > imem :code
+  .rodata : {{ *(.rodata .rodata.*) *(.srodata .srodata.*) }} > dmem :data
+  .data : {{ *(.data .data.*) *(.sdata .sdata.*) }} > dmem :data
   .bss (NOLOAD) : ALIGN(4) {{
     __bss_start = .;
     *(.sbss .sbss.*) *(.bss .bss.*) *(COMMON)
     . = ALIGN(4);
     _end = .;
-  }} > dmem
-  tohost = 0x{TOHOST:08x};
+  }} > dmem :data
+  tohost = 0x{layout.tohost:08x};
   __stacktop = ORIGIN(dmem) + LENGTH(dmem);
 }}
 """
@@ -139,10 +154,17 @@ def _makefile(command):
 
 
 def build(
-    sources, imem_size, dmem_size, *, includes=(), bootstrap=True, project_dir=None
+    sources,
+    imem_size,
+    dmem_size,
+    *,
+    includes=(),
+    bootstrap=True,
+    project_dir=None,
+    layout=AddressMap(),
 ):
     """Compile sources in a private directory and declare gcc's actual inputs."""
-    windows = memory_windows(imem_size, dmem_size)
+    windows = layout.memory_windows(imem_size=imem_size, dmem_size=dmem_size)
     gcc = find_gcc(RISCV_GCC)
     if not gcc:
         raise RuntimeError(
@@ -152,7 +174,9 @@ def build(
     if not sources:
         raise ValueError("firmware build needs at least one source")
     entry = "_bootstrap" if bootstrap else "_start"
-    linker = _linker_script(imem_size, dmem_size, entry)
+    linker = _linker_script(
+        imem_size=imem_size, dmem_size=dmem_size, entry=entry, layout=layout
+    )
     command = [gcc] + _CFLAGS + ["-nostdlib", "-nostartfiles", "-T", "link.ld", "-MD"]
     include_flags = ["-I" + str(Path(i).absolute()) for i in includes]
     command += include_flags
@@ -196,6 +220,7 @@ def build(
         for path in sorted(inputs):
             depends_on(path)
         image = _image((directory / "fw.elf").read_bytes(), windows, entry)
+    # Export the same recipe and linker inputs that produced the embedded image.
     if project_dir is not None:
         project = Path(project_dir)
         project.mkdir(parents=True, exist_ok=True)

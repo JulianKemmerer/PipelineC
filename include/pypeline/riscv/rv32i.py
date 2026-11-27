@@ -1,24 +1,10 @@
-"""Single-cycle RV32I instruction decode, execute and result selection."""
+"""Combinational RV32I instruction decode, execute and result selection."""
 
 from typing import NamedTuple
 
-from pypeline import (
-    struct,
-    concat,
-    hw_func,
-    uint1_t,
-    uint3_t,
-    uint5_t,
-    uint7_t,
-    uint12_t,
-    uint32_t,
-    int12_t,
-    int13_t,
-    int21_t,
-    int32_t,
-)
+from pypeline import *
 
-# Legacy instruction encodings shared with include/risc-v/risc-v.h.
+# RV32I major opcodes, indexed by instruction bits 6:0.
 OP_AUIPC = 0b0010111
 OP_BRANCH = 0b1100011
 OP_IMM = 0b0010011
@@ -28,6 +14,10 @@ OP_LOAD = 0b0000011
 OP_LUI = 0b0110111
 OP_OP = 0b0110011
 OP_STORE = 0b0100011
+OP_MISC_MEM = 0b0001111
+OP_SYSTEM = 0b1110011
+
+# Suboperations selected by funct3 and funct7 within a major opcode.
 FUNCT3_ADD_SUB_MUL = 0b000
 FUNCT7_ADD = 0b0000000
 FUNCT3_ADDI = 0b000
@@ -61,8 +51,7 @@ FUNCT7_SRAI = 0b0100000
 FUNCT7_SUB = 0b0100000
 FUNCT3_XOR_DIV = 0b100
 FUNCT3_XORI = 0b100
-OP_MISC_MEM = 0b0001111
-OP_SYSTEM = 0b1110011
+# Complete SYSTEM instruction words recognized by the trap-free core.
 INST_ECALL = 0x00000073
 INST_EBREAK = 0x00100073
 

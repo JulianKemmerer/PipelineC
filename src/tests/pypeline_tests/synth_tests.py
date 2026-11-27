@@ -246,6 +246,19 @@ def get_tests() -> list:
         ("example_arty_top", EXAMPLES_PYPELINE_DIR / "arty" / "top.py", [], VIVADO),
     ]:
         tests.append(_synth_test(name, [path, "--comb"] + extra_args, tool))
+    # Route the short ROM program on pico-ice and synthesize it for Arty A7-35T.
+    for name, part, tool in (
+        ("riscv_fit_pico_ice", "ICE40UP5K-SG48", OPEN_TOOLS),
+        ("riscv_fit_arty", "xc7a35ticsg324-1l", VIVADO),
+    ):
+        tests.append(
+            _synth_test(
+                name,
+                [EXAMPLES_PYPELINE_DIR / "riscv/fit_top.py", "--comb", "--part", part],
+                tool,
+                requires=[riscv_gcc],
+            )
+        )
     # End-to-end combinational sky130 timing, including both initialized memories.
     tests.append(
         _synth_test(

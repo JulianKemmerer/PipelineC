@@ -37,6 +37,7 @@ cycle diff) where a row says so, and the GCC toolchain described under
   - [Firmware build and RAM contents](#firmware-build-and-ram-contents)
   - [ISA tests](#isa-tests)
   - [M1 exit criteria](#m1-exit-criteria)
+  - [M1.0 follow-up](#m10-follow-up-single-cycle-implementation-review)
 - [M2: Machine-mode traps and CSRs](#m2-machine-mode-traps-and-csrs)
 - [M3: Memory-mapped control and status registers](#m3-memory-mapped-control-and-status-registers)
   - [Memory map](#memory-map)
@@ -184,11 +185,10 @@ address bits:
 | Window | Base | Selected by | Holds |
 |---|---|---|---|
 | IMEM | `0x0000_0000` | instruction fetch only | `.text` |
-| DMEM | `0x4000_0000` | address bit 30 | `.rodata`, `.data`, `.bss`, stack |
+| DMEM | `0x4000_0000` | upper bits match the aligned RAM window | `.rodata`, `.data`, `.bss`, stack |
 | MMIO | `0x8000_0000` | address bit 31 | devices, starting with M1's simulation-control device |
 
-- Sizes are Python constants (parameters). They set both the `make_ram` sizes and the
-  generated linker script.
+- An instance's AddressMap and byte capacities set its reset vector, RAM windows, MMIO base and mailbox. Firmware uses the same layout for the linker and ELF loader.
 - `.rodata` lives in DMEM because, in a Harvard design, loads cannot read IMEM. GCC puts
   string literals, `const` tables and switch jump tables there and reads them with loads.
   The legacy `link.ld` already places `.rodata` in its RAM section.
@@ -239,7 +239,7 @@ Four rules keep each run one command:
   mm.freeze()
   # writes mem_map.h, link.ld and bootstrap.S, runs gcc
   fw = firmware.build(sources=("main.c",), imem_size=IMEM_SIZE, dmem_size=DMEM_SIZE, mem_map=mm)
-  core = make_rv32i_core(IMEM_SIZE, DMEM_SIZE, fw.imem_init, fw.dmem_init, mem_map=mm)
+  core = make_rv32i_single_cycle_core(imem_size=IMEM_SIZE, dmem_size=DMEM_SIZE, imem_init=fw.imem_init, dmem_init=fw.dmem_init, mem_map=mm)
   ```
 
 - **Firmware inputs are fixed during import.** Parameters, Python constants, struct
@@ -290,6 +290,7 @@ Four rules keep each run one command:
 |---|---|---|---|
 | [M0](#m0-audit) | Audit of the legacy CPUs and of Pypeline; decisions; bugs filed | — | Done |
 | [M1](#m1-single-cycle-rv32i-core-firmware-build-and-isa-tests) | Single-cycle RV32I core ported from the legacy core; firmware built during import; resets; `rv32ui` with a replacement test environment | Library workarounds for #71, #362 and a local first assigned inside an `if` | Done. All 40 programs pass in native simulation and GHDL. The C demo builds and runs from one command |
+| [M1.0](#m10-follow-up-single-cycle-implementation-review) | Review the single-cycle datapath and compare implementation alternatives | Working RV32I trace and FPGA fit examples | Equivalent traces and measured area and timing for each adopted change |
 | [M2](#m2-machine-mode-traps-and-csrs) | Machine-mode CSRs, ECALL, EBREAK, MRET and exception traps | Nothing known | `rv32ui` passes with the unmodified riscv-tests `p` environment |
 | [M3](#m3-memory-mapped-control-and-status-registers) | Memory map with struct registers for LEDs, buttons and a cycle counter; handshake registers (`MM_STREAM`) for FIFOs; C header export with the polling helpers | Fix [#382](https://github.com/JulianKemmerer/PipelineC/issues/382) | Firmware reads and writes every field of the mapped structs, checked field by field; a FIFO loopback through handshake registers passes |
 | [M4](#m4-console-and-uart) | Console MMIO device and UART | Nothing more (#382 is fixed before M3) | "Hello" prints in native simulation and GHDL; an echo test passes |
@@ -411,7 +412,7 @@ runs the C demo or a prebuilt ELF. The core works around:
 
 ### Core
 
-`riscv.core.make_rv32i_core` returns the core as a hardware function. It takes:
+`riscv.single_cycle.make_rv32i_single_cycle_core` returns the core as a hardware function. It takes:
 
 - the memory sizes;
 - the IMEM and DMEM contents;
@@ -430,7 +431,7 @@ The core uses the following datapath functions:
 A multi-cycle or pipelined core can then recombine these functions without rewriting
 them.
 
-- **PC:** a `Reg[uint32_t]`, reset to the reset vector `0x0000_0000`.
+- **PC:** a `Reg[uint32_t]`, reset to the IMEM base (zero by default).
 - **IMEM:** a ROM, `make_ram(uint32_t, IMEM_SIZE // 4, ports=("r",), read_latency=0, init=imem)`.
 - **Decode:** the legacy `decode()` if/elif tree, plus FENCE as a no-op and ECALL/EBREAK
   as halt. An unknown encoding sets `unknown_op`.
@@ -447,8 +448,7 @@ them.
     the values the program last wrote. Only reloading the FPGA restores it.
   - M1 documents this behavior. Restoring `.data` needs a copy from a readable image
     ([Deferred](#deferred)).
-- **Halt:** the saved output register holds the halt flag and the final PC. Its
-  halt bit gates the entire instruction step, including register and memory writes.
+- **Halt:** the PC holds and retirement stops. The core disables register writes and RAM/MMIO transfers. The device continues clocking while the final return value and status stay available.
 - **Debug outputs:** the legacy core's `pc`, `unknown_op`, `mem_out_of_range`, `halt`
   and `return_value`.
   The tops use the default clock with an input reset and no clock goal.
@@ -457,7 +457,7 @@ them.
 
 ### Simulation-control device
 
-The device is one register at the MMIO base, `TOHOST`. It follows the `riscv-tests`
+The device is a mailbox at the configurable `tohost` address (the MMIO base by default). It follows the `riscv-tests`
 convention: writing 1 means pass, and writing `(n << 1) | 1` means test `n` failed. The
 startup code writes `(main's return value << 1) | 1`, so a return of 0 passes. A write to
 `TOHOST + 4`, the upper half of the `p` environment's 64-bit `tohost`, is accepted and
@@ -480,7 +480,7 @@ Repeated calls with the same inputs produce identical IMEM and DMEM words. See
 
 ```python
 fw = firmware.build(sources=("main.c",), imem_size=IMEM_SIZE, dmem_size=DMEM_SIZE)  # compile, link, load
-core = make_rv32i_core(IMEM_SIZE, DMEM_SIZE, fw.imem_init, fw.dmem_init, mem_map=mm)
+core = make_rv32i_single_cycle_core(imem_size=IMEM_SIZE, dmem_size=DMEM_SIZE, imem_init=fw.imem_init, dmem_init=fw.dmem_init, mem_map=mm)
 ```
 
 - **Compile:** the helper calls gcc directly:
@@ -537,7 +537,7 @@ core = make_rv32i_core(IMEM_SIZE, DMEM_SIZE, fw.imem_init, fw.dmem_init, mem_map
   - `RVTEST_PASS` and `RVTEST_FAIL` as stores to `TOHOST`;
   - the data-section macros.
 
-  Other small cores take this approach; picorv32's `tests/riscv_test.h` is one example.
+  See [PicoRV32’s trap-free test environment](https://github.com/YosysHQ/picorv32/blob/main/tests/riscv_test.h).
   The replacement stays after M2, for cores built without traps. M0 built all 42
   `rv32ui` tests with such a replacement.
 - **Excluded tests:**
@@ -571,14 +571,14 @@ core = make_rv32i_core(IMEM_SIZE, DMEM_SIZE, fw.imem_init, fw.dmem_init, mem_map
   same IMEM and DMEM words.
 - **Edited firmware:** after a build, editing `main.c` or a header it includes makes the
   next build of the same top build again, naming the file.
-- **Reset:** a generator MAIN pulses a reset Wire mid-run. The PC returns to zero on
+- **Reset:** a generator MAIN pulses a reset Wire mid-run. The PC returns to the relocated IMEM base on
   the following cycle and the C demo completes after reboot.
 - **Synthesis and docs:** a synthesis test of the core top passes with `device_models`,
   the default tool for tests. The guide sections, the example README and the README
   feature table describe the core and firmware workflow. The example README gives each
   run as one command.
 
-With GCC 12.1 and Python 3.8, the firmware build (compile, link and load) takes
+On the original single-cycle implementation (69be5ff8), with GCC 12.1 and Python 3.8, the firmware build (compile, link and load) takes
 28 ms per ISA program and 50 ms for the C demo, on each import. A `--comb
 --no_synth` build of the C demo top, which elaborates it and writes its VHDL,
 takes 9 s. With a 1,024-byte IMEM and a 2,048-byte DMEM, the sky130
@@ -588,6 +588,25 @@ unpriced cell. Seven critical-path arcs exceed the model's capacitance limit.
 The synthesis test takes 4.6 minutes, as does the edited-firmware test's three
 builds. The [coverage table](pypeline_TESTS.md#risc-v-cpu-coverage) lists the
 tests.
+
+With the same C demo, capacities and sky130 model, the single-cycle core with
+per-write enables and a continuously driven DMEM read address reports 670.100 ns,
+83,368 cells and 17,574 sequential cells. Its modeled period is 13.4% longer
+than the original 590.714 ns. Eight critical-path arcs exceed the library's
+capacitance limit and one cell is unpriced. FPGA resource counts for the
+small ROM workload are in the [FPGA fit example](../examples/pypeline/riscv/README.md#fpga-fit-example).
+
+### M1.0 follow-up: single-cycle implementation review
+
+Review the instruction encodings, decoder and execute selectors as idiomatic Pypeline.
+Compare alternative byte-lane steering for stores and sign extension for loads.
+Preserve alignment faults, exact window bounds and idle write enables. Use the ISA
+trace comparisons and the independent-core halt and reset tests to check behavior.
+Measure alternatives on the same part with the same ROM, memory sizes and synthesis
+settings. Compare LUTs and the reported critical path before adopting a more complex
+encoding or mux. At decoder optimization, also evaluate optional
+`AUTO_COMB_DELAY_OPT` and `AUTO_COMB_AREA_OPT` policies for execute and other combinational
+blocks.
 
 ## M2: Machine-mode traps and CSRs
 

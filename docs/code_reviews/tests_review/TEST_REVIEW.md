@@ -240,6 +240,11 @@ Two reproducer-quality findings, from the tree at `df682629`:
 
 ## 10. Harness reliability, resource limits and evidence
 
+The firmware rebuild test on `69be5ff8` copies the RISC-V example's `top.py` into
+its scratch directory and writes a modified `main.c` there. An example-local
+Python import or additional firmware input therefore also needs to be present in
+that copy. Running the example in place does not exercise this fixture dependency.
+
 The following are small infrastructure changes that help runtime and interpretation:
 
 - **Track real resource use.** `run_all -j` limits outer tests, but the native/GHDL driver launches two compiler processes and the multi-clock Vivado wrapper launches XPM/builtin builds together. Compiler/backend `-j` adds another layer. Use CPU/memory/tool tokens or explicit inner-job caps; scheduling every expensive test first can worsen contention. Keep duration-based scheduling within the available resource budget, rather than relying on a Boolean `long_pole` forever.

@@ -11,17 +11,34 @@ from pypeline import (
     uint1_t,
     uint32_t,
 )
-from cpu.sim_ctrl import sim_ctrl_device
+from cpu.mem_map import AddressMap
+from cpu.sim_ctrl import make_sim_ctrl_device
 from riscv import firmware
-from riscv.core import make_rv32i_core, riscv_out_t
+from riscv.core import riscv_out_t
+from riscv.single_cycle import make_rv32i_single_cycle_core
 
 # Leave RAM live across a mid-program reset (the counter loop is past startup).
 RESET_AT = 900
-# Use the example program and its stack layout.
-fw = firmware.build(
-    [Path(__file__).resolve().parents[4] / "examples/pypeline/riscv/main.c"], 1024, 2048
+# Hardware comparison uses the same reset vector as the linker.
+RESET_VECTOR = 0x8000
+# Relocate all windows and place the mailbox inside the MMIO region.
+layout = AddressMap(
+    imem_base=RESET_VECTOR, dmem_base=0x400, mmio_base=0x10000, tohost=0x10040
 )
-core = make_rv32i_core(1024, 2048, fw.imem_init, fw.dmem_init, sim_ctrl_device)
+fw = firmware.build(
+    [Path(__file__).resolve().parents[4] / "examples/pypeline/riscv/main.c"],
+    imem_size=1024,
+    dmem_size=2048,
+    layout=layout,
+)
+core = make_rv32i_single_cycle_core(
+    imem_size=1024,
+    dmem_size=2048,
+    imem_init=fw.imem_init,
+    dmem_init=fw.dmem_init,
+    mem_map=make_sim_ctrl_device(tohost=layout.tohost),
+    layout=layout,
+)
 # Generator and CPU share the default clock.
 cpu_rst: Wire[uint1_t] = make_reset()
 cycle: Wire[uint32_t]
@@ -42,6 +59,7 @@ def riscv() -> riscv_out_t:
     if (cycle == RESET_AT) | (cycle == RESET_AT + 1):
         sim_print(f"reset cycle={cycle} pc={o.pc}", debug=True)
         sim_assert(
-            (o.pc == 0) == (cycle == RESET_AT + 1), f"restart pc={o.pc} at {cycle}"
+            (o.pc == RESET_VECTOR) == (cycle == RESET_AT + 1),
+            f"restart pc={o.pc} at {cycle}",
         )
     return o

@@ -519,7 +519,7 @@ def get_tests() -> list:
             requires=[riscv_gcc],
         )
     )
-    # CPU restart from a generated reset and a frozen EBREAK retirement.
+    # Relocated firmware boots through reset, and independent cores halt with idle buses.
     for filename, requires in (
         ("riscv_reset_test.py", [riscv_gcc]),
         ("riscv_halt_test.py", []),

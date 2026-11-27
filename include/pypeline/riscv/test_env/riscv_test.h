@@ -1,4 +1,4 @@
-// Trap-free RV32I environment following picorv32 tests/riscv_test.h.
+// Trap-free RV32I environment inspired by PicoRV32: https://github.com/YosysHQ/picorv32/blob/main/tests/riscv_test.h
 // The firmware linker script maps the tohost symbol to the simulation-control device.
 #ifndef _ENV_PYPELINE_NO_TRAPS_H
 #define _ENV_PYPELINE_NO_TRAPS_H

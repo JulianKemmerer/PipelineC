@@ -1203,14 +1203,15 @@ Every test that compiles firmware requires the RISC-V gcc and skips without it
 | Test | Category | What it covers |
 |---|---|---|
 | `riscv_elf_test` | `unit` | the ELF loader on synthetic images, without a toolchain: placement by virtual address, zero fill past a segment's file bytes, a segment with no file bytes outside the windows skipped, a segment outside the windows or overflowing one named in the error, non-ELF, ELF64, big-endian, wrong-machine and truncated input rejected |
-| `riscv_firmware_test` | `unit` | `firmware.build` without hardware: all 40 ISA programs build and load with the entry at 0; two builds give identical words; the declared files are exactly the sources and the project and toolchain headers they include, from every source of a multi-source build; the linker symbols, with no `__global_pointer$`; `.rodata` and `.bss` in DMEM; an entry other than 0 rejected |
+| `riscv_firmware_test` | `unit` | all 40 ISA programs build and load at the default reset vector, repeated builds give identical words, and every translation unit declares its inputs. A relocated build checks the stack, mailbox, sections and entry. Invalid windows and an entry different from the reset vector are rejected |
 | `riscv_isa_rv32ui_<name>` (40 tests) | `native_sim` | one ISA program each, through `isa_test_top.py --run all`: it stores 1 to `TOHOST` before the `MAX_CYCLES` deadline |
 | `riscv_isa_rv32ui_<name>_comb` (40 tests) | `native_vs_vhdl_sim` (`--comb`) | the same programs with `RISCV_TRACE=1`: native simulation and GHDL print the same PC, instruction, register write, store and exit code every cycle |
 | `example_riscv_top_sim` | `native_sim` | the example's C demo, compiled during import, passes its checksum |
 | `example_riscv_top_comb` | `native_vs_vhdl_sim` (`--comb`) | the C demo's trace, cycle by cycle |
 | `riscv_firmware_makefile_test` | `native_sim` | `project_dir=`: the exported Makefile builds the import's words, its ELF runs through `-D FIRMWARE`, and an unchanged export rewrites no file |
-| `riscv_reset_test` | `native_vs_vhdl_sim` (`--comb`) | a generator `@MAIN` resets the running C demo through a reset `Wire`: the PC is 0 on the next cycle, and the demo boots again and passes |
-| `riscv_halt_test` | `native_vs_vhdl_sim` (`--comb`) | after `ebreak` the core holds `halt` and `pc`, and the clock-enabled step, its device call included, no longer runs |
+| `riscv_reset_test` | `native_vs_vhdl_sim` (`--comb`) | reset returns the PC to the relocated IMEM base on the next cycle. The C demo boots again using relocated DMEM and finishes at the configured mailbox |
+| `riscv_halt_test` | `native_vs_vhdl_sim` (`--comb`) | two instances of one core start on different cycles and independently reach EBREAK. A third, relocated core halts on a store, holds its PC and result, and keeps the peripheral clocking without repeating the transfer |
+| `riscv_fit_arty`, `riscv_fit_pico_ice` | `synth_vivado`, `synth_open_tools` | the short assembly firmware on Arty A7-35T and pico-ice UP5K FPGA parts |
 | `example_riscv_top` | `synth_device_models` (`--comb`) | the C demo's top, with a 1,024-byte IMEM and a 2,048-byte DMEM, through sky130 synthesis |
 | `riscv_firmware_rebuild_test` | `build_report_device_models` | three sky130 builds of a copy of the example, with small memories: a repeat build is up to date, and editing `main.c` or a header it includes builds again and names the file |
 

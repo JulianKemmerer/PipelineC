@@ -15,8 +15,7 @@ import pypeline
 from riscv import firmware
 from riscv.isa_tests import ISA_TESTS, RISCV_TESTS_DIR, INCLUDES
 from riscv.toolchain import find_gcc
-from cpu.mem_map import DMEM_BASE_ADDR
-from cpu.sim_ctrl import TOHOST
+from cpu.mem_map import AddressMap
 
 
 def isa_image(name):
@@ -108,15 +107,32 @@ def test_linker_symbols_and_dmem_sections():
                 symbols[name] = int(value, 16)
             return build_image(data, windows, symbol)
 
-        with mock.patch.object(firmware, "_image", inspect):
-            fw = firmware.build((source,), 1024, 128)
-        assert (
-            symbols["_bootstrap"] == 0 and symbols["__stacktop"] == DMEM_BASE_ADDR + 128
+        layout = AddressMap(
+            imem_base=0x4000, dmem_base=0x100, mmio_base=0x8000, tohost=0x8010
         )
-        assert symbols["tohost"] == TOHOST and "__global_pointer$" not in symbols
+        with mock.patch.object(firmware, "_image", inspect):
+            fw = firmware.build((source,), imem_size=1024, dmem_size=128, layout=layout)
+        assert (
+            symbols["_bootstrap"] == layout.imem_base
+            and symbols["__stacktop"] == layout.dmem_base + 128
+        )
+        assert symbols["tohost"] == layout.tohost and "__global_pointer$" not in symbols
         assert symbols["__bss_start"] <= symbols["counter"] < symbols["_end"]
-        assert fw.dmem_init[(symbols["counter"] - DMEM_BASE_ADDR) // 4] == 0
-        assert fw.dmem_init[(symbols["table"] - DMEM_BASE_ADDR) // 4] == 0x89ABCDEF
+        assert fw.dmem_init[(symbols["counter"] - layout.dmem_base) // 4] == 0
+        assert fw.dmem_init[(symbols["table"] - layout.dmem_base) // 4] == 0x89ABCDEF
+
+
+def test_invalid_address_maps_rejected():
+    for layout in (
+        AddressMap(imem_base=2),
+        AddressMap(dmem_base=12),
+        AddressMap(dmem_base=0x7ffffffc),
+        AddressMap(tohost=0xfffffffc),
+        AddressMap(tohost=0x80000002),
+        AddressMap(tohost=0x40000000),
+    ):
+        with TestCase().assertRaises(ValueError):
+            layout.memory_windows(imem_size=16, dmem_size=8)
 
 
 def test_entry_must_be_reset_vector():

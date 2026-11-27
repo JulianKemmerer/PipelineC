@@ -56,6 +56,12 @@ SWEEP_FLOAT32_BLOCKED = {
 
 def get_tests() -> list:
     tests = [
+        # VHDL generation tries to parse Python's boolean spelling as a number.
+        Test(
+            "bool_constant_known_issue", "known_issues",
+            [PYPELINEC, INST_DIR / "bool_constant_design.py", "--comb", "--no_synth"],
+            needs_out_dir=True, expect_fail=True,
+        ),
         # Issue #411. A local first assigned inside a runtime if (if/else or ternary) is
         # unknown after the if; native simulation runs both as a mux.
         Test(
