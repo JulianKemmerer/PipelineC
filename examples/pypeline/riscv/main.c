@@ -1,4 +1,3 @@
-// Counter from the pico-ice RISC-V demo. See examples/pico-ice/ice_makefile_pipelinec/risc-v/firmware/main.c.
 #include <stdint.h>
 
 static const uint32_t table[] = {3, 1, 4, 1, 5, 9, 2, 6};
@@ -18,9 +17,6 @@ uint32_t checksum(void) {
 }
 
 int main(void) {
-    volatile uint32_t count = 0;
-    for (unsigned i = 0; i < 100; ++i)
-        ++count;
     // Reference: compile checksum() for the host and print its uint32_t result.
     return checksum() == 0x784d8099u ? 0 : 1;
 }

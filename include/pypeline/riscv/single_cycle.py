@@ -9,7 +9,9 @@ from riscv.rv32i import decode, decoded_t, execute, select_next_pc, select_reg_w
 
 # Enable a tagged architectural trace in native and HDL simulation.
 RISCV_TRACE = param(
-    "RISCV_TRACE", False, help="Trace instruction, register write and store each cycle"
+    name="RISCV_TRACE",
+    default=False,
+    help="Trace instruction, register write and store each cycle",
 )
 
 
@@ -27,20 +29,23 @@ class riscv_dmem_out_t(NamedTuple):
     return_value: uint32_t
 
 
-def make_rv32i_single_cycle_core(
-    imem_size, dmem_size, imem_init, dmem_init, mem_map, *, layout=AddressMap()
-):
+@hw_func
+def in_region(addr: uint32_t, base: uint32_t, last: uint32_t) -> uint1_t:
+    return (addr >= base) & (addr <= last)
+
+
+def make_rv32i_single_cycle_core(*, imem_init, dmem_init, mem_map, layout=AddressMap()):
     """Return a no-argument hardware function. Memory sizes are in bytes."""
-    layout.memory_windows(imem_size=imem_size, dmem_size=dmem_size)
+    layout.memory_windows()
+    imem_size = layout.imem_size
+    dmem_size = layout.dmem_size
     reset_vector = layout.imem_base
     data_base = layout.dmem_base
     mmio_base = layout.mmio_base
-    # For a naturally aligned power-of-two window only the upper address bits
-    # select the RAM. Keep exact bounds for other whole-word capacities.
-    imem_mask = 0xFFFFFFFF ^ (imem_size - 1)
-    dmem_mask = 0xFFFFFFFF ^ (dmem_size - 1)
-    mask_imem = imem_size & (imem_size - 1) == 0 and reset_vector % imem_size == 0
-    mask_dmem = dmem_size & (dmem_size - 1) == 0 and data_base % dmem_size == 0
+    # Inclusive last addresses also represent regions ending at 2**32.
+    imem_last = reset_vector + imem_size - 1
+    dmem_last = data_base + dmem_size - 1
+    mmio_last = mmio_base + layout.mmio_size - 1
     imem = make_ram(
         elem_t=uint32_t,
         size=imem_size // 4,
@@ -67,7 +72,7 @@ def make_rv32i_single_cycle_core(
 
     @hw_func
     def reg_file(rd1: rd_port_t, rd2: rd2_port_t, wr: wr_port_t) -> reg_file_out_t:
-        o = regs(rd1, rd2, wr)
+        o = regs(p0=rd1, p1=rd2, p2=wr)
         rv: reg_file_out_t
         if rd1.addr != 0:
             rv.rd_data1 = o.p0.rd_data
@@ -77,18 +82,20 @@ def make_rv32i_single_cycle_core(
 
     @hw_func
     def riscv_dmem(
-        addr: uint32_t, wr_data: uint32_t, decoded: decoded_t, active: uint1_t
+        addr: uint32_t, wr_data: uint32_t, decoded: decoded_t, enabled: uint1_t
     ) -> riscv_dmem_out_t:
+        # The decoder supplies low-lane masks 0001, 0011 or 1111. A word
+        # needs offset zero and a halfword needs an even byte address.
         offset = addr[1:0]
         wr = array_to_uint_le(decoded.mem_wr_byte_ens)
         rd = array_to_uint_le(decoded.mem_rd_byte_ens)
         lanes: uint4_t = wr | rd
         aligned = ~((lanes[3] & (offset != 0)) | (lanes[1] & addr[0]))
         local_addr: uint32_t = addr - data_base
-        in_ram = local_addr < dmem_size
-        if mask_dmem:
-            in_ram = (addr & dmem_mask) == data_base
-        in_mmio = addr >= mmio_base
+        in_ram = in_region(addr=addr, base=data_base, last=dmem_last)
+        in_mmio = in_region(addr=addr, base=mmio_base, last=mmio_last)
+        # Move each enable by the byte offset and store data by eight times
+        # that offset. RAM and MMIO see identical little-endian word lanes.
         shifted_wr: uint4_t = wr << offset
         shifted_rd: uint4_t = rd << offset
         shift: uint5_t = concat(offset, uint3_t(0))
@@ -100,26 +107,28 @@ def make_rv32i_single_cycle_core(
             index = local_addr[dmem_hi:2]
         elif in_ram:
             index = local_addr[dmem_hi:2]
-        if active & aligned & in_ram:
+        if enabled & aligned & in_ram:
             ram_wr = shifted_wr
         ram_out = dmem(
-            dmem.p0_in_t(
+            p0=dmem.p0_in_t(
                 addr=index,
                 wr_data=shifted_data,
                 wr_en=uint_to_array_le(ram_wr, 1),
                 valid=1,
             )
         )
+        # The peripheral clocks even on idle cycles. Only the byte enables
+        # authorize a transfer, and only a device inside MMIO may claim it.
         mm_wr: uint4_t = 0
         mm_rd: uint4_t = 0
-        if active & aligned & in_mmio:
+        if enabled & aligned & in_mmio:
             mm_wr = shifted_wr
             mm_rd = shifted_rd
         mm = mem_map(
-            addr & 0xFFFFFFFC,
-            shifted_data,
-            uint_to_array_le(mm_wr, 1),
-            uint_to_array_le(mm_rd, 1),
+            addr=addr & 0xFFFFFFFC,
+            wr_data=shifted_data,
+            wr_byte_ens=uint_to_array_le(mm_wr, 1),
+            rd_byte_ens=uint_to_array_le(mm_rd, 1),
         )
         rv: riscv_dmem_out_t
         rv.mem_out_of_range = (lanes != 0) & ~(
@@ -127,6 +136,7 @@ def make_rv32i_single_cycle_core(
         )
         rv.halt = mm.halt
         rv.return_value = mm.return_value
+        # Select the addressed byte or halfword before extending to XLEN.
         word: uint32_t = mm.rd_data if in_mmio else ram_out.p0.rd_data
         rv.rd_data = word
         if rd == 1:
@@ -148,13 +158,11 @@ def make_rv32i_single_cycle_core(
         # Fetch. All five parts execute between the same pair of clock edges.
         pc: Reg[uint32_t] = reset_vector
         halted: Reg[uint1_t]
-        active = ~halted
+        enabled = ~halted
         fetch_offset: uint32_t = pc - reset_vector
-        in_rom = fetch_offset < imem_size
-        if mask_imem:
-            in_rom = (pc & imem_mask) == reset_vector
+        in_rom = in_region(addr=pc, base=reset_vector, last=imem_last)
         pc_plus4: uint32_t = pc + 4
-        fetch = imem(imem.p0_in_t(addr=fetch_offset[imem_hi:2], valid=1))
+        fetch = imem(p0=imem.p0_in_t(addr=fetch_offset[imem_hi:2], valid=1))
         inst = fetch.p0.rd_data
         sim_assert(
             in_rom & (pc[1:0] == 0),
@@ -162,7 +170,7 @@ def make_rv32i_single_cycle_core(
         )
         # Decode and read both sources. Feedback connects the writeback port
         # below to this same RAM instance. Reads see the pre-edge register values.
-        decoded = decode(inst)
+        decoded = decode(inst=inst)
         sim_assert(
             ~decoded.unknown_op, f"unknown instruction pc={hex(pc)} inst={hex(inst)}"
         )
@@ -181,7 +189,7 @@ def make_rv32i_single_cycle_core(
             reg2=regs_out.rd_data2,
         )
         if RISCV_TRACE:
-            if active:
+            if enabled:
                 store = array_to_uint_le(decoded.mem_wr_byte_ens)
                 sim_print(
                     f"pc={hex(pc)} inst={hex(inst)} wr={wr.wr_en} rd={wr.addr} data={hex(wr.wr_data)} "
@@ -190,7 +198,7 @@ def make_rv32i_single_cycle_core(
                 )
         # Memory. An idle MMIO port still clocks the peripheral.
         mem = riscv_dmem(
-            addr=exe.result, wr_data=regs_out.rd_data2, decoded=decoded, active=active
+            addr=exe.result, wr_data=regs_out.rd_data2, decoded=decoded, enabled=enabled
         )
         sim_assert(
             halted | ~mem.mem_out_of_range,
@@ -203,7 +211,7 @@ def make_rv32i_single_cycle_core(
         wr = wr_port_t(
             addr=decoded.dest,
             wr_data=data,
-            wr_en=active & decoded.reg_wr & (decoded.dest != 0),
+            wr_en=enabled & decoded.reg_wr & (decoded.dest != 0),
             valid=1,
         )
         rv: riscv_out_t
@@ -218,7 +226,7 @@ def make_rv32i_single_cycle_core(
         rv.mem_out_of_range = final_range_error if halted else mem.mem_out_of_range
         if ~rv.halt:
             pc = select_next_pc(decoded=decoded, exe=exe, pc_plus4=pc_plus4)
-        elif active:
+        elif enabled:
             halted = 1
             final_value = mem.return_value
             final_range_error = mem.mem_out_of_range

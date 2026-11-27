@@ -185,10 +185,10 @@ address bits:
 | Window | Base | Selected by | Holds |
 |---|---|---|---|
 | IMEM | `0x0000_0000` | instruction fetch only | `.text` |
-| DMEM | `0x4000_0000` | upper bits match the aligned RAM window | `.rodata`, `.data`, `.bss`, stack |
-| MMIO | `0x8000_0000` | address bit 31 | devices, starting with M1's simulation-control device |
+| DMEM | `0x4000_0000` | address inside the configured DMEM range | `.rodata`, `.data`, `.bss`, stack |
+| MMIO | `0x8000_0000` | address inside the configured MMIO range | devices, starting with M1's simulation-control device |
 
-- An instance's AddressMap and byte capacities set its reset vector, RAM windows, MMIO base and mailbox. Firmware uses the same layout for the linker and ELF loader.
+- An instance’s AddressMap sets the base and byte capacity of each region and the address of its mailbox. Any region order is valid. Gaps remain unmapped. Firmware uses the same layout for the linker and ELF loader.
 - `.rodata` lives in DMEM because, in a Harvard design, loads cannot read IMEM. GCC puts
   string literals, `const` tables and switch jump tables there and reads them with loads.
   The legacy `link.ld` already places `.rodata` in its RAM section.
@@ -204,7 +204,7 @@ Run these commands from the example directory with `pypelinec` on PATH.
 | Native simulation | `pypelinec top.py --sim --comb --run all` |
 | cocotb + GHDL | `pypelinec top.py --sim --comb --cocotb --ghdl --run all` |
 | M1 synthesis | `pypelinec top.py --comb --syn_tool device_models` |
-| One ISA test | `pypelinec isa_test_top.py --sim --comb --run all -D ISA_TEST=rv32ui/add` |
+| One ISA test | `pypelinec top.py --sim --comb --run all -D ISA_TEST=rv32ui/add` |
 | Prebuilt ELF | `pypelinec top.py --sim --comb --run all -D FIRMWARE=app.elf` |
 | Board VHDL, from M6 | `pypelinec board_top.py`; the vendor flow after it is manual ([M6](#m6-hardware-bring-up)) |
 
@@ -227,7 +227,7 @@ add them:
 Four rules keep each run one command:
 
 - **One description, two consumers.** The firmware helper takes the objects the core
-  factory takes: the memory sizes, the frozen memory map and, from M5, the plugin list.
+  factory takes: the address layout, the frozen device map and, from M5, the plugin list.
   It derives the linker script, the header and `-march` from them, so the firmware and
   the hardware cannot disagree, and the top states each choice once.
 - **The top's module-level code sets the order.** The hardware definitions come
@@ -238,8 +238,8 @@ Four rules keep each run one command:
   mm.add("leds", ctrl_regs_t=leds_ctrl_regs_t)
   mm.freeze()
   # writes mem_map.h, link.ld and bootstrap.S, runs gcc
-  fw = firmware.build(sources=("main.c",), imem_size=IMEM_SIZE, dmem_size=DMEM_SIZE, mem_map=mm)
-  core = make_rv32i_single_cycle_core(imem_size=IMEM_SIZE, dmem_size=DMEM_SIZE, imem_init=fw.imem_init, dmem_init=fw.dmem_init, mem_map=mm)
+  fw = firmware.build(sources=("main.c",), layout=layout, mem_map=mm)
+  core = make_rv32i_single_cycle_core(layout=layout, imem_init=fw.imem_init, dmem_init=fw.dmem_init, mem_map=mm)
   ```
 
 - **Firmware inputs are fixed during import.** Parameters, Python constants, struct
@@ -258,16 +258,15 @@ Four rules keep each run one command:
 
 - `include/pypeline/riscv/`: everything RISC-V:
   - the core factory, the decoders and the extension plugins;
-  - the firmware build: the GCC driver, and the generators of the linker script,
+  - the firmware build: GCC discovery, ELF loading, the GCC driver, and the generators of the linker script,
     `bootstrap.S` and the firmware Makefile;
   - the [pinned riscv-tests sources](../include/pypeline/riscv/riscv-tests/README.md):
     M1 includes the 42 rv32ui wrappers, the 42 rv64ui files they include, the scalar
     macros and upstream license. M2 adds the `p` environment, `encoding.h` and its
     license from the pinned env commit. M5 adds rv32um and its rv64um includes;
-  - the replacement test environment from M1.
+  - the replacement test environment and its tohost exit mailbox.
 - `include/pypeline/cpu/`: the parts no ISA owns:
-  - the ELF loader;
-  - the simulation-control device;
+  - the address layout and memory-mapped device response;
   - from M3, `cpu/mem_map`: the memory map builder and its register and console devices.
 - `include/pypeline/uart/`, from M4: the UART MAC. It is not CPU-specific, so it sits
   beside `vga/` and `axi/`.
@@ -401,7 +400,7 @@ The C idioms map to Pypeline like this:
 The [library](../include/pypeline/riscv/pypeline_riscv_guide.md) ports the
 legacy single-cycle core, supplies its simulation-control device and builds the
 firmware during import. The [example](../examples/pypeline/riscv/README.md)
-runs the C demo or a prebuilt ELF. The core works around:
+runs the C demo, a selected ISA test or a prebuilt ELF. The core works around:
 
 - [#362](https://github.com/JulianKemmerer/PipelineC/issues/362): byte lanes through an
   array;
@@ -414,7 +413,7 @@ runs the C demo or a prebuilt ELF. The core works around:
 
 `riscv.single_cycle.make_rv32i_single_cycle_core` returns the core as a hardware function. It takes:
 
-- the memory sizes;
+- the address layout, including region capacities;
 - the IMEM and DMEM contents;
 - the MMIO hardware function, which answers the native port for the MMIO window. M1
   passes the simulation-control device.
@@ -479,8 +478,8 @@ Repeated calls with the same inputs produce identical IMEM and DMEM words. See
 [Code that runs during design import](pypeline_guide.md#code-that-runs-during-design-import).
 
 ```python
-fw = firmware.build(sources=("main.c",), imem_size=IMEM_SIZE, dmem_size=DMEM_SIZE)  # compile, link, load
-core = make_rv32i_single_cycle_core(imem_size=IMEM_SIZE, dmem_size=DMEM_SIZE, imem_init=fw.imem_init, dmem_init=fw.dmem_init, mem_map=mm)
+fw = firmware.build(sources=("main.c",), layout=layout)  # compile, link, load
+core = make_rv32i_single_cycle_core(layout=layout, imem_init=fw.imem_init, dmem_init=fw.dmem_init, mem_map=mm)
 ```
 
 - **Compile:** the helper calls gcc directly:
@@ -544,10 +543,10 @@ core = make_rv32i_single_cycle_core(imem_size=IMEM_SIZE, dmem_size=DMEM_SIZE, im
   - `fence_i`, which writes instructions through data stores. A Harvard IMEM cannot take
     those writes.
   - `ma_data`, which tests misaligned accesses.
-- **ISA test top:** `param("ISA_TEST", ...)` names one test, such as `rv32ui/add`. The
+- **ISA test selection:** The shared top’s `ISA_TEST` parameter names one test, such as `rv32ui/add`. The
   top builds it with the firmware helper during import, against the test environment's
   include directories. Each test is then one command:
-  `pypelinec isa_test_top.py --sim --comb --run all -D ISA_TEST=rv32ui/add`. The
+  `pypelinec top.py --sim --comb --run all -D ISA_TEST=rv32ui/add`. The
   top asserts `cycle < MAX_CYCLES`. The default is four times the longest passing
   run, `ld_st` at 928 cycles. A hung test fails in native simulation and GHDL.
 - **Native run:** a registered test runs that command for each ISA test, in parallel,
@@ -562,8 +561,8 @@ core = make_rv32i_single_cycle_core(imem_size=IMEM_SIZE, dmem_size=DMEM_SIZE, im
 
 - **ISA tests:** every `rv32ui` test except the exclusions passes in native simulation,
   and in cocotb + GHDL. All 40 are registered in both categories.
-- **C demo:** a demo ported from the pico-ice `main.c`, without its UART, builds during
-  import with no manual step. It exercises a counter, libgcc arithmetic and data
+- **C demo:** the checksum demo builds during
+  import with no manual step. It exercises libgcc arithmetic and data
   sections, then returns zero when its checksum equals the host reference. It passes
   in native simulation and in GHDL, and `native_vs_vhdl_sim` compares its trace cycle
   by cycle.
@@ -589,12 +588,21 @@ The synthesis test takes 4.6 minutes, as does the edited-firmware test's three
 builds. The [coverage table](pypeline_TESTS.md#risc-v-cpu-coverage) lists the
 tests.
 
-With the same C demo, capacities and sky130 model, the single-cycle core with
+At `2c4539da`, with the same C demo, capacities and sky130 model, the single-cycle core with
 per-write enables and a continuously driven DMEM read address reports 670.100 ns,
 83,368 cells and 17,574 sequential cells. Its modeled period is 13.4% longer
 than the original 590.714 ns. Eight critical-path arcs exceed the library's
-capacitance limit and one cell is unpriced. FPGA resource counts for the
-small ROM workload are in the [FPGA fit example](../examples/pypeline/riscv/README.md#fpga-fit-example).
+capacitance limit and one cell is unpriced.
+
+With `rv32ui/lui`, 256 bytes of IMEM, 16 bytes of DMEM and the success pin,
+nextpnr-ice40 (UP5K SG48, seed 1, unconstrained pins) routes 1,659 of 5,280
+logic cells and reports 12.71 MHz. Vivado 2019.2 synthesis for the Arty
+A7-35T estimates 63.25 MHz with 1,300 slice LUTs and 97 registers. The checksum
+demo with full status outputs and default RAM sizes on the same Arty part
+estimates 49.92 MHz with 2,516 slice LUTs and 164 registers. M1 records the
+achieved timing under the driver’s default constraint. Its FPGA exit criteria
+are synthesis for Arty and successful placement and routing for pico-ice.
+See the [FPGA build commands](../examples/pypeline/riscv/README.md#fpga-fit-example).
 
 ### M1.0 follow-up: single-cycle implementation review
 
@@ -604,7 +612,10 @@ Preserve alignment faults, exact window bounds and idle write enables. Use the I
 trace comparisons and the independent-core halt and reset tests to check behavior.
 Measure alternatives on the same part with the same ROM, memory sizes and synthesis
 settings. Compare LUTs and the reported critical path before adopting a more complex
-encoding or mux. At decoder optimization, also evaluate optional
+encoding or mux. At decoder optimization, evaluate simpler implementations of
+`in_region` for aligned layouts, down to a single address bit where membership
+is exactly equivalent across the entire address space. Check boundaries and
+unmapped gaps for each specialization. Also evaluate optional
 `AUTO_COMB_DELAY_OPT` and `AUTO_COMB_AREA_OPT` policies for execute and other combinational
 blocks.
 

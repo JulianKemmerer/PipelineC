@@ -14,15 +14,14 @@ sys.path[:0] = [str(ROOT / "src"), str(ROOT / "include/pypeline")]
 import pypeline
 from riscv import firmware
 from riscv.isa_tests import ISA_TESTS, RISCV_TESTS_DIR, INCLUDES
-from riscv.toolchain import find_gcc
+from riscv.firmware import find_gcc
 from cpu.mem_map import AddressMap
 
 
 def isa_image(name):
     return firmware.build(
-        [RISCV_TESTS_DIR / "isa" / (name + ".S")],
-        4096,
-        1024,
+        sources=[RISCV_TESTS_DIR / "isa" / (name + ".S")],
+        layout=AddressMap(imem_size=4096, dmem_size=1024),
         includes=INCLUDES,
         bootstrap=False,
     )
@@ -45,7 +44,7 @@ def test_two_imports_produce_identical_words():
 
 
 def test_declared_dependencies_are_external_inputs():
-    gcc = find_gcc(os.environ.get("RISCV_GCC"))
+    gcc = find_gcc(explicit=os.environ.get("RISCV_GCC"))
     with tempfile.TemporaryDirectory() as tmp, mock.patch.dict(
         pypeline._declared_files, clear=True
     ):
@@ -53,7 +52,9 @@ def test_declared_dependencies_are_external_inputs():
         header = Path(tmp) / "my header.h"
         header.write_text("#include <stdint.h>\n")
         source.write_text('#include "my header.h"\nint main(void) {return 0;}\n')
-        firmware.build([source], 1024, 128)
+        firmware.build(
+            sources=[source], layout=AddressMap(imem_size=1024, dmem_size=128)
+        )
         # Ask the preprocessor independently for transitive toolchain headers.
         rule = subprocess.check_output(
             [gcc, "-march=rv32i", "-mabi=ilp32", "-M", "-x", "c", "-"],
@@ -77,7 +78,7 @@ def test_each_translation_unit_declares_its_headers():
         header.write_text("#define VALUE 0\n")
         sources[0].write_text('#include "part.h"\nint part(void) {return VALUE;}\n')
         sources[1].write_text("int part(void); int main(void) {return part();}\n")
-        firmware.build(sources, 256, 128)
+        firmware.build(sources=sources, layout=AddressMap(imem_size=256, dmem_size=128))
         assert set(pypeline.DECLARED_FILES()) == {
             str(path) for path in sources + [header]
         }
@@ -90,7 +91,7 @@ def test_linker_symbols_and_dmem_sections():
             "const unsigned table = 0x89abcdef; volatile unsigned counter;\n"
             "int main(void) {return counter;}\n"
         )
-        gcc = Path(find_gcc(os.environ.get("RISCV_GCC")))
+        gcc = Path(find_gcc(explicit=os.environ.get("RISCV_GCC")))
         nm = subprocess.check_output(
             [str(gcc), "-print-prog-name=nm"], text=True
         ).strip()
@@ -108,10 +109,15 @@ def test_linker_symbols_and_dmem_sections():
             return build_image(data, windows, symbol)
 
         layout = AddressMap(
-            imem_base=0x4000, dmem_base=0x100, mmio_base=0x8000, tohost=0x8010
+            imem_size=1024,
+            dmem_size=128,
+            imem_base=0x4000,
+            dmem_base=0x100,
+            mmio_base=0x8000,
+            tohost=0x8010,
         )
         with mock.patch.object(firmware, "_image", inspect):
-            fw = firmware.build((source,), imem_size=1024, dmem_size=128, layout=layout)
+            fw = firmware.build(sources=(source,), layout=layout)
         assert (
             symbols["_bootstrap"] == layout.imem_base
             and symbols["__stacktop"] == layout.dmem_base + 128
@@ -125,14 +131,19 @@ def test_linker_symbols_and_dmem_sections():
 def test_invalid_address_maps_rejected():
     for layout in (
         AddressMap(imem_base=2),
+        AddressMap(imem_size=0),
+        AddressMap(dmem_size=6),
+        AddressMap(mmio_size=4),
+        AddressMap(mmio_base=0xfffffffc, mmio_size=8, tohost=0xfffffffc),
+        AddressMap(mmio_base=0x1000, mmio_size=16, tohost=0x100c),
         AddressMap(dmem_base=12),
-        AddressMap(dmem_base=0x7ffffffc),
-        AddressMap(tohost=0xfffffffc),
+        AddressMap(dmem_base=0x7FFFFFFC),
+        AddressMap(tohost=0xFFFFFFFC),
         AddressMap(tohost=0x80000002),
         AddressMap(tohost=0x40000000),
     ):
         with TestCase().assertRaises(ValueError):
-            layout.memory_windows(imem_size=16, dmem_size=8)
+            layout.memory_windows()
 
 
 def test_entry_must_be_reset_vector():
@@ -142,7 +153,11 @@ def test_entry_must_be_reset_vector():
             ".section .text.init\n.word 0\n.globl _start\n_start: j _start\n"
         )
         with TestCase().assertRaisesRegex(ValueError, "entry _start at 0x00000004"):
-            firmware.build([source], 128, 128, bootstrap=False)
+            firmware.build(
+                sources=[source],
+                layout=AddressMap(imem_size=128, dmem_size=128),
+                bootstrap=False,
+            )
 
 
 if __name__ == "__main__":

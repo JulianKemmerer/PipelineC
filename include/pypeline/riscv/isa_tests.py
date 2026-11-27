@@ -16,6 +16,6 @@ EXCLUDED = {
 # Parameter values include the upstream suite name, e.g. rv32ui/add.
 ISA_TESTS = tuple(
     "rv32ui/" + path.stem
-    for path in sorted((RISCV_TESTS_DIR / "isa/rv32ui").glob("*.S"))
+    for path in sorted((RISCV_TESTS_DIR / "isa/rv32ui").glob(pattern="*.S"))
     if path.stem not in EXCLUDED
 )

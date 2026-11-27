@@ -12,28 +12,28 @@ from pypeline import (
     uint32_t,
 )
 from cpu.mem_map import AddressMap
-from cpu.sim_ctrl import make_sim_ctrl_device
+from riscv.sim_ctrl import make_sim_ctrl_device
 from riscv import firmware
 from riscv.core import riscv_out_t
 from riscv.single_cycle import make_rv32i_single_cycle_core
 
-# Leave RAM live across a mid-program reset (the counter loop is past startup).
-RESET_AT = 900
+# Leave RAM live across a mid-program reset (startup has cleared .bss).
+RESET_AT = 90
 # Hardware comparison uses the same reset vector as the linker.
 RESET_VECTOR = 0x8000
 # Relocate all windows and place the mailbox inside the MMIO region.
 layout = AddressMap(
-    imem_base=RESET_VECTOR, dmem_base=0x400, mmio_base=0x10000, tohost=0x10040
+    imem_base=RESET_VECTOR,
+    dmem_base=0x10000,
+    mmio_base=0x400,
+    mmio_size=0x80,
+    tohost=0x440,
 )
 fw = firmware.build(
-    [Path(__file__).resolve().parents[4] / "examples/pypeline/riscv/main.c"],
-    imem_size=1024,
-    dmem_size=2048,
+    sources=[Path(__file__).resolve().parents[4] / "examples/pypeline/riscv/main.c"],
     layout=layout,
 )
 core = make_rv32i_single_cycle_core(
-    imem_size=1024,
-    dmem_size=2048,
     imem_init=fw.imem_init,
     dmem_init=fw.dmem_init,
     mem_map=make_sim_ctrl_device(tohost=layout.tohost),

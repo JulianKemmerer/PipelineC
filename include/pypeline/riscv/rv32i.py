@@ -119,7 +119,7 @@ def decode(inst: uint32_t) -> decoded_t:
         if (rv.funct3 == 0b010) | (rv.funct3 == 0b011):
             rv.unknown_op = 1
         else:
-            rv.signed_immediate = b_offset(inst)
+            rv.signed_immediate = b_offset(inst=inst)
             rv.exe_to_pc = 1
     elif rv.opcode == OP_IMM:
         if (rv.funct3 == FUNCT3_SLLI) | (rv.funct3 == FUNCT3_SRLI_SRAI):

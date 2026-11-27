@@ -486,7 +486,7 @@ def get_tests() -> list:
                 "native_vs_vhdl_sim",
                 [
                     PYPELINE_SIM_DEBUG,
-                    EXAMPLES_PYPELINE_DIR / "riscv/isa_test_top.py",
+                    EXAMPLES_PYPELINE_DIR / "riscv/top.py",
                     "--sim",
                     "--comb",
                     "--run",

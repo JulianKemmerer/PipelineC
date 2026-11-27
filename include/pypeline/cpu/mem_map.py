@@ -25,29 +25,29 @@ class AddressMap(NamedTuple):
     mmio_base: int = MEM_MAP_BASE_ADDR
     tohost: int = MEM_MAP_BASE_ADDR
 
-    def memory_windows(self, imem_size, dmem_size):
-        windows = [(self.imem_base, imem_size), (self.dmem_base, dmem_size)]
-        for base, size in windows:
-            if base < 0 or base % 4 or size <= 0 or size % 4:
+    imem_size: int = 1024
+    dmem_size: int = 2048
+    mmio_size: int = 0x8000_0000
+
+    def memory_windows(self):
+        """Validate the byte ranges and return RAMs in firmware image order."""
+        imem = (self.imem_base, self.imem_size)
+        dmem = (self.dmem_base, self.dmem_size)
+        mmio = (self.mmio_base, self.mmio_size)
+        previous_end = 0
+        for base, size in sorted((imem, dmem, mmio)):
+            if base < 0 or base % 4 or size <= 0 or size % 4 or base + size > 2**32:
                 raise ValueError(
-                    "RAM windows require aligned bases and positive word sizes"
+                    "regions must be whole words within the RV32 address space"
                 )
-            if base + size > self.mmio_base:
-                raise ValueError("RAM window extends into MMIO")
-        if max(self.imem_base, self.dmem_base) < min(
-            self.imem_base + imem_size, self.dmem_base + dmem_size
-        ):
-            raise ValueError("IMEM and DMEM overlap")
+            if base < previous_end:
+                raise ValueError("address regions overlap")
+            previous_end = base + size
         if (
-            self.mmio_base % 4
-            or not self.mmio_base <= self.tohost <= 2**32 - 8
-            or self.tohost % 4
+            self.tohost % 4
+            or not self.mmio_base <= self.tohost <= self.mmio_base + self.mmio_size - 8
         ):
             raise ValueError(
-                "TOHOST and its upper word must fit in aligned 32-bit MMIO"
+                "both words of the aligned TOHOST mailbox must fit in MMIO"
             )
-        return windows
-
-
-# Size-only callers use the standard memory layout.
-memory_windows = AddressMap().memory_windows
+        return imem, dmem

@@ -11,18 +11,19 @@ from built_hardware_sim_test import pypelinec
 ROOT = Path(__file__).resolve().parents[4]
 sys.path[:0] = [str(ROOT / "src"), str(ROOT / "include/pypeline")]
 from riscv import firmware
+from cpu.mem_map import AddressMap
 
 
 def test_makefile_and_prebuilt_elf(root):
     example = ROOT / "examples/pypeline/riscv"
     export = root / "export"
     source = example / "main.c"
-    built = firmware.build([source], 1024, 2048, project_dir=export)
+    built = firmware.build(sources=[source], layout=AddressMap(), project_dir=export)
     files = [export / n for n in ("Makefile", "link.ld", "bootstrap.S")]
     times = [p.stat().st_mtime_ns for p in files]
     subprocess.run(["make"], cwd=export, check=True)
     elf = export / "fw.elf"
-    assert firmware.load(elf, 1024, 2048) == built
+    assert firmware.load(path=elf, layout=AddressMap()) == built
     log = pypelinec(
         example / "top.py",
         root / "sim",
@@ -34,7 +35,7 @@ def test_makefile_and_prebuilt_elf(root):
         "FIRMWARE=" + str(elf),
     )
     assert "TOHOST code=1 return_value=0" in log
-    firmware.build([source], 1024, 2048, project_dir=export)
+    firmware.build(sources=[source], layout=AddressMap(), project_dir=export)
     assert [p.stat().st_mtime_ns for p in files] == times
 
 

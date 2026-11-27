@@ -6,7 +6,7 @@ from pathlib import Path
 from unittest import TestCase
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[4] / "include/pypeline"))
-from cpu.elf import load_elf
+from riscv.firmware import load_elf
 
 
 def elf(addr, data, memsz):
@@ -32,7 +32,7 @@ def elf(addr, data, memsz):
 
 
 def read(data):
-    return load_elf(data, [(0, 8), (32, 8)], 243)
+    return load_elf(data=data, windows=[(0, 8), (32, 8)], e_machine=243)
 
 
 def test_placement_uses_virtual_address():

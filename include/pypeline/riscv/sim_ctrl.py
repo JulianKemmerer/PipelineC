@@ -1,4 +1,9 @@
-"""Single-cycle memory-mapped exit mailbox for firmware and ISA tests."""
+"""Firmware exit mailbox shared by the C startup and the trap-free ISA tests.
+
+A store to the linked tohost symbol publishes the program result. Hardware
+latches it and halts the core so a board can expose success on a pin. Simulation
+also checks the encoded result and ends the run at that same store.
+"""
 
 from pypeline import *
 from cpu.mem_map import MEM_MAP_BASE_ADDR, riscv_mem_map_mod_out_t
@@ -37,7 +42,3 @@ def make_sim_ctrl_device(tohost=TOHOST):
         return rv
 
     return sim_ctrl_device
-
-
-# Default mailbox for designs using the standard address layout.
-sim_ctrl_device = make_sim_ctrl_device()

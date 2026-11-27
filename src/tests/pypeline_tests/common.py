@@ -67,12 +67,12 @@ assert (REPO_ROOT / "src" / "pypelinec").is_file(), (
 
 # Test manifests import the software-only RISC-V test list and gcc discovery.
 sys.path.insert(0, str(REPO_ROOT / "include/pypeline"))
-from riscv.toolchain import find_gcc
+from riscv.firmware import find_gcc
 
 
 def riscv_gcc():
     """Set RISCV_GCC or install riscv32-unknown-elf-gcc on PATH or in /opt/riscv/bin."""
-    return find_gcc(os.environ.get("RISCV_GCC", "")) is not None
+    return find_gcc(explicit=os.environ.get("RISCV_GCC", "")) is not None
 
 
 PYPELINEC = REPO_ROOT / "src" / "pypelinec"

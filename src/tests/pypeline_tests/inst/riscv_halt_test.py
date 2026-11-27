@@ -11,7 +11,7 @@ device_ticks: Wire[uint32_t]
 
 @hw_func
 def peripheral(
-    addr: uint32_t, wr_data: uint32_t, wr_byte_ens: uint1_t[4], rd_byte_ens: uint1_t[4]
+    rd_byte_ens: uint1_t[4], wr_byte_ens: uint1_t[4], wr_data: uint32_t, addr: uint32_t
 ) -> riscv_mem_map_mod_out_t:
     ticks: Reg[uint32_t]
     device_ticks = ticks
@@ -38,20 +38,24 @@ def idle_device(
 
 # The same factory result at two call sites has independent architectural state.
 core = make_rv32i_single_cycle_core(
-    imem_size=8,
-    dmem_size=4,
+    layout=AddressMap(imem_size=8, dmem_size=4),
     imem_init=[0x00700093, 0x00100073],
     dmem_init=[0],
     mem_map=idle_device,
 )
 # LUI x1,1; ADDI x1,x1,4; SW x0,0(x1). The store itself requests halt.
 other = make_rv32i_single_cycle_core(
-    imem_size=12,
-    dmem_size=4,
     imem_init=[0x000010B7, 0x00408093, 0x0000A023],
     dmem_init=[0],
     mem_map=peripheral,
-    layout=AddressMap(imem_base=0x104, dmem_base=0x24, mmio_base=0x1000, tohost=0x1004),
+    layout=AddressMap(
+        imem_size=12,
+        dmem_size=4,
+        imem_base=0x104,
+        dmem_base=0x24,
+        mmio_base=0x1000,
+        tohost=0x1004,
+    ),
 )
 
 

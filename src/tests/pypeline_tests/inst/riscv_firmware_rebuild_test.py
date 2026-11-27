@@ -31,7 +31,7 @@ def test_firmware_edits_invalidate_build(root):
     hw = root / "hardware"
     pypelinec(design, hw, *BUILD_ARGS)
     assert "Up to date: " in pypelinec(design, hw, *BUILD_ARGS)
-    for path, old, new in ((source, "i < 100", "i < 99"), (header, "12345", "12346")):
+    for path, old, new in ((source, "sum * 31", "sum * 33"), (header, "12345", "12346")):
         content = path.read_text()
         assert old in content
         path.write_text(content.replace(old, new))

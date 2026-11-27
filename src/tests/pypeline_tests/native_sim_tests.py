@@ -724,7 +724,7 @@ def get_tests() -> list:
                 "native_sim",
                 [
                     PYPELINEC,
-                    EXAMPLES_PYPELINE_DIR / "riscv/isa_test_top.py",
+                    EXAMPLES_PYPELINE_DIR / "riscv/top.py",
                     "--sim",
                     "--comb",
                     "--run",
