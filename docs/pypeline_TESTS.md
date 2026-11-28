@@ -1210,7 +1210,7 @@ Every test that compiles firmware requires the RISC-V gcc and skips without it
 | `example_riscv_top_comb` | `native_vs_vhdl_sim` (`--comb`) | the C demo's trace, cycle by cycle |
 | `riscv_firmware_makefile_test` | `native_sim` | `project_dir=`: the exported Makefile builds the import's words, its ELF runs through `-D FIRMWARE`, and an unchanged export rewrites no file |
 | `riscv_reset_test` | `native_vs_vhdl_sim` (`--comb`) | reset returns the PC to the relocated IMEM base on the next cycle. The C demo boots again using relocated DMEM and finishes at the configured mailbox |
-| `riscv_halt_test` | `native_vs_vhdl_sim` (`--comb`) | two instances of one core start on different cycles and independently reach EBREAK. A third, relocated core halts on a store, holds its PC and result, and keeps the peripheral clocking without repeating the transfer |
+| `riscv_halt_test` | `native_vs_vhdl_sim` (`--comb`) | two instances of one core start on different cycles and independently reach EBREAK. A third, relocated core halts on a store, returns to its reset vector and forwards the live peripheral status without repeating the transfer |
 | `riscv_fit_arty`, `riscv_fit_pico_ice` | `synth_vivado`, `synth_open_tools` | the shared top running rv32ui/lui with a success pin on Arty A7-35T and pico-ice UP5K FPGA parts |
 | `example_riscv_top` | `synth_device_models` (`--comb`) | the C demo's top, with a 1,024-byte IMEM and a 2,048-byte DMEM, through sky130 synthesis |
 | `riscv_firmware_rebuild_test` | `build_report_device_models` | three sky130 builds of a copy of the example, with small memories: a repeat build is up to date, and editing `main.c` or a header it includes builds again and names the file |

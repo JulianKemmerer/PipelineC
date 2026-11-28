@@ -1,7 +1,6 @@
-"""CPU address windows and memory-mapped device response."""
+"""Compile-time CPU address windows for firmware and hardware."""
 
-from typing import NamedTuple
-from pypeline import struct, uint1_t, uint32_t
+from dataclasses import dataclass
 
 # First byte of data RAM.
 DMEM_BASE_ADDR = 0x4000_0000
@@ -9,15 +8,8 @@ DMEM_BASE_ADDR = 0x4000_0000
 MEM_MAP_BASE_ADDR = 0x8000_0000
 
 
-@struct
-class riscv_mem_map_mod_out_t(NamedTuple):
-    addr_is_mapped: uint1_t
-    rd_data: uint32_t
-    halt: uint1_t
-    return_value: uint32_t
-
-
-class AddressMap(NamedTuple):
+@dataclass(frozen=True)
+class AddressMap:
     """Byte addresses shared by the hardware, ELF loader and firmware linker."""
 
     imem_base: int = 0
@@ -29,10 +21,8 @@ class AddressMap(NamedTuple):
     dmem_size: int = 2048
     mmio_size: int = 0x8000_0000
 
-    def memory_windows(self):
-        """Validate the byte ranges and return RAMs in firmware image order."""
-        imem = (self.imem_base, self.imem_size)
-        dmem = (self.dmem_base, self.dmem_size)
+    def __post_init__(self):
+        imem, dmem = self.memory_windows()
         mmio = (self.mmio_base, self.mmio_size)
         previous_end = 0
         for base, size in sorted((imem, dmem, mmio)):
@@ -45,9 +35,25 @@ class AddressMap(NamedTuple):
             previous_end = base + size
         if (
             self.tohost % 4
-            or not self.mmio_base <= self.tohost <= self.mmio_base + self.mmio_size - 8
+            or not self.mmio_base <= self.tohost <= self.mmio_last - 7
         ):
             raise ValueError(
                 "both words of the aligned TOHOST mailbox must fit in MMIO"
             )
-        return imem, dmem
+
+    def memory_windows(self):
+        """Return RAM base and size pairs in firmware image order."""
+        return (self.imem_base, self.imem_size), (self.dmem_base, self.dmem_size)
+
+    # Inclusive endpoints fit on a 32-bit hardware port even at the top of memory.
+    @property
+    def imem_last(self):
+        return self.imem_base + self.imem_size - 1
+
+    @property
+    def dmem_last(self):
+        return self.dmem_base + self.dmem_size - 1
+
+    @property
+    def mmio_last(self):
+        return self.mmio_base + self.mmio_size - 1

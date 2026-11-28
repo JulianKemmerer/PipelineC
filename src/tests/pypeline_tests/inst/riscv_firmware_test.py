@@ -129,21 +129,21 @@ def test_linker_symbols_and_dmem_sections():
 
 
 def test_invalid_address_maps_rejected():
-    for layout in (
-        AddressMap(imem_base=2),
-        AddressMap(imem_size=0),
-        AddressMap(dmem_size=6),
-        AddressMap(mmio_size=4),
-        AddressMap(mmio_base=0xfffffffc, mmio_size=8, tohost=0xfffffffc),
-        AddressMap(mmio_base=0x1000, mmio_size=16, tohost=0x100c),
-        AddressMap(dmem_base=12),
-        AddressMap(dmem_base=0x7FFFFFFC),
-        AddressMap(tohost=0xFFFFFFFC),
-        AddressMap(tohost=0x80000002),
-        AddressMap(tohost=0x40000000),
+    for fields in (
+        dict(imem_base=2),
+        dict(imem_size=0),
+        dict(dmem_size=6),
+        dict(mmio_size=4),
+        dict(mmio_base=0xfffffffc, mmio_size=8, tohost=0xfffffffc),
+        dict(mmio_base=0x1000, mmio_size=16, tohost=0x100c),
+        dict(dmem_base=12),
+        dict(dmem_base=0x7FFFFFFC),
+        dict(tohost=0xFFFFFFFC),
+        dict(tohost=0x80000002),
+        dict(tohost=0x40000000),
     ):
         with TestCase().assertRaises(ValueError):
-            layout.memory_windows()
+            AddressMap(**fields)
 
 
 def test_entry_must_be_reset_vector():

@@ -13,7 +13,10 @@ The core executes one little-endian RV32I instruction per clock. The example top
 
 Each region has its own byte base and size. Choose non-overlapping regions in
 any order, with word-aligned bases and positive whole-word capacities. Gaps
-remain unmapped. Instruction fetches must be word-aligned. The IMEM base is
+remain unmapped. Constructing an `AddressMap` checks these constraints. Its
+`imem_last`, `dmem_last` and `mmio_last` properties give the inclusive last
+byte of each region. The hardware uses `address_in_range` for membership and
+`region_offset` for the byte offset from a RAM base. Instruction fetches must be word-aligned. The IMEM base is
 the reset vector. On the example top, use `-D IMEM_BASE=...`, `DMEM_BASE`,
 `MMIO_BASE` and their corresponding `*_SIZE` parameters to set the regions.
 `TOHOST` defaults to the MMIO base and occupies two words inside it.
@@ -58,17 +61,23 @@ core = make_rv32i_single_cycle_core(
 )
 ```
 
-Call `core()` once per clock. Separate call sites instantiate independent cores, including when they use the same factory result. Each factory can take its own layout, firmware and device. Its `riscv_out_t` gives the current instruction's
-`pc`, `unknown_op`, `mem_out_of_range`, `halt` and `return_value`. ECALL and
-EBREAK halt at their own PC. A halted core holds these outputs and the fetch address, suppresses register and memory writes, and presents idle byte enables to its still-clocked peripheral until reset. FENCE completes in one cycle. The Harvard core
+Call `core()` once per clock. Separate call sites instantiate independent cores, including when they use the same factory result. Each factory can take its own layout, firmware and device. The single-cycle result gives the current
+`pc`, `unknown_op`, `mem_out_of_range`, `halt` and live `device_status`.
+ECALL, EBREAK and a device halt request each stop execution. On the first halt
+cycle the PC identifies the stopping instruction. At the edge it returns to the
+reset vector, where it stays until reset. Register writes and RAM/MMIO
+transfers are disabled on subsequent cycles. The peripheral continues clocking.
+A testbench that needs the stopping PC or fault flags captures them on the first
+halt cycle. FENCE completes in one cycle. The Harvard core
 has read-only instruction memory and provides no CSRs, traps or FENCE.I.
 
 A custom `@hw_func` device takes `addr: uint32_t`, `wr_data: uint32_t`,
 `wr_byte_ens: uint1_t[4]` and `rd_byte_ens: uint1_t[4]` as named inputs.
 It receives a word-aligned byte address. Byte enables and store data are
 shifted to their little-endian word lanes. Both enables are clear for an idle
-or invalid transfer. Return a `cpu.mem_map.riscv_mem_map_mod_out_t` with
-`addr_is_mapped`, combinational `rd_data`, `halt` and `return_value`. The core
+or invalid transfer. Return a `cpu.mem_map_port.riscv_mem_map_mod_out_t` with
+`addr_is_mapped`, combinational `rd_data`, a `halt` request and a 32-bit
+`device_status` word for the caller. A one-cycle request suffices. The core
 checks the address claim for active MMIO accesses, selects the requested
 load lanes, and sign-extends LB and LH.
 
@@ -78,8 +87,9 @@ or without a trap handler. There is no inbound `fromhost` channel.
 The simulation-control device accepts full-word stores to `TOHOST` at
 the configured mailbox address (default `0x80000000`). A store of 1 finishes successfully. An odd code
 `(n << 1) | 1` with nonzero `n` fails with the test number or C return
-value. An even code or a partial store also fails. In hardware the device
-holds the halt bit and return value. The upper word at `TOHOST + 4`
+value. An even code or a partial store also fails. In hardware the device requests halt on the low-word store and
+holds the raw exit code from a full-word write until reset. The example drives
+its success pin when that code equals 1. The upper word at `TOHOST + 4`
 accepts stores and both words read zero.
 
 ## Building firmware

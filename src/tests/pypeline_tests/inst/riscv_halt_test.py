@@ -1,9 +1,9 @@
 """Check independent CPU instances, retirement on halt and an always-clocked peripheral."""
 
 from pypeline import *
-from cpu.mem_map import AddressMap, riscv_mem_map_mod_out_t
-from riscv.core import riscv_out_t
-from riscv.single_cycle import make_rv32i_single_cycle_core
+from cpu.mem_map import AddressMap
+from cpu.mem_map_port import riscv_mem_map_mod_out_t
+from riscv.single_cycle import make_rv32i_single_cycle_core, riscv_out_t
 
 # Observe the peripheral's local clock counter even after its CPU halts.
 device_ticks: Wire[uint32_t]
@@ -23,7 +23,7 @@ def peripheral(
     rv: riscv_mem_map_mod_out_t
     rv.addr_is_mapped = addr == 0x1004
     rv.halt = write != 0
-    rv.return_value = ticks
+    rv.device_status = ticks
     ticks += 1
     return rv
 
@@ -68,14 +68,16 @@ def check():
         second = core()
     third = other()
     sim_assert(first.halt == (cycle >= 1))
-    sim_assert(first.pc == (uint32_t(4) if cycle >= 1 else uint32_t(0)))
+    sim_assert(first.pc == (uint32_t(4) if cycle == 1 else uint32_t(0)))
     sim_assert(second.halt == (cycle >= 3))
-    sim_assert(second.pc == (uint32_t(4) if cycle >= 3 else uint32_t(0)))
+    sim_assert(second.pc == (uint32_t(4) if cycle == 3 else uint32_t(0)))
     sim_assert(third.halt == (cycle >= 2))
     sim_assert(device_ticks == cycle, f"device clock stalled at {device_ticks}")
-    if cycle >= 2:
+    if cycle == 2:
         sim_assert(third.pc == 0x10C)
-        sim_assert(third.return_value == 2)
+    if cycle > 2:
+        sim_assert(third.pc == 0x104)
+    sim_assert(third.device_status == cycle)
     sim_print(
         f"cycle={cycle} first={first.pc} second={second.pc} third={third.pc}",
         debug=True,

@@ -73,7 +73,8 @@ class decoded_t(NamedTuple):
     pc_plus4_to_reg: uint1_t
     exe_to_pc: uint1_t
     signed_immediate: int32_t
-    halt: uint1_t
+    is_ecall: uint1_t
+    is_ebreak: uint1_t
     unknown_op: uint1_t
 
 
@@ -187,10 +188,9 @@ def decode(inst: uint32_t) -> decoded_t:
         if rv.funct3 != 0b000:  # FENCE is a no-op; FENCE.I is not supported
             rv.unknown_op = 1
     elif rv.opcode == OP_SYSTEM:
-        if (inst == INST_ECALL) | (inst == INST_EBREAK):
-            rv.halt = 1
-        else:
-            rv.unknown_op = 1
+        rv.is_ecall = inst == INST_ECALL
+        rv.is_ebreak = inst == INST_EBREAK
+        rv.unknown_op = ~(rv.is_ecall | rv.is_ebreak)
     else:
         rv.unknown_op = 1
     return rv

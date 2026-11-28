@@ -260,7 +260,6 @@ def get_tests() -> list:
                     "-D", "ISA_TEST=rv32ui/lui",
                     "-D", "IMEM_SIZE=256",
                     "-D", "DMEM_SIZE=16",
-                    "-D", "STATUS_PIN_ONLY=1",
                 ],
                 tool,
                 requires=[riscv_gcc],

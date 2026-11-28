@@ -14,8 +14,7 @@ from pypeline import (
 from cpu.mem_map import AddressMap
 from riscv.sim_ctrl import make_sim_ctrl_device
 from riscv import firmware
-from riscv.core import riscv_out_t
-from riscv.single_cycle import make_rv32i_single_cycle_core
+from riscv.single_cycle import make_rv32i_single_cycle_core, riscv_out_t
 
 # Leave RAM live across a mid-program reset (startup has cleared .bss).
 RESET_AT = 90

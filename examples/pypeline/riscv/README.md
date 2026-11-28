@@ -34,13 +34,14 @@ make -C "$OUT/firmware" dump-code
 
 ## FPGA fit example
 
-Select the upstream LUI instruction test and expose the program's success on one
-pin. Its short ROM lets synthesis specialize the single-cycle datapath. The same
-`top.py` can expose full core status for simulation.
+The example exposes one output, `passed`, for every firmware selection. It goes
+high when the program writes a full word of 1 to its exit mailbox and stays high
+until reset. A separate simulation deadline checks for a timeout. The upstream
+LUI test has a short ROM that lets synthesis specialize the single-cycle datapath.
 
 ```sh
-./src/pypelinec examples/pypeline/riscv/top.py --comb --part ICE40UP5K-SG48 --syn_tool open_tools -D ISA_TEST=rv32ui/lui -D IMEM_SIZE=256 -D DMEM_SIZE=16 -D STATUS_PIN_ONLY=1 --out_dir "$OUT/pico_ice"
-./src/pypelinec examples/pypeline/riscv/top.py --comb --part xc7a35ticsg324-1l --syn_tool vivado -D ISA_TEST=rv32ui/lui -D IMEM_SIZE=256 -D DMEM_SIZE=16 -D STATUS_PIN_ONLY=1 --out_dir "$OUT/arty"
+./src/pypelinec examples/pypeline/riscv/top.py --comb --part ICE40UP5K-SG48 --syn_tool open_tools -D ISA_TEST=rv32ui/lui -D IMEM_SIZE=256 -D DMEM_SIZE=16 --out_dir "$OUT/pico_ice"
+./src/pypelinec examples/pypeline/riscv/top.py --comb --part xc7a35ticsg324-1l --syn_tool vivado -D ISA_TEST=rv32ui/lui -D IMEM_SIZE=256 -D DMEM_SIZE=16 --out_dir "$OUT/arty"
 ```
 
 Read utilization and timing in the tool log under the output directory's

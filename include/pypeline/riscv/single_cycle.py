@@ -4,7 +4,7 @@ from typing import NamedTuple
 from pypeline import *
 from ram import make_ram
 from cpu.mem_map import AddressMap
-from riscv.core import riscv_out_t
+from cpu.mem_map_port import address_in_range, region_offset
 from riscv.rv32i import decode, decoded_t, execute, select_next_pc, select_reg_wr_data
 
 # Enable a tagged architectural trace in native and HDL simulation.
@@ -13,6 +13,15 @@ RISCV_TRACE = param(
     default=False,
     help="Trace instruction, register write and store each cycle",
 )
+
+
+@struct
+class riscv_out_t(NamedTuple):
+    halt: uint1_t
+    device_status: uint32_t
+    pc: uint32_t
+    unknown_op: uint1_t
+    mem_out_of_range: uint1_t
 
 
 @struct
@@ -26,26 +35,20 @@ class riscv_dmem_out_t(NamedTuple):
     rd_data: uint32_t
     mem_out_of_range: uint1_t
     halt: uint1_t
-    return_value: uint32_t
-
-
-@hw_func
-def in_region(addr: uint32_t, base: uint32_t, last: uint32_t) -> uint1_t:
-    return (addr >= base) & (addr <= last)
+    device_status: uint32_t
 
 
 def make_rv32i_single_cycle_core(*, imem_init, dmem_init, mem_map, layout=AddressMap()):
     """Return a no-argument hardware function. Memory sizes are in bytes."""
-    layout.memory_windows()
     imem_size = layout.imem_size
     dmem_size = layout.dmem_size
     reset_vector = layout.imem_base
     data_base = layout.dmem_base
     mmio_base = layout.mmio_base
     # Inclusive last addresses also represent regions ending at 2**32.
-    imem_last = reset_vector + imem_size - 1
-    dmem_last = data_base + dmem_size - 1
-    mmio_last = mmio_base + layout.mmio_size - 1
+    imem_last = layout.imem_last
+    dmem_last = layout.dmem_last
+    mmio_last = layout.mmio_last
     imem = make_ram(
         elem_t=uint32_t,
         size=imem_size // 4,
@@ -91,9 +94,9 @@ def make_rv32i_single_cycle_core(*, imem_init, dmem_init, mem_map, layout=Addres
         rd = array_to_uint_le(decoded.mem_rd_byte_ens)
         lanes: uint4_t = wr | rd
         aligned = ~((lanes[3] & (offset != 0)) | (lanes[1] & addr[0]))
-        local_addr: uint32_t = addr - data_base
-        in_ram = in_region(addr=addr, base=data_base, last=dmem_last)
-        in_mmio = in_region(addr=addr, base=mmio_base, last=mmio_last)
+        local_addr: uint32_t = region_offset(addr=addr, base=data_base)
+        in_ram = address_in_range(addr=addr, base=data_base, last=dmem_last)
+        in_mmio = address_in_range(addr=addr, base=mmio_base, last=mmio_last)
         # Move each enable by the byte offset and store data by eight times
         # that offset. RAM and MMIO see identical little-endian word lanes.
         shifted_wr: uint4_t = wr << offset
@@ -125,17 +128,17 @@ def make_rv32i_single_cycle_core(*, imem_init, dmem_init, mem_map, layout=Addres
             mm_wr = shifted_wr
             mm_rd = shifted_rd
         mm = mem_map(
-            addr=addr & 0xFFFFFFFC,
+            addr=concat(addr[31:2], uint2_t(0)),
             wr_data=shifted_data,
             wr_byte_ens=uint_to_array_le(mm_wr, 1),
             rd_byte_ens=uint_to_array_le(mm_rd, 1),
         )
         rv: riscv_dmem_out_t
-        rv.mem_out_of_range = (lanes != 0) & ~(
+        rv.mem_out_of_range = enabled & (lanes != 0) & ~(
             aligned & (in_ram | (in_mmio & mm.addr_is_mapped))
         )
         rv.halt = mm.halt
-        rv.return_value = mm.return_value
+        rv.device_status = mm.device_status
         # Select the addressed byte or halfword before extending to XLEN.
         word: uint32_t = mm.rd_data if in_mmio else ram_out.p0.rd_data
         rv.rd_data = word
@@ -159,8 +162,8 @@ def make_rv32i_single_cycle_core(*, imem_init, dmem_init, mem_map, layout=Addres
         pc: Reg[uint32_t] = reset_vector
         halted: Reg[uint1_t]
         enabled = ~halted
-        fetch_offset: uint32_t = pc - reset_vector
-        in_rom = in_region(addr=pc, base=reset_vector, last=imem_last)
+        fetch_offset: uint32_t = region_offset(addr=pc, base=reset_vector)
+        in_rom = address_in_range(addr=pc, base=reset_vector, last=imem_last)
         pc_plus4: uint32_t = pc + 4
         fetch = imem(p0=imem.p0_in_t(addr=fetch_offset[imem_hi:2], valid=1))
         inst = fetch.p0.rd_data
@@ -201,7 +204,7 @@ def make_rv32i_single_cycle_core(*, imem_init, dmem_init, mem_map, layout=Addres
             addr=exe.result, wr_data=regs_out.rd_data2, decoded=decoded, enabled=enabled
         )
         sim_assert(
-            halted | ~mem.mem_out_of_range,
+            ~mem.mem_out_of_range,
             f"bad data address={hex(exe.result)} pc={hex(pc)} inst={hex(inst)}",
         )
         # Writeback. The edge commits rd and feeds the selected PC back to fetch.
@@ -215,21 +218,15 @@ def make_rv32i_single_cycle_core(*, imem_init, dmem_init, mem_map, layout=Addres
             valid=1,
         )
         rv: riscv_out_t
-        # Latch the retirement status, since a live device may change its
-        # response once its transfer enables are removed.
-        final_value: Reg[uint32_t]
-        final_range_error: Reg[uint1_t]
-        rv.halt = halted | decoded.halt | mem.halt
-        rv.return_value = final_value if halted else mem.return_value
         rv.pc = pc
         rv.unknown_op = decoded.unknown_op
-        rv.mem_out_of_range = final_range_error if halted else mem.mem_out_of_range
-        if ~rv.halt:
-            pc = select_next_pc(decoded=decoded, exe=exe, pc_plus4=pc_plus4)
-        elif enabled:
+        rv.mem_out_of_range = mem.mem_out_of_range
+        rv.device_status = mem.device_status
+        rv.halt = halted | decoded.is_ecall | decoded.is_ebreak | mem.halt
+        pc = select_next_pc(decoded=decoded, exe=exe, pc_plus4=pc_plus4)
+        if rv.halt:
+            pc = reset_vector
             halted = 1
-            final_value = mem.return_value
-            final_range_error = mem.mem_out_of_range
         return rv
 
     return single_cycle_core

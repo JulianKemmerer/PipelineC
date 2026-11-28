@@ -6,14 +6,11 @@ from cpu.mem_map import AddressMap
 from riscv.sim_ctrl import make_sim_ctrl_device
 from riscv.isa_tests import INCLUDES, ISA_TESTS, RISCV_TESTS_DIR
 from riscv import firmware
-from riscv.core import riscv_out_t
 from riscv.single_cycle import make_rv32i_single_cycle_core
 
 # Select one program. The ISA assembly supplies its own entry point.
 ISA_TEST = param(name="ISA_TEST", default="", choices=("",) + ISA_TESTS)
 FIRMWARE = param(name="FIRMWARE", default="", help="prebuilt RV32I ELF")
-# Limit FPGA pins to reset, clock and the program's pass indication.
-STATUS_PIN_ONLY = param(name="STATUS_PIN_ONLY", default=False)
 # Simulation watchdog shared by native and generated HDL runs.
 MAX_CYCLES = param(name="MAX_CYCLES", default=3712)
 # Pass the same byte ranges to the firmware linker and the hardware decoder.
@@ -50,17 +47,10 @@ core = make_rv32i_single_cycle_core(
 rst: Input[uint1_t] = make_reset()
 
 
-if STATUS_PIN_ONLY:
-
-    @MAIN(reset=rst, reset_registers="all")
-    def passed() -> uint1_t:
-        result = core()
-        return result.halt & (result.return_value == 0)
-else:
-
-    @MAIN(reset=rst, reset_registers="all")
-    def riscv() -> riscv_out_t:
-        return core()
+@MAIN(reset=rst, reset_registers="all")
+def passed() -> uint1_t:
+    result = core()
+    return result.device_status == 1
 
 
 # A hardware-language checker also runs in generated VHDL simulation.

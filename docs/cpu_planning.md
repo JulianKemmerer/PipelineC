@@ -162,7 +162,7 @@ on `PATH`; the legacy Makefiles say `export PATH=$PATH:/opt/riscv/bin`.
    - `wr_data`, 32 bits, and `wr_byte_ens[4]`;
    - `rd_byte_ens[4]`;
    - `rd_data`, combinational, and `addr_is_mapped`;
-   - `halt` and `return_value` from a device. M3 merges them across devices.
+   - a `halt` request and a live `device_status` word from a device. M3 merges them across devices.
 
    Every memory and device sees this port. The legacy module's `valid` and `ready`
    signals belong to the multi-cycle cores, which are [deferred](#deferred).
@@ -447,9 +447,9 @@ them.
     the values the program last wrote. Only reloading the FPGA restores it.
   - M1 documents this behavior. Restoring `.data` needs a copy from a readable image
     ([Deferred](#deferred)).
-- **Halt:** the PC holds and retirement stops. The core disables register writes and RAM/MMIO transfers. The device continues clocking while the final return value and status stay available.
-- **Debug outputs:** the legacy core's `pc`, `unknown_op`, `mem_out_of_range`, `halt`
-  and `return_value`.
+- **Halt:** the PC returns to the reset vector at the edge. A sticky halted bit disables subsequent register writes and RAM/MMIO transfers. The device continues clocking. A testbench can sample the stopping PC on the first halt cycle.
+- **Debug outputs:** the current `pc`, `unknown_op`, `mem_out_of_range`, `halt`
+  and the peripheral's `device_status`.
   The tops use the default clock with an input reset and no clock goal.
   Per-instruction trace prints sit behind `param("RISCV_TRACE", False)` and print with
   `hex()`.
@@ -469,7 +469,7 @@ On a write, the device:
 - calls `sim_finish()`.
 
 These are hardware statements, so the same pass/fail check works in native simulation and
-in GHDL. On a board, the write sets `halt`.
+in GHDL. The device pulses `halt` on a low-word write and holds the full-word exit code. The board success pin tests that code for equality to 1.
 
 ### Firmware build and RAM contents
 
@@ -594,7 +594,7 @@ per-write enables and a continuously driven DMEM read address reports 670.100 ns
 than the original 590.714 ns. Eight critical-path arcs exceed the library's
 capacitance limit and one cell is unpriced.
 
-With `rv32ui/lui`, 256 bytes of IMEM, 16 bytes of DMEM and the success pin,
+At `3354a757`, with `rv32ui/lui`, 256 bytes of IMEM, 16 bytes of DMEM and the success pin,
 nextpnr-ice40 (UP5K SG48, seed 1, unconstrained pins) routes 1,659 of 5,280
 logic cells and reports 12.71 MHz. Vivado 2019.2 synthesis for the Arty
 A7-35T estimates 63.25 MHz with 1,300 slice LUTs and 97 registers. The checksum
@@ -613,9 +613,12 @@ trace comparisons and the independent-core halt and reset tests to check behavio
 Measure alternatives on the same part with the same ROM, memory sizes and synthesis
 settings. Compare LUTs and the reported critical path before adopting a more complex
 encoding or mux. At decoder optimization, evaluate simpler implementations of
-`in_region` for aligned layouts, down to a single address bit where membership
+`address_in_range` for aligned layouts, down to a single address bit where membership
 is exactly equivalent across the entire address space. Check boundaries and
-unmapped gaps for each specialization. Also evaluate optional
+unmapped gaps for each specialization. For an in-range byte address, compare
+`region_offset` subtraction with low-bit extraction when the capacity is a power
+of two and the base is aligned to it. Compare constant masks with bit slices and
+concatenation for setting or clearing fixed fields. Also evaluate optional
 `AUTO_COMB_DELAY_OPT` and `AUTO_COMB_AREA_OPT` policies for execute and other combinational
 blocks.
 
