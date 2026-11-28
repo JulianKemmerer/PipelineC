@@ -3,6 +3,80 @@
 The core executes one little-endian RV32I instruction per clock. The example top builds the C demo or a selected ISA test during design import. Start with the
 [example commands](../../../examples/pypeline/riscv/README.md).
 
+## The datapath
+
+[`single_cycle.py`](single_cycle.py) builds the single-cycle datapath of
+Patterson & Hennessy's *Computer Organization and Design, RISC-V Edition*
+(chapter 4) and Harris & Harris's *Digital Design and Computer Architecture,
+RISC-V Edition* (chapter 7). Each of the five stages is its own function, and
+the signals use the books' names. One instruction passes through all five in
+one clock cycle. A stage's output struct holds the values that leave it,
+roughly what a pipelined core keeps in its IF/ID, ID/EX, EX/MEM and MEM/WB
+registers.
+
+| Stage | Textbook blocks | Function | Notes |
+|---|---|---|---|
+| — | PC | `pc_register` | Loads the next PC at the clock edge. A halt sends it to the reset vector and stops the core |
+| IF | Instruction memory, PC + 4 adder | `if_stage` | Passes the PC on, as the IF/ID register does |
+| ID | Control unit, immediate generator, register file | `id_stage`: `rv32i.decode`, `rv32i.imm_gen`, `register_file` | Instruction fields `rd`, `rs1`, `rs2`, `funct3`, `funct7`; control signals `reg_write`, `result_src`, `mem_read`, `mem_write`, `pc_src`; `read_data1`, `read_data2` |
+| EX | ALU, branch comparator, PC + imm adder, PCSrc mux | `ex_stage`: `rv32i.execute`, `rv32i.next_pc_mux` | One result: the ALU value, the memory address, or a jump or branch target |
+| MEM | Data memory | `mem_stage` | Byte and halfword lanes, alignment checks, and the memory-mapped device |
+| WB | ResultSrc mux | `wb_stage`: `rv32i.result_mux` | The register write goes back to the register file, and ECALL, EBREAK or a device request goes back to the PC as a halt |
+
+The book figures decide a branch with the ALU's Zero flag and a separate
+target adder. Here `execute` compares the registers itself and returns the
+branch's next PC, target or PC + 4, so `pc_src` is set for every branch and
+jump. Loads and stores also handle bytes and halfwords, which the book
+figures leave out.
+
+This is the core's view in the example's `diagram.html`
+([Viewing the design](../../../docs/README.md#viewing-the-design)), copied with
+**copy as Mermaid**. Dotted edges go through a `Feedback`: a value a later stage
+computes and an earlier one uses in the same cycle.
+
+```mermaid
+flowchart LR
+    n0["pc_register"]
+    n1["if_stage"]
+    n2["id_stage"]
+    n3["ex_stage"]
+    n4["mem_stage"]
+    n5["wb_stage"]
+    subgraph outputs[" "]
+        n6["pc<br>output  uint32_t (32b)"]
+        n7["device_status<br>output  uint32_t (32b)"]
+        n8["mem_out_of_range<br>output  uint1_t (1b)"]
+        n9["illegal_instruction<br>output  uint1_t (1b)"]
+        n10["halt<br>output  uint1_t (1b)"]
+    end
+    style outputs fill:none,stroke:none
+    n0 -->|"pc_out.pc"| n1
+    n0 -->|"pc_out.running"| n2
+    n0 -->|"pc_out.running"| n4
+    n0 -->|"pc_out.pc"| n6
+    n0 -->|"pc_out.halt"| n10
+    n1 -->|"if_out: pc, instr"| n2
+    n1 -->|"if_out: pc, pc_plus4"| n3
+    n1 -->|"if_out.pc"| n4
+    n1 -->|"if_out.pc_plus4"| n5
+    n2 -->|"id_stage → ex_stage.id_out"| n3
+    n2 -->|"id_out: read_data2, decoded"| n4
+    n2 -->|"id_out.decoded"| n5
+    n2 -->|"id_out.decoded.illegal_instruction"| n9
+    n3 -.->|"ex_out.next_pc"| n0
+    n3 -->|"ex_out.alu_result"| n4
+    n3 -->|"ex_out.alu_result"| n5
+    n4 -->|"mem_out: read_data, device_halt"| n5
+    n4 -->|"mem_out.device_status"| n7
+    n4 -->|"mem_out.mem_out_of_range"| n8
+    n5 -.->|"wb_out.halt"| n0
+    n5 -.->|"wb_out.rd_write"| n2
+    n5 ~~~ n6
+```
+
+To refresh it after changing the core, build the example with `--comb --no_synth`,
+open `diagram.html`, go to `passed` and then `core`, and copy the view again.
+
 ## Address map and reset
 
 | Default byte address | Contents |
@@ -62,7 +136,7 @@ core = make_rv32i_single_cycle_core(
 ```
 
 Call `core()` once per clock. Separate call sites instantiate independent cores, including when they use the same factory result. Each factory can take its own layout, firmware and device. The single-cycle result gives the current
-`pc`, `unknown_op`, `mem_out_of_range`, `halt` and live `device_status`.
+`pc`, `illegal_instruction`, `mem_out_of_range`, `halt` and live `device_status`.
 ECALL, EBREAK and a device halt request each stop execution. On the first halt
 cycle the PC identifies the stopping instruction. At the edge it returns to the
 reset vector, where it stays until reset. Register writes and RAM/MMIO
@@ -141,8 +215,10 @@ environment, with `gp` holding the current test number. `fence_i` needs writable
 instruction memory and `ma_data` needs misaligned data access.
 
 Set `-D ISA_TEST=rv32ui/add` on the example top. Use `--run all` so the program
-runs to its exit store. The top asserts a `MAX_CYCLES` deadline (default
-3,712 cycles). `-D RISCV_TRACE=1` prints the PC, instruction word, register
-write and effective store address, source data and unshifted byte mask before
-the device can finish the simulation. The [test reference](../../../docs/pypeline_TESTS.md#risc-v-cpu-coverage)
+runs to its exit store. The top asserts a `MAX_CYCLES` deadline.
+`-D RISCV_TRACE=1` prints, for each instruction, the PC and
+instruction word, the register write (`reg_write`, `rd` and the data), and
+the memory access (`mem_write`, the address, rs2's value and the unshifted
+byte mask). It prints before the memory stage, so a store that ends the
+simulation still appears. The [test reference](../../../docs/pypeline_TESTS.md#risc-v-cpu-coverage)
 covers the native/GHDL comparisons.

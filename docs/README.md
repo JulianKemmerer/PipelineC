@@ -1519,7 +1519,13 @@ the details below one click away.
   VS Code; Ctrl- or Cmd-click a block to open its call site. **copy as Mermaid**
   copies the current view as a Mermaid `flowchart`, for a README: the blocks, and
   the edges with the labels the view shows, inputs in a column on the left and
-  outputs on the right.
+  outputs on the right. The blocks keep the view's left-to-right order, loops
+  included. The [RISC-V library guide](../include/pypeline/riscv/pypeline_riscv_guide.md#the-datapath)
+  shows one.
+- **A view drawn in one column:** when a block feeds another and gets a value of
+  the same width back from it through a `Feedback`, the view can put every block in
+  one column ([known issue #413](issues_inventory.md#30-413i413-the-design-diagram-draws-a-view-in-one-column-when-a-feedback-edge-pairs-with-a-forward-edge)).
+  Passing the forward value through another block avoids it.
 
 The page does not show AUTO_PIPELINE or AUTO_FSM internals. An AUTO_FSM call site is
 one block. C designs get the same page, with whole global wires rather than fields.

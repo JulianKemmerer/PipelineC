@@ -592,7 +592,12 @@ slowest member.
   with loops dagre can still rank an output right after the block feeding it, before
   blocks of later layers, so invisible links (`~~~`) run from each block of the
   page's last middle layer to the first output, after the real edges (which keeps
-  the `linkStyle` indices).
+  the `linkStyle` indices). Blocks are declared in the view's order (inputs, then
+  left to right and top to bottom, then outputs), and edges are listed by their
+  source's place, then their destination's. dagre breaks each loop with a
+  depth-first walk in that order, so the edges it reverses are the ones the view
+  draws backwards, and a `Feedback` into an earlier block leaves the columns in the
+  view's order.
 
 ### Self-test
 
@@ -607,7 +612,9 @@ of one variable on one name-label line, then draws:
   every edge's label is, a pin group holds more than one pin and none of its pins is drawn
   on its own, and there is no file banner; that the top file's link opens it; and
   every file view, checking each has its banner;
-- each function with a graph three times: with the defaults, checking that no
+- each function with a graph three times: with the defaults, checking that its
+  Mermaid text declares its blocks left to right and lists edges by their sources'
+  places, and that no
   operator (a call with `op` included), wiring call site, register, constant or clock
   enable is drawn, every edge's label is, no returned struct is drawn as one output, no port
   or wire stub is feedback and, in a view with forward interfaces both ways, none is
@@ -660,9 +667,14 @@ where the same paths exist.
 - A call is drawn as an operator when an operator was dispatched to its callee
   anywhere in the parse (`pypeline_operator_impl_ops` is per callee), so a direct
   call to the same specialization is drawn as one too.
-- The Mermaid text's columns hold only for its first and last layers; dagre places
-  the blocks between them by its own ranking and cycle breaking, which can differ
-  from the page's.
+- The Mermaid text's columns hold only for its first and last layers. dagre ranks
+  the blocks between them itself: declaring them in the page's order makes its cycle
+  breaking reverse the edges the page draws backwards, but its columns can still
+  differ from the page's.
+- `layout()` reverses the narrower edge of a two-way pair before the `Feedback` rule
+  runs, so when the other edge of the pair is a `Feedback` edge that stays reversed,
+  the layering graph keeps a cycle and the view draws its blocks in one column
+  ([known issue #413](issues_inventory.md#30-413i413-the-design-diagram-draws-a-view-in-one-column-when-a-feedback-edge-pairs-with-a-forward-edge)).
 - Type names that stay alike after factory arguments (the same class with arguments
   of the same name) are told apart only by their widths and tooltips.
 - A function used at several instances has one graph; latencies are per instance,
@@ -682,6 +694,7 @@ where the same paths exist.
 | `inst/diagram_test.py` | elab_introspect | the data of four Pypeline designs and one C example, parsed in-process: files, clocks, links and their roles, graphs, edge names, `Feedback` edges and their types, type roles, names and fields (an interface wire's feedback fields), field selects and assemblies, operators dispatched to calls, a generated function's source function, wire stubs' roles and driven fields, wiring call sites, call-site kinds |
 | `inst/diagram_build_test.py` | build_report_device_models | a sky130 build's latencies against `built_hardware.json`, delays and offsets, the pipelined divider's operator latencies, a `--no_synth` build, a failed build removing the page |
 | `inst/diagram_render_test.py` | unit (needs `google-chrome`) | the [self-test](#self-test) of four designs' pages in headless Chrome, and what `diagram_interfaces_design.py`'s default views draw: a returned struct's outputs, wire names, sideband and feedback ports and data left out, an operator's call in a logic block, a global wire write taking only its fields, a label with one variable's fields on one line, packed pins as one port |
+| `inst/diagram_feedback_pair_test.py` | known_issues (needs `google-chrome`) | [#413](issues_inventory.md#30-413i413-the-design-diagram-draws-a-view-in-one-column-when-a-feedback-edge-pairs-with-a-forward-edge): `diagram_feedback_pair_design.py`'s blocks in three columns, left to right; XFAIL while the view draws them in one |
 
 `inst/diagram_interfaces_design.py` is the fixture for interface roles, type names
 (named and unnamed stream types), `Feedback` edges of both roles, wiring call sites,

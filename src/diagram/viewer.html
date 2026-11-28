@@ -2062,12 +2062,20 @@ addEventListener("click", (ev) => {
 // labels shown. Mermaid's layout (dagre) puts a block next to what it connects
 // to, so the inputs (and registers, global wire reads) go in one subgraph and
 // the outputs in another: dagre keeps each subgraph's blocks in one column,
-// left of everything they feed and right of everything feeding them.
+// left of everything they feed and right of everything feeding them. Blocks
+// are declared in the view's order, left to right, and edges sorted by their
+// source's place, then their destination's: dagre breaks a loop at the edge
+// its depth-first walk in that order meets last, so an edge the view draws
+// backwards (a Feedback into an earlier block) stays the one that is reversed.
 function mermaidText() {
-  const { nodes, edges } = state.last || { nodes: [], edges: [] };
+  const { nodes: drawnNodes, edges } = state.last || { nodes: [], edges: [] };
   const esc = (t) => String(t).replace(/"/g, "#quot;").replace(/</g, "#lt;").replace(/>/g, "#gt;");
   const q = (lines) => '"' + lines.map(esc).join("<br>") + '"';
+  const side = (n) => n.rank === "first" ? 0 : n.rank === "last" ? 2 : 1;
+  const nodes = drawnNodes.slice().sort((a, b) =>
+    side(a) - side(b) || (a.x + a.w / 2) - (b.x + b.w / 2) || a.y - b.y);
   const ids = new Map(nodes.map((n, i) => [n.id, "n" + i]));
+  const place = new Map(nodes.map((n, i) => [n.id, i]));
   const shape = (n) => ids.get(n.id) + (isCloud(n) ? "((" + q(n.mermaid || n.lines) + "))" : "[" + q(n.mermaid || n.lines) + "]");
   const out = ["flowchart LR"];
   for (const n of nodes) if (n.rank !== "first" && n.rank !== "last") out.push("    " + shape(n));
@@ -2080,8 +2088,9 @@ function mermaidText() {
   }
   const cross = [];
   let i = 0;
-  for (const e of edges) {
-    if (!ids.has(e.s) || !ids.has(e.d)) continue;
+  const shown = edges.filter((e) => ids.has(e.s) && ids.has(e.d));
+  shown.sort((a, b) => place.get(a.s) - place.get(b.s) || place.get(a.d) - place.get(b.d));
+  for (const e of shown) {
     const arrow = e.fb ? "-.->" : "-->";
     out.push("    " + ids.get(e.s) + " " + arrow + (e.lines.length ? "|" + q(e.lines) + "|" : "") + " " + ids.get(e.d));
     if (e.cross) cross.push(i);
@@ -2123,6 +2132,23 @@ const ALL_SHOWN = (f) => { for (const k of KINDS) f[k.id].mode = "show"; };
 const ALL_HIDDEN = (f) => {
   for (const k of KINDS) { f[k.id].mode = k.modes.includes("pass") ? "pass" : "drop"; f[k.id].scope = "all"; }
 };
+// The Mermaid text of the drawn view declares its blocks in the view's order,
+// left to right, and lists the edges by their sources' places (see mermaidText)
+function checkMermaidOrder(where, check) {
+  const mm = mermaidText();
+  const firstLine = (n) => String((n.mermaid || n.lines)[0]).replace(/"/g, "#quot;").replace(/</g, "#lt;").replace(/>/g, "#gt;");
+  const pool = new Map();
+  for (const n of state.last.nodes) {
+    if (n.rank === "first" || n.rank === "last") continue;
+    if (!pool.has(firstLine(n))) pool.set(firstLine(n), []);
+    pool.get(firstLine(n)).push(n.x + n.w / 2);
+  }
+  for (const xs of pool.values()) xs.sort((a, b) => a - b);
+  const declaredX = [...mm.matchAll(/^    n\d+[[(]+"([^"]*?)(?:<br>|")/gm)].map((m) => (pool.get(m[1]) || [NaN]).shift());
+  check(declaredX.every((x, k) => !k || x >= declaredX[k - 1]), "Mermaid blocks not declared left to right in " + where);
+  const sources = [...mm.matchAll(/^    n(\d+) -\.?->/gm)].map((m) => +m[1]);
+  check(sources.every((s, k) => !k || s >= sources[k - 1]), "Mermaid edges not listed by their sources' places in " + where);
+}
 function selftest() {
   let views = 0;
   const drawn = {};
@@ -2192,6 +2218,7 @@ function selftest() {
       const g = graphOf(fname);
       const v = functionView(inst); views++;
       record(fname, v);
+      checkMermaidOrder(fname, check);
       const ids = drawnIds(v);
       for (const e of v.edges) check(ids.has(e.s) && ids.has(e.d), "edge to an undrawn node in " + fname);
       // A returned struct is drawn as its fields; ports are neither feedback

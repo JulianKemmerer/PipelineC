@@ -241,6 +241,34 @@ def get_tests() -> list:
             requires=["ghdl"],
         )
     )
+    # The diagram reverses both edges of a two-way pair when one is a Feedback
+    # edge that closes a cycle, and lays every block of the view out in one
+    # column. Issue #413.
+    tests.append(
+        Test(
+            name="diagram_feedback_pair_known_issue",
+            category="known_issues",
+            cmd=[INST_DIR / "diagram_feedback_pair_test.py"],
+            expect_fail=True,
+            requires=["google-chrome"],
+        )
+    )
+    # @enum members are emitted into VHDL unchanged. A reserved-word member,
+    # and a member hidden by a same-named port of the function using it (VHDL
+    # names ignore case), each pass native sim and fail GHDL analysis. One
+    # registration per case, so fixing one shows up as an XPASS. Issue #358.
+    for case in ("reserved_word", "port_name"):
+        tests.append(
+            Test(
+                name=f"enum_{case}_known_issue",
+                category="known_issues",
+                cmd=[PYPELINEC, INST_DIR / f"enum_{case}_design.py",
+                     "--comb", "--sim", "--cocotb", "--ghdl", "--run", "all"],
+                needs_out_dir=True,
+                expect_fail=True,
+                requires=["ghdl"],
+            )
+        )
     # @pipeline_latency(N >= 1) (C: FUNC_LATENCY) on a wire-only body renders a
     # process sensitivity list ending in a dangling comment: illegal VHDL that
     # GHDL rejects. Issue #371.

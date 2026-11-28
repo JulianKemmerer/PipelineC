@@ -1,4 +1,8 @@
-"""Run the checksum demo, an ISA test or a prebuilt ELF on the single-cycle core."""
+"""Run the checksum demo, an ISA test or a prebuilt ELF on the single-cycle core.
+
+The core is in include/pypeline/riscv/single_cycle.py. Its docstring maps each
+part of the core to the textbook single-cycle datapath.
+"""
 
 from pathlib import Path
 from pypeline import *

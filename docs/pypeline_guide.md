@@ -776,7 +776,7 @@ def abs_val(x: int32_t) -> int32_t:
 > build stops with `Unknown name`. Native simulation accepts it. Write
 > `result: int32_t` (or `result: int32_t = x`, as above) first. A ternary that
 > introduces a name, `out = a if c else b`, needs its annotation for the same reason.
-> See [#411](issues_inventory.md#39-411i411-a-local-first-assigned-inside-a-runtime-if-is-unknown-after-the-if).
+> See [#411](issues_inventory.md#40-411i411-a-local-first-assigned-inside-a-runtime-if-is-unknown-after-the-if).
 
 #### Ternary expression
 
@@ -7108,8 +7108,11 @@ that differ only by case, or that normalize to the same identifier, are rejected
 `Input[T]` and `Output[T]` are different: their bare source names become top-level
 ports exactly, without a module prefix or silent normalization, so they must already be
 legal, globally unique VHDL identifiers. Imported `Wire[T]` names are module-prefixed;
-import aliases do not change that prefix. Enum member names are also emitted verbatim
-and therefore must not be VHDL reserved words ([#358](https://github.com/JulianKemmerer/PipelineC/issues/358)). Struct field names are normalized.
+import aliases do not change that prefix. Enum member names are also emitted verbatim,
+so a member must not be a VHDL reserved word. It must also differ, ignoring case, from
+every parameter of a function that uses it, and from `return_output`
+([known issue #358](issues_inventory.md#31-358i358-enum-member-names-clash-with-other-vhdl-names)).
+Struct field names are normalized.
 
 These source rules are the stable contract. Generated entity/type names and timing
 suffixes are implementation artifacts; use the lookup files described under
@@ -7139,7 +7142,7 @@ tracks the row.
 | Language | **Casting to an `@enum` or an array type** | Not supported | Scalar int/uint and `char_t` casting, and compound (struct/`@interface`-half) casting via `@cast`/`register_cast`, are supported (see [Casting](#casting)). An array destination is rejected with a clear error. Any `state_t(...)` call inside a hardware function currently crashes with an internal `TypeError`; use the members (`state_t.RUN`) directly | [#362](https://github.com/JulianKemmerer/PipelineC/issues/362) |
 | Language | **Assigning or returning an array of a different length** | Invalid VHDL | A `uint2_t[4]` value assigned to a `uint2_t[16]` local, or returned from a function declared `-> uint2_t[16]`, is accepted. Native simulation passes the 4-element value through, and GHDL rejects the generated VHDL. Keep array lengths equal | [#359](https://github.com/JulianKemmerer/PipelineC/issues/359) |
 | Language | **Arrays of `@enum` (`some_enum_t[N]`)** | Not supported | `@struct` installs `__class_getitem__`, `@enum` does not, so the subscript is an `IntEnum` member lookup and raises `KeyError`. Wrap the enum in a `@struct` and make an array of that — an enum inside a struct inside an array is fine | [#362](https://github.com/JulianKemmerer/PipelineC/issues/362) |
-| Language | **`@enum` member names that are VHDL reserved words** | Invalid VHDL | Member names are emitted verbatim into the generated VHDL enumeration type and are *not* sanitized (unlike locals and struct fields, which `_sanitize_vhdl_name` mangles), so a member called `ON`, `OPEN`, `OUT`, `BUS`, `RELEASE`, `REGISTER`, `RANGE`, `NEXT`, `REM` or `SIGNAL` produces uncompilable VHDL. Native simulation cannot see this — only a `synth_*`-category or GHDL run can, which is why every enum-bearing design wants one | [#358](https://github.com/JulianKemmerer/PipelineC/issues/358) |
+| Language | **`@enum` member names that are VHDL reserved words or port names** | Invalid VHDL | Member names are emitted verbatim into the generated VHDL enumeration type and are *not* sanitized (unlike locals and struct fields, which `_sanitize_vhdl_name` mangles), so a member called `ON`, `OPEN`, `OUT`, `BUS`, `RELEASE`, `REGISTER`, `RANGE`, `NEXT`, `REM` or `SIGNAL` produces uncompilable VHDL. VHDL names also ignore case, so in a function with a parameter `read_data` (or the implicit `return_output`), a member `READ_DATA` is hidden by the port. Rename the member or the parameter. Native simulation cannot see this — only a `synth_*`-category or GHDL run can, which is why every enum-bearing design wants one | [#358](issues_inventory.md#31-358i358-enum-member-names-clash-with-other-vhdl-names) |
 | Language | **Underscores in string literals** | Invalid VHDL | The literal is cut at the first `_` and loses its closing quote. The build and native simulation succeed; GHDL and synthesis tools reject the file. Use a string without `_`, or initialize the `char_t[N]` data numerically | [#356](https://github.com/JulianKemmerer/PipelineC/issues/356) |
 | Language | **An initializer on a `Reg[T]` whose element type is `char_t`** | Not supported | Rejected with a clear error; a zero-initialized char register works (see [Char arrays](#char-arrays-strings)) | [#357](https://github.com/JulianKemmerer/PipelineC/issues/357) |
 | Language | **Float literals as hardware values** | Not supported | Use `float_t.as_const(value)` at elaboration time | [#345](https://github.com/JulianKemmerer/PipelineC/discussions/345) |

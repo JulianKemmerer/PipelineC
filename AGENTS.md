@@ -252,7 +252,10 @@ For test-runner commands, see [Testing](#testing).
   `@struct` fields `release`, `reject`, `register`, `next`, `block`, `open`, `range`,
   `wait`, `file`, `label`, `null` or any other VHDL reserved word. Locals with such
   names get auto-renamed with a warning; grep build logs for
-  `not a legal VHDL identifier` rather than trusting the exit code.
+  `not a legal VHDL identifier` rather than trusting the exit code. VHDL names also
+  ignore case, so an `@enum` member must not match a parameter of a function that
+  uses it: `READ_DATA` inside a function with a `read_data` port fails GHDL
+  ([#358](docs/issues_inventory.md#31-358i358-enum-member-names-clash-with-other-vhdl-names)).
 - **Ternary branches must have identical types.** A bare integer literal gets its
   minimum width, so `CONST if c else x16` fails when `CONST = 1`. Bind the constant to
   a typed local first (`k: uint16_t = CONST`).

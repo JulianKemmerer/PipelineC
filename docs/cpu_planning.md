@@ -330,10 +330,10 @@ fixed. #402 and #404 are fixed before M5 and M6.
 
 | Source | Decision | Notes |
 |---|---|---|
-| `include/risc-v/risc-v.h`: opcode and funct constants | Port as is | Module-level integers |
-| `risc-v.h`: `decode()` | Port | One `if`/`elif` tree, as in C. The per-instruction `printf`s become M1's `RISCV_TRACE` prints. Dropped: `print_rs1_read`/`print_rs2_read`, which only steer those prints, and `is_rv32i`/`is_rv32_mul`/`is_rv32_div`, autopipeline split flags that M5's plugins replace. Each chain of `int13_uint1_12(...)` immediate helpers becomes one `concat`. Added for M1: FENCE as a no-op, ECALL and EBREAK as halt |
+| `include/risc-v/risc-v.h`: opcode and funct constants | Port, renamed | Module-level integers. The opcode names stay. The funct3 and funct7 names lose their M-extension halves (`FUNCT3_ADD_SUB_MUL` becomes `FUNCT3_ADD_SUB`), and OP and OP-IMM share one name per ALU code, so the core reads like the RV32I tables |
+| `risc-v.h`: `decode()` | Port, renamed | One `if`/`elif` tree, as in C. The per-instruction `printf`s become M1's `RISCV_TRACE` prints. Dropped: `print_rs1_read`/`print_rs2_read`, which only steer those prints, and `is_rv32i`/`is_rv32_mul`/`is_rv32_div`, autopipeline split flags that M5's plugins replace. The immediate moves to its own `imm_gen`, where each chain of `int13_uint1_12(...)` helpers becomes one `concat`. The fields and control signals take the textbook names (`src1` becomes `rs1`, `reg_wr` becomes `reg_write`, `mem_to_reg` and `pc_plus4_to_reg` become `result_src`). Added for M1: FENCE as a no-op, ECALL and EBREAK as halt |
 | `risc-v.h`: `execute()` | Port | JALR's `int32_uint1_0(result, 0)` becomes the single-bit store `result[0] = 0`. The M extension's `execute_rv32_mul` and `execute_rv32_div` move to M5's M plugin |
-| `risc-v.h`: `select_reg_wr_data()`, `select_next_pc()` | Port | Legacy load handling is split three ways: `decode()` sets byte enables, the DMEM wrapper shifts and truncates, and `select_reg_wr_data()` sign-extends. M1 joins them in the load and store alignment function |
+| `risc-v.h`: `select_reg_wr_data()`, `select_next_pc()` | Port as `result_mux` and `next_pc_mux` | Legacy load handling is split three ways: `decode()` sets byte enables, the DMEM wrapper shifts and truncates, and `select_reg_wr_data()` sign-extends. M1 joins them in the memory stage, `data_memory` |
 | `examples/risc-v/risc-v_decl.h` | Redesigned as M1's core factory | Same datapath. The macro instance (`riscv_name` and `#define`d sizes and contents) becomes factory arguments, and `#pragma FEEDBACK` becomes `Feedback[T]`. Its `halt` and `return_value` outputs are declared but never assigned; M1's halt comes from ECALL, EBREAK and the `TOHOST` write |
 | `include/risc-v/reg_file.h` | Port | The same three-port RAM and `x0` write gate. M1 adds the `x0` read mux, so `x0` does not depend on the RAM's initial contents |
 | `include/risc-v/mem_decl.h`, 0-cycle IMEM and DMEM | Redesigned | The raw-VHDL RAMs become `make_ram(read_latency=0)`, with `byte_write_enables=True` for DMEM. A store outside DMEM and MMIO, or to an unmapped MMIO address, sets `mem_out_of_range` but still drives the DMEM write at `addr >> 2` (from the code). M1 enables the write only in the DMEM window. The legacy check flags a misaligned access only when it spills past its word; M1 flags any misaligned access |
@@ -406,7 +406,7 @@ runs the C demo, a selected ISA test or a prebuilt ELF. The core works around:
   array;
 - [#71](https://github.com/JulianKemmerer/PipelineC/issues/71): bind a call's result to a
   local before reading its fields;
-- [a local first assigned inside an `if`](issues_inventory.md#39-411i411-a-local-first-assigned-inside-a-runtime-if-is-unknown-after-the-if):
+- [a local first assigned inside an `if`](issues_inventory.md#40-411i411-a-local-first-assigned-inside-a-runtime-if-is-unknown-after-the-if):
   declare it before the `if` or ternary that assigns it.
 
 ### Core
@@ -418,22 +418,24 @@ runs the C demo, a selected ISA test or a prebuilt ELF. The core works around:
 - the MMIO hardware function, which answers the native port for the MMIO window. M1
   passes the simulation-control device.
 
-The core uses the following datapath functions:
+The core is one function per stage of the textbook datapath, plus the PC:
 
-- `decode`;
-- immediate generation inside `decode`;
-- `execute`;
-- load and store alignment in `riscv_dmem`, alongside DMEM and the MMIO call;
-- the write-back select;
-- the next-PC select.
+- `pc_register`, the PC and the halt flag;
+- `if_stage`, which reads IMEM and adds 4 to the PC;
+- `id_stage`: `decode` (the control unit), `imm_gen` and `register_file`;
+- `ex_stage`: `execute` and `next_pc_mux`;
+- `mem_stage`, with load and store alignment, DMEM and the MMIO call;
+- `wb_stage` and its `result_mux`.
 
-A multi-cycle or pipelined core can then recombine these functions without rewriting
-them.
+`decode`, `imm_gen`, `execute` and the two muxes live in `riscv.rv32i` and hold no
+state, so a multi-cycle or pipelined core can recombine them without rewriting them.
+The factory defines the stages around its own memories. Each stage's output struct
+holds roughly what a pipelined core keeps in the register after that stage.
 
 - **PC:** a `Reg[uint32_t]`, reset to the IMEM base (zero by default).
 - **IMEM:** a ROM, `make_ram(uint32_t, IMEM_SIZE // 4, ports=("r",), read_latency=0, init=imem)`.
 - **Decode:** the legacy `decode()` if/elif tree, plus FENCE as a no-op and ECALL/EBREAK
-  as halt. An unknown encoding sets `unknown_op`.
+  as halt. An unknown encoding sets `illegal_instruction`.
 - **Register file:** the two-read, one-write RAM from
   [What Pypeline provides today](#what-pypeline-provides-today), with its write port driven
   through `Feedback`. `x0` reads as zero through a mux and is never written. It
@@ -448,7 +450,7 @@ them.
   - M1 documents this behavior. Restoring `.data` needs a copy from a readable image
     ([Deferred](#deferred)).
 - **Halt:** the PC returns to the reset vector at the edge. A sticky halted bit disables subsequent register writes and RAM/MMIO transfers. The device continues clocking. A testbench can sample the stopping PC on the first halt cycle.
-- **Debug outputs:** the current `pc`, `unknown_op`, `mem_out_of_range`, `halt`
+- **Debug outputs:** the current `pc`, `illegal_instruction`, `mem_out_of_range`, `halt`
   and the peripheral's `device_status`.
   The tops use the default clock with an input reset and no clock goal.
   Per-instruction trace prints sit behind `param("RISCV_TRACE", False)` and print with
@@ -604,6 +606,14 @@ achieved timing under the driver’s default constraint. Its FPGA exit criteria
 are synthesis for Arty and successful placement and routing for pico-ice.
 See the [FPGA build commands](../examples/pypeline/riscv/README.md#fpga-fit-example).
 
+At `2702c84b`, the same `rv32ui/lui` builds report 1,583 pico-ice logic cells at
+12.08 MHz, and 1,159 Arty slice LUTs and 66 registers at 57.37 MHz. The C demo on
+sky130 reports 667.638 ns and 83,547 cells, 17,474 of them sequential. The core with
+one function per stage (`pc_register`, `if_stage` to `wb_stage`) and textbook names
+reports 1,666 logic cells at 12.45 MHz on pico-ice, 991 slice LUTs and 66 registers
+at 60.99 MHz on Arty, and 747.844 ns with 87,127 cells, 17,474 of them sequential,
+on sky130. Each pair was built from the same tools and settings.
+
 ### M1.0 follow-up: single-cycle implementation review
 
 Review the instruction encodings, decoder and execute selectors as idiomatic Pypeline.
@@ -650,7 +660,7 @@ and M0's disassembly of `rv32ui` `add` built with it:
   test's ECALLs are cause 11.
 - **Traps:** ECALL (cause 11) and EBREAK (cause 3) save the PC in `mepc`, set `mcause`
   and jump to `mtvec`. An unknown encoding or CSR traps as an illegal instruction
-  (cause 2). `unknown_op` stays as a debug output.
+  (cause 2). `illegal_instruction` stays as a debug output.
 - **Trap vector:** it reads `mcause`. Causes 8, 9 and 11, ECALL from each privilege
   mode, write the result to `tohost`. Any other cause writes a fail code
   (`TESTNUM | 1337`).

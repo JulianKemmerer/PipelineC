@@ -376,7 +376,7 @@ variable being assigned to is already a hardware wire in `self.env`.
 
 A Python boolean that survives as a hardware operand retains its Python spelling in
 the constant wire name. VHDL emission expects a numeric literal there. See the
-[boolean constant reproducer](issues_inventory.md#40-412i412-a-python-boolean-used-as-a-hardware-constant-breaks-vhdl-generation).
+[boolean constant reproducer](issues_inventory.md#41-412i412-a-python-boolean-used-as-a-hardware-constant-breaks-vhdl-generation).
 
 **Value-context subscript/attribute reads:** bare-name reads (`_elab_name`) resolve a
 name that isn't a declared hardware variable by checking `const_env`, then
@@ -1028,7 +1028,7 @@ name first assigned inside the `if`, and step 11's restore drops it. Such a name
 therefore local to its arm, as a C block variable is. That holds even when both arms
 assign it, with the same annotated type, which Python and native simulation accept.
 A later read stops with `Unknown name`, which does not say why. This is a
-[#411](issues_inventory.md#39-411i411-a-local-first-assigned-inside-a-runtime-if-is-unknown-after-the-if).
+[#411](issues_inventory.md#40-411i411-a-local-first-assigned-inside-a-runtime-if-is-unknown-after-the-if).
 A name declared before the `if` (`value: uint8_t`) is muxed normally.
 
 ### Clock Enable Propagation Through `if`
@@ -1654,6 +1654,12 @@ with a `LOGIC.EnumInfo` built from the `IntEnum` members:
 info.id_to_int_val = {m.name: m.value for m in ctype_obj}   # e.g. {"IDLE": 0, "RUNNING": 1}
 info.int_c_type    = ctype_obj._pypeline_enum_int_ctype       # e.g. "uint2_t"
 ```
+
+Member names are stored unchanged, and `VHDL.WRITE_C_DEFINED_VHDL_STRUCTS_PACKAGE` emits
+them as the bare literals of the VHDL enumeration type. Nothing checks them against VHDL
+reserved words, or against the port names of the functions that use them (VHDL names
+ignore case), so either clash gives invalid VHDL
+([known issue #358](issues_inventory.md#31-358i358-enum-member-names-clash-with-other-vhdl-names)).
 
 **`_discover_enums_from_module(module, parser_state)`** — walks `vars(module)` and registers
 every object with `_pypeline_is_enum = True`. Called immediately after
